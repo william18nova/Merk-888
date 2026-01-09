@@ -76,26 +76,38 @@ import os, io, textwrap, subprocess
 from django.views.decorators.http import require_POST
 from django.conf import settings
 from datetime import timedelta
+import pytz
 
 
 CO_TZ = ZoneInfo("America/Bogota")
 
-def _as_co(dt):
+def _as_co(value):
     """
-    Convierte cualquier datetime (aware) a America/Bogota.
-    Si viene None, retorna None.
+    Acepta datetime o date.
+    - Si es date, lo convierte a datetime (00:00:00) antes de localtime.
+    - Si es datetime naive, lo hace aware en CO_TZ.
     """
-    if not dt:
+    if value is None:
         return None
-    # Django con USE_TZ=True te da aware; igual lo normalizamos:
-    return timezone.localtime(dt, CO_TZ)
 
-def _iso_co(dt):
+    # ✅ Si viene un date, convertirlo a datetime
+    if isinstance(value, date) and not isinstance(value, datetime):
+        value = datetime.combine(value, time(0, 0, 0))
+
+    # ✅ Si viene naive -> hacerlo aware en CO_TZ
+    if timezone.is_naive(value):
+        value = timezone.make_aware(value, CO_TZ)
+
+    # ✅ Pasar a hora CO
+    return timezone.localtime(value, CO_TZ)
+
+def _iso_co(value):
     """
-    ISO string en hora Colombia (con offset -05:00)
+    Devuelve string ISO 'YYYY-MM-DD' en hora CO.
+    Acepta datetime o date.
     """
-    dt_co = _as_co(dt)
-    return dt_co.isoformat() if dt_co else None
+    dt_co = _as_co(value)
+    return dt_co.date().isoformat()
 
 def _now_co():
     """
@@ -5392,7 +5404,7 @@ class VentasDiariasView(LoginRequiredMixin,DenyRolesMixin, View):
     template_name = "ventas_diarias.html"
 
     def get(self, request):
-        hoy = timezone.localdate()
+        hoy = timezone.localdate()  # date
         return render(request, self.template_name, {"fecha_hoy": _iso_co(hoy)})
 
 
