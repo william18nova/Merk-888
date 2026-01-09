@@ -1,4 +1,4 @@
-{# templates/editar_inventario.html #}
+{# templates/editar_inventario.html (completo) #}
 {% extends "base.html" %}
 {% load static %}
 
@@ -24,6 +24,7 @@
 
     <div id="error-message" class="alert alert-error" style="display:none;"></div>
     <div id="success-message" class="alert alert-success" style="display:none;"></div>
+    <div id="warning-message" class="alert alert-warning" style="display:none;"></div>
 
     <form id="inventarioForm" method="post"
           action="{% url 'editar_inventario' sucursal_id=sucursal.pk %}">
@@ -60,16 +61,22 @@
         <div class="field-error" id="error-id_productoid"></div>
       </div>
 
-      {# ---------- Cantidad ---------- #}
+      {# ---------- Cantidad exacta ---------- #}
       <div class="form-group-precio">
-        <label for="id_cantidad">Cantidad <span class="required">*</span></label>
-
-        <!-- ✅ ANTES: min="1"  (eso fuerza a 1 y no deja 0) -->
-        <!-- ✅ AHORA: permite 0 y negativos -->
+        <label for="id_cantidad">Cantidad exacta (actual) <span class="required">*</span></label>
         <input type="number" id="id_cantidad" name="cantidad"
-               class="form-control" step="1" placeholder="Ingrese la cantidad (puede ser 0 o negativa)">
-
+               class="form-control"
+               placeholder="Puede ser negativo, 0 o positivo">
         <div class="field-error" id="error-id_cantidad"></div>
+      </div>
+
+      {# ---------- ✅ Añadir cantidad (suma) ---------- #}
+      <div class="form-group-precio">
+        <label for="id_add_cantidad">Añadir cantidad (se suma a la actual)</label>
+        <input type="number" id="id_add_cantidad" name="add_cantidad"
+               class="form-control"
+               placeholder="Ej: 12 (o -3 para restar)">
+        <div class="field-error" id="error-id_add_cantidad"></div>
       </div>
 
       <button type="button" id="actualizarProductoBtn" class="btn-agregar-precio">
@@ -83,7 +90,7 @@
             <tr>
               <th>Producto</th>
               <th>Código de barras</th>
-              <th>Cantidad</th>
+              <th>Cantidad actual</th>
               <th>Acciones</th>
             </tr>
           </thead>

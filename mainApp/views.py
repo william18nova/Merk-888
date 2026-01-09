@@ -892,7 +892,10 @@ class EditarInventarioView(LoginRequiredMixin, View):
     """
     GET  → muestra formulario precargado.
     POST →
-      - action=add_item (AJAX): upsert solo del producto enviado.
+      - action=add_item (AJAX):
+          * si viene add_cantidad => suma atómica (F) a cantidad actual
+            - si cantidad actual > 9000: BLOQUEA y pide contar antes
+          * si no viene add_cantidad => set exacto (puede ser negativo o 0)
       - submit principal: merge (upsert SOLO lo enviado) SIN borrar faltantes.
     ✅ Permite cantidades negativas o 0.
     """
@@ -926,34 +929,71 @@ class EditarInventarioView(LoginRequiredMixin, View):
         if request.POST.get("action") == "add_item":
             sucursal = get_object_or_404(Sucursal, pk=sucursal_id)
 
-            productoid = (request.POST.get("productoid") or "").strip()
-            cantidad   = (request.POST.get("cantidad") or "").strip()
+            productoid   = (request.POST.get("productoid") or "").strip()
+            cantidad     = (request.POST.get("cantidad") or "").strip()       # Cantidad exacta
+            add_cantidad = (request.POST.get("add_cantidad") or "").strip()   # Añadir cantidad (suma)
 
             errors = {}
+
             if not productoid or not productoid.isdigit():
                 errors.setdefault("productoid", []).append({"message": "Debe seleccionar un producto válido."})
 
-            # ✅ permite negativos y 0
-            try:
-                cantidad_int = int(cantidad)
-            except ValueError:
-                errors.setdefault("cantidad", []).append({"message": "Cantidad debe ser un número entero (puede ser negativo o 0)."})
+            def parse_int_nullable(val):
+                val = (val or "").strip()
+                if val == "":
+                    return None
+                try:
+                    return int(val)  # permite negativos y 0
+                except ValueError:
+                    return "ERR"
+
+            cantidad_int = parse_int_nullable(cantidad)
+            add_int      = parse_int_nullable(add_cantidad)
+
+            # Debe venir exacta o add
+            if cantidad_int is None and add_int is None:
+                errors.setdefault("cantidad", []).append({"message": "Ingrese Cantidad exacta o Añadir cantidad."})
+
+            if cantidad_int == "ERR":
+                errors.setdefault("cantidad", []).append({"message": "Cantidad exacta debe ser un entero (puede ser negativo o 0)."})
+            if add_int == "ERR":
+                errors.setdefault("add_cantidad", []).append({"message": "Añadir cantidad debe ser un entero (puede ser negativo o 0)."})
 
             if errors:
                 return JsonResponse({"success": False, "errors": json.dumps(errors)}, status=400)
 
             pid = int(productoid)
+
+            # Lock row
             inv, created = Inventario.objects.select_for_update().get_or_create(
                 sucursalid=sucursal,
                 productoid_id=pid,
-                defaults={"cantidad": cantidad_int},
+                defaults={"cantidad": 0},
             )
-            if not created:
-                inv.cantidad = cantidad_int
-                inv.save(update_fields=["cantidad"])
+
+            # ✅ MODO: SUMA (añadir)
+            if add_int is not None:
+                # Si actual > 9000 => bloquear surtido
+                if (inv.cantidad or 0) > 9000:
+                    return JsonResponse({
+                        "success": False,
+                        "errors": json.dumps({
+                            "add_cantidad": [{"message": "Este producto nunca se a contado cuentelo antes de surtir"}]
+                        })
+                    }, status=400)
+
+                Inventario.objects.filter(pk=inv.pk).update(cantidad=F("cantidad") + add_int)
+                inv.refresh_from_db(fields=["cantidad"])
+
+                messages.success(request, f"Producto actualizado en «{sucursal.nombre}».")
+                return JsonResponse({"success": True, "new_cantidad": inv.cantidad})
+
+            # ✅ MODO: SET EXACTO
+            inv.cantidad = int(cantidad_int)  # aquí no es None
+            inv.save(update_fields=["cantidad"])
 
             messages.success(request, f"Producto actualizado en «{sucursal.nombre}».")
-            return JsonResponse({"success": True})
+            return JsonResponse({"success": True, "new_cantidad": inv.cantidad})
 
         # ───── Submit principal: MERGE (no eliminar faltantes) ─────
         form = EditarInventarioForm(request.POST)

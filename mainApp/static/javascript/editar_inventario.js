@@ -11,9 +11,10 @@ $(function () {
   const isSecure = window.isSecureContext || location.hostname === "localhost";
 
   /* ================= UI refs ================= */
-  const $form   = $("#inventarioForm");
-  const $pidHid = $("#id_productoid");
-  const $qty    = $("#id_cantidad");
+  const $form     = $("#inventarioForm");
+  const $pidHid   = $("#id_productoid");
+  const $qtyExact = $("#id_cantidad");
+  const $qtyAdd   = $("#id_add_cantidad");
 
   const $inpNom = $("#producto_busqueda_nombre");
   const $inpBar = $("#producto_busqueda_barras");
@@ -23,8 +24,9 @@ $(function () {
 
   const $tbody  = $("#productos-body");
 
-  const $errBox = $("#error-message");
-  const $okBox  = $("#success-message");
+  const $errBox  = $("#error-message");
+  const $okBox   = $("#success-message");
+  const $warnBox = $("#warning-message");
 
   // Scanner
   const $btnScan  = $("#btnScanBarcode");
@@ -36,12 +38,20 @@ $(function () {
 
   function showErr(msg){
     $okBox.hide().text("");
+    $warnBox.hide().text("");
     $errBox.html(`<i class="fas fa-exclamation-circle"></i> ${msg}`).show();
   }
   function showOk(msg){
     $errBox.hide().text("");
+    $warnBox.hide().text("");
     $okBox.html(`<i class="fas fa-check-circle"></i> ${msg}`).show();
   }
+  function showWarn(msg){
+    $errBox.hide().text("");
+    $okBox.hide().text("");
+    $warnBox.html(`<i class="fas fa-triangle-exclamation"></i> ${msg}`).show();
+  }
+
   function clearFieldErrors(){
     $(".field-error").removeClass("visible").text("");
     $(".input-error").removeClass("input-error");
@@ -51,11 +61,20 @@ $(function () {
     if ($box.length){
       $box.text(msg).addClass("visible");
     }
-    const map = { productoid: [$inpNom,$inpBar,$inpId], cantidad: [$qty], sucursal: [$("#id_sucursal_autocomplete")] };
+    const map = {
+      productoid: [$inpNom,$inpBar,$inpId],
+      cantidad: [$qtyExact],
+      add_cantidad: [$qtyAdd],
+      sucursal: [$("#id_sucursal_autocomplete")]
+    };
     (map[field] || []).forEach($i => $i.addClass("input-error"));
   }
 
   function onlyDigits(s){ return String(s||"").replace(/\D+/g, ""); }
+  function isIntString(v){
+    v = String(v||"").trim();
+    return /^-?\d+$/.test(v);
+  }
 
   /* ================= DataTable ================= */
   const dt = $("#productos-list").DataTable({
@@ -74,38 +93,38 @@ $(function () {
     inventarioId: null,
     nombre: "",
     barcode: "",
-    cantidad: 0
+    cantidad: 0,
+    alert9000: false
   };
 
   function clearTable(){
     dt.clear().draw(false);
-    current = { productId:null, inventarioId:null, nombre:"", barcode:"", cantidad:0 };
   }
 
-  // ✅ limpia absolutamente todo
   function clearAllFieldsAndUI({ keepMessages=false } = {}){
     clearFieldErrors();
 
     $pidHid.val("");
-    $qty.val("");
+    $qtyExact.val("");
+    $qtyAdd.val("");
 
     $inpNom.val("").trigger("change");
     $inpBar.val("").trigger("change");
     $inpId.val("").trigger("change");
 
-    // cierra cualquier menú de autocomplete abierto
     try { $inpNom.autocomplete("close"); } catch {}
     try { $inpBar.autocomplete("close"); } catch {}
     try { $inpId.autocomplete("close"); } catch {}
 
+    current = { productId:null, inventarioId:null, nombre:"", barcode:"", cantidad:0, alert9000:false };
     clearTable();
 
     if (!keepMessages){
       $errBox.hide().text("");
       $okBox.hide().text("");
+      $warnBox.hide().text("");
     }
 
-    // foco rápido
     setTimeout(() => $inpBar.trigger("focus"), 0);
   }
 
@@ -113,17 +132,11 @@ $(function () {
     clearTable();
     if (!current.productId) return;
 
-    // ✅ NO uses (current.cantidad || 1) porque 0 se vuelve 1
-    const safeQty = Number.isFinite(Number(current.cantidad)) ? Number(current.cantidad) : 0;
-
     const rowHtml = `
       <tr data-product-id="${current.productId}" data-inventario-id="${current.inventarioId || ""}">
         <td>${current.nombre || ("Producto " + current.productId)}</td>
         <td>${current.barcode || ""}</td>
-
-        <!-- ✅ permite 0 y negativos -->
-        <td><input type="number" class="qty-input" step="1" value="${safeQty}"></td>
-
+        <td>${String(current.cantidad ?? 0)}</td>
         <td>
           <button type="button" class="btn-eliminar" title="Eliminar">
             <i class="fas fa-trash-alt"></i>
@@ -150,7 +163,7 @@ $(function () {
   /* ================= Cargar SOLO 1 item (AJAX) ================= */
   function loadSingleInventoryItem(productId){
     clearFieldErrors();
-    $errBox.hide(); $okBox.hide();
+    $errBox.hide(); $okBox.hide(); $warnBox.hide();
 
     const url = inventarioItemUrl + "?" + new URLSearchParams({ productoid: productId, _ts: Date.now() });
 
@@ -168,22 +181,34 @@ $(function () {
         current.barcode = p.codigo_de_barras || current.barcode;
         current.inventarioId = data.inventario_id || null;
 
-        // ✅ AQUÍ estaba el problema:
-        // Antes: qty > 0 ? qty : 1  => 0 o no existe -> 1
-        // Ahora: si no existe o es 0, se muestra 0 (y si es negativa, se muestra negativa)
         const qty = Number(data.cantidad);
         current.cantidad = Number.isFinite(qty) ? qty : 0;
 
-        $qty.val(String(current.cantidad));
+        current.alert9000 = !!data.alert_9000;
+
+        // ✅ mostrar EXACTO (negativo / 0 / positivo)
+        $qtyExact.val(String(current.cantidad));
+        $qtyAdd.val("");
+
         renderSingleRow();
 
-        setTimeout(() => { $qty.trigger("focus"); $qty[0]?.select?.(); }, 0);
+        // ✅ aviso si >9000
+        if (current.alert9000){
+          showWarn("Este producto nunca se ha contado, cuéntelo antes de surtir.");
+        }
+
+        setTimeout(() => { $qtyAdd.trigger("focus"); }, 0);
       })
       .catch(() => showErr("Error de red cargando el producto."));
   }
 
-  /* ================= Autocomplete (jQuery UI como generar venta) ================= */
+  /* =============================================================================
+     Autocomplete ULTRA: cache + abort para que sea instantáneo
+  ============================================================================= */
   function makeAC($input, urlBuilder, mode){
+    const cache = new Map(); // term -> results[]
+    let acAbort = null;
+
     $input.autocomplete({
       minLength: 1,
       delay: 0,
@@ -193,7 +218,16 @@ $(function () {
         const term = (req.term || "").trim();
         if (!term) return resp([]);
 
-        fetch(urlBuilder(term), { cache:"no-store" })
+        const key = mode + "::" + term;
+        if (cache.has(key)){
+          return resp(cache.get(key));
+        }
+
+        // cancelar request anterior
+        try { if (acAbort) acAbort.abort(); } catch {}
+        acAbort = new AbortController();
+
+        fetch(urlBuilder(term), { cache:"no-store", signal: acAbort.signal })
           .then(r => r.ok ? r.json() : {results:[]})
           .then(d => {
             const arr = (d.results || []).map(x => ({
@@ -211,6 +245,14 @@ $(function () {
               text: x.text || "",
               barcode: x.barcode || ""
             }));
+
+            // cache pequeño (LRU simple)
+            cache.set(key, arr);
+            if (cache.size > 300){
+              const first = cache.keys().next().value;
+              cache.delete(first);
+            }
+
             resp(arr);
           })
           .catch(() => resp([]));
@@ -232,7 +274,7 @@ $(function () {
     if (this.value !== d) this.value = d;
   });
 
-  /* ================= ✅ FIX: auto-pick barras sin timeout ================= */
+  /* ================= Auto-pick barras (sin timeout) ================= */
   let pickToken = 0;
   let pendingPick = null;
 
@@ -242,9 +284,6 @@ $(function () {
     const curVal = String(($inpBar.val() || "").trim());
     if (curVal !== pendingPick.value) return;
     if (!ui || !Array.isArray(ui.content)) return;
-
-    const myToken = pendingPick.token;
-    if (!pendingPick || myToken !== pendingPick.token) return;
 
     const list = ui.content;
     if (!list.length){
@@ -264,35 +303,48 @@ $(function () {
   function openBarAutocompleteAndPickFirst(){
     const v = String(($inpBar.val() || "").trim());
     if (!v) return;
-
     pendingPick = { token: ++pickToken, value: v };
-
     try { $inpBar.autocomplete("close"); } catch {}
     $inpBar.autocomplete("search", v);
   }
 
-  /* ================= Actualizar SOLO ese producto (AJAX) ================= */
+  /* =============================================================================
+     ✅ Actualizar: si "Añadir cantidad" tiene valor -> suma (DB atómica)
+               si no -> set exacto (puede ser negativo / 0)
+  ============================================================================= */
   function validateSingle(){
     clearFieldErrors();
 
     const pid = ($pidHid.val() || "").trim();
-    const qtyRaw = ($qty.val() || "").trim();
+    const qtyExact = String($qtyExact.val() || "").trim();
+    const qtyAdd   = String($qtyAdd.val() || "").trim();
 
     let bad = false;
     if (!pid) { fieldError("productoid", "Debe seleccionar un producto."); bad = true; }
 
-    // ✅ Antes exigías > 0, ahora permite 0 y negativos, pero exige entero válido
-    if (qtyRaw === "") { fieldError("cantidad", "Cantidad es obligatoria."); bad = true; }
-    const qtyNum = Number(qtyRaw);
-    if (!bad){
-      if (!Number.isFinite(qtyNum) || !Number.isInteger(qtyNum)) {
-        fieldError("cantidad", "Cantidad debe ser un número entero (puede ser 0 o negativo).");
+    // Si hay add, se usa add; si no hay add, se usa exact
+    if (qtyAdd !== ""){
+      if (!isIntString(qtyAdd)){ fieldError("add_cantidad", "Añadir cantidad debe ser entero (puede ser negativo o 0)."); bad = true; }
+      // regla local de aviso (además del backend)
+      if ((current.cantidad || 0) > 9000){
+        fieldError("add_cantidad", "Este producto nunca se ha contado, cuéntelo antes de surtir.");
         bad = true;
       }
+      if (bad) return null;
+      return { pid, qtyExact, qtyAdd, mode:"add" };
+    }
+
+    // exact
+    if (qtyExact === ""){
+      fieldError("cantidad", "Ingrese la cantidad exacta.");
+      bad = true;
+    } else if (!isIntString(qtyExact)){
+      fieldError("cantidad", "Cantidad exacta debe ser entero (puede ser negativo o 0).");
+      bad = true;
     }
 
     if (bad) return null;
-    return { pid, qty: String(qtyNum) };
+    return { pid, qtyExact, qtyAdd:"", mode:"exact" };
   }
 
   let saving = false;
@@ -308,22 +360,42 @@ $(function () {
     const fd = new FormData();
     fd.append("action", "add_item");
     fd.append("productoid", v.pid);
-    fd.append("cantidad", v.qty);
+
+    if (v.mode === "add"){
+      fd.append("add_cantidad", v.qtyAdd);
+      // mandamos también cantidad exacta por si quieres, pero el backend suma con add_cantidad
+      fd.append("cantidad", v.qtyExact || String(current.cantidad || 0));
+    } else {
+      fd.append("cantidad", v.qtyExact);
+      fd.append("add_cantidad", "");
+    }
 
     fetch($form.attr("action"), {
       method: "POST",
       headers: { "X-CSRFToken": getCSRF(), "Accept":"application/json" },
       body: fd
     })
-    .then(r => r.ok ? r.json() : r.json().then(j => Promise.reject(j)))
+    .then(async r => {
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw j;
+      return j;
+    })
     .then(data => {
       if (!data || !data.success) {
         showErr("No se pudo actualizar.");
         return;
       }
 
+      const newQty = Number(data.new_cantidad);
+      if (Number.isFinite(newQty)){
+        current.cantidad = newQty;
+        $qtyExact.val(String(newQty));
+        renderSingleRow();
+      }
+
+      $qtyAdd.val(""); // ✅ listo para seguir surtiendo rápido
       showOk("✅ Producto actualizado.");
-      clearAllFieldsAndUI({ keepMessages:true });
+      setTimeout(() => $qtyAdd.trigger("focus"), 0);
     })
     .catch(err => {
       try {
@@ -367,21 +439,9 @@ $(function () {
     .catch(() => showErr("Error de red eliminando el producto."));
   });
 
-  /* ================= Guardar Cambios ================= */
+  /* ================= Guardar Cambios (reusa el botón actualizar) ================= */
   $form.on("submit", function(e){
     e.preventDefault();
-
-    const pid = ($pidHid.val() || "").trim();
-    if (!pid){
-      showErr("Busca y selecciona un producto primero.");
-      return;
-    }
-
-    // ✅ Antes ponías "1" por defecto. Ahora NO fuerces 1.
-    // Si el input está vacío, usamos 0 (coherente con “no existe”).
-    const qty = ($qty.val() || "0").trim();
-    $("#id_inventarios_temp").val(JSON.stringify([{ productId: pid, cantidad: qty }]));
-
     $btnUpd.trigger("click");
   });
 
@@ -407,7 +467,6 @@ $(function () {
     rafId = 0;
 
     try { detector = null; } catch {}
-
     try { if (zxingReader) zxingReader.reset(); } catch {}
     zxingReader = null;
 
@@ -464,7 +523,6 @@ $(function () {
 
     $inpBar.val(String(raw)).trigger("input");
     openBarAutocompleteAndPickFirst();
-
     return true;
   }
 
@@ -523,7 +581,6 @@ $(function () {
 
       const ZXing = await loadZXing();
       zxingReader = new ZXing.BrowserMultiFormatReader();
-
       zxingReader.decodeFromVideoElementContinuously(videoEl, (result) => {
         if (!running) return;
         if (result){
