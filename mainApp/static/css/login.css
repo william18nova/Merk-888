@@ -1,0 +1,282 @@
+/* static/css/login.css */
+
+/*─────────────────────────────────────────────────────────────────────────────
+  Fuentes
+─────────────────────────────────────────────────────────────────────────────*/
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
+
+/*─────────────────────────────────────────────────────────────────────────────
+  Variables (alineadas al navbar Nova Advance con más brillo y viveza)
+─────────────────────────────────────────────────────────────────────────────*/
+:root{
+  /* Paleta más clara y viva */
+  --bg-1: #153060;            /* fondo profundo */
+  --bg-2: #20497d;            /* tono navbar */
+  --brand: #4da6ff;           /* acento muy vivo */
+  --text: #f8fbff;            /* texto principal muy claro */
+  --text-muted: #d8e8ff;      /* texto suave más claro */
+
+  /* Superficies / glass */
+  --card-bg: rgba(33, 64, 120, 0.7);
+  --card-border: rgba(255,255,255,.18);
+  --card-shadow: 0 18px 40px rgba(0,0,0,.45);
+
+  /* Inputs */
+  --input-bg: rgba(255,255,255,.1);
+  --input-hov: rgba(255,255,255,.18);
+  --input-brd: rgba(255,255,255,.22);
+
+  /* Botón */
+  --btn-bg: linear-gradient(180deg, #5cb8ff, #3d8cff);
+  --btn-bg-hov: linear-gradient(180deg, #6ec0ff, #4da1ff);
+  --btn-shadow: 0 10px 24px rgba(77,161,255,.5), inset 0 0 0 1px rgba(255,255,255,.2);
+
+  /* Estados */
+  --ring: #b8dbff;
+
+  /* Errores */
+  --err-bg: rgba(235, 59, 72, .18);
+  --err-brd: rgba(255, 150, 150, .55);
+  --err-tx: #ffd2d4;
+
+  /* Misc */
+  --radius: 14px;
+  --radius-sm: 10px;
+  --transition: .22s cubic-bezier(.2,.6,.2,1);
+  --font-base: 'Inter', system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+}
+
+/*─────────────────────────────────────────────────────────────────────────────
+  Reset base
+─────────────────────────────────────────────────────────────────────────────*/
+*,
+*::before,
+*::after{ box-sizing: border-box; }
+html, body{ height: 100%; }
+body{
+  margin: 0;
+  font-family: var(--font-base);
+  color: var(--text);
+  background:
+    radial-gradient(1200px 700px at 10% 10%, rgba(77,166,255,.35), transparent 60%),
+    radial-gradient(1200px 700px at 90% 90%, rgba(77,166,255,.25), transparent 60%),
+    linear-gradient(135deg, var(--bg-1), var(--bg-2));
+  display: grid;
+  place-items: center;
+  min-height: 100svh;
+  overflow-y: auto;
+}
+
+.page-wrap{ padding-top: 0 !important; }
+
+/*─────────────────────────────────────────────────────────────────────────────
+  Contenedor
+─────────────────────────────────────────────────────────────────────────────*/
+.login-container{
+  width: min(94vw, 400px);
+  padding: clamp(32px, 5vw, 40px);
+  text-align: center;
+
+  background: var(--card-bg);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius);
+  box-shadow: var(--card-shadow);
+
+  display: grid;
+  gap: 18px;
+  animation: rise .5s ease both;
+}
+
+@keyframes rise{
+  from{ transform: translateY(8px); opacity: .0; }
+  to{ transform: translateY(0); opacity: 1; }
+}
+
+/*─────────────────────────────────────────────────────────────────────────────
+  Icono y título
+─────────────────────────────────────────────────────────────────────────────*/
+.login-container .icon{
+  font-size: clamp(64px, 8vw, 84px);
+  color: var(--text);
+  opacity: 1;
+  filter: drop-shadow(0 6px 16px rgba(0,0,0,.4));
+  margin-bottom: 6px;
+}
+
+.login-container h2{
+  font-size: clamp(22px, 2.6vw, 26px);
+  font-weight: 700;
+  letter-spacing: .2px;
+  color: var(--text);
+  margin-bottom: 6px;
+}
+
+/*─────────────────────────────────────────────────────────────────────────────
+  Inputs
+─────────────────────────────────────────────────────────────────────────────*/
+.login-container input[type="text"],
+.login-container input[type="password"]{
+  width: 100%;
+  padding: 14px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--input-brd);
+  background: var(--input-bg);
+  color: var(--text);
+  font-size: 15px;
+  transition: background var(--transition), border-color var(--transition), box-shadow var(--transition), transform var(--transition);
+  outline: none;
+  margin-bottom: 15px;
+}
+
+.login-container input[type="text"]::placeholder,
+.login-container input[type="password"]::placeholder{
+  color: var(--text-muted);
+}
+
+.login-container input[type="text"]:hover,
+.login-container input[type="password"]:hover{
+  background: var(--input-hov);
+  transform: translateY(-1px);
+}
+
+.login-container input[type="text"]:focus,
+.login-container input[type="password"]:focus{
+  background: var(--input-hov);
+  border-color: var(--ring);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring) 50%, transparent);
+}
+
+/*─────────────────────────────────────────────────────────────────────────────
+  Opciones
+─────────────────────────────────────────────────────────────────────────────*/
+.login-container .options{
+  margin-top: 2px;
+  margin-bottom: 4px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.login-container .options label{
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.login-container .options input[type="checkbox"]{
+  appearance: none;
+  width: 16px; height: 16px;
+  border-radius: 4px;
+  border: 1px solid var(--input-brd);
+  background: var(--input-bg);
+  position: relative;
+  transition: border-color var(--transition), background var(--transition), box-shadow var(--transition);
+}
+.login-container .options input[type="checkbox"]:hover{
+  border-color: var(--ring);
+}
+.login-container .options input[type="checkbox"]:checked{
+  background: var(--brand);
+  border-color: transparent;
+  box-shadow: 0 8px 18px rgba(77,166,255,.55) inset;
+}
+.login-container .options input[type="checkbox"]:checked::after{
+  content: "";
+  position: absolute;
+  inset: 3px 4px 3px 4px;
+  border: solid #fff;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+
+.login-container .options a{
+  color: var(--text);
+  text-decoration: none;
+  opacity: .95;
+  transition: opacity var(--transition), text-underline-offset var(--transition);
+  text-underline-offset: 2px;
+}
+.login-container .options a:hover{
+  opacity: 1;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+/*─────────────────────────────────────────────────────────────────────────────
+  Botón Entrar
+─────────────────────────────────────────────────────────────────────────────*/
+.login-container button{
+  width: 100%;
+  padding: 14px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: var(--btn-bg);
+  color: #fff;
+  font-size: 15px;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: var(--btn-shadow);
+  transition: transform var(--transition), box-shadow var(--transition), filter var(--transition), background var(--transition);
+  margin-top: 15px;
+}
+.login-container button:hover{
+  background: var(--btn-bg-hov);
+  transform: translateY(-1px);
+  filter: saturate(1.12);
+  box-shadow: 0 12px 28px rgba(77,166,255,.55), inset 0 0 0 1px rgba(255,255,255,.22);
+}
+.login-container button:active{
+  transform: translateY(0);
+}
+.login-container button:focus-visible{
+  outline: none;
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--ring) 55%, transparent),
+    0 12px 28px rgba(77,166,255,.5),
+    inset 0 0 0 1px rgba(255,255,255,.2);
+}
+
+/*─────────────────────────────────────────────────────────────────────────────
+  Mensajes de error
+─────────────────────────────────────────────────────────────────────────────*/
+.error-message{
+  margin-top: 8px;
+  padding: 12px;
+  background: var(--err-bg);
+  color: var(--err-tx);
+  border: 1px solid var(--err-brd);
+  border-radius: var(--radius-sm);
+  text-align: left;
+  font-size: 14px;
+  line-height: 1.35;
+}
+
+/*─────────────────────────────────────────────────────────────────────────────
+  Responsivo
+─────────────────────────────────────────────────────────────────────────────*/
+@media (max-width: 720px){
+  .login-container{
+    width: min(92vw, 420px);
+    padding: 24px;
+    gap: 14px;
+  }
+  .login-container .options{
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce){
+  .login-container,
+  .login-container input,
+  .login-container button{ transition: none !important; }
+  .login-container{ animation: none !important; }
+}

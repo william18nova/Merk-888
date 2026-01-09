@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Agregar Cliente{% endblock %}
+
+{% block extra_head %}
+  <!-- Font Awesome + hoja de estilos -->
+  <link rel="stylesheet"
+        href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"/>
+  <link rel="stylesheet"
+        href="{% static 'css/agregar_cliente.css' %}">
+{% endblock %}
+
+{% block content %}
+<div class="container-empleado">
+  <i class="fas fa-user-plus icon-empleado"></i>
+  <h2>Agregar Cliente</h2>
+
+  <p class="obligatorio-texto">
+    Los campos marcados con <span class="required">*</span> son obligatorios.
+  </p>
+
+  <div id="error-message"   class="alert alert-error"   style="display:none;"></div>
+  <div id="success-message" class="alert alert-success" style="display:none;"></div>
+
+  <form id="form-agregar-cliente"
+        method="post"
+        action="{% url 'agregar_cliente' %}">
+    {% csrf_token %}
+
+    {% for field in form %}
+      <div class="form-group-empleado">
+        <label for="{{ field.id_for_label }}">
+          {{ field.label }}
+          {% if field.field.required %}
+            <span class="required">*</span>
+          {% endif %}
+        </label>
+        {{ field }}
+        <div class="field-error"
+             id="error-{{ field.html_name }}"></div>
+      </div>
+    {% endfor %}
+
+    <button type="submit" class="btn-agregar-empleado">Agregar Cliente</button>
+  </form>
+</div>
+
+<script defer src="{% static 'javascript/agregar_cliente.js' %}"></script>
+{% endblock %}

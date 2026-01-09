@@ -1,0 +1,95 @@
+{# templates/ventas_diarias.html #}
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Ventas diarias{% endblock %}
+
+{% block extra_head %}
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"/>
+  <link rel="stylesheet" href="{% static 'css/ventas_diarias.css' %}">
+{% endblock %}
+
+{% block content %}
+<div class="vd-wrap">
+  <div class="vd-card">
+    <h2><i class="fa-solid fa-cash-register"></i> Ventas diarias</h2>
+
+    <div id="flash" class="alert" style="display:none"></div>
+
+    <form id="vdForm" class="vd-grid" onsubmit="return false;">
+      {% csrf_token %}
+
+      <!-- Sucursal -->
+      <label class="vd-label">Sucursal</label>
+      <div class="vd-field">
+        <i class="fa-solid fa-building"></i>
+        <input id="sucursal_ac" class="vd-input" placeholder="Buscar sucursal…" autocomplete="off">
+        <input type="hidden" id="sucursal_id">
+        <div id="sucursal_box" class="ac-box"></div>
+      </div>
+
+      <!-- Punto de pago -->
+      <label class="vd-label">Punto de pago</label>
+      <div class="vd-field">
+        <i class="fa-solid fa-computer"></i>
+        <input id="pp_ac" class="vd-input" placeholder="Buscar punto de pago…" autocomplete="off" disabled>
+        <input type="hidden" id="pp_id">
+        <div id="pp_box" class="ac-box"></div>
+      </div>
+
+      <!-- Fecha -->
+      <label class="vd-label">Fecha</label>
+      <div class="vd-field">
+        <i class="fa-solid fa-calendar-day"></i>
+        <input id="fecha" class="vd-input" type="date" value="{{ fecha_hoy }}">
+      </div>
+
+      <!-- Hora desde -->
+      <label class="vd-label">Hora desde</label>
+      <div class="vd-field">
+        <i class="fa-solid fa-clock"></i>
+        <input id="hora_desde" class="vd-input" type="time" step="1" value="">
+      </div>
+
+      <!-- Hora hasta -->
+      <label class="vd-label">Hora hasta</label>
+      <div class="vd-field">
+        <i class="fa-solid fa-clock"></i>
+        <input id="hora_hasta" class="vd-input" type="time" step="1" value="">
+      </div>
+
+      <!-- Modo de pago -->
+      <label class="vd-label">Modo de pago</label>
+      <div class="vd-field">
+        <i class="fa-solid fa-wallet"></i>
+        <select id="modo" class="vd-input" style="padding-left:38px">
+          <option value="TOTAL">Totales</option>
+          <option value="efectivo">Efectivo</option>
+          <option value="nequi">Nequi</option>
+          <option value="daviplata">Daviplata</option>
+          <option value="tarjeta">Tarjeta</option>
+          <option value="banco_caja_social">Banco Caja Social</option>
+        </select>
+      </div>
+    </form>
+
+    <div class="vd-metrics">
+      <div class="metric">
+        <div class="metric-label">Número de ventas</div>
+        <div id="m-ventas" class="metric-value">—</div>
+      </div>
+      <div class="metric">
+        <div class="metric-label">Total vendido</div>
+        <div id="m-total" class="metric-value">—</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  const sucUrl   = "{% url 'sucursal_ventas_autocomplete' %}";
+  const ppUrl    = "{% url 'puntopago_ventas_autocomplete' %}";
+  const statsUrl = "{% url 'ventas_diarias_stats' %}";
+</script>
+<script defer src="{% static 'javascript/ventas_diarias.js' %}"></script>
+{% endblock %}

@@ -1,0 +1,152 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Gestión Masiva Inventario{% endblock %}
+
+{% block extra_head %}
+  <link rel="stylesheet"
+        href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"/>
+  <link rel="stylesheet"
+        href="https://cdn.datatables.net/1.13.8/css/jquery.dataTables.min.css"/>
+  <link rel="stylesheet"
+        href="https://code.jquery.com/ui/1.13.3/themes/base/jquery-ui.css"/>
+
+  {# ✅ CSS ESPECÍFICO de esta página (el que te pasé) #}
+  <link rel="stylesheet" href="{% static 'css/gestion_inventario_masiva.css' %}">
+{% endblock %}
+
+{% block content %}
+  <div class="masivo-page">
+    <div class="masivo-layout">
+
+      {# ================= Sidebar (controles) ================= #}
+      <aside class="masivo-sidebar">
+        <i class="fas fa-boxes-stacked icon-inventario"></i>
+        <h2>Gestión Masiva de Inventario</h2>
+
+        <div id="error-message" class="alert alert-error" style="display:none;"></div>
+        <div id="success-message" class="alert alert-success" style="display:none;"></div>
+
+        <form id="masivoForm" method="post" action="{% url 'inventario_masivo' %}">
+          {% csrf_token %}
+
+          {# ---------- Sucursal ---------- #}
+          <div class="form-group-precio">
+            <label for="sucursal_autocomplete">Sucursal <span class="required">*</span></label>
+            <input type="text" id="sucursal_autocomplete" class="form-control"
+                   placeholder="Buscar sucursal..." autocomplete="off">
+            <input type="hidden" id="sucursal_id" name="sucursal_id">
+          </div>
+
+          {# ---------- Buscar producto (3 AC) ---------- #}
+          <div class="form-group-precio">
+            <label>Buscar producto <span class="required">*</span></label>
+
+            <input type="text" id="producto_busqueda_nombre" class="form-control"
+                   placeholder="Buscar por nombre…" autocomplete="off">
+
+            <input type="text" id="producto_busqueda_barras" class="form-control"
+                   placeholder="Buscar por código de barras…" autocomplete="off" inputmode="numeric">
+
+            <input type="text" id="producto_busqueda_id" class="form-control"
+                   placeholder="Buscar por ID…" autocomplete="off" inputmode="numeric">
+
+            <button type="button" id="btnNuevoProducto" class="btn-agregar-precio" style="margin-top:10px;">
+              <i class="fas fa-plus"></i> Nuevo producto
+            </button>
+          </div>
+
+          <input type="hidden" id="payload" name="payload">
+
+          <button type="button" id="btnGuardarTodo" class="btn-guardar-precio">
+            Guardar todo
+          </button>
+        </form>
+      </aside>
+
+      {# ================= Main (tabla) ================= #}
+      <main class="masivo-main">
+        <div class="table-wrap">
+          <table id="tabla-masivo" class="display">
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Nombre</th>
+                <th>Descripción</th>
+                <th>Código barras</th>
+                <th>Categoría ID</th>
+                <th>Precio</th>
+                <th>Precio anterior</th>
+                <th>IVA</th>
+                <th>Imp. consumo</th>
+                <th>ICUI</th>
+                <th>IBUA</th>
+                <th>Rentabilidad</th>
+                <th>Inventario</th>
+                <th>Ingresado</th>
+                <th>Nuevo total</th>
+                <th>Acciones</th>
+              </tr>
+            </thead>
+            <tbody id="tabla-body"></tbody>
+          </table>
+        </div>
+      </main>
+
+    </div>
+  </div>
+
+  {# ================= Modal Nuevo Producto ================= #}
+  <div id="modalNuevoProducto" style="display:none;">
+    <div class="modal-card">
+      <div class="scanner-head" style="display:flex; align-items:center; justify-content:space-between; gap:10px;">
+        <div class="scanner-title" style="font-weight:800;">
+          <i class="fas fa-plus"></i> Nuevo Producto
+        </div>
+        <button type="button" id="btnCerrarModalProducto" class="scanner-close"
+                style="border:none; background:transparent; color:rgba(248,251,255,.9); font-size:18px; cursor:pointer;">
+          ✕
+        </button>
+      </div>
+
+      <div style="padding-top:12px; display:grid; gap:10px;">
+        <input id="np_nombre" class="form-control" placeholder="Nombre (obligatorio)">
+
+        <input id="np_desc" class="form-control" placeholder="Descripción (opcional)">
+        <input id="np_barras" class="form-control" placeholder="Código de barras (opcional)">
+        <input id="np_categoria" class="form-control" placeholder="Categoría ID (opcional)" inputmode="numeric">
+
+        <input id="np_precio" class="form-control" placeholder="Precio (obligatorio) ej: 2500.00" inputmode="decimal">
+        <input id="np_precio_anterior" class="form-control" placeholder="Precio anterior (opcional)" inputmode="decimal">
+        <input id="np_iva" class="form-control" placeholder="IVA (obligatorio) ej: 19" inputmode="decimal">
+
+        <input id="np_imp_consumo" class="form-control" placeholder="Impuesto consumo (default 0)" inputmode="decimal" value="0">
+        <input id="np_icui" class="form-control" placeholder="ICUI (default 0)" inputmode="decimal" value="0">
+        <input id="np_ibua" class="form-control" placeholder="IBUA (default 0)" inputmode="decimal" value="0">
+        <input id="np_rentabilidad" class="form-control" placeholder="Rentabilidad (default 0)" inputmode="decimal" value="0">
+
+        <input id="np_cant" class="form-control" type="number" step="1" value="0"
+               placeholder="Cantidad inicial inventario">
+
+        <button type="button" id="btnCrearProducto" class="btn-guardar-precio">
+          Crear y agregar
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const SUCURSAL_URL      = "{% url 'sucursal_autocomplete_simple' %}";
+    const PROD_NOMBRE_URL   = "{% url 'producto_buscar_nombre_simple' %}";
+    const PROD_BARRAS_URL   = "{% url 'producto_buscar_barras_simple' %}";
+    const PROD_ID_URL       = "{% url 'producto_buscar_id_simple' %}";
+    const PROD_DETALLE_URL  = "{% url 'producto_detalle_inventario' %}";
+    const POST_URL          = "{% url 'inventario_masivo' %}";
+  </script>
+
+  <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+  <script src="https://cdn.datatables.net/1.13.8/js/jquery.dataTables.min.js"></script>
+  <script src="https://code.jquery.com/ui/1.13.3/jquery-ui.min.js"></script>
+
+  <script defer src="{% static 'javascript/gestion_inventario_masiva.js' %}"></script>
+{% endblock %}

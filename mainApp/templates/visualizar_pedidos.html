@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Visualizar Pedidos{% endblock %}
+
+{% block content %}
+  <div class="container-pedidos">
+    <h2><i class="fas fa-truck"></i> Lista de Pedidos</h2>
+
+    <!-- mensajes del framework -->
+    {% if messages %}
+      <div class="flash-stack" style="margin:.5rem 0;">
+        {% for message in messages %}
+          <div class="alert alert-{{ message.tags }}">{{ message }}</div>
+        {% endfor %}
+      </div>
+    {% endif %}
+
+    <!-- fallback por query param -->
+    <div id="success-message" class="alert alert-success"
+         {% if not just_updated %}style="display:none"{% endif %}>
+      Pedido actualizado correctamente.
+    </div>
+    <div id="error-message" class="alert alert-error" style="display:none"></div>
+
+    <!-- buscador externo -->
+    <div class="search-wrapper">
+      <i class="fas fa-search"></i>
+      <input id="buscador-pedidos" class="search-input"
+             type="text" placeholder="Buscar…">
+    </div>
+
+    <!-- tabla -->
+    <table id="pedidosTable" class="display">
+      <thead>
+        <tr>
+          <th>ID</th><th>Proveedor</th><th>Sucursal</th>
+          <th>Fecha&nbsp;Pedido</th><th>Fecha&nbsp;Estimada</th>
+          <th>Costo&nbsp;Total</th><th>Estado</th>
+          <th class="no-sort">Acciones</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for p in pedidos %}
+        <tr data-id="{{ p.pedidoid }}">
+          <td data-label="ID">{{ p.pedidoid }}</td>
+          <td data-label="Proveedor">{{ p.proveedorid.nombre }}</td>
+          <td data-label="Sucursal">{{ p.sucursalid.nombre }}</td>
+          <td data-label="Fecha Pedido">{{ p.fechapedido|date:"d/m/Y" }}</td>
+          <td data-label="Fecha Estimada">
+            {{ p.fechaestimadaentrega|default:"—" }}
+          </td>
+          <td data-label="Costo Total">${{ p.costototal|floatformat:2 }}</td>
+          <td data-label="Estado">{{ p.estado }}</td>
+          <td data-label="Acciones" class="actions-cell">
+            <div class="btn-container">
+              <a href="{% url 'editar_pedido' p.pedidoid %}"
+                 class="btn editar" title="Editar">
+                <i class="fas fa-edit"></i>
+              </a>
+              <button type="button" class="btn borrar"
+                      data-id="{{ p.pedidoid }}" title="Eliminar">
+                <i class="fas fa-trash-alt"></i>
+              </button>
+            </div>
+            <form class="delete-form"
+                  action="{% url 'eliminar_pedido' p.pedidoid %}"
+                  method="post" style="display:none">{% csrf_token %}</form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Font-Awesome + DataTables -->
+  <link rel="stylesheet"
+        href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+  <link rel="stylesheet"
+        href="https://cdn.datatables.net/1.11.5/css/jquery.dataTables.min.css">
+  <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+  <script src="https://cdn.datatables.net/1.11.5/js/jquery.dataTables.min.js"></script>
+
+  <!-- estilos + lógica -->
+  <link rel="stylesheet" href="{% static 'css/visualizar_pedidos.css' %}">
+  <script>
+    const eliminarPedidoUrl = "{% url 'eliminar_pedido' 0 %}";
+    const verPedidoUrl      = "{% url 'ver_pedido' 0 %}";
+  </script>
+  <script src="{% static 'javascript/visualizar_pedidos.js' %}" defer></script>
+{% endblock %}

@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Cambios &amp; Devoluciones{% endblock %}
+
+{% block content %}
+<div class="container-pedidos">
+  <h2><i class="fas fa-exchange-alt"></i> Cambios &amp; Devoluciones</h2>
+
+  {# ——— Buscador externo ——— #}
+  <div class="search-wrapper">
+    <i class="fas fa-search"></i>
+    <input id="buscador-cambios" class="search-input" type="text" placeholder="Buscar…">
+  </div>
+
+  {# ——— Tabla de cambios ——— #}
+  <table id="cambiosTable" class="display">
+    <thead>
+      <tr>
+        <th>ID</th>
+        <th>Venta</th>
+        <th>Producto</th>
+        <th>Cant.</th>
+        <th>Tipo</th>
+        <th>Estado</th>
+        <th>Fecha</th>
+        <th>Motivo</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for c in cambios %}
+      <tr data-id="{{ c.venta.ventaid }}">
+        <td data-label="ID">{{ c.cambioid }}</td>
+        <td data-label="Venta">
+          <a href="{% url 'ver_venta' c.venta.ventaid %}">#{{ c.venta.ventaid }}</a>
+        </td>
+        <td data-label="Producto">{{ c.productoid.nombre }}</td>
+        <td data-label="Cant.">{{ c.cantidad }}</td>
+        <td data-label="Tipo">{{ c.tipo }}</td>
+        <td data-label="Estado">{{ c.estado }}</td>
+        <td data-label="Fecha">{{ c.fecha|date:"d/m/Y" }}</td>
+        <td data-label="Motivo">{{ c.motivo|default:"—" }}</td>
+      </tr>
+      {% empty %}
+      <tr>
+        <td colspan="8" class="empty">No hay cambios o devoluciones.</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{# ——— Recursos compartidos ——— #}
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<link rel="stylesheet" href="https://cdn.datatables.net/1.11.5/css/jquery.dataTables.min.css">
+<link rel="stylesheet" href="{% static 'css/visualizar_pedidos.css' %}">
+
+<script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+<script src="https://cdn.datatables.net/1.11.5/js/jquery.dataTables.min.js"></script>
+
+<script>
+  // URL base para navegar al detalle de la venta
+  const verVentaUrl = "{% url 'ver_venta' 0 %}";
+</script>
+<script src="{% static 'javascript/visualizar_cambios.js' %}" defer></script>
+{% endblock %}

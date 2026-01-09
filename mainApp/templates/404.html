@@ -1,0 +1,110 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Página no encontrada — Nova Advance</title>
+  <link rel="icon" href="{% static 'images/logoNovaAdvance.png' %}">
+  <style>
+    :root{
+      --nv1:#153060;--nv2:#20497d;--nv3:#3d8cff;--nv4:#4da6ff;
+      --bg: radial-gradient(1200px 600px at 20% -20%, rgba(77,166,255,.15), transparent 60%),
+            radial-gradient(900px 500px at 90% 10%, rgba(61,140,255,.12), transparent 60%),
+            linear-gradient(180deg, #0f223d 0%, #10223f 100%);
+      --card: rgba(255,255,255,.08); --card-bd: rgba(255,255,255,.12);
+      --txt:#eaf2ff; --muted:#b9c7dc;
+      --shadow: 0 20px 60px rgba(0,0,0,.35);
+    }
+    *{box-sizing:border-box} html,body{height:100%} body{
+      margin:0; background:var(--bg); color:var(--txt);
+      font: 500 16px/1.4 "Inter", system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+      display:flex; min-height:100%; align-items:center; justify-content:center; padding:32px;
+    }
+    .wrap{ width:min(980px, 92vw); text-align:center; }
+    .card{
+      background:var(--card); border:1px solid var(--card-bd);
+      box-shadow: var(--shadow); border-radius:20px; padding:28px 22px 26px;
+      backdrop-filter: blur(8px);
+    }
+    .badge{
+      display:inline-flex; align-items:center; gap:10px;
+      background:rgba(255,255,255,.08); padding:8px 12px; border-radius:999px; color:#fff;
+      margin-bottom:14px; font-weight:700; letter-spacing:.4px;
+    }
+    .badge .dot{width:8px; height:8px; border-radius:999px; background:#ff6b71; box-shadow:0 0 0 3px rgba(255,107,113,.25)}
+    h1{ font-weight:900; margin:6px 0 6px; letter-spacing:.4px; font-size: clamp(32px, 5vw, 60px); }
+    .lead{ color:var(--muted); font-size: clamp(14px, 1.7vw, 16px); margin:0 0 18px }
+    .search{
+      display:flex; gap:10px; justify-content:center; margin:18px 0 4px; flex-wrap:wrap;
+    }
+    .search input{
+      width:min(540px, 80vw); padding:14px 14px; border-radius:12px; border:1px solid var(--card-bd);
+      background:rgba(255,255,255,.06); color:#fff; outline:none;
+    }
+    .search button{
+      padding:14px 16px; border-radius:12px; border:0; cursor:pointer; color:#fff;
+      background: linear-gradient(180deg, #3d8cff, #20497d); box-shadow: inset 0 1px 0 rgba(255,255,255,.12), 0 8px 20px rgba(61,140,255,.35);
+      font-weight:800; letter-spacing:.25px;
+    }
+    .actions{ display:flex; gap:10px; justify-content:center; flex-wrap:wrap; margin-top:14px }
+    .btn{
+      padding:12px 16px; border-radius:12px; border:1px solid var(--card-bd); color:#fff; text-decoration:none;
+      background:rgba(255,255,255,.06);
+    }
+    .btn.primary{
+      background: linear-gradient(180deg, #3d8cff, #20497d);
+      border:0; box-shadow: inset 0 1px 0 rgba(255,255,255,.12), 0 8px 20px rgba(61,140,255,.35);
+      font-weight:800;
+    }
+    .art{
+      width:min(580px, 86vw); margin:0 auto 10px; opacity:.95; filter: drop-shadow(0 22px 50px rgba(0,0,0,.35));
+    }
+    .small{ color:var(--muted); margin-top:14px; font-size:13px }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <div class="badge"><span class="dot"></span>Error 404</div>
+
+      <!-- Ilustración SVG ligera -->
+      <svg class="art" viewBox="0 0 600 280" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <defs>
+          <linearGradient id="g1" x1="0" x2="1">
+            <stop offset="0%" stop-color="#4da6ff"/><stop offset="100%" stop-color="#3d8cff"/>
+          </linearGradient>
+          <linearGradient id="g2" x1="0" x2="1">
+            <stop offset="0%" stop-color="#1a2f55"/><stop offset="100%" stop-color="#0f223d"/>
+          </linearGradient>
+        </defs>
+        <rect x="0" y="0" width="600" height="280" rx="22" fill="url(#g2)" opacity=".55"/>
+        <g fill="none" stroke="url(#g1)" stroke-width="8" stroke-linecap="round">
+          <path d="M60 210 L140 100 L220 210" opacity=".9"/>
+          <path d="M380 210 q40-80 80 0 q40 80 80 0" opacity=".9"/>
+          <path d="M260 210 v-60 a30 30 0 0 1 60 0 v60" opacity=".9"/>
+        </g>
+        <g fill="#eaf2ff" opacity=".12">
+          <circle cx="90" cy="70" r="6"/><circle cx="520" cy="60" r="5"/><circle cx="410" cy="40" r="4"/>
+        </g>
+      </svg>
+
+      <h1>Ups… página no encontrada</h1>
+      <p class="lead">La URL que intentaste abrir no existe o fue movida. Revisa si hay un error de escritura o vuelve al inicio.</p>
+
+      <form class="search" action="{% url 'visualizar_productos' %}" method="get">
+        <input type="text" name="q" placeholder="Buscar productos, clientes, pedidos…" aria-label="Buscar">
+        <button type="submit">Buscar</button>
+      </form>
+
+      <div class="actions">
+        <a class="btn primary" href="{% url 'home' %}">Volver al inicio</a>
+        <a class="btn" href="javascript:history.back()">Ir a la página anterior</a>
+        <a class="btn" href="{% url 'visualizar_ventas' %}">Ir a Ventas</a>
+      </div>
+
+      <p class="small">Si crees que esto es un error, contáctanos con el enlace exacto que intentaste abrir.</p>
+    </div>
+  </div>
+</body>
+</html>

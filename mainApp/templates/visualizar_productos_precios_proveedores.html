@@ -1,0 +1,101 @@
+{# templates/visualizar_productos_precios_proveedores.html #}
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Productos & Precios{% endblock %}
+
+{% block extra_head %}
+  <!-- Font-Awesome + DataTables -->
+  <link rel="stylesheet"
+        href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"/>
+  <link rel="stylesheet"
+        href="https://cdn.datatables.net/1.13.8/css/jquery.dataTables.min.css"/>
+
+  <!-- Hoja de estilo propia -->
+  <link rel="stylesheet"
+        href="{% static 'css/visualizar_productos_precios_proveedores.css' %}">
+{% endblock %}
+
+{% block content %}
+  <div class="container">
+    <h2><i class="fas fa-truck"></i> Productos & Precios</h2>
+
+    {# --------- alertas Django --------- #}
+    {% if messages %}
+      <div class="messages">
+        {% for m in messages %}
+          <div class="alert {% if m.tags %}alert-{{ m.tags }}{% endif %}">
+            {{ m }}
+          </div>
+        {% endfor %}
+      </div>
+    {% endif %}
+
+    {# --------- buscador proveedor --------- #}
+    <form id="proveedorForm" class="search-wrapper" method="post">
+      {% csrf_token %}
+      <i class="fas fa-search"></i>
+      <input  id="id_proveedor_autocomplete"
+              class="search-input"
+              placeholder="Buscar proveedor…"
+              autocomplete="off"
+              value="{{ proveedor_seleccionado.nombre|default_if_none:'' }}">
+      <input  type="hidden" id="id_proveedor" name="proveedor"
+              value="{{ proveedor_seleccionado.proveedorid|default_if_none:'' }}">
+      <div   id="proveedor-autocomplete-results"
+             class="autocomplete-results"></div>
+    </form>
+
+    {# --------- botón editar (solo cuando hay proveedor) --------- #}
+    {% if proveedor_seleccionado %}
+      <div class="btn-container">
+        <a  href="{% url 'editar_productos_precios_proveedor' proveedor_seleccionado.pk %}"
+            class="btn-editar-inventario">
+          Editar Precios
+        </a>
+      </div>
+    {% endif %}
+
+    {# --------- tabla (sólo si hay datos) --------- #}
+    {% if productos_precios %}
+      <table id="preciosTable" class="display">
+        <thead>
+          <tr>
+            <th>Producto</th>
+            <th>Precio</th>
+            <th class="no-sort">Acciones</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for p in productos_precios %}
+            <tr>
+              <td data-label="Producto">{{ p.productoid.nombre }}</td>
+              <td data-label="Precio">{{ p.precio }}</td>
+              <td data-label="Acciones" class="actions-cell">
+                <button type="button"
+                        class="btn-eliminar"
+                        data-precio-id="{{ p.pk }}"
+                        title="Eliminar precio">
+                  <i class="fas fa-trash-alt"></i>
+                </button>
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% endif %}
+  </div>
+
+  {# --------- scripts --------- #}
+  <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+  <script src="https://cdn.datatables.net/1.13.8/js/jquery.dataTables.min.js"></script>
+
+  <script>
+    const proveedorAutocompleteUrl = "{% url 'proveedor_con_productos_autocomplete' %}";
+    const eliminarPrecioUrl        = "{% url 'eliminar_precio_proveedor' 0 %}";
+  </script>
+
+  <script defer
+          src="{% static 'javascript/visualizar_productos_precios_proveedores.js' %}">
+  </script>
+{% endblock %}

@@ -1,0 +1,247 @@
+{% load static %}
+
+<nav class="nv">
+  <div class="nv__left">
+    <!-- + Accesibilidad -->
+    <button class="nv__burger" id="nvBurger" aria-label="Abrir menú"
+            aria-controls="nvLinks" aria-expanded="false">
+      <span></span><span></span><span></span>
+    </button>
+
+    <a href="{% url 'home' %}" class="nv__brand">
+      <img src="{% static 'images/logoNovaAdvance.png' %}" alt="Nova" class="nv__logo">
+      <span class="nv__title">Nova Advance</span>
+    </a>
+  </div>
+
+  {# ===== URLs base usadas abajo ===== #}
+  {% url 'home' as home_url %}
+
+  {% url 'agregar_sucursal' as add_suc_url %}
+  {% url 'visualizar_sucursales' as list_suc_url %}
+
+  {% url 'agregar_categoria' as add_cat_url %}
+  {% url 'visualizar_categorias' as list_cat_url %}
+
+  {% url 'agregar_producto' as add_prod_url %}
+  {% url 'visualizar_productos' as list_prod_url %}
+
+  {% url 'agregar_inventario' as add_inv_url %}
+  {% url 'visualizar_inventarios' as list_inv_url %}
+  {% url 'editar_inventario' 0 as edit_inv_example %}
+
+  {% url 'agregar_proveedor' as add_prov_url %}
+  {% url 'visualizar_proveedores' as list_prov_url %}
+
+  {% url 'agregar_productos_precios_proveedor' as add_pp_url %}
+  {% url 'visualizar_productos_precios_proveedores' as list_pp_url %}
+
+  {% url 'agregar_punto_pago' as add_ppago_url %}
+  {% url 'visualizar_puntos_pago' as list_ppago_url %}
+
+  {% url 'agregar_rol' as add_rol_url %}
+  {% url 'visualizar_roles' as list_rol_url %}
+
+  {% url 'agregar_usuario' as add_user_url %}
+  {% url 'visualizar_usuarios' as list_user_url %}
+
+  {% url 'agregar_empleado' as add_emp_url %}
+  {% url 'visualizar_empleados' as list_emp_url %}
+
+  {% url 'agregar_horario' as add_hor_url %}
+  {% url 'visualizar_horarios' as list_hor_url %}
+
+  {% url 'agregar_horario_caja' as add_horc_url %}
+  {% url 'visualizar_horarios_cajas' as list_horc_url %}
+
+  {% url 'agregar_cliente' as add_cli_url %}
+  {% url 'visualizar_clientes' as list_cli_url %}
+
+  {% url 'generar_venta' as gen_venta_url %}
+  {% url 'visualizar_ventas' as list_venta_url %}
+  {% url 'visualizar_cambios' as cambios_url %}
+
+  {% url 'agregar_pedido' as add_pedido_url %}
+  {% url 'visualizar_pedidos' as list_pedido_url %}
+
+  {# NUEVOS #}
+  {% url 'roles_permisos' as roles_permisos_url %}
+  {% url 'permiso_agregar' as add_perm_url %}
+  {% url 'visualizar_permisos' as list_perm_url %}
+  {% url 'ventas_diarias' as ventas_diarias_url %}
+  {% url 'pedidos_pagados' as pedidos_pagados_url %}
+
+  <ul class="nv__links" id="nvLinks">
+    <li>
+      <a href="{{ home_url }}"
+         class="{% if request.path == '/' or request.path == home_url %}is-active{% endif %}">
+        Inicio
+      </a>
+    </li>
+
+    {# ============= Sucursales ============= #}
+    <li class="nv__item has-dd {% if '/sucursal' in request.path or '/sucursales' in request.path %}is-parent-active{% endif %}">
+      <a href="{{ list_suc_url }}">Sucursales</a>
+      <ul class="nv__dd">
+        <li><a href="{{ add_suc_url }}">Agregar sucursal</a></li>
+        <li><a href="{{ list_suc_url }}">Visualizar sucursales</a></li>
+      </ul>
+    </li>
+
+    {# ============= Categorías ============= #}
+    <li class="nv__item has-dd {% if '/categoria' in request.path or '/categorias' in request.path %}is-parent-active{% endif %}">
+      <a href="{{ list_cat_url }}">Categorías</a>
+      <ul class="nv__dd">
+        <li><a href="{{ add_cat_url }}">Agregar categoría</a></li>
+        <li><a href="{{ list_cat_url }}">Visualizar categorías</a></li>
+      </ul>
+    </li>
+
+    {# ============= Productos ============= #}
+    <li class="nv__item has-dd {% if '/producto' in request.path or '/productos' in request.path %}is-parent-active{% endif %}">
+      <a href="{{ list_prod_url }}">Productos</a>
+      <ul class="nv__dd">
+        <li><a href="{{ add_prod_url }}">Agregar producto</a></li>
+        <li><a href="{{ list_prod_url }}">Visualizar productos</a></li>
+      </ul>
+    </li>
+
+    {# ============= Inventarios ============= #}
+    <li class="nv__item has-dd {% if '/inventario' in request.path or '/inventarios' in request.path %}is-parent-active{% endif %}">
+      <a href="{{ list_inv_url }}">Inventarios</a>
+      <ul class="nv__dd">
+        <li><a href="{{ add_inv_url }}">Agregar inventario</a></li>
+        <li><a href="{{ list_inv_url }}">Visualizar inventarios</a></li>
+      </ul>
+    </li>
+
+    {# ============= Proveedores ============= #}
+    <li class="nv__item has-dd {% if '/proveedor' in request.path or '/proveedores' in request.path %}is-parent-active{% endif %}">
+      <a href="{{ list_prov_url }}">Proveedores</a>
+      <ul class="nv__dd">
+        <li><a href="{{ add_prov_url }}">Agregar proveedor</a></li>
+        <li><a href="{{ list_prov_url }}">Visualizar proveedores</a></li>
+      </ul>
+    </li>
+
+    {# ============= Precios Proveedor ============= #}
+    <li class="nv__item has-dd {% if '/precios' in request.path %}is-parent-active{% endif %}">
+      <a href="{{ list_pp_url }}">Precios Proveedor</a>
+      <ul class="nv__dd">
+        <li><a href="{{ add_pp_url }}">Agregar precios</a></li>
+        <li><a href="{{ list_pp_url }}">Visualizar precios</a></li>
+      </ul>
+    </li>
+
+    {# ============= Puntos de Pago ============= #}
+    <li class="nv__item has-dd {% if '/punto_pago' in request.path or '/puntos_pago' in request.path %}is-parent-active{% endif %}">
+      <a href="{{ list_ppago_url }}">Puntos de Pago</a>
+      <ul class="nv__dd">
+        <li><a href="{{ add_ppago_url }}">Agregar punto de pago</a></li>
+        <li><a href="{{ list_ppago_url }}">Visualizar puntos</a></li>
+      </ul>
+    </li>
+
+    {# ============= Roles ============= #}
+    <li class="nv__item has-dd {% if '/rol' in request.path or '/roles' in request.path %}is-parent-active{% endif %}">
+      <a href="{{ list_rol_url }}">Roles</a>
+      <ul class="nv__dd">
+        <li><a href="{{ add_rol_url }}">Agregar rol</a></li>
+        <li><a href="{{ list_rol_url }}">Visualizar roles</a></li>
+      </ul>
+    </li>
+
+    {# ============= Permisos ============= #}
+    <li class="nv__item has-dd {% if '/permisos' in request.path and '/roles_permisos' not in request.path %}is-parent-active{% endif %}">
+      <a href="{{ list_perm_url }}">Permisos</a>
+      <ul class="nv__dd">
+        <li><a href="{{ add_perm_url }}">Agregar permiso</a></li>
+        <li><a href="{{ list_perm_url }}">Visualizar permisos</a></li>
+      </ul>
+    </li>
+
+    {# ============= Usuarios ============= #}
+    <li class="nv__item has-dd {% if '/usuario' in request.path or '/usuarios' in request.path %}is-parent-active{% endif %}">
+      <a href="{{ list_user_url }}">Usuarios</a>
+      <ul class="nv__dd">
+        <li><a href="{{ add_user_url }}">Agregar usuario</a></li>
+        <li><a href="{{ list_user_url }}">Visualizar usuarios</a></li>
+      </ul>
+    </li>
+
+    {# ============= Empleados ============= #}
+    <li class="nv__item has-dd {% if '/empleado' in request.path or '/empleados' in request.path %}is-parent-active{% endif %}">
+      <a href="{{ list_emp_url }}">Empleados</a>
+      <ul class="nv__dd">
+        <li><a href="{{ add_emp_url }}">Agregar empleado</a></li>
+        <li><a href="{{ list_emp_url }}">Visualizar empleados</a></li>
+      </ul>
+    </li>
+
+    {# ============= Horarios ============= #}
+    <li class="nv__item has-dd {% if '/horario/' in request.path and '/caja' not in request.path %}is-parent-active{% endif %}">
+      <a href="{{ list_hor_url }}">Horarios</a>
+      <ul class="nv__dd">
+        <li><a href="{{ add_hor_url }}">Agregar horario</a></li>
+        <li><a href="{{ list_hor_url }}">Visualizar horarios</a></li>
+      </ul>
+    </li>
+
+    {# ============= Horarios de Cajas ============= #}
+    <li class="nv__item has-dd {% if '/horarios_cajas' in request.path or '/horario_caja' in request.path %}is-parent-active{% endif %}">
+      <a href="{{ list_horc_url }}">Horarios de Cajas</a>
+      <ul class="nv__dd">
+        <li><a href="{{ add_horc_url }}">Agregar horario de caja</a></li>
+        <li><a href="{{ list_horc_url }}">Visualizar horarios de cajas</a></li>
+      </ul>
+    </li>
+
+    {# ============= Clientes ============= #}
+    <li class="nv__item has-dd {% if '/cliente' in request.path or '/clientes' in request.path %}is-parent-active{% endif %}">
+      <a href="{{ list_cli_url }}">Clientes</a>
+      <ul class="nv__dd">
+        <li><a href="{{ add_cli_url }}">Agregar cliente</a></li>
+        <li><a href="{{ list_cli_url }}">Visualizar clientes</a></li>
+      </ul>
+    </li>
+
+    {# ============= Ventas ============= #}
+    <li class="nv__item has-dd {% if '/venta' in request.path or '/ventas' in request.path or '/cambios' in request.path %}is-parent-active{% endif %}">
+      <a href="{{ list_venta_url }}">Ventas</a>
+      <ul class="nv__dd">
+        <li><a href="{{ gen_venta_url }}">Generar venta</a></li>
+        <li><a href="{{ list_venta_url }}">Visualizar ventas</a></li>
+        <li><a href="{{ cambios_url }}">Cambios / Devoluciones</a></li>
+        <li><a href="{{ ventas_diarias_url }}">Ventas diarias</a></li>
+      </ul>
+    </li>
+
+    {# ============= Pedidos ============= #}
+    <li class="nv__item has-dd {% if '/pedido' in request.path or '/pedidos' in request.path %}is-parent-active{% endif %}">
+      <a href="{{ list_pedido_url }}">Pedidos</a>
+      <ul class="nv__dd">
+        <li><a href="{{ add_pedido_url }}">Agregar pedido</a></li>
+        <li><a href="{{ list_pedido_url }}">Visualizar pedidos</a></li>
+        <li><a href="{{ pedidos_pagados_url }}">Pedidos pagados</a></li>
+      </ul>
+    </li>
+
+    <li>
+      <a href="{{ roles_permisos_url }}"
+         class="{% if '/roles_permisos' in request.path %}is-active{% endif %}">
+        Roles ↔ Permisos
+      </a>
+    </li>
+
+    {% if user.is_authenticated %}
+    <li>
+      <form method="post" action="{% url 'logout' %}" style="display:inline;">
+        {% csrf_token %}
+        <button type="submit" class="nv__logout-btn">
+          <i class="fas fa-sign-out-alt"></i> Cerrar sesión
+        </button>
+      </form>
+    </li>
+    {% endif %}
+  </ul>
+</nav>

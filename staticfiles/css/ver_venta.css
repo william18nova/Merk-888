@@ -1,0 +1,180 @@
+/* ======================================================================
+   ver_venta.css
+   Hoja de estilo para la tarjeta “Detalle de la Venta”
+   ====================================================================== */
+
+/* ----------------------------------------------------
+   Tarjeta principal
+---------------------------------------------------- */
+.venta-card {
+  width: 100%;
+  max-width: 740px;
+  margin: auto;
+  padding: 32px;
+  background: rgba(255,255,255,0.10);
+  border-radius: 10px;
+  box-shadow: 0 4px 8px rgba(0,0,0,.22);
+  box-sizing: border-box;
+  text-align: center;
+}
+
+/* Título y subtítulo */
+.venta-card__title {
+  font-size: 2rem;
+  margin-bottom: 28px;
+  font-weight: 700;
+}
+.venta-card__subtitle {
+  font-size: 1.2rem;
+  font-weight: 700;
+  margin: 18px 0 14px;
+}
+
+/* ----------------------------------------------------
+   Rejilla de campos
+---------------------------------------------------- */
+.venta-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-bottom: 26px;
+  /* asegurar que los hijos se alineen a la izquierda */
+  text-align: left;
+}
+.venta-grid > div {
+  flex: 1 1 45%;
+  min-width: 200px;
+  /* también aquí forzamos alineación de contenido */
+  text-align: left;
+}
+.venta-grid label {
+  display: block;
+  margin-bottom: 4px;
+  font-weight: 700;
+  font-size: 0.9rem;
+}
+.venta-grid input {
+  width: 100%;
+  padding: 8px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  background: #f0f8ff;
+  color: #333;
+  font-size: 0.92rem;
+  pointer-events: none;    /* solo lectura */
+  box-sizing: border-box;
+  /* ⚠️ texto siempre a la izquierda, pasando por encima de cualquier otro estilo */
+  text-align: left !important;
+}
+.venta-grid input:hover {
+  background: #e0e8ff;
+  border-color: #aaa;
+}
+
+/* ----------------------------------------------------
+   Tabla de productos
+---------------------------------------------------- */
+.venta-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: #fff;
+  table-layout: fixed;
+}
+.venta-table thead th {
+  background: #0d2f67;
+  color: #fff;
+  font-size: 0.90rem;
+  padding: 8px;
+  border: 1px solid #0d2f67;
+}
+.venta-table td {
+  border: 1px solid #ddd;
+  padding: 7px;
+  color: #333;
+  font-size: 0.88rem;
+}
+.venta-table .text-end {
+  text-align: right;
+}
+/* input Devolver */
+.venta-table input[type=number] {
+  width: 72px;
+  max-width: 100%;
+  padding: 4px 6px;
+  text-align: center;
+  margin: 0 auto;
+  display: block;
+  box-sizing: border-box;
+}
+
+/* ----------------------------------------------------
+   Footer (total + botones)
+---------------------------------------------------- */
+.venta-footer {
+  text-align: center;
+  margin-top: 30px;
+}
+.venta-footer h3 {
+  font-size: 1.15rem;
+  font-weight: 700;
+  margin-bottom: 22px;
+}
+.venta-footer span {
+  color: #ffd166;
+}
+
+/* Botones */
+.btn-primary,
+.btn-primary-alt {
+  display: inline-block;
+  padding: 10px 26px;
+  border: none;
+  border-radius: 4px;
+  font-size: 16px;
+  font-weight: 700;
+  text-decoration: none;
+  cursor: pointer;
+  width: 220px;
+  max-width: 100%;
+}
+.btn-primary {
+  background: #007bff;
+  color: #fff;
+}
+.btn-primary:hover {
+  background: #0069d9;
+}
+.btn-primary-alt {
+  background: #ffb703;
+  color: #05396b;
+}
+.btn-primary-alt:hover {
+  background: #ffa21b;
+}
+/* siempre en columna */
+.venta-footer .btn-group {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  align-items: center;
+}
+
+/* ----------------------------------------------------
+   Responsive ≤ 540px
+---------------------------------------------------- */
+@media (max-width: 540px) {
+  .venta-grid > div {
+    flex: 1 1 100%;
+  }
+  .venta-table thead th,
+  .venta-table td {
+    font-size: 0.78rem;
+  }
+  .btn-primary,
+  .btn-primary-alt {
+    width: 100%;
+  }
+  .venta-table input[type=number] {
+    width: 100% !important;
+  }
+}

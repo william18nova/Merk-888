@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Clientes{% endblock %}
+
+{% block extra_head %}
+  <link rel="stylesheet"
+        href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"/>
+  <link rel="stylesheet"
+        href="https://cdn.datatables.net/1.13.8/css/jquery.dataTables.min.css"/>
+  <link rel="stylesheet"
+        href="{% static 'css/visualizar_clientes.css' %}">
+{% endblock %}
+
+{% block content %}
+  <div class="container">
+    <h2><i class="fas fa-user-friends"></i> Lista de Clientes</h2>
+
+    {% if messages %}
+      <div class="messages">
+        {% for m in messages %}
+          <div class="alert {% if m.tags %}alert-{{ m.tags }}{% endif %}">
+            {{ m }}
+          </div>
+        {% endfor %}
+      </div>
+    {% endif %}
+
+    <table id="clientesTable" class="display">
+      <thead>
+        <tr>
+          <th>Nombre</th>
+          <th>Apellido</th>
+          <th>Teléfono</th>
+          <th>Email</th>
+          <th>N.º Documento</th>
+          <th class="no-sort">Acciones</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for c in clientes %}
+          <tr>
+            <td data-label="Nombre">{{ c.nombre }}</td>
+            <td data-label="Apellido">{{ c.apellido }}</td>
+            <td data-label="Teléfono">{{ c.telefono }}</td>
+            <td data-label="Email">{{ c.email|default:"—" }}</td>
+            <td data-label="N.º Documento">{{ c.numerodocumento }}</td>
+            <td data-label="Acciones" class="actions-cell">
+              <div class="btn-container">
+                <a class="btn editar"
+                   href="{% url 'editar_cliente' c.pk %}"
+                   title="Editar">
+                  <i class="fas fa-edit"></i>
+                </a>
+                <button type="button"
+                        class="btn borrar"
+                        data-id="{{ c.pk }}"
+                        data-nombre="{{ c.nombre }} {{ c.apellido }}"
+                        title="Eliminar">
+                  <i class="fas fa-trash-alt"></i>
+                </button>
+              </div>
+
+              <!-- form oculto -->
+              <form id="eliminar-form-{{ c.pk }}"
+                    action="{% url 'eliminar_cliente' c.pk %}"
+                    method="post"
+                    style="display:none;">
+                {% csrf_token %}
+              </form>
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <!-- scripts -->
+  <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+  <script src="https://cdn.datatables.net/1.13.8/js/jquery.dataTables.min.js"></script>
+  <script defer src="{% static 'javascript/visualizar_clientes.js' %}"></script>
+{% endblock %}

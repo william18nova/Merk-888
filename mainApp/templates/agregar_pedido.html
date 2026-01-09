@@ -1,0 +1,125 @@
+{# templates/agregar_pedido.html #}
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Agregar Pedido{% endblock %}
+
+{% block extra_head %}
+  <!-- Font-Awesome + DataTables -->
+  <link rel="stylesheet"
+        href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"/>
+  <link rel="stylesheet"
+        href="https://cdn.datatables.net/1.13.8/css/jquery.dataTables.min.css"/>
+  <link rel="stylesheet"
+        href="{% static 'css/agregar_pedido.css' %}"/>
+{% endblock %}
+
+{% block content %}
+<div class="container-inventario">
+  <i class="fas fa-truck icon-inventario"></i>
+  <h2>Agregar Pedido</h2>
+
+  <p class="obligatorio-texto">
+    Todos los campos con <span class="required">*</span> son obligatorios.
+  </p>
+
+  <div id="error-message"   class="alert alert-error"></div>
+  <div id="success-message" class="alert alert-success"></div>
+
+  <form id="pedidoForm" method="post" action="{% url 'agregar_pedido' %}">
+    {% csrf_token %}
+
+    <!-- ── PROVEEDOR ─────────────────────────── -->
+    <div class="form-group-precio">
+      <label for="id_proveedor_autocomplete">
+        Proveedor <span class="required">*</span>
+      </label>
+      {{ form.proveedor_autocomplete }}   {# input visible #}
+      {{ form.proveedor }}                {# hidden id="id_proveedor" #}
+      <div id="proveedor-autocomplete-results" class="autocomplete-results"></div>
+      <div class="field-error" id="error-id_proveedor"></div>
+    </div>
+
+    <!-- ── SUCURSAL (autocomplete) ───────────── -->
+    <div class="form-group-precio">
+      <label for="id_sucursal_autocomplete">
+        Sucursal <span class="required">*</span>
+      </label>
+      <input type="text" id="id_sucursal_autocomplete"
+             class="form-control" placeholder="Buscar sucursal…" autocomplete="off">
+      <input type="hidden" id="id_sucursal" name="sucursal">
+      <div id="sucursal-autocomplete-results" class="autocomplete-results"></div>
+      <div class="field-error" id="error-id_sucursal"></div>
+    </div>
+
+    <!-- ── FECHA ESTIMADA (input date) ───────── -->
+    <div class="form-group-precio">
+      <label for="{{ form.fechaestimadaentrega.id_for_label }}">Fecha Estimada</label>
+      {{ form.fechaestimadaentrega }}
+      <div class="field-error" id="error-id_fechaestimadaentrega"></div>
+    </div>
+
+    <!-- ── PRODUCTO + CANTIDAD ───────────────── -->
+    <div class="form-group-precio">
+      <label for="producto-input">
+        Producto <span class="required">*</span>
+      </label>
+      <input type="text" id="producto-input"
+             class="form-control" placeholder="Buscar producto…" autocomplete="off">
+      <input type="hidden" id="producto-id">
+      <div id="producto-autocomplete-results" class="autocomplete-results"></div>
+      <div class="field-error" id="error-id_detalles"></div>
+    </div>
+
+    <div class="form-group-precio">
+      <label for="cantidad-input">
+        Cantidad <span class="required">*</span>
+      </label>
+      <input type="number" id="cantidad-input" class="form-control" min="1" value="1">
+    </div>
+
+    <button type="button" id="agregarDetalleBtn" class="btn-agregar-precio">
+      Agregar Producto
+    </button>
+
+    <h3 id="total-aproximado">
+      Total Aproximado: <span id="total-valor">$ 0,00</span>
+    </h3>
+
+    <!-- ── TABLA DETALLES ────────────────────── -->
+    <div class="table-wrap">
+      <table id="detalle-pedido" class="display">
+        <thead>
+          <tr>
+            <th>Producto</th>
+            <th>Cantidad</th>
+            <th>Precio U.</th>
+            <th>Subtotal</th>
+            <th>Acciones</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+
+
+    {{ form.detalles }}  {# hidden JSON #}
+
+    <button type="submit" class="btn-guardar-precio">
+      Guardar Pedido
+    </button>
+  </form>
+</div>
+
+<!-- ── URLs que usa el JS ─────────────────────── -->
+<script>
+  const proveedorAutocompleteUrl      = "{% url 'proveedor_con_productos_autocomplete' %}";
+  const productoPedidoAutocompleteUrl = "{% url 'producto_pedido_autocomplete' %}";
+  const sucursalAutocompleteUrl       = "{% url 'sucursal_autocomplete' %}";
+</script>
+
+<!-- jQuery + DataTables (sin jQuery-UI) -->
+<script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+<script src="https://cdn.datatables.net/1.13.8/js/jquery.dataTables.min.js"></script>
+<script defer src="{% static 'javascript/agregar_pedido.js' %}"></script>
+{% endblock %}

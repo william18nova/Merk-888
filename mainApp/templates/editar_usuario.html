@@ -1,0 +1,67 @@
+{# templates/editar_usuario.html #}
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Editar usuario{% endblock %}
+
+{% block extra_head %}
+  <link rel="stylesheet" href="{% static 'css/agregar_usuario.css' %}">
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/js/all.min.js"></script>
+{% endblock %}
+
+{% block content %}
+  <div class="container-usuario">
+    <i class="fas fa-user-edit icon-usuario"></i>
+    <h2>Editar usuario</h2>
+
+    <p class="obligatorio-texto">
+      Los campos con <span class="required">*</span> son obligatorios.
+      Si dejas la contraseña vacía, permanecerá sin cambios.
+    </p>
+
+    <div id="error-message"   class="alert alert-error"   style="display:none;"></div>
+    <div id="success-message" class="alert alert-success" style="display:none;"></div>
+
+    <form id="usuarioForm"
+          method="post"
+          action="{% url 'editar_usuario' usuario.usuarioid %}">
+      {% csrf_token %}
+
+      {# ---------- Rol (autocompletado) ---------- #}
+      <div class="form-group-usuario">
+        <label for="id_rol_autocomplete">Rol <span class="required">*</span></label>
+        {{ form.rol_autocomplete }}      {# visible #}
+        {{ form.rolid }}                 {# hidden  #}
+        <div id="rol-autocomplete-results" class="autocomplete-results"></div>
+        <div class="field-error" id="error-id_rolid"></div>
+      </div>
+
+      {# ---------- Nombre de usuario ---------- #}
+      <div class="form-group-usuario">
+        <label for="{{ form.nombreusuario.id_for_label }}">
+          {{ form.nombreusuario.label }} <span class="required">*</span>
+        </label>
+        {{ form.nombreusuario }}
+        <div class="field-error" id="error-id_nombreusuario"></div>
+      </div>
+
+      {# ---------- Contraseña y confirmación (opcionales) ---------- #}
+      {% for pwd in password_fields %}
+        <div class="form-group-usuario">
+          <label for="{{ pwd.id_for_label }}">{{ pwd.label }}</label>
+          <div class="input-container">
+            {{ pwd }}
+            <i class="fas fa-eye toggle-password"
+               onclick="togglePassword('{{ pwd.id_for_label }}')"></i>
+          </div>
+          <div class="field-error" id="error-id_{{ pwd.name }}"></div>
+        </div>
+      {% endfor %}
+
+      <button type="submit" class="btn-agregar-usuario">Guardar cambios</button>
+    </form>
+  </div>
+
+  <script>const rolAutocompleteUrl = "{% url 'rol_autocomplete' %}";</script>
+  <script defer src="{% static 'javascript/editar_usuario.js' %}"></script>
+{% endblock %}

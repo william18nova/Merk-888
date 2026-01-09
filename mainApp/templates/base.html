@@ -1,0 +1,29 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>{% block title %}Mi Sitio{% endblock %}</title>
+
+  <link rel="icon" href="{% static 'images/logoNovaAdvance.png' %}">
+
+  <!-- Estilos globales y del navbar -->
+  <link rel="stylesheet" href="{% static 'css/navbar.css' %}"/>
+
+  {% block extra_head %}{% endblock %}
+</head>
+<body>
+  {% if request.resolver_match.url_name != "login" %}
+    {% include "navbar.html" %}
+  {% endif %}
+
+  <main class="page-wrap">
+    {% block content %}{% endblock %}
+  </main>
+
+  <!-- JS del navbar (menú móvil) -->
+  <script src="{% static 'javascript/navbar.js' %}"></script>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

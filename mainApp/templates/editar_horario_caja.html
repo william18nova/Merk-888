@@ -1,0 +1,136 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Editar Horarios de Caja{% endblock %}
+
+{% block extra_head %}
+  <link rel="stylesheet"
+        href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+  <link rel="stylesheet"
+        href="{% static 'css/agregar_horario.css' %}">
+{% endblock %}
+
+{% block content %}
+<div class="container-horario">
+  <i class="fas fa-clock icon-horario"></i>
+  <h2>Editar Horarios</h2>
+  <p class="obligatorio-texto">
+    Todos los campos con <span class="required">*</span> son obligatorios.
+  </p>
+
+  {% if messages %}
+    <div class="messages">
+      {% for m in messages %}
+        <div class="alert {% if m.tags %}alert-{{ m.tags }}{% endif %}">{{ m }}</div>
+      {% endfor %}
+    </div>
+  {% endif %}
+
+  <div id="error-message"   class="alert alert-error"></div>
+  <div id="success-message" class="alert alert-success"></div>
+
+  <!--  ⤵  La URL incluye el punto de pago original -->
+  <form id="form-editar-horarios"
+        method="post"
+        action="{% url 'editar_horarios_cajas' punto_pago.pk %}">
+    {% csrf_token %}
+
+    <!-- Sucursal ------------------------------------------------------------>
+    <div class="form-group-horario">
+      <label>Sucursal <span class="required">*</span></label>
+
+      <input type="text"
+             id="id_sucursal_autocomplete"
+             placeholder="Buscar sucursal…"
+             autocomplete="off"
+             value="{{ sucursal.nombre }}">
+
+      <input type="hidden" id="id_sucursalid" value="{{ sucursal.pk }}">
+
+      <div id="sucursal-autocomplete-results"
+           class="autocomplete-results"></div>
+      <div id="error-id_sucursalid" class="field-error"></div>
+    </div>
+
+    <!-- Punto de pago ------------------------------------------------------->
+    <div class="form-group-horario">
+      <label>Punto de Pago <span class="required">*</span></label>
+
+      <input type="text"
+             id="id_puntopago_autocomplete"
+             placeholder="Buscar punto de pago…"
+             autocomplete="off"
+             value="{{ punto_pago.nombre }}">
+
+      <input type="hidden" id="id_puntopagoid" value="{{ punto_pago.pk }}">
+
+      <div id="puntopago-autocomplete-results"
+           class="autocomplete-results"></div>
+      <div id="error-id_puntopagoid" class="field-error"></div>
+    </div>
+
+    <!-- Selector de días ---------------------------------------------------->
+    <div class="days-container">
+      {% for d in days %}
+        <button type="button" class="day-button" data-day="{{ d }}">{{ d }}</button>
+      {% endfor %}
+    </div>
+    <div id="error-id_dia_semana" class="field-error"></div>
+
+    <!-- Horas --------------------------------------------------------------->
+    <div class="form-group-horario">
+      <label>Hora de Apertura <span class="required">*</span></label>
+      <input type="time" id="horaapertura">
+      <div id="error-id_horaapertura" class="field-error"></div>
+    </div>
+    <div class="form-group-horario">
+      <label>Hora de Cierre <span class="required">*</span></label>
+      <input type="time" id="horacierre">
+      <div id="error-id_horacierre" class="field-error"></div>
+    </div>
+
+    <button type="button"
+            id="btn-agregar-horario"
+            class="btn-agregar-horario">
+      Agregar Horario
+    </button>
+
+    <!-- Tabla ---------------------------------------------------------------->
+    <div class="horarios-temp-container">
+      <table class="horarios-temp">
+        <thead>
+          <tr><th>Día</th><th>Apertura</th><th>Cierre</th><th>Acciones</th></tr>
+        </thead>
+        <tbody id="tabla-horarios">
+          {% for h in horarios %}
+            <tr data-dia="{{ h.dia_semana }}">
+              <td data-label="Día">{{ h.dia_semana }}</td>
+              <td data-label="Apertura">
+                <input type="time" value="{{ h.horaapertura|time:'H:i' }}" readonly>
+              </td>
+              <td data-label="Cierre">
+                <input type="time" value="{{ h.horacierre|time:'H:i' }}" readonly>
+              </td>
+              <td data-label="Acciones">
+                <button type="button" class="btn-eliminar">
+                  <i class="fas fa-trash"></i>
+                </button>
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <button type="submit" class="btn-guardar-horario">
+      Guardar Cambios
+    </button>
+  </form>
+</div>
+
+<script>
+  const sucursalAutocompleteUrl  = "{% url 'sucursal_caja_editar_autocomplete' %}";
+  const puntopagoAutocompleteUrl = "{% url 'puntopago_caja_editar_autocomplete' %}";
+</script>
+<script defer src="{% static 'javascript/editar_horario_caja.js' %}"></script>
+{% endblock %}

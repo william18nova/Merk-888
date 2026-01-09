@@ -1,0 +1,107 @@
+{# templates/ver_pedido.html #}
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Detalle del Pedido #{{ pedido.pedidoid }}{% endblock %}
+
+{% block extra_head %}
+  <!-- Font-Awesome + DataTables CSS -->
+  <link rel="stylesheet"
+        href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"/>
+  <link rel="stylesheet"
+        href="https://cdn.datatables.net/1.13.8/css/jquery.dataTables.min.css"/>
+
+  <!-- Misma hoja que editar/agregar pedido -->
+  <link rel="stylesheet" href="{% static 'css/agregar_pedido.css' %}"/>
+  <!-- Estilos comunes para tablas (de visualizar_pedidos.css) -->
+  <link rel="stylesheet" href="{% static 'css/visualizar_pedidos.css' %}"/>
+{% endblock %}
+
+{% block content %}
+<div class="container-inventario">
+  <i class="fas fa-truck icon-inventario"></i>
+  <h2>Detalle del Pedido #{{ pedido.pedidoid }}</h2>
+  <p class="obligatorio-texto">Los campos están en modo solo lectura.</p>
+
+  <form id="verPedidoForm">
+    {% csrf_token %}
+
+    <div class="form-group-precio">
+      <label for="ver_proveedor">Proveedor</label>
+      <input type="text" id="ver_proveedor" class="form-control"
+             value="{{ pedido.proveedorid.nombre }}" disabled>
+    </div>
+
+    <div class="form-group-precio">
+      <label for="ver_sucursal">Sucursal</label>
+      <input type="text" id="ver_sucursal" class="form-control"
+             value="{{ pedido.sucursalid.nombre }}" disabled>
+    </div>
+
+    <div class="form-group-precio">
+      <label for="ver_fechaestimadaentrega">Fecha Estimada de Entrega</label>
+      <input type="text" id="ver_fechaestimadaentrega" class="form-control"
+             value="{{ pedido.fechaestimadaentrega|date:'d/m/Y' }}" disabled>
+    </div>
+
+    <div class="form-group-precio">
+      <label for="ver_comentario">Comentario</label>
+      <textarea id="ver_comentario" class="form-control" rows="3"
+                disabled>{{ pedido.comentario }}</textarea>
+    </div>
+  </form>
+
+  <h3 id="total-aproximado">
+    Total Aproximado: 
+    <span id="total-valor">${{ pedido.costototal|floatformat:2 }}</span>
+  </h3>
+
+  <!-- Buscador externo tal como en editar_pedido -->
+  <div class="search-wrapper">
+    <input id="buscador-detalles" class="search-input"
+           type="text" placeholder="Buscar en el pedido…">
+  </div>
+
+  <!-- Tabla con estilo DataTables -->
+  <div class="table-wrap">
+    <table id="detalle-pedido" class="display">
+      <thead>
+        <tr>
+          <th>Producto</th>
+          <th>Cantidad</th>
+          <th>Precio U.</th>
+          <th>Subtotal</th>
+          <th>Acciones</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for det in detalles %}
+        <tr data-id="{{ det.detallepedidoid }}">
+          <td data-label="Producto">{{ det.productoid.nombre }}</td>
+          <td data-label="Cantidad">{{ det.cantidad }}</td>
+          <td data-label="Precio U.">${{ det.preciounitario|floatformat:2 }}</td>
+          <td data-label="Subtotal">${{ det.subtotal|floatformat:2 }}</td>
+          <td data-label="Acciones">
+            
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div style="text-align:center; margin-top:30px;">
+    <a href="{% url 'visualizar_pedidos' %}"
+       class="btn-guardar-precio"
+       style="text-decoration:none; display:inline-block;">
+      Volver a Pedidos
+    </a>
+  </div>
+</div>
+
+<!-- jQuery + DataTables JS -->
+<script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+<script src="https://cdn.datatables.net/1.13.8/js/jquery.dataTables.min.js"></script>
+<script defer src="{% static 'javascript/ver_pedido.js' %}"></script>
+
+{% endblock %}

@@ -1,0 +1,58 @@
+{# templates/permisos/agregar_permiso.html #}
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Agregar permiso{% endblock %}
+
+{% block extra_head %}
+  <link rel="stylesheet"
+        href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"/>
+  <link rel="stylesheet" href="{% static 'css/permiso_add.css' %}">
+{% endblock %}
+
+{% block content %}
+  <div class="container">
+    <i class="fas fa-key icon" aria-hidden="true"></i>
+    <h2>Agregar permiso</h2>
+    <p class="obligatorio-texto">
+      Los campos marcados con <span class="required">*</span> son obligatorios.
+    </p>
+
+    {% if messages %}
+      {% for message in messages %}
+        <div class="alert {% if message.tags %}alert-{{ message.tags }}{% endif %}">
+          {{ message }}
+        </div>
+      {% endfor %}
+    {% endif %}
+
+    <form id="permiso-form" method="post" novalidate>
+      {% csrf_token %}
+
+      <div class="form-group">
+        <label for="{{ form.nombre.id_for_label }}">
+          Nombre del permiso <span class="required">*</span>
+        </label>
+        {{ form.nombre }}
+        <small class="hint">Máx. 50 caracteres, p. ej. “Agregar sucursal”.</small>
+        {% if form.nombre.errors %}
+          <div class="field-error visible">{{ form.nombre.errors|striptags }}</div>
+        {% endif %}
+      </div>
+
+      <div class="form-group">
+        <label for="{{ form.descripcion.id_for_label }}">Descripción</label>
+        {{ form.descripcion }}
+        {% if form.descripcion.errors %}
+          <div class="field-error visible">{{ form.descripcion.errors|striptags }}</div>
+        {% endif %}
+      </div>
+
+      <div class="actions" style="justify-content:center;">
+        <button type="submit" class="btn-agregar-rol">Agregar permiso</button>
+      </div>
+    </form>
+  </div>
+
+  <script defer src="{% static 'javascript/permiso_add.js' %}"></script>
+{% endblock %}

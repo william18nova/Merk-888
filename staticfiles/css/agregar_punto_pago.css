@@ -1,0 +1,268 @@
+/*  agregar_punto_pago.css — Nova Advance Design (match Agregar Pedido)
+   ─────────────────────────────────────────────────────────────────── */
+
+/* Fuente */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap');
+
+/* Tokens (mismos del diseño de pedidos/home) */
+:root{
+  --bg-1:#153060; --bg-2:#20497d;
+  --brand:#4da6ff; --brand-2:#3d8cff;
+  --text:#f8fbff; --text-muted:#d8e8ff;
+
+  --glass-bg: rgba(33,64,120,.28);
+  --glass-bg-strong: rgba(33,64,120,.34);
+  --glass-brd: rgba(255,255,255,.18);
+  --glass-sh: 0 18px 40px rgba(0,0,0,.35);
+
+  --slate-50:#f8fafc; --slate-100:#eef2f7; --slate-200:#e2e8f0;
+
+  --input-bg: rgba(255,255,255,.10);
+  --input-hov: rgba(255,255,255,.18);
+  --input-brd: rgba(255,255,255,.22);
+  --ring:#b8dbff;
+
+  --btn-grad: linear-gradient(180deg,#5cb8ff,#4da6ff 60%,#3d8cff);
+  --btn-grad-hov: linear-gradient(180deg,#6ec0ff,#58b1ff 60%,#4da6ff);
+  --btn-shadow: 0 12px 28px rgba(77,166,255,.45), inset 0 0 0 1px rgba(255,255,255,.22);
+
+  --err:#ff5b6b; --err-strong:#ff4d5f;
+  --err-bg-soft: rgba(255,77,95,.18);
+  --err-brd-soft: rgba(255,140,150,.65);
+
+  --radius:16px; --radius-sm:12px;
+  --font:'Inter', system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+  --icon-size:92px;
+  --transition:.22s cubic-bezier(.2,.6,.2,1);
+}
+
+/* Reset + fondo */
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{
+  font-family:var(--font); color:var(--text);
+  min-height:100svh; overflow:auto;
+  padding:clamp(20px,4vw,32px);
+  background:
+    radial-gradient(1400px 800px at 10% 20%, rgba(77,166,255,.35), transparent 60%),
+    radial-gradient(1200px 700px at 85% 85%, rgba(77,166,255,.25), transparent 60%),
+    linear-gradient(135deg,var(--bg-1),var(--bg-2));
+}
+body::before{content:"";position:fixed;inset:0;background:inherit;filter:blur(12px);z-index:-1}
+
+/* Card contenedor */
+.container-punto-pago{
+  width:min(95vw,780px);
+  background:var(--glass-bg);
+  backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px);
+  border:1px solid var(--glass-brd);
+  border-radius:var(--radius);
+  box-shadow:var(--glass-sh);
+  padding:clamp(28px,4.8vw,40px);
+  margin-inline:auto;
+}
+
+/* Header */
+.icon-punto-pago{
+  display:block; margin:4px auto 10px;
+  font-size:var(--icon-size); color:var(--brand);
+  filter:drop-shadow(0 8px 20px rgba(0,0,0,.28));
+  text-align:center;
+}
+h2{
+  font-size:clamp(24px,3.6vw,32px); font-weight:800; letter-spacing:.2px;
+  color:var(--text); text-align:center;
+  text-shadow:0 6px 16px rgba(0,0,0,.22); margin-bottom:8px;
+}
+.obligatorio-texto{
+  text-align:center; font-size:13px; color:var(--text-muted);
+  font-style:italic; margin-bottom:22px;
+}
+
+/* Formulario — inputs look login */
+.form-group-punto-pago{ margin-bottom:18px; position:relative; }
+.form-group-punto-pago label{ display:block; font-weight:700; color:var(--text); margin:0 0 6px; }
+
+input[type="text"], input[type="number"]{
+  width:100%; padding:14px;
+  border-radius:var(--radius-sm);
+  border:1px solid var(--input-brd);
+  background:var(--input-bg);
+  color:var(--text);
+  font-size:15px; outline:none;
+  transition: var(--transition);
+}
+input::placeholder{ color:var(--text-muted); }
+input:hover{ background:var(--input-hov); transform:translateY(-1px); }
+input:focus{
+  background:var(--input-hov); border-color:var(--ring);
+  box-shadow:0 0 0 3px color-mix(in srgb, var(--ring) 50%, transparent);
+}
+
+/* Autocomplete */
+.autocomplete-results{
+  position:absolute; top:calc(100% + 6px); left:0; right:0;
+  max-height:260px; overflow-y:auto; background:#fff;
+  border:1px solid var(--slate-200); border-radius:var(--radius-sm);
+  box-shadow:0 16px 30px rgba(0,0,0,.16);
+  z-index:30; display:none;
+}
+.autocomplete-option{ padding:10px 12px; font-size:15px; cursor:pointer; color:#0b1220; }
+.autocomplete-option:hover{ background:#eaf3ff; }
+.autocomplete-no-result{ padding:10px 12px; font-size:14px; color:#64748b; }
+
+/* Errores */
+.input-error{
+  border-color:#ff6b77 !important;
+  background: color-mix(in srgb, var(--err-bg-soft) 100%, transparent);
+  box-shadow:0 0 0 3px rgba(255, 77, 95, .22);
+}
+.input-error:focus{
+  box-shadow:0 0 0 3px color-mix(in srgb, var(--err) 45%, transparent)!important;
+}
+.field-error{
+  display:flex; align-items:center; gap:6px;
+  min-height:18px; font-size:14px; font-weight:700; letter-spacing:.1px;
+  color:var(--err-strong); visibility:hidden; margin-top:6px;
+}
+.field-error.visible{ visibility:visible; }
+.field-error i{ color:var(--err-strong); font-size:12px; }
+
+/* Alertas */
+.alert{
+  display:none; padding:12px 14px; border-radius:var(--radius-sm);
+  font-size:14px; margin-bottom:16px; border:1px solid transparent;
+}
+.alert-success{ background: color-mix(in srgb,#16a34a 18%, white); color:#064e1a; border-color: color-mix(in srgb,#16a34a 38%, white); }
+.alert-error  { background: var(--err-bg-soft); color: var(--err-strong); border-color: var(--err-brd-soft); }
+
+/* Botones */
+.btn-agregar-punto-pago, .btn-submit-punto-pago{
+  width:100%; padding:13px 14px; border:none; border-radius:var(--radius-sm);
+  background:var(--btn-grad); color:#ffffff; font-size:15px; font-weight:900; letter-spacing:.2px;
+  cursor:pointer; box-shadow:var(--btn-shadow);
+  transition: transform .2s, filter .22s, box-shadow .22s, background .22s;
+}
+.btn-agregar-punto-pago:hover, .btn-submit-punto-pago:hover{
+  background:var(--btn-grad-hov); transform:translateY(-1px);
+  filter:saturate(1.06);
+  box-shadow:0 14px 30px rgba(77,166,255,.45), inset 0 0 0 1px rgba(255,255,255,.26);
+}
+
+/* Tabla / DataTable */
+.table-container-punto-pago{ margin:18px 0 12px; }
+
+table.dataTable{
+  width:100%!important; border-collapse:separate; border-spacing:0;
+  background:#fff; border-radius:var(--radius-sm); overflow:hidden;
+  box-shadow:0 6px 18px rgba(0,0,0,.12);
+  font-size:15px;
+}
+table.dataTable thead{
+  background:linear-gradient(180deg,#3563b8,#2a4f9a);
+  color:#fff;
+}
+table.dataTable thead th{
+  padding:11px 12px; font-weight:700; white-space:nowrap;
+  text-align:center;
+}
+table.dataTable tbody td{
+  padding:10px 12px; color:#0b1220; border-top:1px solid var(--slate-100);
+  vertical-align:middle; text-align:center;
+}
+table.dataTable tbody tr:nth-child(even){ background:#f9fbff; }
+
+/* Orden */
+table.dataTable thead th.sorting::after,
+table.dataTable thead th.sorting_asc::after,
+table.dataTable thead th.sorting_desc::after{
+  font-family:"Font Awesome 6 Free"; font-weight:900; margin-left:6px;
+}
+table.dataTable thead th.sorting::after      { content:"\f0dc"; }
+table.dataTable thead th.sorting_asc::after  { content:"\f106"; }
+table.dataTable thead th.sorting_desc::after { content:"\f107"; }
+
+/* Buscador */
+.dataTables_filter{ margin-bottom:10px; }
+.dataTables_filter label{ font-weight:700; color:#2a4f9a; }
+.dataTables_filter input{
+  height:40px; padding:0 12px;
+  border:1px solid var(--slate-200);
+  border-radius:10px; background:#fff; color:#0b1220;
+}
+
+/* Botón eliminar */
+.btn-eliminar{
+  background:#e74c3c; color:#fff; border:none; border-radius:8px;
+  width:30px; height:30px; padding:0;
+  display:inline-flex; align-items:center; justify-content:center;
+  cursor:pointer; transition:.18s;
+}
+.btn-eliminar i{ pointer-events:none; }
+.btn-eliminar:hover{ background:#c0392b; transform:translateY(-1px); }
+
+/* ===== Fix: inputs dentro de la tabla (ej. Dinero en Caja) ===== */
+table.dataTable tbody td input[type="text"],
+table.dataTable tbody td input[type="number"],
+table.dataTable tbody td .dt-input,
+.table-container-punto-pago td input {
+  background:#ffffff !important;
+  color:#0b1220 !important;
+  border:1px solid var(--slate-200) !important;
+  box-shadow:none !important;
+  border-radius:10px;
+  height:36px;
+  padding:6px 10px;
+}
+table.dataTable tbody td input::placeholder {
+  color:#64748b !important;
+}
+table.dataTable tbody td:nth-child(3){ text-align:right; }
+@media (max-width:480px){
+  table.dataTable tbody td:nth-child(3){ justify-content:space-between; }
+}
+
+/* Responsive */
+@media (max-width:768px){
+  .container-punto-pago{
+    width:calc(100vw - 24px);
+    max-width:680px;
+    position:relative; left:50%; transform:translateX(-50%);
+    margin:0 auto !important;
+  }
+}
+@supports selector(:has(*)){
+  @media (max-width:768px){
+    .page-wrap:has(.container-punto-pago){ display:grid; justify-items:center; }
+    .page-wrap:has(.container-punto-pago) .container-punto-pago{
+      position:static; transform:none; left:auto; width:min(100%,780px); margin-inline:auto;
+    }
+  }
+}
+
+/* Tarjetas móvil */
+@media (max-width:480px){
+  .container-punto-pago{ padding:22px 16px; background:var(--glass-bg-strong); }
+
+  table.dataTable thead{ display:none; }
+  table.dataTable{ border-radius:12px; overflow:hidden; }
+  table.dataTable tbody tr{
+    display:block; margin-bottom:14px; border:1px solid var(--slate-200);
+    border-radius:12px; background:#fff!important; box-shadow:0 4px 10px rgba(0,0,0,.08);
+  }
+  table.dataTable tbody td{
+    display:flex; justify-content:space-between; align-items:center;
+    padding:10px 12px; font-size:13px; border-bottom:1px solid var(--slate-100); text-align:left;
+  }
+  table.dataTable tbody td:last-child{ border-bottom:none; }
+  table.dataTable tbody td::before{
+    content:attr(data-label); font-weight:700; color:#2a4f9a; margin-right:10px;
+  }
+  table.dataTable tbody td:last-child{ justify-content:flex-start; }
+  table.dataTable tbody td:last-child .btn-eliminar{ margin-left:auto; }
+}
+
+/* Reduce motion */
+@media (prefers-reduced-motion:reduce){
+  .btn-agregar-punto-pago,.btn-submit-punto-pago,input{ transition:none!important; }
+}

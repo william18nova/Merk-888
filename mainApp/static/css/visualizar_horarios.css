@@ -1,0 +1,275 @@
+/*  visualizar_horarios.css — estilo unificado (Nova Advance)
+   ──────────────────────────────────────────────────────────
+   • Fondo degradado + “glass card” centrado (vertical y horizontal)
+   • Inputs como el login (tokens compartidos)
+   • DataTables con header en gradiente + paginación pill
+   • Autocomplete ultralegible
+   • Alerts en la misma estética de todo el sitio
+   • Responsive: tabla → tarjetas con data-label
+*/
+
+/* Fuente */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap');
+
+/* Tokens (mismos que en las otras páginas) */
+:root{
+  --bg-1:#153060;           /* fondo */
+  --bg-2:#20497d;
+  --brand:#4da6ff;          /* primario */
+  --brand-2:#3d8cff;
+  --text:#f8fbff;           /* texto sobre fondo oscuro */
+  --text-muted:#d8e8ff;
+
+  --glass-bg: rgba(33,64,120,.28);
+  --glass-brd: rgba(255,255,255,.18);
+  --glass-sh: 0 18px 40px rgba(0,0,0,.35);
+
+  --slate-50:#f8fafc;       /* grises claros para tabla */
+  --slate-100:#eef2f7;
+  --slate-200:#e2e8f0;
+
+  /* Inputs (mismo look que login) */
+  --input-bg: rgba(255,255,255,.10);
+  --input-hov: rgba(255,255,255,.18);
+  --input-brd: rgba(255,255,255,.22);
+  --ring:#b8dbff;
+
+  /* Botones/paginación */
+  --btn-grad: linear-gradient(180deg,#5cb8ff,#4da6ff 60%,#3d8cff);
+  --btn-grad-hov: linear-gradient(180deg,#6ec0ff,#58b1ff 60%,#4da6ff);
+  --btn-shadow: 0 12px 28px rgba(77,166,255,.45), inset 0 0 0 1px rgba(255,255,255,.22);
+
+  /* Errores */
+  --err:#ff5b6b;
+  --err-strong:#ff4d5f;
+  --err-bg-soft: rgba(255, 77, 95, .18);
+  --err-brd-soft: rgba(255,140,150,.65);
+
+  --radius:16px; --radius-sm:12px;
+  --font:'Inter', system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+  --transition:.22s cubic-bezier(.2,.6,.2,1);
+}
+
+/* Reset + fondo centrado */
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{height:100%}
+body{
+  font-family:var(--font); color:var(--text);
+  min-height:100svh;
+  /* ⬇ centrado perfecto del contenedor */
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  /* ⬆ */
+  overflow:auto;
+  padding:clamp(20px,4vw,32px);
+  background:
+    radial-gradient(1400px 800px at 10% 20%, rgba(77,166,255,.35), transparent 60%),
+    radial-gradient(1200px 700px at 85% 85%, rgba(77,166,255,.25), transparent 60%),
+    linear-gradient(135deg,var(--bg-1),var(--bg-2));
+}
+body::before{content:"";position:fixed;inset:0;background:inherit;filter:blur(12px);z-index:-1}
+
+/* Card contenedor */
+.container{
+  width:min(95vw,1100px);
+  background:var(--glass-bg);
+  backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px);
+  border:1px solid var(--glass-brd);
+  border-radius:var(--radius);
+  box-shadow:var(--glass-sh);
+  padding:clamp(26px,4.2vw,40px);
+  margin-inline:auto;
+}
+
+/* Si el contenido es más alto que la pantalla, ancla arriba para scroll cómodo */
+@media (max-height: 720px){
+  body{ align-items:flex-start; }
+}
+
+/* Título */
+h2{
+  margin:0 0 18px;
+  font-size:clamp(24px,3.6vw,32px);
+  font-weight:800; letter-spacing:.2px;
+  color:var(--text); text-align:center;
+  text-shadow:0 6px 16px rgba(0,0,0,.22);
+  display:flex; align-items:center; justify-content:center; gap:10px;
+}
+h2 i{ color:var(--brand); font-size:1.15em; }
+
+/* Buscador / filtros arriba de la tabla */
+.search-wrapper{ position:relative; width:100%; margin:0 auto 14px; }
+.search-wrapper i{
+  position:absolute; left:12px; top:50%; transform:translateY(-50%);
+  color:var(--text-muted);
+}
+.search-input{
+  width:100%; height:44px;
+  padding:0 12px 0 40px; border-radius:var(--radius-sm);
+  border:1px solid var(--input-brd); background:var(--input-bg);
+  color:var(--text); font-size:15.5px; transition:var(--transition); outline:none;
+}
+.search-input::placeholder{ color:var(--text-muted); }
+.search-input:hover{ background:var(--input-hov); transform:translateY(-1px); }
+.search-input:focus{
+  background:var(--input-hov); border-color:var(--ring);
+  box-shadow:0 0 0 3px color-mix(in srgb, var(--ring) 50%, transparent);
+}
+
+/* Autocomplete (legible en claro) */
+.autocomplete-results{
+  position:absolute; top:calc(100% + 6px); left:0; right:0;
+  max-height:260px; overflow-y:auto; background:#fff;
+  border:1px solid var(--slate-200); border-radius:var(--radius-sm);
+  box-shadow:0 16px 30px rgba(0,0,0,.16); z-index:20; display:none;
+}
+.autocomplete-option{ padding:10px 12px; font-size:15px; cursor:pointer; color:#0b1220; }
+.autocomplete-option:hover{ background:#eaf3ff; }
+.autocomplete-no-result{ padding:10px 12px; font-size:14px; color:#64748b; }
+
+/* Tabla DataTables */
+.table-wrap{ margin:18px 0 12px; }
+
+table.dataTable{
+  width:100%!important; border-collapse:separate; border-spacing:0;
+  background:#fff; border-radius:var(--radius-sm); overflow:hidden;
+  box-shadow:0 6px 18px rgba(0,0,0,.12);
+  font-size:15.5px;
+}
+table.dataTable thead{
+  background:linear-gradient(180deg,#3563b8,#2a4f9a);
+  color:#fff;
+}
+table.dataTable thead th{
+  padding:12px 14px; font-weight:800; letter-spacing:.2px; text-align:center;
+}
+table.dataTable tbody td{
+  padding:11px 14px; color:#0b1220; border-top:1px solid var(--slate-100);
+  line-height:1.35; text-align:center;
+}
+table.dataTable tbody tr:nth-child(even){ background:#f9fbff; }
+table.dataTable tbody tr:hover{ background:#eef5ff; }
+
+/* Indicadores de orden con FA */
+table.dataTable thead th.sorting,
+table.dataTable thead th.sorting_asc,
+table.dataTable thead th.sorting_desc{
+  background-image:none!important; position:relative; cursor:pointer;
+}
+table.dataTable thead th.sorting::after      { content:'\f0dc'; }
+table.dataTable thead th.sorting_asc::after  { content:'\f106'; }
+table.dataTable thead th.sorting_desc::after { content:'\f107'; }
+table.dataTable thead th.sorting::after,
+table.dataTable thead th.sorting_asc::after,
+table.dataTable thead th.sorting_desc::after{
+  font-family:"Font Awesome 6 Free"; font-weight:900;
+  right:10px; margin-left:8px; position:absolute;
+}
+
+/* UI DataTables (length / filter / paginate) */
+.dataTables_wrapper .dataTables_length label,
+.dataTables_wrapper .dataTables_filter label,
+.dataTables_wrapper .dataTables_info,
+.dataTables_wrapper .dataTables_paginate{
+  color:var(--text); font-weight:600;
+}
+.dataTables_wrapper .dataTables_length select{
+  background:var(--input-bg); border:1px solid var(--input-brd);
+  color:var(--text); border-radius:10px; padding:6px 8px;
+}
+.dataTables_wrapper .dataTables_length select option{
+  background:#fff; color:#0b1220; padding:4px 8px;
+}
+.dataTables_wrapper .dataTables_filter input{
+  background:var(--input-bg); border:1px solid var(--input-brd);
+  color:var(--text); border-radius:10px; padding:6px 10px;
+}
+.dataTables_wrapper .dataTables_filter input::placeholder{ color:var(--text-muted); }
+
+/* Paginación “pill” */
+.dataTables_wrapper .dataTables_paginate .paginate_button{
+  padding:7px 12px!important; margin:0 3px!important; border-radius:999px!important;
+  border:1px solid transparent!important; color:#06203f!important;
+  background:var(--btn-grad)!important;
+  box-shadow:var(--btn-shadow)!important; font-weight:800!important;
+}
+.dataTables_wrapper .dataTables_paginate .paginate_button:hover{
+  background:var(--btn-grad-hov)!important;
+}
+.dataTables_wrapper .dataTables_paginate .paginate_button.current{
+  filter:saturate(1.08);
+}
+
+/* Alerts (misma estética del sitio) */
+.messages{ margin-bottom:18px; }
+.alert{
+  display:block; padding:12px 14px; border-radius:var(--radius-sm);
+  font-size:14px; margin-bottom:12px; border:1px solid transparent;
+}
+.alert-success{
+  background: color-mix(in srgb,#16a34a 18%, white);
+  color:#064e1a;
+  border-color: color-mix(in srgb,#16a34a 38%, white);
+}
+.alert-error{
+  background: var(--err-bg-soft);
+  color: var(--err-strong);
+  border-color: var(--err-brd-soft);
+}
+
+/* Botones */
+.btn-container{ text-align:center; margin-top:15px; }
+.btn-editar-horarios{
+  display:inline-block;
+  background:var(--btn-grad); color:#ffffff;
+  padding:12px 22px; border-radius:var(--radius-sm);
+  text-decoration:none; font-weight:900; letter-spacing:.2px;
+  box-shadow:var(--btn-shadow);
+  transition: transform .2s, filter .22s, box-shadow .22s, background .22s;
+}
+.btn-editar-horarios:hover{
+  background:var(--btn-grad-hov); transform:translateY(-1px);
+  filter:saturate(1.06);
+  box-shadow:0 14px 30px rgba(77,166,255,.45), inset 0 0 0 1px rgba(255,255,255,.26);
+}
+
+.btn-eliminar{
+  background:#e74c3c; color:#fff; border:none; border-radius:8px;
+  width:34px; height:34px; padding:0;
+  display:inline-flex; align-items:center; justify-content:center;
+  cursor:pointer; transition:.18s;
+}
+.btn-eliminar i{ pointer-events:none; }
+.btn-eliminar:hover{ background:#c0392b; transform:translateY(-1px); }
+
+/* Responsive: tabla → tarjetas */
+@media (max-width:768px){
+  .container{ width:calc(100vw - 24px); margin-inline:auto; }
+
+  table.dataTable thead{ display:none; }
+  table.dataTable{ border-radius:12px; overflow:hidden; }
+  table.dataTable tbody tr{
+    display:block; margin-bottom:14px; border:1px solid var(--slate-200);
+    border-radius:12px; background:#fff!important; box-shadow:0 4px 10px rgba(0,0,0,.08);
+  }
+  table.dataTable tbody td{
+    display:flex; justify-content:space-between; align-items:flex-start;
+    padding:12px 14px; font-size:14px; border-bottom:1px solid var(--slate-100); text-align:left;
+  }
+  table.dataTable tbody td:last-child{ border-bottom:none; }
+  table.dataTable tbody td::before{
+    content:attr(data-label); font-weight:800; color:#2a4f9a; margin-right:10px;
+  }
+
+  /* centrar paginación y length */
+  .dataTables_wrapper .dataTables_length{
+    float:none!important; width:100%!important; text-align:center!important; margin:10px 0!important;
+  }
+  .dataTables_wrapper .dataTables_length select{ width:90px; display:inline-block; }
+}
+
+/* Reduce motion */
+@media (prefers-reduced-motion:reduce){
+  .search-input, .btn-editar-horarios, .btn-eliminar{ transition:none!important; }
+}

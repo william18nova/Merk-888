@@ -1,0 +1,111 @@
+{# templates/agregar_horario.html #}
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Agregar Horarios{% endblock %}
+
+{% block extra_head %}
+  <!-- FontAwesome -->
+  <link rel="stylesheet"
+        href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+  <!-- CSS específico -->
+  <link rel="stylesheet" href="{% static 'css/agregar_horario.css' %}">
+{% endblock %}
+
+{% block content %}
+<div class="container-horario">
+  <i class="fas fa-clock icon-horario"></i>
+  <h2>Agregar Horarios</h2>
+  <p class="obligatorio-texto">
+    Todos los campos con <span class="required">*</span> son obligatorios.
+  </p>
+
+  <div id="error-message"   class="alert alert-error"   style="display:none;"></div>
+  <div id="success-message" class="alert alert-success" style="display:none;"></div>
+
+  <form id="horarioForm"
+        method="post"
+        action="{% url 'agregar_horario' %}">
+    {% csrf_token %}
+
+    <!-- Autocomplete Sucursal -->
+    <div class="form-group-horario">
+      <label for="id_sucursal_autocomplete">
+        Sucursal <span class="required">*</span>
+      </label>
+      {{ form.sucursal_autocomplete }}
+      {{ form.sucursalid }}
+      <div class="autocomplete-results"
+           id="sucursal-autocomplete-results"></div>
+      <div class="field-error" id="error-id_sucursalid"></div>
+    </div>
+
+    {# ——— Aquí inyectamos el hidden dia_semana ——— #}
+    {{ form.dia_semana }}
+
+    <!-- Selección de días -->
+    <div class="days-container">
+      {% for d in days %}
+        <button type="button"
+                class="day-button"
+                data-day="{{ d }}">{{ d }}</button>
+      {% endfor %}
+    </div>
+    <div class="field-error" id="error-id_dia_semana"></div>
+
+    <!-- Horario individual (para agregación temporal) -->
+    <div class="form-group-horario">
+      <label for="id_horaapertura">
+        Hora de Apertura <span class="required">*</span>
+      </label>
+      {{ form.horaapertura }}
+      <div class="field-error" id="error-id_horaapertura"></div>
+    </div>
+    <div class="form-group-horario">
+      <label for="id_horacierre">
+        Hora de Cierre <span class="required">*</span>
+      </label>
+      {{ form.horacierre }}
+      <div class="field-error" id="error-id_horacierre"></div>
+    </div>
+
+    <div class="form-group-horario">
+      <button type="button"
+              id="btn-add-horario"
+              class="btn-agregar-horario">
+        Agregar Horario
+      </button>
+    </div>
+
+    <!-- Tabla de horarios temporales -->
+    <div class="horarios-temp-container">
+      <table class="horarios-temp">
+        <thead>
+          <tr>
+            <th>Día</th>
+            <th>Apertura</th>
+            <th>Cierre</th>
+            <th>Acciones</th>
+          </tr>
+        </thead>
+        <tbody id="horariosTabla"></tbody>
+      </table>
+    </div>
+
+    <!-- Campo oculto que recibirá el JSON -->
+    <input type="hidden" name="horarios" id="id_horarios">
+
+    <button type="submit" class="btn-guardar-horario">
+      Guardar Horarios
+    </button>
+  </form>
+</div>
+
+<script>
+  // Ruta del autocomplete
+  const sucursalAutocompleteUrl =
+    "{% url 'horarios_sucursal_autocomplete' %}";
+</script>
+<script defer
+        src="{% static 'javascript/agregar_horario.js' %}"></script>
+{% endblock %}

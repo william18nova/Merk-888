@@ -1,0 +1,105 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Editar Puntos de Pago{% endblock %}
+
+{% block extra_head %}
+  <!-- Font-Awesome + DataTables -->
+  <link rel="stylesheet"
+        href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"/>
+  <link rel="stylesheet"
+        href="https://cdn.datatables.net/1.13.8/css/jquery.dataTables.min.css"/>
+
+  <!-- Usamos exactamente la MISMA hoja que “agregar” -->
+  <link rel="stylesheet"
+        href="{% static 'css/agregar_punto_pago.css' %}">
+{% endblock %}
+
+{% block content %}
+  <div class="container-punto-pago">
+    <i class="fas fa-credit-card icon-punto-pago"></i>
+    <h2>Editar Puntos de Pago</h2>
+    <p class="obligatorio-texto">
+      Sucursal actual: <strong>{{ sucursal.nombre }}</strong>
+    </p>
+
+    <!-- alertas globales -->
+    <div id="error-message"   class="alert alert-error"   style="display:none;"></div>
+    <div id="success-message" class="alert alert-success" style="display:none;"></div>
+
+    <form id="puntoPagoForm"
+          action="{% url 'editar_puntos_pago' sucursal.pk %}"
+          method="post">
+      {% csrf_token %}
+
+      {# ---------- Sucursal (cambiable) ---------- #}
+      <div class="form-group-punto-pago">
+        <label for="id_sucursal_autocomplete">Sucursal <span class="required">*</span></label>
+        {{ form.sucursal_autocomplete }}
+        {{ form.sucursal }}
+        <div class="autocomplete-results" id="sucursal-autocomplete-results"></div>
+        <div class="field-error" id="error-id_sucursal"></div>
+      </div>
+
+      {# ---------- nombre / desc / caja ---------- #}
+      <div class="form-group-punto-pago">
+        <label for="id_nombre">Nombre <span class="required">*</span></label>
+        {{ form.nombre }} <div class="field-error" id="error-id_nombre"></div>
+      </div>
+
+      <div class="form-group-punto-pago">
+        <label for="id_descripcion">Descripción</label>
+        {{ form.descripcion }} <div class="field-error" id="error-id_descripcion"></div>
+      </div>
+
+      <div class="form-group-punto-pago">
+        <label for="id_dinerocaja">Dinero en Caja</label>
+        {{ form.dinerocaja }} <div class="field-error" id="error-id_dinerocaja"></div>
+      </div>
+
+      <button type="button"
+              id="agregarPuntoPagoBtn"
+              class="btn-agregar-punto-pago">
+        Agregar / Actualizar
+      </button>
+
+      {# ---------- tabla ---------- #}
+      <div class="table-container-punto-pago">
+        <table id="puntos-pago-list" class="display">
+          <thead>
+            <tr>
+              <th>Nombre</th>
+              <th>Descripción</th>
+              <th>Dinero en Caja</th>
+              <th>Acciones</th>
+            </tr>
+          </thead>
+          <tbody id="puntos-pago-body"></tbody>
+        </table>
+      </div>
+
+      <input type="hidden" id="id_puntos_temp" name="puntos_temp">
+
+      <button type="submit" class="btn-submit-punto-pago">
+        Guardar Cambios
+      </button>
+    </form>
+  </div>
+
+  {# ---------- variables JS ---------- #}
+  <script>
+    const existingPuntos = JSON.parse('{{ puntos_json|escapejs }}');
+
+    /* endpoint con ?current_sucursal_id=<actual> */
+    const sucursalAutocompleteUrl =
+      "{% url 'sucursal_editar_punto_pago_autocomplete' %}"
+      + "?current_sucursal_id={{ sucursal.pk }}";
+  </script>
+
+  <!-- jQuery + DataTables -->
+  <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+  <script src="https://cdn.datatables.net/1.13.8/js/jquery.dataTables.min.js"></script>
+
+  <!-- JS específico (mismo patrón que agregar) -->
+  <script defer src="{% static 'javascript/editar_punto_pago.js' %}"></script>
+{% endblock %}

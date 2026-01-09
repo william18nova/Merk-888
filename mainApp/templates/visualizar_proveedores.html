@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Visualizar Proveedores{% endblock %}
+{% block content %}
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lista de Proveedores</title>
+
+  <!-- Font-Awesome (se incluye peso 900 para flechas de ordenación) -->
+  <link rel="stylesheet"
+        href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"/>
+
+  <!-- DataTables -->
+  <link rel="stylesheet"
+        href="https://cdn.datatables.net/1.11.5/css/jquery.dataTables.min.css"/>
+  <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+  <script src="https://cdn.datatables.net/1.11.5/js/jquery.dataTables.min.js"></script>
+
+  <!-- Estilos propios -->
+  <link rel="stylesheet" href="{% static 'css/visualizar_proveedores.css' %}">
+</head>
+<body>
+  <div class="container">
+    <h2><i class="fas fa-truck"></i> Lista de Proveedores</h2>
+
+    {# ---------- alertas Django ---------- #}
+    {% if messages %}
+      <div class="messages">
+        {% for message in messages %}
+          <div class="alert {% if message.tags %}alert-{{ message.tags }}{% endif %}">
+            {{ message }}
+          </div>
+        {% endfor %}
+      </div>
+    {% endif %}
+
+    {# ---------- buscador externo ---------- #}
+    <div class="search-wrapper">
+      <i class="fas fa-search"></i>
+      <input id="buscador-proveedores" class="search-input" type="text" placeholder="Buscar…">
+    </div>
+
+    {# ---------- tabla ---------- #}
+    <table id="proveedoresTable" class="display">
+      <thead>
+        <tr>
+          <th>Nombre</th>
+          <th>Empresa</th>
+          <th>Teléfono</th>
+          <th>Email</th>
+          <th>Dirección</th>
+          <th class="no-sort">Acciones</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for p in proveedores %}
+        <tr>
+          <td data-label="Nombre">{{ p.nombre }}</td>
+          <td data-label="Empresa">{{ p.empresa }}</td>
+          <td data-label="Teléfono">{{ p.telefono }}</td>
+          <td data-label="Email">{{ p.email }}</td>
+          <td data-label="Dirección">{{ p.direccion }}</td>
+          <td data-label="Acciones" class="actions-cell">
+            <div class="btn-container">
+              <a href="{% url 'editar_proveedor' p.proveedorid %}"
+                 class="btn editar" title="Editar {{ p.nombre }}">
+                <i class="fas fa-edit"></i>
+              </a>
+
+              <button type="button" class="btn borrar"
+                      data-prov-id="{{ p.proveedorid }}"
+                      data-prov-nombre="{{ p.nombre }}"
+                      title="Eliminar {{ p.nombre }}">
+                <i class="fas fa-trash-alt"></i>
+              </button>
+            </div>
+
+            <!-- formulario oculto para envío POST -->
+            <form id="eliminar-prov-{{ p.proveedorid }}"
+                  action="{% url 'eliminar_proveedor' p.proveedorid %}"
+                  method="post" style="display:none;">{% csrf_token %}</form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <!-- JS propio -->
+  <script src="{% static 'javascript/visualizar_proveedores.js' %}"></script>
+</body>
+</html>
+{% endblock %}

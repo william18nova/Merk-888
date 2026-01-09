@@ -1,0 +1,177 @@
+/* ============================================================================
+   Agregar / Editar Sucursal — Nova Advance Design
+   (glassmorphism + iconografía unificada)
+============================================================================ */
+
+/* Fuente */
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap");
+
+/* Tokens */
+:root{
+  --bg-1:#153060; --bg-2:#20497d;
+  --brand:#4da6ff; --brand-2:#3d8cff;
+  --text:#f8fbff; --text-muted:#d8e8ff;
+
+  --glass-bg: rgba(33,64,120,.28);
+  --glass-brd: rgba(255,255,255,.18);
+  --glass-sh: 0 18px 40px rgba(0,0,0,.35);
+
+  --input-bg: rgba(255,255,255,.10);
+  --input-hov: rgba(255,255,255,.18);
+  --input-brd: rgba(255,255,255,.22);
+  --ring:#b8dbff;
+
+  --radius:16px; --radius-sm:12px;
+  --transition:.22s cubic-bezier(.2,.6,.2,1);
+
+  --err:#ff4d5f; --ok:#16a34a;
+
+  --btn-grad: linear-gradient(180deg,#5cb8ff,#4da6ff 60%,#3d8cff);
+  --btn-grad-hov: linear-gradient(180deg,#6ec0ff,#58b1ff 60%,#4da6ff);
+  --btn-shadow: 0 12px 28px rgba(77,166,255,.45), inset 0 0 0 1px rgba(255,255,255,.22);
+}
+
+/* Reset */
+*{ box-sizing:border-box; margin:0; padding:0 }
+html, body{ height:100% }
+
+/* Fondo */
+body{
+  font-family:"Inter", system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+  color:var(--text);
+  min-height:100svh;
+  display:flex; align-items:center; justify-content:center;
+  padding: clamp(18px, 4vw, 36px);
+  background:
+    radial-gradient(1400px 800px at 10% 20%, rgba(77,166,255,.35), transparent 60%),
+    radial-gradient(1200px 700px at 85% 85%, rgba(77,166,255,.25), transparent 60%),
+    linear-gradient(135deg,var(--bg-1),var(--bg-2));
+}
+body::before{
+  content:""; position:fixed; inset:0;
+  background:inherit; filter:blur(12px); z-index:-1;
+}
+
+/* Contenedor */
+.container{
+  width:min(95vw, 720px);
+  margin-inline:auto;
+  background:var(--glass-bg);
+  backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px);
+  border:1px solid var(--glass-brd);
+  border-radius:28px;
+  box-shadow:var(--glass-sh);
+  padding: clamp(32px,4vw,44px);
+  text-align:center;
+}
+
+/* =================== ÍCONO CABECERA =================== */
+/* Usa FA6: <i class="fa-solid fa-store icon icon-glyph"></i> */
+.icon,
+.icon-glyph{
+  display:inline-block;
+  margin: 8px auto 16px;
+  font-size: 92px;             /* tamaño grande uniforme */
+  line-height: 1;
+  color: var(--brand);         /* azul de marca */
+  filter: drop-shadow(0 6px 16px rgba(0,0,0,.18)); /* sombra suave */
+}
+
+/* =================== Encabezado =================== */
+h2{
+  font-size: clamp(28px, 4vw, 38px);
+  font-weight:800; text-align:center;
+  margin-bottom:6px; text-shadow:0 6px 16px rgba(0,0,0,.22);
+}
+.obligatorio-texto{
+  font-size:15px; color:var(--text-muted);
+  font-style:italic; text-align:center; margin-bottom:22px;
+}
+.required{ color:var(--brand); }
+
+/* =================== Formulario =================== */
+.form-group{ margin-bottom:18px; text-align:left; position:relative; }
+.form-group label{
+  display:block; margin-bottom:6px;
+  font-weight:700; color:var(--text);
+}
+
+/* Inputs */
+input[type="text"], input[type="tel"], input[type="number"],
+input[type="email"], select, .form-control, textarea{
+  width:100%; height:52px; padding:0 14px;
+  border-radius:14px;
+  border:1px solid var(--input-brd);
+  background:var(--input-bg); color:var(--text);
+  font-size:16px; outline:none; transition:var(--transition);
+}
+textarea{ height:auto; min-height:105px; padding:12px 14px; resize:vertical; }
+
+input::placeholder, textarea::placeholder{ color:var(--text-muted); }
+input:hover, textarea:hover, select:hover{ background:var(--input-hov); transform:translateY(-1px); }
+input:focus, textarea:focus, select:focus{
+  background:var(--input-hov); border-color:var(--ring);
+  box-shadow:0 0 0 4px color-mix(in srgb,var(--ring) 50%, transparent);
+}
+
+/* Errores */
+.input-error{
+  border-color:var(--err)!important;
+  box-shadow:0 0 0 4px color-mix(in srgb,var(--err) 28%, transparent)!important;
+}
+.field-error{
+  font-size:13.5px; color:var(--err);
+  margin-top:6px; display:none;
+}
+.field-error.visible{ display:block; }
+.field-error i{ margin-right:6px; }
+
+/* Alertas */
+.alert{
+  display:none; padding:12px 14px; border-radius:14px;
+  font-size:14px; margin:12px 0; border:1px solid transparent; text-align:center;
+}
+.alert-success{
+  background:color-mix(in srgb,var(--ok) 18%, #ffffff);
+  color:#064e1a; border-color:color-mix(in srgb,var(--ok) 40%, #ffffff);
+  display:flex; align-items:center; justify-content:center; gap:8px;
+}
+.alert-error{
+  background:rgba(255,77,95,.14); color:var(--err); border-color:rgba(255,140,150,.55);
+}
+
+/* Botón */
+.btn-agregar-sucursal{
+  width:100%; height:54px; border:none; border-radius:14px;
+  background:var(--btn-grad); color:#fff;
+  font-weight:800; font-size:18px; letter-spacing:.2px;
+  cursor:pointer; margin-top:16px;
+  box-shadow:var(--btn-shadow);
+  transition:transform .2s, filter .22s, box-shadow .22s, background .22s;
+}
+.btn-agregar-sucursal:hover{
+  background:var(--btn-grad-hov); transform:translateY(-1px);
+  filter:saturate(1.06);
+}
+.btn-agregar-sucursal:active{ transform:none; }
+
+/* Responsive */
+@media (max-width:768px){
+  .container{
+    width: calc(100vw - 24px);
+    margin:0 auto !important;
+    position:relative; left:50%; transform:translateX(-50%);
+    padding:24px 16px;
+    border-radius:22px;
+  }
+  html, body{ overflow-x:hidden; }
+
+  .icon, .icon-glyph{ font-size:76px; margin:6px auto 14px; }
+  h2{ font-size:26px; }
+  .btn-agregar-sucursal{ font-size:16px; height:50px; }
+}
+
+/* Reduce motion */
+@media (prefers-reduced-motion:reduce){
+  .btn-agregar-sucursal, input, textarea, select{ transition:none!important; }
+}

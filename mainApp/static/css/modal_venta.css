@@ -1,0 +1,553 @@
+/* =========================================================
+   ✅ MODAL “Pagos (puede ser mixto)” — ULTRA estético (Nova)
+   - Centrado real + animación
+   - Glassmorphism premium + borde iluminado
+   - Banner Total tipo “chip”
+   - Filas (mix-row) como tarjetas interactivas
+   - Sección efectivo como card elegante
+   - ❌ Sin scroll (ni lateral ni vertical)
+   - ✅ Por encima del navbar (z-index máximo)
+   - ✅ Bloqueo de scroll automático con :has() + fallback modal-open
+   - ✅ Reglas Pago Mixto:
+       - NO mixto: solo 1 check, input solo efectivo (fijo = total)
+       - Mixto: varios checks, input en seleccionados (arriba/abajo sin bug)
+   ========================================================= */
+
+:root{
+  --na-bg1:#153060;
+  --na-bg2:#20497d;
+  --na-accent:#4da6ff;
+  --na-white:#ffffff;
+
+  --na-green:#28a745;
+  --na-green2:#1f8a3a;
+
+  --na-danger:#ff4d6d;
+
+  --na-glass: rgba(255,255,255,.10);
+  --na-glass2: rgba(255,255,255,.06);
+  --na-border: rgba(255,255,255,.16);
+  --na-border2: rgba(255,255,255,.10);
+
+  --na-shadow: 0 26px 80px rgba(0,0,0,.55);
+  --na-shadow-soft: 0 12px 28px rgba(0,0,0,.22);
+
+  --na-radius: 20px;
+  --na-radius2: 16px;
+
+  --na-ease: cubic-bezier(.2,.9,.2,1);
+}
+
+/* =========================================================
+   ✅ BLOQUEO SCROLL AUTOMÁTICO DEL DOCUMENTO (sin JS)
+   ========================================================= */
+html:has(#myModal.modal[style*="display: block"]),
+body:has(#myModal.modal[style*="display: block"]),
+html:has(#myModal.modal.is-open),
+body:has(#myModal.modal.is-open){
+  overflow: hidden !important;
+}
+
+/* fallback por si prefieres con JS: body.classList.add("modal-open") */
+body.modal-open{
+  overflow: hidden !important;
+}
+
+/* =========================================================
+   ✅ MODAL BACKDROP + CENTRADO (siempre sobre navbar)
+   ========================================================= */
+#myModal.modal{
+  display:none;
+  position:fixed;
+  inset:0;
+
+  /* 🔥 por encima de TODO (navbar, dropdowns, etc.) */
+  z-index: 2147483647 !important;
+
+  background:
+    radial-gradient(900px 600px at 50% 10%, rgba(77,166,255,.25), transparent 60%),
+    radial-gradient(800px 550px at 15% 88%, rgba(77,166,255,.12), transparent 58%),
+    radial-gradient(700px 520px at 88% 85%, rgba(32,73,125,.22), transparent 60%),
+    rgba(0,0,0,.66);
+
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+
+  align-items:center;
+  justify-content:center;
+  padding: 18px;
+
+  /* ❌ sin barras */
+  overflow: hidden !important;
+
+  /* animación */
+  opacity: 0;
+  transition: opacity .18s var(--na-ease);
+}
+
+/* abierto: show() => display:block */
+#myModal.modal[style*="display: block"]{
+  display:flex !important;
+  opacity: 1;
+}
+#myModal.modal.is-open{
+  display:flex !important;
+  opacity: 1;
+}
+
+/* =========================================================
+   ✅ CONTENEDOR (sin scroll interno)
+   ========================================================= */
+#myModal .modal-content{
+  width: min(580px, 94vw);
+  margin: 0;
+
+  /* ❌ sin scroll vertical/lateral interno */
+  max-height: none !important;
+  overflow: hidden !important;
+  overflow-x: hidden !important;
+
+  padding: 18px 18px 16px;
+  border-radius: var(--na-radius);
+
+  color: var(--na-white);
+
+  background:
+    linear-gradient(165deg, rgba(77,166,255,.20), rgba(21,48,96,.92)),
+    radial-gradient(900px 500px at 20% 10%, rgba(255,255,255,.10), transparent 60%);
+
+  border: 1px solid var(--na-border);
+  box-shadow: var(--na-shadow);
+  position:relative;
+
+  transform: translateY(12px) scale(.99);
+  transition: transform .22s var(--na-ease);
+}
+
+#myModal.modal[style*="display: block"] .modal-content,
+#myModal.modal.is-open .modal-content{
+  transform: translateY(0) scale(1);
+}
+
+/* Asegura que nada se salga por ancho (causa scroll lateral) */
+#myModal *,
+#myModal *::before,
+#myModal *::after{
+  box-sizing: border-box;
+  max-width: 100%;
+}
+
+/* refuerzo anti-scroll lateral */
+#myModal .mix-grid,
+#myModal .mix-row,
+#myModal .radio-wrap{
+  overflow-x: hidden !important;
+}
+
+/* Halo / borde iluminado */
+#myModal .modal-content::before{
+  content:"";
+  position:absolute; inset:-1px;
+  border-radius: var(--na-radius);
+  pointer-events:none;
+  background: linear-gradient(180deg, rgba(255,255,255,.26), rgba(255,255,255,.04));
+  -webkit-mask: linear-gradient(#000,#000) content-box, linear-gradient(#000,#000);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  padding:1px;
+  opacity:.55;
+}
+
+/* =========================================================
+   ✅ TÍTULO
+   ========================================================= */
+#myModal .modal-content h2{
+  margin: 6px 50px 12px 0;
+  font-size: 24px;
+  font-weight: 950;
+  letter-spacing: .2px;
+  text-shadow: 0 10px 26px rgba(0,0,0,.30);
+}
+
+/* =========================================================
+   ✅ BOTÓN CERRAR
+   ========================================================= */
+#myModal .close{
+  position:absolute;
+  top: 12px; right: 12px;
+
+  width: 38px; height: 38px;
+  border-radius: 14px;
+
+  display:grid; place-items:center;
+  font-size: 22px;
+  line-height: 1;
+  font-weight: 900;
+
+  color:#fff;
+  background: rgba(255,255,255,.10);
+  border: 1px solid rgba(255,255,255,.18);
+
+  cursor:pointer;
+  box-shadow: 0 14px 26px rgba(0,0,0,.20);
+  transition: transform .14s var(--na-ease), background .14s var(--na-ease), border-color .14s var(--na-ease);
+}
+#myModal .close:hover{
+  transform: scale(1.06);
+  background: rgba(255,255,255,.14);
+  border-color: rgba(77,166,255,.35);
+}
+#myModal .close:active{ transform: scale(1.02); }
+
+/* =========================================================
+   ✅ BANNER TOTAL
+   ========================================================= */
+#myModal .total-banner{
+  display:flex;
+  align-items:center;
+  gap: 10px;
+
+  padding: 12px 12px;
+  border-radius: var(--na-radius2);
+
+  background: linear-gradient(180deg, rgba(255,255,255,.12), rgba(255,255,255,.06));
+  border: 1px solid rgba(255,255,255,.16);
+
+  box-shadow: var(--na-shadow-soft);
+}
+#myModal .total-icon{
+  width: 34px; height: 34px;
+  display:grid; place-items:center;
+  border-radius: 14px;
+  background: rgba(77,166,255,.18);
+  border: 1px solid rgba(77,166,255,.22);
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.06);
+}
+#myModal .total-label{
+  font-weight: 900;
+  opacity: .95;
+}
+#myModal .total-amount{
+  margin-left:auto;
+  font-weight: 950;
+  letter-spacing: .2px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(0,0,0,.20);
+  border: 1px solid rgba(255,255,255,.12);
+  box-shadow: 0 10px 18px rgba(0,0,0,.18);
+}
+
+/* =========================================================
+   ✅ PENDING / RESTANTE
+   ========================================================= */
+#myModal .pending-banner{
+  padding: 10px 12px;
+  border-radius: var(--na-radius2);
+  background: rgba(255,255,255,.07);
+  border: 1px solid rgba(255,255,255,.12);
+  box-shadow: 0 12px 22px rgba(0,0,0,.14);
+}
+#myModal #monto-pendiente{
+  display:block;
+  font-weight: 950;
+  letter-spacing: .1px;
+  color: rgba(255,255,255,.94);
+}
+
+/* =========================================================
+   ✅ TEXTO GUÍA
+   ========================================================= */
+#myModal .modal-content > p{
+  margin: 10px 0 12px !important;
+  padding: 12px 12px;
+  border-radius: var(--na-radius2);
+  background: rgba(255,255,255,.07);
+  border: 1px solid rgba(255,255,255,.12);
+  box-shadow: 0 12px 22px rgba(0,0,0,.14);
+  color: rgba(255,255,255,.92);
+}
+
+/* =========================================================
+   ✅ GRID / SEPARACIÓN
+   ========================================================= */
+#myModal .mix-grid{ display:block; }
+
+/* =========================================================
+   ✅ FILAS (TARJETAS) DE MÉTODOS
+   - Soporta .mix-row o .radio-wrap (por si tu HTML usa ese)
+   ========================================================= */
+#myModal .mix-row,
+#myModal .radio-wrap{
+  display:grid;
+
+  /* ✅ por defecto NO reservamos espacio para input */
+  grid-template-columns: 1fr !important;
+
+  gap: 12px;
+  align-items:center;
+
+  padding: 12px 12px;
+  border-radius: 18px;
+
+  background: rgba(255,255,255,.06);
+  border: 1px solid rgba(255,255,255,.10);
+  box-shadow: 0 10px 22px rgba(0,0,0,.12), inset 0 0 0 1px rgba(255,255,255,.04);
+
+  margin: 10px 0;
+  transition: transform .14s var(--na-ease), background .14s var(--na-ease), border-color .14s var(--na-ease);
+}
+#myModal .mix-row:hover,
+#myModal .radio-wrap:hover{
+  transform: translateY(-1px);
+  background: rgba(255,255,255,.085);
+  border-color: rgba(255,255,255,.16);
+}
+
+/* ✅ Solo cuando debe mostrarse el input */
+#myModal .mix-row.show-amt,
+#myModal .radio-wrap.show-amt{
+  grid-template-columns: 1fr 190px !important;
+}
+
+/* Label + checkbox */
+#myModal .mix-check{
+  display:flex;
+  align-items:center;
+  gap: 10px;
+  user-select:none;
+}
+#myModal .mix-check span{
+  font-weight: 950;
+  letter-spacing: .1px;
+  text-shadow: 0 8px 18px rgba(0,0,0,.22);
+}
+
+/* Checkbox */
+#myModal .mix-check input[type="checkbox"]{
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: var(--na-accent);
+  filter: drop-shadow(0 8px 16px rgba(0,0,0,.18));
+}
+
+/* =========================================================
+   ✅ INPUT MONTO (FIX MIXTO: que SIEMPRE se vea si está activo)
+   ========================================================= */
+#myModal .pm-amt{
+  /* por defecto oculto */
+  display:none;
+
+  width: 100% !important;
+  min-width: 0 !important;
+  height: 42px;
+
+  padding: 10px 12px;
+  border-radius: 16px;
+
+  border: 1px solid rgba(255,255,255,.30);
+  background: rgba(255,255,255,.96);
+  color: #0b1220;
+
+  outline: none;
+  box-shadow: 0 12px 24px rgba(0,0,0,.14);
+  transition: box-shadow .14s var(--na-ease), border-color .14s var(--na-ease), transform .14s var(--na-ease);
+}
+
+/* cuando JS pone .show-amt */
+#myModal .mix-row.show-amt .pm-amt,
+#myModal .radio-wrap.show-amt .pm-amt{
+  display:block;
+}
+
+/* ✅ Fallback: si el input está habilitado (mixto + check), que se vea sí o sí */
+#myModal .pm-amt:not(:disabled){
+  display:block !important;
+}
+
+/* ✅ Si hay soporte :has, ajusta columnas automáticamente sin depender de .show-amt */
+@supports selector(.mix-row:has(.pm-amt)){
+  #myModal .mix-row:has(.pm-amt:not(:disabled)),
+  #myModal .radio-wrap:has(.pm-amt:not(:disabled)){
+    grid-template-columns: 1fr 190px !important;
+  }
+}
+
+#myModal .pm-amt::placeholder{ color: rgba(11,18,32,.52); }
+#myModal .pm-amt:focus{
+  border-color: rgba(77,166,255,.85);
+  box-shadow: 0 0 0 3px rgba(77,166,255,.18), 0 12px 24px rgba(0,0,0,.14);
+  transform: translateY(-1px);
+}
+
+/* Disabled (no-mixto) */
+#myModal .pm-amt:disabled{
+  opacity: .92;
+  cursor: not-allowed;
+  transform: none;
+}
+
+/* Quitar spinners */
+#myModal input[type="number"]::-webkit-outer-spin-button,
+#myModal input[type="number"]::-webkit-inner-spin-button{
+  -webkit-appearance: none;
+  margin: 0;
+}
+#myModal input[type="number"]{ -moz-appearance:textfield; }
+
+/* Resaltado al marcar (si hay soporte :has) */
+#myModal .mix-row:has(.pm-check:checked),
+#myModal .radio-wrap:has(.pm-check:checked){
+  background: linear-gradient(180deg, rgba(77,166,255,.18), rgba(255,255,255,.06));
+  border-color: rgba(77,166,255,.30);
+  box-shadow: 0 14px 30px rgba(0,0,0,.16), inset 0 0 0 1px rgba(255,255,255,.05);
+}
+
+/* =========================================================
+   ✅ EFECTIVO OPTIONS (solo NO mixto)
+   ========================================================= */
+#myModal #efectivo-options{
+  display:none;
+  margin: 12px 0 10px;
+  padding: 14px 14px;
+  border-radius: 18px;
+
+  background: rgba(255,255,255,.07);
+  border: 1px solid rgba(255,255,255,.12);
+  box-shadow: 0 16px 30px rgba(0,0,0,.16);
+}
+#myModal #efectivo-options label{
+  margin: 0 0 8px 0;
+  display:block;
+  font-weight: 950;
+  color:#fff;
+  opacity: .98;
+}
+#myModal #monto-recibido{
+  width: 100% !important;
+  min-width: 0 !important;
+  height: 46px;
+
+  padding: 12px 12px;
+  border-radius: 16px;
+
+  border: 1px solid rgba(255,255,255,.30);
+  background: rgba(255,255,255,.96);
+  color:#0b1220;
+
+  outline:none;
+  box-shadow: 0 12px 24px rgba(0,0,0,.14);
+}
+#myModal #monto-recibido:focus{
+  border-color: rgba(77,166,255,.85);
+  box-shadow: 0 0 0 3px rgba(77,166,255,.18), 0 12px 24px rgba(0,0,0,.14);
+}
+#myModal #cambio{
+  margin: 10px 0 0;
+  font-weight: 950;
+  color: #eaffea;
+  text-shadow: 0 10px 22px rgba(0,0,0,.22);
+}
+
+/* ✅ fuerza extra: en mixto NUNCA mostrar efectivo-options aunque alguien lo ponga inline */
+#myModal.modal[data-mixto="1"] #efectivo-options{
+  display:none !important;
+}
+
+/* =========================================================
+   ✅ ERROR MIX
+   ========================================================= */
+#myModal #mix-error{
+  display:none; /* JS lo muestra con texto */
+  border-radius: 14px;
+  padding: 10px 12px;
+  background: rgba(255,77,109,.12);
+  border: 1px solid rgba(255,77,109,.28);
+  color: #ffd7df;
+  box-shadow: 0 14px 28px rgba(0,0,0,.14);
+}
+
+/* =========================================================
+   ✅ BOTÓN CONFIRMAR
+   ========================================================= */
+#myModal #confirmar-pago,
+#myModal .btn-confirmar{
+  width:100%;
+  height: 54px;
+  margin-top: 14px;
+
+  border: none;
+  border-radius: 18px;
+
+  color:#fff;
+  font-weight: 950;
+  letter-spacing: .7px;
+  text-transform: uppercase;
+
+  background:
+    linear-gradient(180deg, rgba(255,255,255,.18), rgba(255,255,255,0)),
+    linear-gradient(180deg, var(--na-green), var(--na-green2));
+
+  box-shadow: 0 22px 44px rgba(40,167,69,.30), inset 0 0 0 1px rgba(255,255,255,.18);
+  cursor:pointer;
+
+  transition: transform .14s var(--na-ease), filter .14s var(--na-ease), box-shadow .14s var(--na-ease);
+}
+#myModal #confirmar-pago:hover,
+#myModal .btn-confirmar:hover{
+  transform: translateY(-1px);
+  filter: brightness(1.05);
+  box-shadow: 0 28px 56px rgba(40,167,69,.36), inset 0 0 0 1px rgba(255,255,255,.22);
+}
+#myModal #confirmar-pago:active,
+#myModal .btn-confirmar:active{
+  transform: translateY(0);
+}
+
+/* =========================================================
+   ✅ RESPONSIVE (evita desbordes en móvil)
+   ========================================================= */
+@media (max-width: 520px){
+  #myModal .modal-content{
+    width: min(560px, 96vw);
+    padding: 16px 14px 14px;
+    border-radius: 18px;
+  }
+
+  /* en móvil, siempre una columna */
+  #myModal .mix-row.show-amt,
+  #myModal .radio-wrap.show-amt{
+    grid-template-columns: 1fr !important;
+    gap: 10px;
+  }
+
+  /* fallback móvil si :has está activo */
+  @supports selector(.mix-row:has(.pm-amt)){
+    #myModal .mix-row:has(.pm-amt:not(:disabled)),
+    #myModal .radio-wrap:has(.pm-amt:not(:disabled)){
+      grid-template-columns: 1fr !important;
+      gap: 10px;
+    }
+  }
+
+  #myModal .pm-amt{ height: 44px; }
+}
+
+/* Accesibilidad: menos animación */
+@media (prefers-reduced-motion: reduce){
+  #myModal .modal-content { transition:none; }
+}
+
+/* Alto contraste del sistema */
+@media (forced-colors: active){
+  #myModal.modal{ background: rgba(0,0,0,.6); }
+  #myModal .modal-content{
+    background: Canvas; color: CanvasText; border: 1px solid CanvasText;
+  }
+  #myModal .total-banner{
+    background: Canvas; border: 1px solid CanvasText; box-shadow:none;
+  }
+  #myModal .total-label, #myModal .total-amount{ color: CanvasText; text-shadow:none; }
+  #myModal #confirmar-pago{ forced-color-adjust: auto; }
+}

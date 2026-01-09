@@ -1,0 +1,90 @@
+{#  templates/visualizar_empleados.html  #}
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Visualizar Empleados{% endblock %}
+
+{% block extra_head %}
+  <!-- Estilos de la página -->
+  <link rel="stylesheet" href="{% static 'css/visualizar_empleados.css' %}">
+  <!-- DataTables + FA -->
+  <link rel="stylesheet"
+        href="https://cdn.datatables.net/1.11.5/css/jquery.dataTables.min.css">
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/js/all.min.js"></script>
+  <script defer src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+  <script defer src="https://cdn.datatables.net/1.11.5/js/jquery.dataTables.min.js"></script>
+{% endblock %}
+
+{% block content %}
+  <div class="container">
+    <h2><i class="fas fa-user-tie"></i> Lista de Empleados</h2>
+
+    {# ---- mensajes Django ---- #}
+    {% if messages %}
+      <div class="messages">
+        {% for message in messages %}
+          <div class="alert {% if message.tags %}alert-{{ message.tags }}{% endif %}">
+            {{ message }}
+          </div>
+        {% endfor %}
+      </div>
+    {% endif %}
+
+    {# ---- buscador externo ---- #}
+    <div class="search-wrapper">
+      <span class="search-icon"><i class="fas fa-search"></i></span>
+      <input id="buscador-empleados"
+             class="search-input"
+             type="text"
+             placeholder="Buscar…">
+    </div>
+
+    {# ---- tabla ---- #}
+    <table id="empleadosTable" class="display">
+      <thead>
+        <tr>
+          <th>Nombre</th>
+          <th>Apellido</th>
+          <th>Teléfono</th>
+          <th>Email</th>
+          <th>Dirección</th>
+          <th>Puesto</th>
+          <th>N.º Documento</th>
+          <th class="no-sort">Acciones</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for e in empleados %}
+        <tr>
+          <td data-label="Nombre">{{ e.nombre }}</td>
+          <td data-label="Apellido">{{ e.apellido }}</td>
+          <td data-label="Teléfono">{{ e.telefono }}</td>
+          <td data-label="Email">{{ e.email }}</td>
+          <td data-label="Dirección">{{ e.direccion|default:"—" }}</td>
+          <td data-label="Puesto">{{ e.puesto|default:"—" }}</td>
+          <td data-label="N.º Documento">{{ e.numerodocumento }}</td>
+
+          <td data-label="Acciones" class="actions-cell">
+            <div class="btn-container">
+              <a href="{% url 'editar_empleado' e.empleadoid %}"
+                 class="btn editar"
+                 title="Editar {{ e.nombre }}"><i class="fas fa-edit"></i></a>
+
+              <button type="button"
+                      class="btn borrar"
+                      data-nombre="{{ e.nombre }} {{ e.apellido }}"><i class="fas fa-trash-alt"></i></button>
+            </div>
+
+            <!-- Formulario oculto DELETE -->
+            <form class="delete-form"
+                  action="{% url 'eliminar_empleado' e.empleadoid %}"
+                  method="post" style="display:none;">{% csrf_token %}</form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <script defer src="{% static 'javascript/visualizar_empleados.js' %}"></script>
+{% endblock %}

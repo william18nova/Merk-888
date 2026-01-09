@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Puntos de Pago{% endblock %}
+
+{% block extra_head %}
+  <!-- Font-Awesome + DataTables -->
+  <link rel="stylesheet"
+        href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"/>
+  <link rel="stylesheet"
+        href="https://cdn.datatables.net/1.13.8/css/jquery.dataTables.min.css"/>
+
+  <!-- Hoja de estilo propia -->
+  <link rel="stylesheet"
+        href="{% static 'css/visualizar_puntos_pago.css' %}">
+{% endblock %}
+
+{% block content %}
+  <div class="container">
+    <h2><i class="fas fa-credit-card"></i> Puntos de Pago</h2>
+
+    {% if messages %}
+      <div class="messages">
+        {% for m in messages %}
+          <div class="alert {% if m.tags %}alert-{{ m.tags }}{% endif %}">{{ m }}</div>
+        {% endfor %}
+      </div>
+    {% endif %}
+
+    {# ---------- buscador sucursal ---------- #}
+    <form id="sucursalForm" class="search-wrapper" method="post">
+      {% csrf_token %}
+      <i class="fas fa-search"></i>
+      <input  id="id_sucursal_autocomplete"
+              class="search-input"
+              placeholder="Buscar sucursal…"
+              autocomplete="off"
+              value="{{ sucursal_seleccionada.nombre|default_if_none:'' }}">
+      <input  type="hidden" id="id_sucursal" name="sucursal"
+              value="{{ sucursal_seleccionada.sucursalid|default_if_none:'' }}">
+      <div   id="sucursal-autocomplete-results"
+             class="autocomplete-results"></div>
+    </form>
+
+    {# ---------- botón editar ---------- #}
+    {% if sucursal_seleccionada %}
+      <div class="btn-container">
+        <a  href="{% url 'editar_puntos_pago' sucursal_seleccionada.pk %}"
+            class="btn-editar-inventario">
+          Editar Puntos de Pago
+        </a>
+      </div>
+    {% endif %}
+
+    {# ---------- tabla ---------- #}
+    {% if puntos_pago %}
+      <table id="puntosPagoTable" class="display">
+        <thead>
+          <tr>
+            <th>Nombre</th>
+            <th>Descripción</th>
+            <th class="no-sort">Acciones</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for p in puntos_pago %}
+            <tr>
+              <td data-label="Nombre">{{ p.nombre }}</td>
+              <td data-label="Descripción">{{ p.descripcion }}</td>
+              <td data-label="Acciones" class="actions-cell">
+                <button type="button"
+                        class="btn-eliminar"
+                        data-pp-id="{{ p.puntopagoid }}"
+                        title="Eliminar punto de pago">
+                  <i class="fas fa-trash-alt"></i>
+                </button>
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% endif %}
+  </div>
+
+  {# ---------- scripts ---------- #}
+  <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+  <script src="https://cdn.datatables.net/1.13.8/js/jquery.dataTables.min.js"></script>
+
+  <script>
+    const sucursalAutocompleteUrl = "{% url 'sucursal_punto_pago_visualizar_autocomplete' %}";
+    const eliminarPuntoPagoUrl    = "{% url 'eliminar_punto_pago' 0 %}";
+  </script>
+
+  <script defer
+          src="{% static 'javascript/visualizar_puntos_pago.js' %}">
+  </script>
+{% endblock %}

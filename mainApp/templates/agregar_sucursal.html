@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% load static %}
+{% block title %}Agregar Sucursal{% endblock %}
+
+{% block extra_head %}
+  <!-- Estilos de la página -->
+  <link rel="stylesheet" href="{% static 'css/agregar_sucursal.css' %}">
+  <!-- Font Awesome 6 (CSS). Evita el build JS para que no “falle” el ícono -->
+  <link rel="stylesheet"
+        href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css"
+        crossorigin="anonymous" referrerpolicy="no-referrer" />
+{% endblock %}
+
+{% block content %}
+  <div class="container">
+    <!-- Ícono correcto de FA6 -->
+    <i class="fa-solid fa-store icon icon-glyph" aria-hidden="true"></i>
+
+    <h2>Agregar Sucursal</h2>
+    <p class="obligatorio-texto">
+      Los campos marcados con <span class="required">*</span> son obligatorios.
+    </p>
+
+    <div id="error-message" class="alert alert-error" style="display:none;"></div>
+    <div id="success-message" class="alert alert-success" style="display:none;">
+      <i class="fa-solid fa-check-circle" aria-hidden="true"></i>
+      <span id="success-text"></span>
+    </div>
+
+    <form id="sucursalForm" method="post" action="{% url 'agregar_sucursal' %}">
+      {% csrf_token %}
+      {% for field in form.visible_fields %}
+        <div class="form-group">
+          <label for="{{ field.id_for_label }}">
+            {{ field.label }}{% if field.field.required %} <span class="required">*</span>{% endif %}
+          </label>
+          {{ field }}
+          <div class="field-error" id="error-{{ field.html_name }}"></div>
+        </div>
+      {% endfor %}
+      <button type="submit" class="btn-agregar-sucursal">Agregar</button>
+    </form>
+  </div>
+
+  <script src="{% static 'javascript/agregar_sucursal.js' %}"></script>
+{% endblock %}

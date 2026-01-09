@@ -1,0 +1,22 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}Inicio{% endblock %}
+
+{% block extra_head %}
+  <link rel="stylesheet" href="{% static 'css/homePage.css' %}">
+{% endblock %}
+
+{% block content %}
+<main class="home">
+    <h1 class="home__title">Software Administrativo de Supermercados</h1>
+    <figure class="home__logo">
+      <img src="{% static 'images/logoNovaAdvancetransparente.png' %}"
+           alt="Logo Nova Advance" loading="lazy">
+    </figure>
+    <p class="home__tagline">Nova Advance®</p>
+    <p class="home__copyright">
+      © 2024 Nova Advance. Todos los derechos reservados.
+    </p>
+</main>
+{% endblock %}

@@ -1,0 +1,79 @@
+{# templates/roles_permisos.html #}
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Roles ↔ Permisos{% endblock %}
+
+{% block extra_head %}
+  <link rel="stylesheet"
+        href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"/>
+  <link rel="stylesheet"
+        href="https://cdn.datatables.net/1.13.8/css/jquery.dataTables.min.css"/>
+  <link rel="stylesheet" href="{% static 'css/roles_permisos.css' %}">
+{% endblock %}
+
+{% block content %}
+  <div class="container-rp">
+    <i class="fas fa-key icon-rp"></i>
+    <h2>Asignar Permisos a Rol</h2>
+    <p class="obligatorio-texto">
+      Seleccione un <b>Rol</b>, busque uno o varios <b>Permisos</b> y presione <b>Agregar permiso</b>.
+      Luego <b>Guardar</b> para asociarlos.
+    </p>
+
+    <div id="error-message"   class="alert alert-error"   style="display:none;"></div>
+    <div id="success-message" class="alert alert-success" style="display:none;"></div>
+
+    <form id="rolPermisoForm" method="post" action="{% url 'roles_permisos' %}">
+      {% csrf_token %}
+
+      <!-- Rol -->
+      <div class="form-group-rp">
+        <label for="id_rol_autocomplete">Rol <span class="required">*</span></label>
+        {{ form.rol_autocomplete }}
+        {{ form.rol }}
+        <div class="autocomplete-results" id="rol-autocomplete-results"></div>
+        <div class="field-error" id="error-id_rol"></div>
+      </div>
+
+      <!-- Permiso -->
+      <div class="form-group-rp">
+        <label for="id_permiso_autocomplete">Permiso</label>
+        {{ form.permiso_autocomplete }}
+        {{ form.permisoid }}
+        <div class="autocomplete-results" id="permiso-autocomplete-results"></div>
+        <div class="field-error" id="error-id_permisoid"></div>
+      </div>
+
+      <button type="button" id="agregarPermisoBtn" class="btn-add">
+        Agregar permiso
+      </button>
+
+      <div class="table-wrap">
+        <table id="permisos-list" class="display">
+          <thead>
+            <tr>
+              <th>Permiso</th>
+              <th>Acciones</th>
+            </tr>
+          </thead>
+          <tbody id="permisos-body"></tbody>
+        </table>
+      </div>
+
+      <input type="hidden" id="id_permisos_temp" name="permisos_temp">
+      <div class="actions">
+        <button type="submit" class="btn-save">Guardar</button>
+      </div>
+    </form>
+  </div>
+
+  <script>
+    const rolAutocompleteUrl     = "{% url 'rol_autocomplete' %}";
+    const permisoAutocompleteUrl = "{% url 'permiso_autocomplete' %}";
+  </script>
+
+  <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+  <script src="https://cdn.datatables.net/1.13.8/js/jquery.dataTables.min.js"></script>
+  <script defer src="{% static 'javascript/roles_permisos.js' %}"></script>
+{% endblock %}

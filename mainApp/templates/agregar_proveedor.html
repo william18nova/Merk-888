@@ -1,0 +1,84 @@
+{# templates/agregar_proveedor.html #}
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Agregar Proveedor{% endblock %}
+
+{# ---------- CSS & Iconos ---------- #}
+{% block extra_head %}
+  <link rel="stylesheet"
+        href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"/>
+  <link rel="stylesheet" href="{% static 'css/agregar_proveedor.css' %}">
+{% endblock %}
+
+{% block content %}
+  <div class="container-proveedor">
+    <i class="fas fa-truck icon-proveedor"></i>
+    <h2>Agregar Proveedor</h2>
+
+    <p class="obligatorio-texto">
+      Todos los campos con <span class="required">*</span> son obligatorios.
+    </p>
+
+    <!-- alertas globales controladas por JS -->
+    <div id="error-message"   class="alert alert-error"   style="display:none;"></div>
+    <div id="success-message" class="alert alert-success" style="display:none;">
+      <i class="fas fa-check-circle success-icon"></i>
+      <span id="success-text"></span>
+    </div>
+
+    <form id="form-agregar-proveedor"
+          method="post"
+          action="{% url 'agregar_proveedor' %}">
+      {% csrf_token %}
+
+      {# ---------- Nombre ---------- #}
+      <div class="form-group-proveedor">
+        <label for="{{ form.nombre.id_for_label }}">
+          {{ form.nombre.label }} <span class="required">*</span>
+        </label>
+        {{ form.nombre }}
+        <div class="field-error" id="error-id_nombre"></div>
+      </div>
+
+      {# ---------- Empresa ---------- #}
+      <div class="form-group-proveedor">
+        <label for="{{ form.empresa.id_for_label }}">
+          {{ form.empresa.label }} <span class="required">*</span>
+        </label>
+        {{ form.empresa }}
+        <div class="field-error" id="error-id_empresa"></div>
+      </div>
+
+      {# ---------- Teléfono ---------- #}
+      <div class="form-group-proveedor">
+        <label for="{{ form.telefono.id_for_label }}">
+          {{ form.telefono.label }} <span class="required">*</span>
+        </label>
+        {{ form.telefono }}
+        <div class="field-error" id="error-id_telefono"></div>
+      </div>
+
+      {# ---------- Email ---------- #}
+      <div class="form-group-proveedor">
+        <label for="{{ form.email.id_for_label }}">{{ form.email.label }}</label>
+        {{ form.email }}
+        <div class="field-error" id="error-id_email"></div>
+      </div>
+
+      {# ---------- Dirección ---------- #}
+      <div class="form-group-proveedor">
+        <label for="{{ form.direccion.id_for_label }}">{{ form.direccion.label }}</label>
+        {{ form.direccion }}
+        <div class="field-error" id="error-id_direccion"></div>
+      </div>
+
+      <button type="submit" class="btn-agregar-proveedor">
+        Agregar Proveedor
+      </button>
+    </form>
+  </div>
+
+  {# ----------  JS propio (se carga al final, después del DOM)  ---------- #}
+  <script src="{% static 'javascript/agregar_proveedor.js' %}"></script>
+{% endblock %}

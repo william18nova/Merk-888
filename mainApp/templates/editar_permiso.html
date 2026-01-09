@@ -1,0 +1,50 @@
+{# templates/permisos/editar_permiso.html #}
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Editar Permiso{% endblock %}
+
+{% block extra_head %}
+  {# Reutilizamos la misma hoja que usamos para agregar/editar rol #}
+  <link rel="stylesheet" href="{% static 'css/agregar_rol.css' %}">
+  <script defer
+          src="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/js/all.min.js"></script>
+{% endblock %}
+
+{% block content %}
+  <div class="container">
+    <i class="fas fa-key icon"></i>
+    <h2>Editar Permiso</h2>
+
+    <p class="obligatorio-texto">
+      Los campos marcados con <span class="required">*</span> son obligatorios.
+    </p>
+
+    <div id="error-message"   class="alert alert-error"   style="display:none;"></div>
+    <div id="success-message" class="alert alert-success" style="display:none;"></div>
+
+    <form id="permisoForm"
+          method="post"
+          action="{% url 'editar_permiso' permiso.pk %}">
+      {% csrf_token %}
+
+      {# Campos visibles + errores bajo el input #}
+      {% for field in form.visible_fields %}
+        <div class="form-group">
+          <label for="{{ field.id_for_label }}">
+            {{ field.label }}{% if field.field.required %} <span class="required">*</span>{% endif %}
+          </label>
+          {{ field }}
+          <div class="field-error" id="error-id_{{ field.name }}"></div>
+          {% if field.name == "nombre" %}
+            <small class="hint">Máx. 50 caracteres, p. ej. “Agregar sucursal”.</small>
+          {% endif %}
+        </div>
+      {% endfor %}
+
+      <button type="submit" class="btn-agregar-rol">Guardar cambios</button>
+    </form>
+  </div>
+
+  <script defer src="{% static 'javascript/editar_permiso.js' %}"></script>
+{% endblock %}

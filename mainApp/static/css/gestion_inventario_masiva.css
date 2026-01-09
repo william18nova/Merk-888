@@ -1,0 +1,358 @@
+/* static/css/gestion_inventario_masiva.css */
+
+/* Fuente */
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap");
+
+/* Tokens (paleta Nova) */
+:root{
+  --bg-1:#153060;
+  --bg-2:#20497d;
+  --brand:#4da6ff;
+  --brand-2:#3d8cff;
+
+  --text:#f8fbff;
+  --muted:rgba(248,251,255,.72);
+
+  --glass: rgba(255,255,255,.08);
+  --glass-2: rgba(255,255,255,.10);
+  --stroke: rgba(255,255,255,.16);
+  --shadow: 0 18px 55px rgba(0,0,0,.35);
+
+  --radius: 18px;
+  --radius-sm: 12px;
+}
+
+*{ box-sizing:border-box; }
+html, body{ height:100%; }
+body{
+  margin:0;
+  font-family:Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+  color:var(--text);
+  background:
+    radial-gradient(900px 600px at 20% 15%, rgba(77,166,255,.18), transparent 55%),
+    radial-gradient(900px 600px at 80% 75%, rgba(61,140,255,.14), transparent 55%),
+    linear-gradient(180deg, var(--bg-1), var(--bg-2));
+}
+
+/* ================= Layout moderno (recomendado) ================= */
+.masivo-page{
+  min-height:100vh;
+  padding:26px 18px;
+}
+
+.masivo-layout{
+  width:min(1500px, 96vw);
+  margin:0 auto;
+  display:grid;
+  grid-template-columns: 420px 1fr;
+  gap:18px;
+  align-items:start;
+}
+
+@media (max-width: 1100px){
+  .masivo-layout{
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Si no usas layout nuevo, intentamos “rescatar” tu estructura vieja */
+.container-inventario{
+  /* si tu panel está en container-inventario, lo tratamos como sidebar */
+  width: min(520px, 96vw);
+  margin: 0 auto;
+}
+
+/* ================= Panels glass ================= */
+.masivo-sidebar,
+.masivo-main,
+.container-inventario{
+  background: linear-gradient(180deg, rgba(255,255,255,.10), rgba(255,255,255,.06));
+  border: 1px solid var(--stroke);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.masivo-sidebar{
+  padding:18px 18px 16px;
+}
+
+.masivo-main{
+  padding:14px;
+}
+
+/* Título + ícono */
+.icon-inventario,
+.masivo-icon{
+  display:block;
+  font-size:56px;
+  color: var(--brand);
+  text-align:center;
+  margin: 4px auto 10px;
+  filter: drop-shadow(0 10px 22px rgba(0,0,0,.25));
+}
+
+h2{
+  margin:0 0 10px;
+  text-align:center;
+  font-size:24px;
+  letter-spacing:.2px;
+}
+
+/* ================= Alerts ================= */
+.alert{
+  border-radius: 12px;
+  padding:10px 12px;
+  font-size:13px;
+  border:1px solid rgba(255,255,255,.18);
+  backdrop-filter: blur(8px);
+}
+.alert-success{
+  background: rgba(80, 220, 140, .14);
+  color: #dfffea;
+}
+.alert-error{
+  background: rgba(255, 82, 82, .16);
+  color: #ffe2e2;
+}
+.alert i{ margin-right:8px; }
+
+/* ================= Form ================= */
+.form-group-precio{
+  margin: 10px 0 12px;
+}
+
+label{
+  display:block;
+  font-size:12px;
+  font-weight:700;
+  color: rgba(248,251,255,.92);
+  margin-bottom:6px;
+}
+.required{ color:#ff6b6b; }
+
+.form-control{
+  width:100%;
+  height: 38px;
+  border-radius: 12px;
+  border:1px solid rgba(255,255,255,.16);
+  background: rgba(255,255,255,.10);
+  color: var(--text);
+  outline:none;
+  padding: 9px 12px;
+  transition: .15s ease;
+}
+.form-control::placeholder{ color: rgba(248,251,255,.55); }
+
+.form-control:focus{
+  border-color: rgba(77,166,255,.55);
+  box-shadow: 0 0 0 3px rgba(77,166,255,.18);
+}
+
+/* Inputs dentro de la tabla: blancos (para legibilidad) */
+.table-wrap .form-control,
+#tabla-masivo .form-control{
+  height: 30px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: rgba(255,255,255,.96);
+  color: #0f1d35;
+  border: 1px solid rgba(10,20,40,.22);
+  box-shadow: none;
+}
+.table-wrap .form-control:focus,
+#tabla-masivo .form-control:focus{
+  border-color: rgba(21,48,96,.45);
+  box-shadow: 0 0 0 2px rgba(77,166,255,.22);
+}
+
+/* errores de campo (si los usas) */
+.field-error{
+  font-size:12px;
+  margin-top:6px;
+  color:#ffd1d1;
+  display:none;
+}
+.field-error.visible{ display:block; }
+.input-error{ border-color:#ff6b6b !important; box-shadow:0 0 0 3px rgba(255,107,107,.18) !important; }
+
+/* Row barras + cámara (si existe en tu página) */
+.barcode-row{
+  display:flex;
+  gap:10px;
+  align-items:center;
+}
+.btn-scan{
+  width: 42px;
+  height: 38px;
+  border-radius: 12px;
+  border:1px solid rgba(255,255,255,.16);
+  background: rgba(255,255,255,.12);
+  color: var(--text);
+  cursor:pointer;
+  transition:.15s ease;
+}
+.btn-scan:hover{ transform: translateY(-1px); border-color: rgba(77,166,255,.45); }
+
+/* ================= Buttons ================= */
+.btn-guardar-precio,
+.btn-agregar-precio,
+#btnGuardarTodo,
+#btnNuevoProducto{
+  width:100%;
+  height: 42px;
+  border-radius: 12px;
+  border: 1px solid rgba(255,255,255,.16);
+  background: linear-gradient(180deg, var(--brand), var(--brand-2));
+  color: #07142a;
+  font-weight: 800;
+  cursor: pointer;
+  transition:.15s ease;
+  box-shadow: 0 12px 24px rgba(0,0,0,.22);
+}
+.btn-guardar-precio:hover,
+.btn-agregar-precio:hover,
+#btnGuardarTodo:hover,
+#btnNuevoProducto:hover{
+  transform: translateY(-1px);
+  filter: brightness(1.03);
+}
+.btn-guardar-precio:active,
+.btn-agregar-precio:active,
+#btnGuardarTodo:active,
+#btnNuevoProducto:active{
+  transform: translateY(0px);
+}
+
+/* ================= Tabla (DataTables) ================= */
+.table-wrap{
+  margin-top: 14px;
+  border-radius: 14px;
+  border: 1px solid rgba(255,255,255,.14);
+  background: rgba(0,0,0,.12);
+  overflow: hidden; /* recorta bordes */
+}
+
+/* Contenedor scroll horizontal elegante */
+.table-wrap{
+  overflow-x:auto;
+  -webkit-overflow-scrolling: touch;
+}
+.table-wrap::-webkit-scrollbar{ height: 10px; }
+.table-wrap::-webkit-scrollbar-track{ background: rgba(255,255,255,.08); border-radius: 999px; }
+.table-wrap::-webkit-scrollbar-thumb{ background: rgba(77,166,255,.45); border-radius: 999px; }
+
+#tabla-masivo,
+#productos-list{
+  width:100% !important;
+  border-collapse: separate !important;
+  border-spacing: 0 !important;
+  min-width: 1180px; /* ✅ clave: evita que se “aplasten” columnas */
+}
+
+/* Header bonito + sticky */
+#tabla-masivo thead th,
+#productos-list thead th{
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: linear-gradient(180deg, rgba(77,166,255,.30), rgba(61,140,255,.18));
+  color: rgba(248,251,255,.95);
+  font-size: 12px;
+  font-weight: 800;
+  text-align: center;
+  padding: 10px 8px !important;
+  border-bottom: 1px solid rgba(255,255,255,.16) !important;
+  white-space: nowrap;
+}
+
+#tabla-masivo tbody td,
+#productos-list tbody td{
+  padding: 10px 8px !important;
+  border-bottom: 1px solid rgba(255,255,255,.10);
+  vertical-align: middle;
+}
+
+#tabla-masivo tbody tr:hover,
+#productos-list tbody tr:hover{
+  background: rgba(255,255,255,.04);
+}
+
+/* Botón eliminar dentro tabla */
+.btn-eliminar{
+  width: 36px;
+  height: 30px;
+  border-radius: 8px;
+  border: 1px solid rgba(255,255,255,.14);
+  background: rgba(255, 82, 82, .16);
+  color: #ffd5d5;
+  cursor:pointer;
+  transition:.15s ease;
+}
+.btn-eliminar:hover{ transform: translateY(-1px); background: rgba(255,82,82,.24); }
+
+/* DataTables wrapper (quita cosas raras) */
+.dataTables_wrapper .dataTables_length,
+.dataTables_wrapper .dataTables_filter,
+.dataTables_wrapper .dataTables_info,
+.dataTables_wrapper .dataTables_paginate{
+  display:none !important;
+}
+table.dataTable.no-footer{
+  border-bottom: none !important;
+}
+table.dataTable thead th, table.dataTable thead td{
+  border-bottom: none !important;
+}
+
+/* ================= jQuery UI Autocomplete ================= */
+.ui-autocomplete{
+  z-index: 99999 !important;
+  border-radius: 12px;
+  border: 1px solid rgba(255,255,255,.16);
+  background: rgba(10,20,40,.95);
+  backdrop-filter: blur(10px);
+  box-shadow: 0 18px 40px rgba(0,0,0,.45);
+  padding: 6px;
+}
+.ui-menu-item-wrapper{
+  border-radius: 10px;
+  padding: 10px 10px;
+  color: rgba(248,251,255,.9);
+}
+.ui-state-active,
+.ui-widget-content .ui-state-active{
+  border: none !important;
+  background: rgba(77,166,255,.22) !important;
+  color: rgba(248,251,255,.98) !important;
+}
+
+/* ================= Modal (si lo usas) ================= */
+#modalNuevoProducto{
+  position: fixed;
+  inset: 0;
+  display:none;
+  align-items:center;
+  justify-content:center;
+  padding: 18px;
+  background: rgba(0,0,0,.55);
+  z-index: 999999;
+}
+
+#modalNuevoProducto .modal-card{
+  width: min(640px, 96vw);
+  background: linear-gradient(180deg, rgba(255,255,255,.10), rgba(255,255,255,.06));
+  border: 1px solid rgba(255,255,255,.18);
+  border-radius: 18px;
+  box-shadow: 0 25px 70px rgba(0,0,0,.55);
+  padding: 16px;
+}
+
+/* ================= Fallback: si sigues usando SOLO un “container” ================= */
+/* Haz que ese container NO sea tan angosto: */
+.container-inventario{
+  max-width: 1500px !important;
+  width: min(1500px, 96vw) !important;
+  padding: 18px;
+}

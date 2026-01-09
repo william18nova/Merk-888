@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Pedidos pagados{% endblock %}
+
+{% block extra_head %}
+<link rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"/>
+<link rel="stylesheet"
+      href="{% static 'css/reportes_pedidos_pagados.css' %}">
+{% endblock %}
+
+{% block content %}
+<div class="wrap">
+  <div class="card">
+    <h2><i class="fas fa-file-invoice-dollar"></i> Pedidos pagados</h2>
+
+    <div id="flash-ok"   class="alert alert-success" style="display:none"></div>
+    <div id="flash-err"  class="alert alert-error"   style="display:none"></div>
+
+    <div class="grid">
+      <!-- Sucursal -->
+      <div class="field">
+        <label>Sucursal</label>
+        <div class="ac-wrap">
+          <i class="fas fa-store"></i>
+          <input id="ac_sucursal" class="ac-input" placeholder="Buscar sucursal…" autocomplete="off">
+          <input type="hidden" id="sucursal_id">
+          <div id="box_sucursal" class="ac-box"></div>
+        </div>
+      </div>
+
+      <!-- Punto de pago -->
+      <div class="field">
+        <label>Punto de pago (opcional)</label>
+        <div class="ac-wrap">
+          <i class="fas fa-cash-register"></i>
+          <input id="ac_puntopago" class="ac-input" placeholder="Buscar punto de pago…" autocomplete="off" disabled>
+          <input type="hidden" id="puntopago_id">
+          <div id="box_puntopago" class="ac-box"></div>
+        </div>
+        <button type="button" id="clear_pp" class="link-clear" disabled>Quitar selección</button>
+      </div>
+
+      <!-- Fecha (opcional) -->
+      <div class="field">
+        <label>Fecha recibida (opcional)</label>
+        <div class="date-wrap">
+          <i class="fas fa-calendar-day"></i>
+          <input type="date" id="fecha" class="date-input">
+        </div>
+      </div>
+
+      <!-- Botón consultar -->
+      <div class="field field-btn">
+        <button id="btnConsultar" class="btn-primary">
+          <i class="fas fa-magnifying-glass"></i> Consultar
+        </button>
+      </div>
+    </div>
+
+    <div class="results">
+      <div class="kpi">
+        <div class="kpi-title">Número de pedidos</div>
+        <div id="kpiCantidad" class="kpi-value">—</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-title">Total pagado</div>
+        <div id="kpiTotal" class="kpi-value">—</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  const urlAcSucursal  = "{% url 'sucursal_con_pedidos_pagados_autocomplete' %}";
+  const urlAcPuntoPago = "{% url 'puntopago_con_pedidos_pagados_autocomplete' %}";
+  const urlResumen     = "{% url 'pedidos_pagados' %}";
+  const CSRF_TOKEN     = "{{ csrf_token }}";
+</script>
+<script defer src="{% static 'javascript/reportes_pedidos_pagados.js' %}"></script>
+{% endblock %}

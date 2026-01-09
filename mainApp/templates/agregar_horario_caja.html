@@ -1,0 +1,114 @@
+{# templates/agregar_horario_caja.html #}
+{% extends "base.html" %}
+{% load static %}
+{% block title %}Agregar Horario de Caja{% endblock %}
+
+{% block extra_head %}
+  <link rel="stylesheet"
+        href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+  <link rel="stylesheet" href="{% static 'css/agregar_horario.css' %}">
+{% endblock %}
+
+{% block content %}
+<div class="container-horario">
+  <i class="fas fa-clock icon-horario"></i>
+  <h2>Agregar Horario de Caja</h2>
+  <p class="obligatorio-texto">
+    Todos los campos con <span class="required">*</span> son obligatorios.
+  </p>
+
+  <div id="error-message"   class="alert alert-error"   style="display:none;"></div>
+  <div id="success-message" class="alert alert-success" style="display:none;"></div>
+
+  <form id="form-agregar-horario"
+        method="post"
+        action="{% url 'agregar_horario_caja' %}">
+    {% csrf_token %}
+
+    {# ─── Autocomplete Sucursal ─── #}
+    <div class="form-group-horario">
+      <label>Sucursal <span class="required">*</span></label>
+      <input type="text"
+             id="id_sucursal_autocomplete"
+             name="sucursal_autocomplete"
+             class="form-control"
+             placeholder="Escriba para buscar sucursal…"
+             autocomplete="off">
+      <input type="hidden" id="id_sucursalid" name="sucursalid">
+      <div id="sucursal-autocomplete-results"
+           class="autocomplete-results"></div>
+      <div class="field-error" id="error-id_sucursalid"></div>
+    </div>
+
+    {# ─── Autocomplete Punto de Pago ─── #}
+    <div class="form-group-horario">
+      <label>Punto de Pago <span class="required">*</span></label>
+      <input type="text"
+             id="id_puntopago_autocomplete"
+             name="puntopago_autocomplete"
+             class="form-control"
+             placeholder="Escriba para buscar punto de pago…"
+             autocomplete="off">
+      <input type="hidden" id="id_puntopagoid" name="puntopagoid">
+      <div id="puntopago-autocomplete-results"
+           class="autocomplete-results"></div>
+      <div class="field-error" id="error-id_puntopagoid"></div>
+    </div>
+
+    {{ form.dia_semana }}
+
+    {# ─── Selector de días ─── #}
+    <div class="days-container">
+      {% for d in days %}
+        <button type="button"
+                class="day-button"
+                data-day="{{ d }}">{{ d }}</button>
+      {% endfor %}
+    </div>
+    <div class="field-error" id="error-id_dia_semana"></div>
+
+    {# ─── Horas ─── #}
+    <div class="form-group-horario">
+      <label>Hora de Apertura <span class="required">*</span></label>
+      {{ form.horaapertura }}
+      <div class="field-error" id="error-id_horaapertura"></div>
+    </div>
+    <div class="form-group-horario">
+      <label>Hora de Cierre <span class="required">*</span></label>
+      {{ form.horacierre }}
+      <div class="field-error" id="error-id_horacierre"></div>
+    </div>
+
+    <button type="button"
+            id="btn-agregar-temporal"
+            class="btn-agregar-horario">
+      Agregar Horario Temporal
+    </button>
+
+    {# ─── Tabla temporal ─── #}
+    <div class="horarios-temp-container">
+      <table class="horarios-temp">
+        <thead>
+          <tr>
+            <th>Día</th>
+            <th>Apertura</th>
+            <th>Cierre</th>
+            <th>Acciones</th>
+          </tr>
+        </thead>
+        <tbody id="horarios-temp-body"></tbody>
+      </table>
+    </div>
+
+    <button type="submit" class="btn-guardar-horario">
+      Guardar Cambios
+    </button>
+  </form>
+</div>
+
+<script>
+  const sucursalAutocompleteUrl  = "{% url 'sucursal_horario_caja_autocomplete' %}";
+  const puntopagoAutocompleteUrl = "{% url 'puntopago_horario_caja_autocomplete' %}";
+</script>
+<script defer src="{% static 'javascript/agregar_horario_caja.js' %}"></script>
+{% endblock %}

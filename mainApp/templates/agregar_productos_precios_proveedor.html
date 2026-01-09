@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Agregar Precios de Proveedor{% endblock %}
+
+{% block extra_head %}
+  <!-- Font-Awesome -->
+  <link rel="stylesheet"
+        href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"/>
+  <!-- DataTables -->
+  <link rel="stylesheet"
+        href="https://cdn.datatables.net/1.13.8/css/jquery.dataTables.min.css"/>
+  <!-- Estilos page-specific -->
+  <link rel="stylesheet"
+        href="{% static 'css/agregar_productos_precios_proveedor.css' %}">
+{% endblock %}
+
+{% block content %}
+  <div class="container-precios">
+    <i class="fas fa-truck icon-proveedor"></i>
+    <h2>Agregar Precios de Proveedor</h2>
+    <p class="obligatorio-texto">
+      Todos los campos con <span class="required">*</span> son obligatorios.
+    </p>
+
+    <!-- alertas globales -->
+    <div id="error-message"   class="alert alert-error"   style="display:none;"></div>
+    <div id="success-message" class="alert alert-success" style="display:none;"></div>
+
+    <form id="preciosForm" method="post"
+          action="{% url 'agregar_productos_precios_proveedor' %}">
+      {% csrf_token %}
+
+      {# ---------- Proveedor ---------- #}
+      <div class="form-group-precio">
+        <label for="id_proveedor_autocomplete">Proveedor <span class="required">*</span></label>
+        {{ form.proveedor_autocomplete }}
+        {{ form.proveedor }}
+        <div class="autocomplete-results" id="proveedor-autocomplete-results"></div>
+        <div class="field-error" id="error-id_proveedor"></div>
+      </div>
+
+      {# ---------- Producto ---------- #}
+      <div class="form-group-precio">
+        <label for="id_producto_autocomplete">Producto <span class="required">*</span></label>
+        {{ form.producto_autocomplete }}
+        {{ form.productoid }}
+        <div class="autocomplete-results" id="producto-autocomplete-results"></div>
+        <div class="field-error" id="error-id_productoid"></div>
+      </div>
+
+      {# ---------- Precio ---------- #}
+      <div class="form-group-precio">
+        <label for="id_precio">Precio <span class="required">*</span></label>
+        {{ form.precio }}
+        <div class="field-error" id="error-id_precio"></div>
+      </div>
+
+      <button type="button" id="agregarProductoBtn" class="btn-agregar-precio">
+        Agregar Producto
+      </button>
+
+      {# ---------- tabla DataTable ---------- #}
+      <div class="table-wrap">
+        <table id="productos-list" class="display">
+          <thead>
+            <tr>
+              <th>Producto</th>
+              <th>Precio</th>
+              <th>Acciones</th>
+            </tr>
+          </thead>
+          <tbody id="productos-body"></tbody>
+        </table>
+      </div>
+
+      <input type="hidden" id="id_precios_temp" name="precios_temp">
+
+      <button type="submit" class="btn-guardar-precio">
+        Guardar Productos y Precios
+      </button>
+    </form>
+  </div>
+
+  {# ---------- rutas autocompletado ---------- #}
+  <script>
+    const proveedorAutocompleteUrl = "{% url 'proveedor_precios_autocomplete' %}";
+    const productoAutocompleteUrl  = "{% url 'producto_precios_autocomplete' %}";
+  </script>
+
+  <!-- jQuery + DataTables -->
+  <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+  <script src="https://cdn.datatables.net/1.13.8/js/jquery.dataTables.min.js"></script>
+
+  <!-- JS page-specific -->
+  <script defer src="{% static 'javascript/agregar_precios_proveedor.js' %}"></script>
+{% endblock %}

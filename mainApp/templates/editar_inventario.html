@@ -1,0 +1,146 @@
+{# templates/editar_inventario.html #}
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Editar Inventario{% endblock %}
+
+{% block extra_head %}
+  <link rel="stylesheet"
+        href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"/>
+  <link rel="stylesheet"
+        href="https://cdn.datatables.net/1.13.8/css/jquery.dataTables.min.css"/>
+
+  <!-- ✅ jQuery UI (autocomplete estilo generar_venta) -->
+  <link rel="stylesheet"
+        href="https://code.jquery.com/ui/1.13.3/themes/base/jquery-ui.css"/>
+
+  <link rel="stylesheet" href="{% static 'css/agregar_inventario.css' %}">
+{% endblock %}
+
+{% block content %}
+  <div class="container-inventario">
+    <i class="fas fa-pencil-alt icon-inventario"></i>
+    <h2>Editar Inventario</h2>
+
+    <div id="error-message" class="alert alert-error" style="display:none;"></div>
+    <div id="success-message" class="alert alert-success" style="display:none;"></div>
+
+    <form id="inventarioForm" method="post"
+          action="{% url 'editar_inventario' sucursal_id=sucursal.pk %}">
+      {% csrf_token %}
+
+      {# ---------- Sucursal ---------- #}
+      <div class="form-group-precio">
+        <label for="id_sucursal_autocomplete">Sucursal <span class="required">*</span></label>
+        {{ form.sucursal_autocomplete }}
+        {{ form.sucursal }}
+        <div class="field-error" id="error-id_sucursal"></div>
+      </div>
+
+      {# ---------- ✅ 3 autocompletes de producto ---------- #}
+      <div class="form-group-precio">
+        <label>Buscar producto <span class="required">*</span></label>
+
+        <input type="text" id="producto_busqueda_nombre" class="form-control"
+               placeholder="Buscar por nombre…" autocomplete="off">
+
+        <!-- ✅ barras + botón cámara -->
+        <div class="barcode-row">
+          <input type="text" id="producto_busqueda_barras" class="form-control"
+                 placeholder="Buscar por código de barras…" autocomplete="off" inputmode="numeric">
+          <button type="button" id="btnScanBarcode" class="btn-scan" aria-label="Escanear código de barras">
+            <i class="fas fa-camera"></i>
+          </button>
+        </div>
+
+        <input type="text" id="producto_busqueda_id" class="form-control"
+               placeholder="Buscar por ID…" autocomplete="off" inputmode="numeric">
+
+        <input type="hidden" id="id_productoid" name="productoid">
+        <div class="field-error" id="error-id_productoid"></div>
+      </div>
+
+      {# ---------- Cantidad ---------- #}
+      <div class="form-group-precio">
+        <label for="id_cantidad">Cantidad <span class="required">*</span></label>
+
+        <!-- ✅ ANTES: min="1"  (eso fuerza a 1 y no deja 0) -->
+        <!-- ✅ AHORA: permite 0 y negativos -->
+        <input type="number" id="id_cantidad" name="cantidad"
+               class="form-control" step="1" placeholder="Ingrese la cantidad (puede ser 0 o negativa)">
+
+        <div class="field-error" id="error-id_cantidad"></div>
+      </div>
+
+      <button type="button" id="actualizarProductoBtn" class="btn-agregar-precio">
+        Actualizar Producto
+      </button>
+
+      {# ---------- Tabla: VACÍA, solo se llena con 1 producto ---------- #}
+      <div class="table-wrap">
+        <table id="productos-list" class="display">
+          <thead>
+            <tr>
+              <th>Producto</th>
+              <th>Código de barras</th>
+              <th>Cantidad</th>
+              <th>Acciones</th>
+            </tr>
+          </thead>
+          <tbody id="productos-body"></tbody>
+        </table>
+      </div>
+
+      {{ form.inventarios_temp }}
+      <div class="field-error" id="error-id_inventarios_temp"></div>
+
+      <button type="submit" class="btn-guardar-precio">Guardar Cambios</button>
+    </form>
+  </div>
+
+  <!-- ✅ Overlay cámara con visor (cuadro + marco) -->
+  <div id="barcodeScannerOverlay" class="scanner-overlay" style="display:none;">
+    <div class="scanner-card">
+      <div class="scanner-head">
+        <div class="scanner-title">
+          <i class="fas fa-camera"></i> Escanear código de barras
+        </div>
+        <button type="button" id="btnCloseScanner" class="scanner-close" aria-label="Cerrar">✕</button>
+      </div>
+
+      <div class="scanner-viewport">
+        <video id="barcodeVideo" playsinline></video>
+        <div class="scanner-frame"></div>
+        <div class="scanner-hint">Alinea el código dentro del cuadro</div>
+      </div>
+
+      <div class="scanner-actions">
+        <button type="button" id="btnToggleTorch" class="scanner-btn" style="display:none;">
+          Linterna
+        </button>
+        <div id="scannerStatus" class="scanner-status">Iniciando…</div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const sucursalAutocompleteUrl = "{% url 'sucursal_inventario_autocomplete' %}";
+    const currentSucursalId       = "{{ sucursal.pk }}";
+
+    // ✅ 3 endpoints
+    const productoNombreUrl = "{% url 'producto_inventario_buscar_nombre' %}";
+    const productoBarrasUrl = "{% url 'producto_inventario_buscar_barras' %}";
+    const productoIdUrl     = "{% url 'producto_inventario_buscar_id' %}";
+
+    // ✅ cargar 1 item
+    const inventarioItemUrl = "{% url 'inventario_item_ajax' sucursal_id=sucursal.pk %}";
+  </script>
+
+  <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+  <script src="https://cdn.datatables.net/1.13.8/js/jquery.dataTables.min.js"></script>
+
+  <!-- ✅ jQuery UI -->
+  <script src="https://code.jquery.com/ui/1.13.3/jquery-ui.min.js"></script>
+
+  <script defer src="{% static 'javascript/editar_inventario.js' %}"></script>
+{% endblock %}

@@ -1,0 +1,82 @@
+{# templates/editar_producto.html #}
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Editar producto{% endblock %}
+
+{% block extra_head %}
+  <link rel="stylesheet" href="{% static 'css/agregar_producto.css' %}">
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/js/all.min.js"></script>
+{% endblock %}
+
+{% block content %}
+  <div class="container">
+    <i class="fas fa-pencil-alt icon"></i>
+    <h2>Editar producto</h2>
+
+    <p class="obligatorio-texto">
+      Los campos con <span class="required">*</span> son obligatorios.
+    </p>
+
+    {# Fallback por si llegas aquí sin AJAX (messages framework) #}
+    {% if messages %}
+      <div class="messages">
+        {% for message in messages %}
+          <div class="alert {% if message.tags %}alert-{{ message.tags }}{% else %}alert-success{% endif %}">
+            {{ message }}
+          </div>
+        {% endfor %}
+      </div>
+    {% endif %}
+
+    <div id="error-message"   class="alert alert-error"   style="display:none;"></div>
+    <div id="success-message" class="alert alert-success" style="display:none;"></div>
+
+    <form id="productoForm"
+          method="post"
+          action="{% url 'editar_producto' object.pk %}">
+      {% csrf_token %}
+
+      {# --------- Campos del ModelForm (excepto categoría) --------- #}
+      {% for field in form.visible_fields %}
+        {% if field.name != "categoria" %}
+          <div class="form-group">
+            <label for="{{ field.id_for_label }}">
+              {{ field.label }}
+              {% if field.field.required %}<span class="required">*</span>{% endif %}
+            </label>
+            {{ field }}
+            <div class="field-error" id="error-id_{{ field.name }}"></div>
+          </div>
+        {% endif %}
+      {% endfor %}
+
+      {# --------- Categoría con autocompletado --------- #}
+      <div class="form-group">
+        <label for="id_categoria_autocomplete">
+          Categoría <span class="required">*</span>
+        </label>
+
+        <input
+          type="text"
+          id="id_categoria_autocomplete"
+          class="form-control"
+          placeholder="Escribe para buscar…"
+          autocomplete="off"
+          value="{{ form.initial.id_categoria_autocomplete_initial|default:'' }}">
+
+        {{ form.categoria }}   {# hidden con la PK real (obligatorio para el POST) #}
+
+        <div class="autocomplete-results" id="categoria-autocomplete-results"></div>
+        <div class="field-error" id="error-id_categoria"></div>
+      </div>
+
+      <button type="submit" class="btn-agregar-producto">Guardar cambios</button>
+    </form>
+  </div>
+
+  <script>
+    const categoriaAutocompleteUrl = "{% url 'categoria_autocomplete' %}";
+  </script>
+  <script defer src="{% static 'javascript/editar_producto.js' %}"></script>
+{% endblock %}

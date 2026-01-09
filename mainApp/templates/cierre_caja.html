@@ -1,0 +1,209 @@
+{% load static %}
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Cierre de Caja</title>
+  <link rel="stylesheet" href="{% static 'css/cierre_caja.css' %}">
+</head>
+
+<body>
+  <div class="wrap">
+    <div class="card">
+      <div class="head">
+        <div>
+          <div class="title">Cierre de Caja</div>
+          <div class="sub">
+            Apertura real = lo que quedó en caja. Diferencias se registran por turno.
+          </div>
+        </div>
+
+        {% if turno %}
+          <div class="pill">
+            Turno #{{ turno.id }} — {{ turno.estado }}<br/>
+            Inicio: {{ turno.inicio }}
+          </div>
+        {% endif %}
+      </div>
+
+      <div class="content">
+
+        {% if messages %}
+          <div class="messages">
+            {% for message in messages %}
+              <div class="msg {{ message.tags }}">{{ message }}</div>
+            {% endfor %}
+          </div>
+        {% endif %}
+
+        {% if not turno %}
+          <form method="post" class="form">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="iniciar_turno"/>
+
+            <div class="grid">
+              <div class="field">
+                <label>Punto de pago / Caja</label>
+                <select name="puntopago_id" required>
+                  <option value="" disabled selected>Selecciona la caja…</option>
+                  {% for p in puntospagos %}
+                    <option value="{{ p.puntopagoid }}">{{ p.nombre }}</option>
+                  {% endfor %}
+                </select>
+              </div>
+
+              <div class="field">
+                <label>Usuario cajero</label>
+                <select name="usuario_id" required>
+                  <option value="" disabled selected>Selecciona el usuario…</option>
+                  {% for u in usuarios %}
+                    <option value="{{ u.usuarioid }}">{{ u.nombreusuario }}</option>
+                  {% endfor %}
+                </select>
+              </div>
+
+              <div class="field full">
+                <label>Contraseña del cajero</label>
+                <input type="password" name="password" placeholder="••••••••" required />
+              </div>
+
+              <div class="field full">
+                <label>Efectivo en caja al abrir (opcional)</label>
+                <input name="efectivo_apertura" inputmode="decimal"
+                       placeholder="Si lo dejas vacío, usa dinerocaja actual" />
+              </div>
+            </div>
+
+            <div class="actions">
+              <button class="btn primary" type="submit">Iniciar turno</button>
+            </div>
+
+            <div class="hint">
+              El siguiente turno arranca con lo real que quedó en caja (dinerocaja).
+            </div>
+          </form>
+        {% endif %}
+
+        {% if turno and turno.estado == "ABIERTO" %}
+          <div class="hint">
+            Turno abierto. Presiona <b>Iniciar cierre</b> para congelar los cálculos desde la hora de entrada hasta ahora.
+          </div>
+
+          <form method="post" class="form">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="iniciar_cierre"/>
+            <input type="hidden" name="turno_id" value="{{ turno.id }}"/>
+
+            <div class="actions">
+              <button class="btn primary" type="submit">Iniciar cierre</button>
+              <a class="btn" href="{% url 'cierre_caja' %}">Volver</a>
+            </div>
+          </form>
+        {% endif %}
+
+        {% if turno and turno.estado == "CIERRE" %}
+          <div class="hint">
+            Snapshot: desde <b>{{ turno.inicio }}</b> hasta <b>{{ turno.cierre_iniciado }}</b>.
+          </div>
+
+          <form method="post" class="form" id="cierreForm">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="finalizar_cierre"/>
+            <input type="hidden" name="turno_id" value="{{ turno.id }}"/>
+
+            <table class="tabla" id="tablaMedios">
+              <thead>
+                <tr>
+                  <th>Método</th>
+                  <th>Esperado</th>
+                  <th>Contado (real)</th>
+                  <th>Diferencia</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for m in medios %}
+                <tr class="medio-row"
+                    data-esperado="{{ m.esperado|default_if_none:'0' }}"
+                    data-metodo="{{ m.metodo }}">
+                  <td class="td-metodo">{{ m.metodo }}</td>
+                  <td class="td-esperado">
+                    <span class="money esperado">{{ m.esperado }}</span>
+                  </td>
+                  <td class="td-contado">
+                    <input class="inp-money contado"
+                           name="contado_{{ m.id }}"
+                           inputmode="decimal"
+                           placeholder="0.00"
+                           value="0.00" />
+                  </td>
+                  <td class="td-diff">
+                    <span class="money diff">0.00</span>
+                  </td>
+                </tr>
+                {% endfor %}
+
+                <tr class="efectivo-row"
+                    data-esperado="{{ esperado_efectivo|default_if_none:'0' }}">
+                  <td class="td-metodo"><b>Efectivo en caja (físico)</b></td>
+                  <td class="td-esperado">
+                    <b class="money esperado" id="esperadoEfectivo">{{ esperado_efectivo }}</b>
+                    <div class="mini">apertura + efectivo vendido</div>
+                  </td>
+                  <td class="td-contado">
+                    <input class="inp-money" name="efectivo_real" id="efectivo_real"
+                           inputmode="decimal" placeholder="0.00" value="0.00" />
+                  </td>
+                  <td class="td-diff">
+                    <b class="money diff" id="diffEfectivo">0.00</b>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+
+            <div class="totales">
+              <div class="total-card">
+                <div class="k">Total esperado (medios)</div>
+                <div class="v money" id="totalEsperado">0.00</div>
+              </div>
+              <div class="total-card">
+                <div class="k">Total contado (medios)</div>
+                <div class="v money" id="totalContado">0.00</div>
+              </div>
+              <div class="total-card">
+                <div class="k">Diferencia (medios)</div>
+                <div class="v money diff" id="totalDiff">0.00</div>
+              </div>
+            </div>
+
+            <div class="actions">
+              <button class="btn primary" type="submit">Finalizar cierre</button>
+              <a class="btn danger" href="{% url 'cierre_caja' %}">Salir</a>
+            </div>
+
+            <div class="hint">
+              Al finalizar: se guardan diferencias por turno y se actualiza <b>dinerocaja</b> al efectivo real contado.
+              Así el siguiente turno arranca desde lo real.
+            </div>
+          </form>
+        {% endif %}
+
+        {% if turno and turno.estado == "CERRADO" %}
+          <div class="hint">
+            Turno cerrado: {{ turno.fin }}<br/>
+            Efectivo real: <b>{{ turno.efectivo_real }}</b><br/>
+            Diferencia efectivo: <b>{{ turno.diferencia_efectivo }}</b>
+          </div>
+
+          <div class="actions">
+            <a class="btn primary" href="{% url 'cierre_caja' %}">Iniciar nuevo turno</a>
+          </div>
+        {% endif %}
+
+      </div>
+    </div>
+  </div>
+
+  <script src="{% static 'js/cierre_caja.js' %}"></script>
+</body>
+</html>

@@ -1,0 +1,198 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Detalle Venta #{{ venta.ventaid }}{% endblock %}
+
+{% block extra_head %}
+  <link rel="stylesheet" href="{% static 'css/generar_venta.css' %}">
+  <link rel="stylesheet" href="{% static 'css/ver_venta.css' %}">
+{% endblock %}
+
+{% block content %}
+<div class="venta-card">
+  <h1 class="venta-card__title">
+    <i class="fas fa-file-invoice-dollar me-2"></i>
+    Detalle de la Venta #{{ venta.ventaid }}
+  </h1>
+
+  <form method="post" id="venta-form">
+    {% csrf_token %}
+
+    {{ dev_formset.management_form }}
+    {{ pagos_formset.management_form }}
+    {{ reintegro_formset.management_form }}
+
+    <div class="venta-grid">
+      <div>
+        <label>Fecha</label>
+        <input readonly value="{{ venta.fecha|date:'d/m/Y' }}">
+      </div>
+      <div>
+        <label>Hora</label>
+        <input readonly value="{{ venta.hora|time:'H:i' }}">
+      </div>
+
+      <div>
+        <label for="id_mediopago">Medio de Pago</label>
+        <select name="mediopago" id="id_mediopago">
+          <option value="efectivo" {% if venta.mediopago == "efectivo" %}selected{% endif %}>Efectivo</option>
+          <option value="nequi" {% if venta.mediopago == "nequi" %}selected{% endif %}>Nequi</option>
+          <option value="daviplata" {% if venta.mediopago == "daviplata" %}selected{% endif %}>Daviplata</option>
+          <option value="tarjeta" {% if venta.mediopago == "tarjeta" %}selected{% endif %}>Tarjeta</option>
+          <option value="banco_caja_social" {% if venta.mediopago == "banco_caja_social" %}selected{% endif %}>Banco Caja Social</option>
+          <option value="mixto" {% if venta.mediopago == "mixto" %}selected{% endif %}>Mixto</option>
+        </select>
+      </div>
+
+      <div>
+        <label>Cliente</label>
+        <input readonly value="{% if venta.clienteid %}{{ venta.clienteid.nombre }} {{ venta.clienteid.apellido }}{% else %}N/A{% endif %}">
+      </div>
+      <div>
+        <label>Empleado</label>
+        <input readonly value="{{ venta.empleadoid.nombre }} {{ venta.empleadoid.apellido }}">
+      </div>
+      <div>
+        <label>Sucursal</label>
+        <input readonly value="{{ venta.sucursalid.nombre }}">
+      </div>
+      <div>
+        <label>Punto de Pago</label>
+        <input readonly value="{{ venta.puntopagoid.nombre }}">
+      </div>
+    </div>
+
+    <!-- ===================== PAGO MIXTO: COMO SE PAGO ===================== -->
+    <div id="bloque-mixto-pagos"
+         class="mixto-card"
+         style="{% if es_mixto %}display:block;{% else %}display:none;{% endif %}">
+      <h2 class="mixto-title">
+        <i class="fas fa-random me-2"></i> Pago mixto (cómo se pagó esta venta)
+      </h2>
+
+      <div class="mixto-grid">
+        {% for f in pagos_formset.forms %}
+          <div class="mixto-row">
+            <span class="mixto-label">
+              {{ f.medio_pago.value|cut:"_"|title }}
+            </span>
+            <div class="mixto-input">
+              {{ f.monto }}
+              {{ f.medio_pago }}
+            </div>
+          </div>
+        {% endfor %}
+      </div>
+
+      <div class="mixto-summary">
+        Total venta: <strong>$<span id="mixto-total-venta">{{ venta.total|floatformat:2 }}</span></strong>
+        &nbsp;|&nbsp;
+        Suma pagos: <strong>$<span id="mixto-suma-pagos">0.00</span></strong>
+      </div>
+
+      <small class="mixto-hint">
+        La suma de los pagos debe ser igual al total de la venta.
+      </small>
+
+      <div class="mixto-error" id="mixto-error-pagos" style="display:none;"></div>
+    </div>
+
+    <h2 class="venta-card__subtitle">Productos</h2>
+
+    <div class="table-responsive rounded-2 overflow-hidden">
+      <table class="venta-table" id="tabla-detalles">
+        <thead>
+          <tr>
+            <th>Producto</th>
+            <th class="text-end">Cant.</th>
+            <th class="text-end">Precio U.</th>
+            <th class="text-end">Subtotal</th>
+            <th class="text-end">Devolver</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for det, f in filas %}
+          <tr data-precio="{{ det.preciounitario }}">
+            <td>{{ det.productoid.nombre }}</td>
+            <td class="text-end">{{ det.cantidad }}</td>
+            <td class="text-end">${{ det.preciounitario|floatformat:2 }}</td>
+            <td class="text-end">${{ det.subtotal|floatformat:2 }}</td>
+            <td class="text-end">
+              {{ f.devolver }} {{ f.detalle_id }}
+            </td>
+          </tr>
+          {% empty %}
+          <tr><td colspan="5" class="empty">Sin productos</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <!-- ===================== REINTEGRO MIXTO: CON QUE MEDIOS SE DEVUELVE ===================== -->
+    <div id="bloque-mixto-reintegro"
+         class="mixto-card"
+         style="{% if es_mixto %}display:block;{% else %}display:none;{% endif %}">
+      <h2 class="mixto-title">
+        <i class="fas fa-undo me-2"></i> Devolución por medio de pago (mixto)
+      </h2>
+
+      <div class="mixto-summary">
+        Total a devolver: <strong>$<span id="reintegro-total">0.00</span></strong>
+        &nbsp;|&nbsp;
+        Suma inputs: <strong>$<span id="reintegro-suma">0.00</span></strong>
+      </div>
+
+      <div class="mixto-grid">
+        {% for f in reintegro_formset.forms %}
+          <div class="mixto-row">
+            <span class="mixto-label">
+              {{ f.medio_pago.value|cut:"_"|title }}
+            </span>
+            <div class="mixto-input">
+              {{ f.monto }}
+              {{ f.medio_pago }}
+            </div>
+          </div>
+        {% endfor %}
+      </div>
+
+      <small class="mixto-hint">
+        Si devuelves productos, debes repartir el valor entre uno o varios medios.
+        La suma debe ser EXACTA al total a devolver.
+      </small>
+
+      <div class="mixto-error" id="mixto-error-reintegro" style="display:none;"></div>
+    </div>
+
+    <div class="venta-footer">
+      <h3>Total actual: <span>${{ venta.total|floatformat:2 }}</span></h3>
+      <div class="btn-group">
+        <button type="submit" class="btn-primary-alt" name="accion" value="guardar">
+          <i class="fas fa-save me-1"></i> Guardar cambios / devolución
+        </button>
+
+        <button type="submit" class="btn-primary" name="accion" value="volver_lista">
+          <i class="fas fa-list me-1"></i> Volver a la lista
+        </button>
+
+        <button type="button"
+                id="btn-imprimir-factura"
+                class="btn-primary"
+                data-venta-id="{{ venta.pk }}">
+          <i class="fas fa-print me-1"></i> Imprimir factura
+        </button>
+      </div>
+    </div>
+
+  </form>
+</div>
+
+<script>
+  window.VENTA_TOTAL = "{{ venta.total|floatformat:2 }}";
+  window.imprimirFacturaUrl = "{% url 'imprimir_factura' %}";
+  window.ticketTextoUrl     = "{% url 'ticket_texto' %}";
+  window.POS_AGENT_URL      = "{{ POS_AGENT_URL|default:'' }}";
+  window.POS_AGENT_TOKEN    = "{{ POS_AGENT_TOKEN|default:'' }}";
+</script>
+<script src="{% static 'javascript/ver_venta.js' %}"></script>
+{% endblock %}

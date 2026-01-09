@@ -1,0 +1,436 @@
+/* ========================================================================
+   Visualizar Productos — Nova Advance Design (glass + responsive centrado)
+   ✅ sin scroll lateral (table-layout fixed + widths) + ✅ acciones centradas
+   ✅ FIX botones acción: más espacio + no se cortan + header no parte “Acciones”
+======================================================================== */
+
+/* Fuente */
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap");
+
+/* Tokens */
+:root{
+  --bg-1:#153060; --bg-2:#20497d;
+  --brand:#4da6ff; --brand-2:#3d8cff;
+  --text:#f8fbff; --text-muted:#d8e8ff;
+
+  --glass-bg: rgba(33,64,120,.28);
+  --glass-brd: rgba(255,255,255,.18);
+  --glass-sh: 0 18px 40px rgba(0,0,0,.35);
+
+  --input-bg: rgba(255,255,255,.10);
+  --input-hov: rgba(255,255,255,.18);
+  --input-brd: rgba(255,255,255,.22);
+  --ring:#b8dbff;
+
+  --slate-50:#f8fafc; --slate-100:#eef2f7; --slate-200:#e2e8f0;
+
+  --radius:18px; --radius-sm:12px;
+  --transition:.22s cubic-bezier(.2,.6,.2,1);
+  --font:"Inter", system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+
+  --ok:#16a34a; --err:#ff4d5f;
+
+  --select-arrow:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='%23d8e8ff'%3E%3Cpath d='M5.23 7.21a.75.75 0 011.06.02L10 10.17l3.71-2.94a.75.75 0 111.06 1.06l-4.24 3.36a.75.75 0 01-.94 0L5.21 8.29a.75.75 0 01.02-1.08z'/%3E%3C/svg%3E");
+}
+
+/* Reset */
+*{box-sizing:border-box}
+html,body{height:100%}
+
+/* Fondo */
+body{
+  margin:0; font-family:var(--font); color:var(--text);
+  min-height:100svh;
+  display:grid; place-items:center;
+  padding: clamp(18px, 3.8vw, 36px);
+  background:
+    radial-gradient(1400px 800px at 10% 20%, rgba(77,166,255,.35), transparent 60%),
+    radial-gradient(1200px 700px at 85% 85%, rgba(77,166,255,.25), transparent 60%),
+    linear-gradient(135deg,var(--bg-1),var(--bg-2));
+}
+body::before{
+  content:""; position:fixed; inset:0;
+  background:inherit; filter:blur(12px); z-index:-1;
+}
+
+/* Tarjeta principal */
+.container{
+  width:min(94vw, 1200px);
+  background:var(--glass-bg);
+  backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px);
+  border:1px solid var(--glass-brd);
+  border-radius:var(--radius);
+  box-shadow:var(--glass-sh);
+  padding: clamp(22px, 4.2vw, 36px);
+}
+
+/* Título */
+h2{
+  margin:0 0 16px;
+  font-size:clamp(22px,3.2vw,30px);
+  font-weight:800; letter-spacing:.2px; color:var(--text);
+  display:flex; align-items:center; justify-content:center; gap:10px;
+  text-shadow:0 6px 16px rgba(0,0,0,.22);
+}
+h2 i{ color:var(--brand); font-size:1.15em; }
+
+/* Mensajes */
+.messages{ margin-bottom:12px }
+.alert{
+  display:block; padding:12px 14px; border-radius:12px;
+  font-size:14px; border:1px solid transparent; text-align:center;
+}
+.alert-success{
+  background:color-mix(in srgb,var(--ok) 18%, #ffffff);
+  color:#064e1a; border-color:color-mix(in srgb,var(--ok) 40%, #ffffff);
+}
+.alert-error{
+  background:rgba(255,77,95,.14);
+  color:var(--err);
+  border-color:rgba(255,140,150,.55);
+}
+
+/* Buscador superior propio */
+.search-wrapper{ position:relative; width:100%; margin:0 auto 14px; }
+.search-wrapper i{
+  position:absolute; left:12px; top:50%; transform:translateY(-50%);
+  color:var(--text-muted); font-size:18px;
+}
+.search-input{
+  width:100%; height:44px;
+  padding:0 12px 0 40px; border-radius:999px;
+  border:1px solid var(--input-brd); background:var(--input-bg);
+  color:var(--text); font-size:15.5px; transition:var(--transition); outline:none;
+}
+.search-input::placeholder{ color:var(--text-muted); }
+.search-input:hover{ background:var(--input-hov); transform:translateY(-1px); }
+.search-input:focus{
+  background:var(--input-hov); border-color:var(--ring);
+  box-shadow:0 0 0 3px color-mix(in srgb, var(--ring) 50%, transparent);
+}
+
+/* ================== DataTables (sin overflow lateral) ================== */
+#productosTable,
+table.dataTable{
+  width:100% !important;
+  border-collapse:separate;
+  border-spacing:0;
+  background:#fff;
+  border-radius:12px;
+  overflow:hidden;
+  box-shadow:0 6px 18px rgba(0,0,0,.12);
+  font-size:15.5px;
+
+  table-layout:fixed; /* ✅ no sobresale del contenedor */
+}
+
+/* Encabezado */
+table.dataTable thead{
+  background:linear-gradient(180deg,#3563b8,#2a4f9a);
+  color:#fff;
+}
+table.dataTable thead th{
+  position:sticky; top:0; z-index:2;
+  padding:14px 10px;
+  font-weight:800; letter-spacing:.2px;
+  text-align:center;
+
+  white-space:normal;
+  overflow-wrap:anywhere;
+  line-height:1.12;
+}
+
+/* ✅ NO partir “Acciones” (y deja el último header limpio) */
+#productosTable thead th:last-child{
+  white-space:nowrap !important;
+  overflow-wrap:normal !important;
+  padding-left:14px;
+  padding-right:14px;
+}
+
+/* Celdas */
+table.dataTable tbody td{
+  padding:12px 10px;
+  color:#0b1220;
+  border-top:1px solid var(--slate-100);
+  line-height:1.25;
+  vertical-align:middle;
+  text-align:center;
+
+  white-space:normal;
+  overflow-wrap:anywhere;
+  word-break:break-word;
+}
+table.dataTable tbody tr:nth-child(even){ background:#f7fbff; }
+table.dataTable tbody tr:hover{ background:#eef5ff; }
+
+/* ================== Anchos por columna (desktop) ==================
+   Ajusta si quieres, pero estos evitan scroll lateral
+==================================================================== */
+#productosTable th:nth-child(1),  #productosTable td:nth-child(1){  width:70px; }   /* ID */
+#productosTable th:nth-child(2),  #productosTable td:nth-child(2){  width:150px; }  /* Nombre */
+#productosTable th:nth-child(3),  #productosTable td:nth-child(3){  width:160px; }  /* Descripción */
+#productosTable th:nth-child(4),  #productosTable td:nth-child(4){  width:95px; }   /* Precio */
+#productosTable th:nth-child(5),  #productosTable td:nth-child(5){  width:110px; }  /* Precio anterior */
+#productosTable th:nth-child(6),  #productosTable td:nth-child(6){  width:135px; }  /* Categoría */
+#productosTable th:nth-child(7),  #productosTable td:nth-child(7){  width:120px; }  /* Cód. Barras */
+#productosTable th:nth-child(8),  #productosTable td:nth-child(8){  width:80px; }   /* IVA */
+#productosTable th:nth-child(9),  #productosTable td:nth-child(9){  width:105px; }  /* Imp. Consumo */
+#productosTable th:nth-child(10), #productosTable td:nth-child(10){ width:80px; }   /* ICUI */
+#productosTable th:nth-child(11), #productosTable td:nth-child(11){ width:80px; }   /* IBUA */
+#productosTable th:nth-child(12), #productosTable td:nth-child(12){ width:110px; }  /* Rentabilidad */
+
+/* ✅ Acciones: más ancho para que NO se pegue al borde ni se corte */
+#productosTable th:nth-child(13), #productosTable td:nth-child(13){ width:150px; }  /* Acciones */
+
+/* Ordenación */
+table.dataTable thead th.sorting,
+table.dataTable thead th.sorting_asc,
+table.dataTable thead th.sorting_desc{
+  background-image:none!important;
+  position:relative;
+  cursor:pointer;
+}
+table.dataTable thead th.sorting::after,
+table.dataTable thead th.sorting_asc::after,
+table.dataTable thead th.sorting_desc::after{
+  content:"";
+  position:absolute; right:8px; top:50%;
+  transform:translateY(-50%);
+  width:12px; height:12px;
+  opacity:.9; pointer-events:none;
+  background-repeat:no-repeat;
+  background-size:12px 12px;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%23ffffff'%3E%3Cpath d='M7 10l5 5 5-5z'/%3E%3C/svg%3E");
+}
+table.dataTable thead th.sorting_asc::after{
+  transform:translateY(-50%) rotate(180deg);
+}
+
+/* Controles DT */
+.dataTables_wrapper .dataTables_length label,
+.dataTables_wrapper .dataTables_filter label,
+.dataTables_wrapper .dataTables_info,
+.dataTables_wrapper .dataTables_paginate{
+  color:var(--text) !important;
+  font-weight:600;
+}
+.dataTables_wrapper .dataTables_info{
+  font-weight:700;
+  margin-top:10px;
+}
+
+/* Barra inferior transparente */
+.dataTables_wrapper .dataTables_info,
+.dataTables_wrapper .dataTables_paginate,
+.dataTables_wrapper .dataTables_length,
+.dataTables_wrapper .dataTables_filter,
+.dataTables_wrapper .bottom,
+.dataTables_wrapper .dt-bottom{
+  background:transparent !important;
+  box-shadow:none !important;
+  border:none !important;
+}
+
+/* Show entries → píldora */
+.dataTables_wrapper .dataTables_length{
+  display:flex; align-items:center; gap:10px;
+  margin-bottom:8px;
+}
+.dataTables_wrapper .dataTables_length select{
+  height:44px !important;
+  padding:0 40px 0 14px !important;
+  border-radius:999px !important;
+  border:1px solid var(--input-brd) !important;
+  background: var(--input-bg) no-repeat right 12px center / 14px 14px !important;
+  background-image: var(--select-arrow) !important;
+  color:var(--text) !important;
+  font-weight:700 !important;
+  outline:none !important;
+  appearance:none; -webkit-appearance:none; -moz-appearance:none;
+  transition:var(--transition);
+}
+.dataTables_wrapper .dataTables_length select:hover{
+  background-color:var(--input-hov) !important;
+}
+.dataTables_wrapper .dataTables_length select:focus{
+  background-color: var(--input-hov) !important;
+  border-color: var(--ring) !important;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring) 50%, transparent) !important;
+}
+.dataTables_wrapper .dataTables_length select option{
+  background:#fff; color:#0b1220;
+}
+
+/* Filtro DT */
+.dataTables_wrapper .dataTables_filter{ position:relative; }
+.dataTables_wrapper .dataTables_filter:before{ display:none !important; }
+.dataTables_wrapper .dataTables_filter input{
+  height:44px !important;
+  padding:0 12px !important;
+  background:var(--input-bg) !important;
+  border:1px solid var(--input-brd) !important;
+  color:var(--text) !important;
+  border-radius:999px !important;
+  outline:none !important;
+}
+.dataTables_wrapper .dataTables_filter input::placeholder{ color:var(--text-muted); }
+.dataTables_wrapper .dataTables_filter input:hover{ background:var(--input-hov) !important; }
+.dataTables_wrapper .dataTables_filter input:focus{
+  border-color:var(--ring) !important;
+  box-shadow:0 0 0 3px color-mix(in srgb, var(--ring) 50%, transparent) !important;
+}
+
+/* Paginación */
+.dataTables_wrapper .dataTables_paginate{
+  text-align:center;
+  margin-top:12px;
+}
+.dataTables_wrapper .dataTables_paginate .paginate_button{
+  background:transparent !important;
+  border:none !important;
+  box-shadow:none !important;
+  color:var(--text) !important;
+  font-weight:700 !important;
+  padding:6px 12px !important;
+  margin:0 10px !important;
+  border-radius:0 !important;
+}
+.dataTables_wrapper .dataTables_paginate .paginate_button:not(.current):hover{
+  text-decoration:underline;
+  background:transparent !important;
+}
+.dataTables_wrapper .dataTables_paginate .paginate_button.disabled{
+  opacity:.55 !important;
+  cursor:default !important;
+  text-decoration:none !important;
+}
+.dataTables_wrapper .dataTables_paginate .paginate_button.current,
+.dataTables_wrapper .dataTables_paginate .paginate_button.current:hover{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  min-width:34px;
+  height:34px;
+  padding:0 !important;
+  border-radius:999px !important;
+  background:#ffffff !important;
+  color:#0b1220 !important;
+  border:1px solid rgba(0,0,0,.04) !important;
+  box-shadow:0 0 0 4px rgba(77,166,255,.36), 0 6px 16px rgba(0,0,0,.15) !important;
+}
+
+/* ===================== Acciones (botones) ===================== */
+
+/* ✅ La celda de acciones: centra y da aire para que no se “pegue” al borde */
+#productosTable td:last-child{
+  text-align:center !important;
+  vertical-align:middle !important;
+  padding:10px 14px !important;     /* ✅ más espacio interno */
+  white-space:nowrap !important;     /* ✅ botones siempre en una línea */
+  overflow:visible !important;       /* ✅ evita cortes del contenido interno */
+}
+
+/* Tu HTML mete un <div class="btn-container">... */
+#productosTable td:last-child .btn-container{
+  display:flex !important;
+  justify-content:center !important;
+  align-items:center !important;
+  gap:10px !important;
+  width:100% !important;
+  margin:0 auto !important;          /* ✅ centra el bloque */
+}
+
+/* Botones */
+.btn{
+  width:36px;
+  height:36px;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  border:none;
+  border-radius:12px;
+  cursor:pointer;
+  transition:var(--transition);
+  color:#fff;
+  font-size:15px;
+  padding:0;
+
+  /* ✅ sombra más contenida para que no se corte con overflow:hidden del table */
+  box-shadow:0 4px 10px rgba(0,0,0,.14);
+}
+
+.btn.editar{ background:#f5b301; }
+.btn.editar:hover{ background:#d79c00; }
+.btn.borrar{ background:#e74c3c; }
+.btn.borrar:hover{ background:#c0392b; }
+
+/* ============== Responsive centrado (móvil tipo cards) ============== */
+@media (max-width:768px){
+  html, body{ overflow-x:hidden; }
+  body{ display:block; padding:16px; }
+  .container{
+    width: calc(100vw - 24px);
+    max-width: 1200px;
+    margin: 12px auto 24px !important;
+    position: static !important;
+    left: auto !important;
+    transform: none !important;
+    padding:20px;
+    box-sizing:border-box;
+  }
+  h2{ font-size:22px; }
+
+  table.dataTable thead{ display:none; }
+  table.dataTable{ border-radius:12px; overflow:hidden; table-layout:auto; }
+
+  table.dataTable tbody tr{
+    display:block;
+    margin-bottom:15px;
+    border:1px solid var(--slate-200);
+    border-radius:12px;
+    background:#fff !important;
+    box-shadow:0 4px 10px rgba(0,0,0,.08);
+    overflow:hidden;
+  }
+  table.dataTable tbody td{
+    display:flex;
+    justify-content:space-between;
+    align-items:flex-start;
+    padding:10px 12px;
+    font-size:13px;
+    border-bottom:1px solid var(--slate-100);
+    text-align:left;
+    width:100% !important;
+  }
+  table.dataTable tbody td:last-child{ border-bottom:none; }
+
+  table.dataTable tbody td::before{
+    content:attr(data-label);
+    font-weight:800;
+    color:#2a4f9a;
+    margin-right:10px;
+    max-width:48%;
+  }
+
+  /* Acciones en móvil: etiqueta a la izquierda y botones a la derecha */
+  #productosTable td:last-child{
+    justify-content:space-between !important;
+    align-items:center !important;
+    padding:10px 12px !important;
+  }
+  #productosTable td:last-child .btn-container{
+    width:auto !important;
+    margin:0 !important;
+  }
+}
+
+/* Reduce motion */
+@media (prefers-reduced-motion:reduce){
+  .dataTables_wrapper .dataTables_length select,
+  .dataTables_wrapper .dataTables_filter input,
+  .search-input,
+  .btn{
+    transition:none !important;
+  }
+}

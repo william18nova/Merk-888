@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Editar Rol{% endblock %}
+
+{% block extra_head %}
+  <link rel="stylesheet" href="{% static 'css/agregar_rol.css' %}">
+  <script defer
+          src="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/js/all.min.js"></script>
+{% endblock %}
+
+{% block content %}
+  <div class="container">
+    <i class="fas fa-user-tag icon"></i>
+    <h2>Editar Rol</h2>
+
+    <p class="obligatorio-texto">
+      Los campos marcados con <span class="required">*</span> son obligatorios.
+    </p>
+
+    <div id="error-message"   class="alert alert-error"   style="display:none;"></div>
+    <div id="success-message" class="alert alert-success" style="display:none;"></div>
+
+    <form  id="rolForm"
+           method="post"
+           action="{% url 'editar_rol' rol.pk %}">
+      {% csrf_token %}
+
+      {% for field in form.visible_fields %}
+        <div class="form-group">
+          <label for="{{ field.id_for_label }}">
+            {{ field.label }}{% if field.field.required %} <span class="required">*</span>{% endif %}
+          </label>
+          {{ field }}
+          <div class="field-error" id="error-id_{{ field.name }}"></div>
+        </div>
+      {% endfor %}
+
+      <button type="submit" class="btn-agregar-rol">
+        Guardar cambios
+      </button>
+    </form>
+  </div>
+
+  <script defer src="{% static 'javascript/editar_rol.js' %}"></script>
+{% endblock %}

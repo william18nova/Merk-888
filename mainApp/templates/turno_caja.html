@@ -1,0 +1,186 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Turno de caja{% endblock %}
+
+{% block extra_head %}
+  <link rel="stylesheet"
+        href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"/>
+  <link rel="stylesheet" href="{% static 'css/turno_caja.css' %}">
+{% endblock %}
+
+{% block content %}
+  <div class="tc-wrap">
+    <div class="tc-card">
+      <h2><i class="fa-solid fa-cash-register"></i> Turno de caja</h2>
+
+      <div id="flash" class="alert" style="display:none"></div>
+
+      <!-- =========================
+           STEP 1 — INICIAR TURNO
+      ========================== -->
+      <section id="stepStart" class="tc-section">
+        <div class="tc-section-title">
+          <span class="badge badge-info">1</span>
+          <div>
+            <div class="tt">Iniciar turno</div>
+            <div class="st">Selecciona punto de pago, cajero y base inicial.</div>
+          </div>
+        </div>
+
+        <form id="formStart" class="tc-grid" onsubmit="return false;">
+          {% csrf_token %}
+
+          <!-- Punto de pago -->
+          <label class="tc-label">Punto de pago</label>
+          <div class="tc-field">
+            <i class="fa-solid fa-computer"></i>
+            <input id="pp_ac" class="tc-input" placeholder="Buscar punto de pago…" autocomplete="off">
+            <input type="hidden" id="pp_id">
+            <div id="pp_box" class="ac-box"></div>
+          </div>
+
+          <!-- Cajero -->
+          <label class="tc-label">Cajero</label>
+          <div class="tc-field">
+            <i class="fa-solid fa-user"></i>
+            <input id="cajero_ac" class="tc-input" placeholder="Buscar cajero…" autocomplete="off">
+            <input type="hidden" id="cajero_id">
+            <div id="cajero_box" class="ac-box"></div>
+          </div>
+
+          <!-- Contraseña -->
+          <label class="tc-label">Contraseña</label>
+          <div class="tc-field">
+            <i class="fa-solid fa-key"></i>
+            <input id="password" class="tc-input" type="password" placeholder="••••••••" autocomplete="new-password">
+          </div>
+
+          <!-- Base -->
+          <label class="tc-label">Base (efectivo)</label>
+          <div class="tc-field">
+            <i class="fa-solid fa-coins"></i>
+            <input id="base" class="tc-input" type="number" step="0.01" min="0" placeholder="0.00">
+          </div>
+        </form>
+
+        <div class="tc-actions">
+          <button id="btnIniciar" class="btn btn-primary" type="button">
+            <i class="fa-solid fa-play"></i> Iniciar turno
+          </button>
+        </div>
+      </section>
+
+      <!-- =========================
+           STEP 2 — TURNO ABIERTO
+      ========================== -->
+      <section id="stepOpen" class="tc-section" style="display:none;">
+        <div class="tc-section-title">
+          <span class="badge badge-ok">2</span>
+          <div>
+            <div class="tt">Turno abierto</div>
+            <div class="st">Cuando vayas a cerrar, presiona “Iniciar cierre”.</div>
+          </div>
+          <div class="right">
+            <span id="estadoBadge" class="pill pill-open">ABIERTO</span>
+          </div>
+        </div>
+
+        <div class="tc-info">
+          <div class="info-row"><span>Punto de pago:</span> <b id="infoPP">—</b></div>
+          <div class="info-row"><span>Cajero:</span> <b id="infoCajero">—</b></div>
+          <div class="info-row"><span>Inicio:</span> <b id="infoInicio">—</b></div>
+          <div class="info-row"><span>Base:</span> <b id="infoBase">—</b></div>
+        </div>
+
+        <div class="tc-actions">
+          <button id="btnIniciarCierre" class="btn btn-warn" type="button">
+            <i class="fa-solid fa-lock"></i> Iniciar cierre
+          </button>
+        </div>
+      </section>
+
+      <!-- =========================
+           STEP 3 — CIERRE
+      ========================== -->
+      <section id="stepClose" class="tc-section" style="display:none;">
+        <div class="tc-section-title">
+          <span class="badge badge-warn">3</span>
+          <div>
+            <div class="tt">Cierre de turno</div>
+            <div class="st">Ingresa lo que reconoces por cada medio. Intervalo: inicio → cierre.</div>
+          </div>
+          <div class="right">
+            <span id="estadoBadge2" class="pill pill-close">CIERRE</span>
+          </div>
+        </div>
+
+        <div class="tc-grid tc-grid-compact">
+          <label class="tc-label">Efectivo entregado (TOTAL caja)</label>
+          <div class="tc-field">
+            <i class="fa-solid fa-money-bill-wave"></i>
+            <input id="efectivo_entregado" class="tc-input" type="number" step="0.01" min="0" placeholder="0.00">
+          </div>
+        </div>
+
+        <div class="tc-table-wrap">
+          <table class="tc-table" id="tablaMedios">
+            <thead>
+              <tr>
+                <th>Medio</th>
+                <th class="num">Esperado (BD)</th>
+                <th class="num">Contado (Usuario)</th>
+                <th class="num">Diferencia</th>
+              </tr>
+            </thead>
+            <tbody id="mediosBody">
+              <!-- JS -->
+            </tbody>
+          </table>
+        </div>
+
+        <div class="tc-metrics">
+          <div class="metric">
+            <div class="metric-label">Ventas (según usuario)</div>
+            <div id="mVentas" class="metric-value">—</div>
+          </div>
+
+          <div class="metric">
+            <div class="metric-label">Esperado total (BD)</div>
+            <div id="mEsperado" class="metric-value">—</div>
+          </div>
+
+          <div class="metric">
+            <div class="metric-label">Diferencia total</div>
+            <div id="mDiff" class="metric-value">—</div>
+          </div>
+
+          <div class="metric">
+            <div class="metric-label">Deuda total</div>
+            <div id="mDeuda" class="metric-value">—</div>
+          </div>
+        </div>
+
+        <div class="tc-actions">
+          <button id="btnCerrar" class="btn btn-primary" type="button">
+            <i class="fa-solid fa-check"></i> Cerrar turno
+          </button>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <script>
+    const PP_AC_URL = "{% url 'turno_caja_puntopago_ac' %}";
+    const CAJERO_AC_URL = "{% url 'turno_caja_cajero_ac' %}";
+
+    // ✅ importante: este endpoint debe “recuperar o iniciar”
+    const API_RECUPERAR = "{% url 'turno_recuperar_o_iniciar' %}";
+
+    // ✅ idempotente: si ya está en CIERRE solo devuelve medios/esperados
+    const API_INI_CIERRE = "{% url 'turno_caja_iniciar_cierre' %}";
+    const API_CERRAR = "{% url 'turno_caja_cerrar' %}";
+  </script>
+
+  <script defer src="{% static 'javascript/turno_caja.js' %}"></script>
+{% endblock %}

@@ -1,0 +1,95 @@
+{# templates/visualizar_roles_permisos.html #}
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Roles y Permisos{% endblock %}
+
+{% block extra_head %}
+  <link rel="stylesheet"
+        href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"/>
+  <link rel="stylesheet"
+        href="https://cdn.datatables.net/1.13.8/css/jquery.dataTables.min.css"/>
+  <link rel="stylesheet"
+        href="{% static 'css/visualizar_roles_permisos.css' %}">
+{% endblock %}
+
+{% block content %}
+  <div class="container">
+    <h2><i class="fas fa-user-shield"></i> Roles y Permisos</h2>
+
+    {# ---------- Contenedor de mensajes ---------- #}
+    <div class="messages">
+      {% if messages %}
+        {% for m in messages %}
+          <div class="alert {% if m.tags %}alert-{{ m.tags }}{% endif %}">
+            <i class="fas {% if m.tags == 'success' %}fa-check-circle{% else %}fa-exclamation-circle{% endif %}"></i>
+            {{ m }}
+          </div>
+        {% endfor %}
+      {% endif %}
+    </div>
+
+    <form id="rolForm" class="search-wrapper" method="post">
+      {% csrf_token %}
+      <i class="fas fa-search"></i>
+      <input  id="id_rol_autocomplete"
+              class="search-input"
+              placeholder="Buscar rol…"
+              autocomplete="off"
+              value="{{ rol_seleccionado.nombre|default_if_none:'' }}">
+      <input  type="hidden" id="id_rol" name="rol"
+              value="{{ rol_seleccionado.pk|default_if_none:'' }}">
+      <div   id="rol-autocomplete-results"
+             class="autocomplete-results"></div>
+    </form>
+
+    <div id="edit-btn-wrap" class="btn-container" {% if not rol_seleccionado %}style="display:none"{% endif %}>
+      <a id="edit-btn"
+         href="{% if rol_seleccionado %}{% url 'editar_roles_permisos' rol_seleccionado.pk %}{% else %}#{% endif %}"
+         class="btn-editar">
+        <i class="fas fa-pen-to-square"></i> Editar permisos del rol
+      </a>
+    </div>
+
+    {% if permisos_rel %}
+      <div class="table-wrap">
+        <table id="permisosTable" class="display">
+          <thead>
+            <tr>
+              <th>Permiso</th>
+              <th>Descripción</th>
+              <th class="no-sort">Acciones</th>
+            </tr>
+          </thead>
+          <tbody>
+          {% for rel in permisos_rel %}
+            <tr>
+              <td data-label="Permiso">{{ rel.permiso.nombre }}</td>
+              <td data-label="Descripción">{{ rel.permiso.descripcion|default:"—" }}</td>
+              <td data-label="Acciones" class="actions-cell">
+                <button type="button"
+                        class="btn-eliminar"
+                        data-rp-id="{{ rel.pk }}"
+                        title="Quitar permiso del rol">
+                  <i class="fas fa-trash-alt"></i>
+                </button>
+              </td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% endif %}
+  </div>
+
+  <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+  <script src="https://cdn.datatables.net/1.13.8/js/jquery.dataTables.min.js"></script>
+
+  <script>
+    const rolAutocompleteUrl = "{% url 'rol_con_permisos_autocomplete' %}";
+    const editarRolPermUrl   = "{% url 'editar_roles_permisos' 0 %}";
+    const eliminarRolPermUrl = "{% url 'eliminar_rol_permiso' 0 %}";
+  </script>
+
+  <script defer src="{% static 'javascript/visualizar_roles_permisos.js' %}"></script>
+{% endblock %}

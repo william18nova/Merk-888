@@ -1,0 +1,97 @@
+{# templates/modal_venta.html #}
+<div id="myModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="mpago-title">
+  <div class="modal-content">
+    <button type="button" class="close" aria-label="Cerrar">&times;</button>
+
+    <h2 id="mpago-title">Pagos</h2>
+
+    <div class="total-banner" aria-live="polite">
+      <span class="total-icon" aria-hidden="true">💵</span>
+      <span class="total-label">Total a pagar:</span>
+      <strong id="modal-total" class="total-amount">$ 0,00</strong>
+    </div>
+
+    <!-- ✅ Restante en vivo -->
+    <div class="pending-banner" aria-live="polite" style="margin:.55rem 0 .85rem; font-weight:800;">
+      <span id="monto-pendiente">Falta por pagar: $ 0,00</span>
+    </div>
+
+    <p style="margin:.6rem 0 1rem; opacity:.9">
+      ✅ Si marcas <b>Pago mixto</b>, puedes seleccionar varios medios y escribir el monto de cada uno (la suma debe dar el total).
+      <br>
+      ➜ Si <b>NO</b> marcas Pago mixto, selecciona <b>solo un</b> medio y se tomará el <b>total completo</b> automáticamente.
+    </p>
+
+    <div class="mix-grid">
+
+
+      <!-- NEQUI -->
+      <div class="mix-row">
+        <label class="mix-check">
+          <input type="checkbox" class="pm-check" value="nequi">
+          <span>Nequi</span>
+        </label>
+        <input type="number" class="pm-amt" data-medio="nequi" min="0" step="100" placeholder="0" disabled>
+      </div>
+
+      <!-- DAVIPLATA -->
+      <div class="mix-row">
+        <label class="mix-check">
+          <input type="checkbox" class="pm-check" value="daviplata">
+          <span>Daviplata</span>
+        </label>
+        <input type="number" class="pm-amt" data-medio="daviplata" min="0" step="100" placeholder="0" disabled>
+      </div>
+
+      <!-- EFECTIVO -->
+      <div class="mix-row">
+        <label class="mix-check">
+          <input type="checkbox" class="pm-check" value="efectivo">
+          <span>Efectivo</span>
+        </label>
+        <input type="number" class="pm-amt" data-medio="efectivo" min="0" step="100" placeholder="0" disabled>
+      </div>
+
+      <div id="efectivo-options" style="display:none; margin:.6rem 0 1rem;">
+        <label for="monto-recibido">Monto recibido (solo efectivo)</label>
+        <input type="number" id="monto-recibido" min="0" step="100" placeholder="0">
+        <p id="cambio" class="cambio-text"></p>
+      </div>
+
+      <!-- TARJETA -->
+      <div class="mix-row">
+        <label class="mix-check">
+          <input type="checkbox" class="pm-check" value="tarjeta">
+          <span>Tarjeta</span>
+        </label>
+        <input type="number" class="pm-amt" data-medio="tarjeta" min="0" step="100" placeholder="0" disabled>
+      </div>
+
+      <!-- BANCO CAJA SOCIAL -->
+      <div class="mix-row">
+        <label class="mix-check">
+          <input type="checkbox" class="pm-check" value="banco_caja_social">
+          <span>Banco Caja Social</span>
+        </label>
+        <input type="number" class="pm-amt" data-medio="banco_caja_social" min="0" step="100" placeholder="0" disabled>
+      </div>
+
+      <!-- ✅ PAGO MIXTO (SIEMPRE ÚLTIMO) -->
+      <div class="mix-row" style="margin-top:.8rem; border-top:1px solid rgba(255,255,255,.15); padding-top:.8rem;">
+        <label class="mix-check" style="font-weight:800;">
+          <input type="checkbox" id="mix-mode">
+          <span><b>Pago mixto</b></span>
+        </label>
+        <div style="font-size:.9rem; opacity:.85; line-height:1.2">
+          Activa para usar varios medios y asignar montos.
+        </div>
+      </div>
+
+    </div>
+
+    <div style="margin-top:.8rem">
+      <div id="mix-error" style="display:none; color:#ff6b6b; font-weight:600; margin-bottom:.6rem;"></div>
+      <button id="confirmar-pago" class="btn-confirmar">CONFIRMAR PAGO</button>
+    </div>
+  </div>
+</div>

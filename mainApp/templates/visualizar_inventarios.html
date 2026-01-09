@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+{% load static %}
+{% block title %}Inventarios{% endblock %}
+{% block content %}
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Inventarios</title>
+
+  <!-- Font-Awesome y DataTables -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css"/>
+  <link rel="stylesheet" href="https://cdn.datatables.net/1.11.5/css/jquery.dataTables.min.css"/>
+
+  <!-- Estilos propios -->
+  <link rel="stylesheet" href="{% static 'css/visualizar_inventarios.css' %}"/>
+</head>
+<body>
+  <div class="container">
+
+    <!----- Título & alertas –---->
+    <h2><i class="fas fa-cubes"></i> Inventarios</h2>
+    {% if messages %}
+      <div class="messages">
+        {% for m in messages %}
+          <div class="alert {% if m.tags %}alert-{{ m.tags }}{% endif %}">{{ m }}</div>
+        {% endfor %}
+      </div>
+    {% endif %}
+
+    <!----- Autocomplete Sucursal –---->
+    <form id="sucursalForm" method="post" class="search-wrapper">{% csrf_token %}
+      <i class="fas fa-search"></i>
+      <input  id="id_sucursal_autocomplete" class="search-input"
+              placeholder="Buscar sucursal…"
+              autocomplete="off" />
+      <input  type="hidden" id="id_sucursal" name="sucursal"
+              value="{{ sucursal_seleccionada.sucursalid|default_if_none:'' }}"/>
+      <div  id="sucursal-autocomplete-results"
+            class="autocomplete-results"></div>
+    </form>
+
+    <!----- Botón editar –---->
+    {% if sucursal_seleccionada %}
+      <div class="btn-container">
+        <a href="{% url 'editar_inventario' sucursal_seleccionada.pk %}"
+           class="btn-editar-inventario">Editar Inventario</a>
+      </div>
+    {% endif %}
+
+    <!----- Tabla –---->
+    {% if inventario_global or inventarios %}
+      <table id="inventariosTable" class="display">
+        <thead>
+          <tr>
+            <th>Producto</th>
+            <th>Cantidad</th>
+            {% if not inventario_global %}<th>Acciones</th>{% endif %}
+          </tr>
+        </thead>
+        <tbody>
+          {% if inventario_global %}
+            {% for it in inventario_global_data %}
+              <tr>
+                <td data-label="Producto">{{ it.productoid__nombre }}</td>
+                <td data-label="Cantidad">{{ it.total_cantidad }}</td>
+              </tr>
+            {% endfor %}
+          {% else %}
+            {% for inv in inventarios %}
+              <tr>
+                <td data-label="Producto">{{ inv.productoid.nombre }}</td>
+                <td data-label="Cantidad">{{ inv.cantidad }}</td>
+                <td data-label="Acciones" class="text-center">
+                  <button  type="button" class="btn-eliminar"
+                           data-inventario-id="{{ inv.inventarioid }}">
+                    <i class="fas fa-trash-alt"></i>
+                  </button>
+                </td>
+              </tr>
+            {% endfor %}
+          {% endif %}
+        </tbody>
+      </table>
+    {% endif %}
+  </div>
+
+  <!----- JS (jQuery + DataTables + propio) –---->
+  <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+  <script src="https://cdn.datatables.net/1.11.5/js/jquery.dataTables.min.js"></script>
+  <script>
+    const sucursalAutocompleteUrl  = "{% url 'sucursal_con_inventario_autocomplete' %}";
+    const eliminarInventarioUrl    = "{% url 'eliminar_producto_inventario' 0 %}";
+  </script>
+  <script src="{% static 'javascript/visualizar_inventarios.js' %}"></script>
+</body>
+</html>
+{% endblock %}

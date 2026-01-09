@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Visualizar Productos{% endblock %}
+
+{% block content %}
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lista de Productos</title>
+
+  <link rel="stylesheet"
+        href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"/>
+
+  <link rel="stylesheet"
+        href="https://cdn.datatables.net/1.11.5/css/jquery.dataTables.min.css"/>
+  <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+  <script src="https://cdn.datatables.net/1.11.5/js/jquery.dataTables.min.js"></script>
+
+  <link rel="stylesheet" href="{% static 'css/visualizar_productos.css' %}">
+</head>
+<body>
+  <div class="container">
+    <h2><i class="fas fa-box"></i> Lista de Productos</h2>
+
+    {% if messages %}
+      <div class="messages">
+        {% for message in messages %}
+          <div class="alert {% if message.tags %}alert-{{ message.tags }}{% endif %}">
+            {{ message }}
+          </div>
+        {% endfor %}
+      </div>
+    {% endif %}
+
+    <div class="search-wrapper">
+      <i class="fas fa-search"></i>
+      <input id="buscador-productos" class="search-input" type="text" placeholder="Buscar…">
+    </div>
+
+    <table id="productosTable" class="display">
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>Nombre</th>
+          <th>Descripción</th>
+          <th>Precio</th>
+          <th>Precio anterior</th>   {# ✅ NUEVO #}
+          <th>Categoría</th>
+          <th>Cód. Barras</th>
+          <th>IVA</th>
+          <th>Imp. Consumo</th>
+          <th>ICUI</th>
+          <th>IBUA</th>
+          <th>Rentabilidad</th>
+          <th class="no-sort">Acciones</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>
+
+  <script>
+    window.productosDataUrl = "{% url 'productos_datatable' %}";
+  </script>
+
+  <script src="{% static 'javascript/visualizar_productos.js' %}" defer></script>
+</body>
+</html>
+{% endblock %}

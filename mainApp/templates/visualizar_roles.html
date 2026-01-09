@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Roles{% endblock %}
+
+{% block extra_head %}
+  <link rel="stylesheet"
+        href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"/>
+  <link rel="stylesheet"
+        href="https://cdn.datatables.net/1.13.8/css/jquery.dataTables.min.css"/>
+  <link rel="stylesheet"
+        href="{% static 'css/visualizar_roles.css' %}">
+{% endblock %}
+
+{% block content %}
+  <div class="container">
+    <h2><i class="fas fa-users-cog"></i> Lista de Roles</h2>
+
+    {% if messages %}
+      <div class="messages">
+        {% for m in messages %}
+          <div class="alert {% if m.tags %}alert-{{ m.tags }}{% endif %}">
+            {{ m }}
+          </div>
+        {% endfor %}
+      </div>
+    {% endif %}
+
+    <table id="rolesTable" class="display">
+      <thead>
+        <tr>
+          <th>Nombre</th>
+          <th>Descripción</th>
+          <th class="no-sort">Acciones</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for rol in roles %}
+          <tr>
+            <td data-label="Nombre">{{ rol.nombre }}</td>
+            <td data-label="Descripción">{{ rol.descripcion|default:"—" }}</td>
+            <td data-label="Acciones" class="actions-cell">
+              <div class="btn-container">
+                <a class="btn editar"
+                   href="{% url 'editar_rol' rol.pk %}"
+                   title="Editar"><i class="fas fa-edit"></i></a>
+
+                <button   type="button"
+                           class="btn borrar"
+                           data-id="{{ rol.pk }}"
+                           data-nombre="{{ rol.nombre }}"
+                           title="Eliminar">
+                  <i class="fas fa-trash-alt"></i>
+                </button>
+              </div>
+
+              <!-- form oculto -->
+              <form  id="eliminar-form-{{ rol.pk }}"
+                     action="{% url 'eliminar_rol' rol.pk %}"
+                     method="post" style="display:none;">
+                {% csrf_token %}
+              </form>
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <!-- scripts -->
+  <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+  <script src="https://cdn.datatables.net/1.13.8/js/jquery.dataTables.min.js"></script>
+  <script defer src="{% static 'javascript/visualizar_roles.js' %}"></script>
+{% endblock %}

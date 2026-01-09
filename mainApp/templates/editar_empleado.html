@@ -1,0 +1,69 @@
+{# templates/editar_empleado.html #}
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Editar empleado{% endblock %}
+
+{% block extra_head %}
+  <link rel="stylesheet" href="{% static 'css/agregar_empleado.css' %}">
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/js/all.min.js"></script>
+{% endblock %}
+
+{% block content %}
+  <div class="container-empleado">
+    <i class="fas fa-user-edit icon-empleado"></i>
+    <h2>Editar empleado</h2>
+
+    <p class="obligatorio-texto">
+      Los campos con <span class="required">*</span> son obligatorios.
+    </p>
+
+    <div id="error-message"   class="alert alert-error"   style="display:none;"></div>
+    <div id="success-message" class="alert alert-success" style="display:none;"></div>
+
+    <form id="empleadoForm"
+          method="post"
+          action="{% url 'editar_empleado' form.instance.pk %}">
+      {% csrf_token %}
+
+      {# ---------- usuario (autocomplete) ---------- #}
+      <div class="form-group-empleado">
+        <label for="id_usuario_autocomplete">Usuario <span class="required">*</span></label>
+        {{ form.usuario_autocomplete }}
+        {{ form.usuarioid }}
+        <div class="autocomplete-results" id="usuario-autocomplete-results"></div>
+        <div class="field-error" id="error-id_usuarioid"></div>
+      </div>
+
+      {# ---------- sucursal (autocomplete) ---------- #}
+      <div class="form-group-empleado">
+        <label for="id_sucursal_autocomplete">Sucursal <span class="required">*</span></label>
+        {{ form.sucursal_autocomplete }}
+        {{ form.sucursalid }}
+        <div class="autocomplete-results" id="sucursal-autocomplete-results"></div>
+        <div class="field-error" id="error-id_sucursalid"></div>
+      </div>
+
+      {# ---------- resto de campos ---------- #}
+      {% for field in form.visible_fields %}
+        {% if field.name != 'usuario_autocomplete' and field.name != 'sucursal_autocomplete' and field.name != 'usuarioid' and field.name != 'sucursalid' %}
+          <div class="form-group-empleado">
+            <label for="{{ field.id_for_label }}">
+              {{ field.label }}{% if field.field.required %} <span class="required">*</span>{% endif %}
+            </label>
+            {{ field }}
+            <div class="field-error" id="error-id_{{ field.name }}"></div>
+          </div>
+        {% endif %}
+      {% endfor %}
+
+      <button type="submit" class="btn-agregar-empleado">Guardar cambios</button>
+    </form>
+  </div>
+
+  <script>
+    const usuarioAutocompleteUrl  = "{% url 'usuario_autocomplete' %}?current={{ form.instance.usuarioid_id|default:'' }}";
+    const sucursalAutocompleteUrl = "{% url 'sucursal_autocomplete' %}";
+  </script>
+  <script defer src="{% static 'javascript/editar_empleado.js' %}"></script>
+{% endblock %}

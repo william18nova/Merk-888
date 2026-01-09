@@ -1,0 +1,327 @@
+/* static/css/agregar_horario.css
+   — Plantilla Nova Advance (match agregar_pedido.css)
+   — FIX dropdown autocomplete, label “Días *”, chips centrados
+   — Errores de campo visibles
+   — Alertas positivas sin icono (check) y con estilo Nova
+*/
+
+/* Fuente */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap');
+
+/* Tokens (idénticos a agregar_pedido.css) */
+:root{
+  --bg-1:#153060; --bg-2:#20497d;
+  --brand:#4da6ff; --brand-2:#3d8cff;
+  --text:#f8fbff; --text-muted:#d8e8ff;
+
+  --glass-bg: rgba(33,64,120,.28);
+  --glass-bg-strong: rgba(33,64,120,.34);
+  --glass-brd: rgba(255,255,255,.18);
+  --glass-sh: 0 18px 40px rgba(0,0,0,.35);
+
+  --slate-50:#f8fafc; --slate-100:#eef2f7; --slate-200:#e2e8f0;
+
+  --input-bg: rgba(255,255,255,.10);
+  --input-hov: rgba(255,255,255,.18);
+  --input-brd: rgba(255,255,255,.22);
+  --ring:#b8dbff;
+
+  --btn-grad: linear-gradient(180deg,#5cb8ff,#4da6ff 60%,#3d8cff);
+  --btn-grad-hov: linear-gradient(180deg,#6ec0ff,#58b1ff 60%,#4da6ff);
+  --btn-shadow: 0 12px 28px rgba(77,166,255,.45), inset 0 0 0 1px rgba(255,255,255,.22);
+
+  --err:#ff5b6b; --err-strong:#ff4d5f;
+  --err-bg-soft: rgba(255, 77, 95, .18);
+  --err-brd-soft: rgba(255,140,150,.65);
+
+  --radius:16px; --radius-sm:12px;
+  --font:'Inter', system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+  --icon-size:92px;
+  --transition:.22s cubic-bezier(.2,.6,.2,1);
+}
+
+/* Reset + fondo */
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{height:100%}
+body{
+  font-family:var(--font); color:var(--text);
+  min-height:100svh; overflow:auto;
+  padding:clamp(20px,4vw,32px);
+  background:
+    radial-gradient(1400px 800px at 10% 20%, rgba(77,166,255,.35), transparent 60%),
+    radial-gradient(1200px 700px at 85% 85%, rgba(77,166,255,.25), transparent 60%),
+    linear-gradient(135deg,var(--bg-1),var(--bg-2));
+}
+body::before{content:"";position:fixed;inset:0;background:inherit;filter:blur(12px);z-index:-1}
+
+/* Card (centrado robusto) */
+.container-horario{
+  width:min(95vw,780px);
+  background:var(--glass-bg);
+  backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px);
+  border:1px solid var(--glass-brd);
+  border-radius:var(--radius);
+  box-shadow:var(--glass-sh);
+  padding:clamp(28px,4.8vw,40px);
+  display:block; margin-inline:auto; float:none;
+  text-align:left;
+
+  /* para que el dropdown del autocompletado no se recorte */
+  position:relative; overflow:visible;
+}
+
+/* Header */
+.container-horario > :is(.icon-horario,h2,.obligatorio-texto){
+  display:block; margin-left:auto; margin-right:auto; text-align:center;
+}
+.icon-horario{
+  font-size:var(--icon-size); color:var(--brand);
+  filter:drop-shadow(0 8px 20px rgba(0,0,0,.28));
+  margin-bottom:10px;
+}
+h2{
+  font-size:clamp(24px,3.6vw,32px); font-weight:800; letter-spacing:.2px;
+  color:var(--text); text-shadow:0 6px 16px rgba(0,0,0,.22); margin-bottom:8px;
+}
+.obligatorio-texto{font-size:13px; color:var(--text-muted); font-style:italic; margin-bottom:22px}
+
+/* Formulario — inputs estilo login */
+.form-group-horario{ margin-bottom:18px; position:relative; overflow:visible; }
+.form-group-horario label{ display:block; font-weight:700; color:var(--text); margin:0 0 6px; }
+
+input[type="text"], input[type="time"], select, textarea{
+  width:100%; padding:14px; border-radius:var(--radius-sm);
+  border:1px solid var(--input-brd); background:var(--input-bg);
+  color:var(--text); font-size:15px; outline:none;
+  transition: background var(--transition), border-color var(--transition),
+             box-shadow var(--transition), transform var(--transition);
+}
+input::placeholder, textarea::placeholder{ color:var(--text-muted); }
+input:hover, select:hover, textarea:hover{ background:var(--input-hov); transform:translateY(-1px); }
+input:focus, select:focus, textarea:focus{
+  background:var(--input-hov); border-color:var(--ring);
+  box-shadow:0 0 0 3px color-mix(in srgb, var(--ring) 50%, transparent);
+}
+
+/* Icono del time/date visible en oscuro */
+input[type="time"]::-webkit-calendar-picker-indicator,
+input[type="date"]::-webkit-calendar-picker-indicator{ filter: invert(1) opacity(.85); }
+
+/* Estado error (input) */
+.input-error{
+  border-color:#ff6b77 !important;
+  background: color-mix(in srgb, var(--err-bg-soft) 100%, transparent);
+  box-shadow:0 0 0 3px rgba(255, 77, 95, .22);
+}
+.input-error:focus{
+  box-shadow:0 0 0 3px color-mix(in srgb, var(--err) 45%, transparent)!important;
+}
+
+/* Asterisco */
+.required{ color:var(--text-muted); margin-left:4px; }
+
+/* ===== Errores de campo (VISIBLES) ===== */
+.field-error{
+  display:flex; align-items:center; gap:6px;
+  margin-top:6px;
+  font-size:14px; font-weight:700; letter-spacing:.1px;
+  color:var(--err-strong);
+}
+.field-error i{ color:var(--err-strong); font-size:12px; }
+.field-error:empty{ display:none !important; }
+
+/* Compat Django <ul class="errorlist"> */
+.errorlist{ margin:6px 0 0; padding:0; list-style:none; }
+.errorlist li{
+  display:flex; align-items:center; gap:6px;
+  color:var(--err-strong); font-weight:700; font-size:14px;
+}
+.errorlist li::before{
+  content:"\f06a";  /* exclamation */
+  font-family:"Font Awesome 6 Free"; font-weight:900; font-size:12px;
+}
+
+/* ===== DÍAS (centrados y con label sin tocar HTML) ===== */
+.days-container{
+  display:flex; justify-content:center; gap:12px; flex-wrap:wrap;
+  margin:10px 0 18px; position:relative;
+}
+.days-container::before{
+  content:"Días *";
+  flex-basis:100%; text-align:center;
+  font-weight:800; color:var(--text);
+  margin-bottom:8px; letter-spacing:.2px;
+}
+.day-button{
+  width:40px; height:40px; border-radius:999px; border:1px solid var(--glass-brd);
+  background:var(--glass-bg-strong); color:var(--text); font-weight:800;
+  display:inline-flex; align-items:center; justify-content:center;
+  cursor:pointer; transition:transform .18s, filter .18s, background .22s, box-shadow .22s;
+  box-shadow:0 6px 14px rgba(0,0,0,.18), inset 0 0 0 1px rgba(255,255,255,.12);
+}
+.day-button:hover{ filter:saturate(1.15); transform:translateY(-1px); }
+.day-button:focus-visible{
+  outline:none; box-shadow:0 0 0 3px color-mix(in srgb, var(--ring) 50%, transparent);
+}
+.day-button.active{
+  background:var(--btn-grad);
+  box-shadow:
+    0 8px 22px rgba(77,166,255,.55),
+    0 0 0 6px rgba(77,166,255,.15),
+    inset 0 0 0 1px rgba(255,255,255,.22);
+}
+.day-button:disabled{ background:rgba(255,255,255,.18); color:#c9d5ec; cursor:not-allowed; }
+
+/* Botones principales (gradiente) */
+.btn-agregar-horario, .btn-guardar-horario{
+  width:100%; padding:13px 14px; border:none; border-radius:var(--radius-sm);
+  background:var(--btn-grad); color:#fff; font-size:15px; font-weight:900; letter-spacing:.2px;
+  cursor:pointer; box-shadow:var(--btn-shadow);
+  transition: transform .2s, filter .22s, box-shadow .22s, background .22s;
+}
+.btn-agregar-horario:hover, .btn-guardar-horario:hover{
+  background:var(--btn-grad-hov); transform:translateY(-1px);
+  filter:saturate(1.06);
+  box-shadow:0 14px 30px rgba(77,166,255,.45), inset 0 0 0 1px rgba(255,255,255,.26);
+}
+
+/* ===== Alertas (sin icono para success) ===== */
+.alert{
+  display:block;           /* se muestran cuando existen en el DOM */
+  padding:12px 14px; 
+  border-radius:var(--radius-sm);
+  font-size:14px; 
+  margin-bottom:16px; 
+  border:1px solid transparent;
+  position:relative;
+}
+
+/* POSITIVO (sin chip/check) */
+.alert-success{
+  background: linear-gradient(180deg,
+              color-mix(in srgb,#22c55e 22%, white),
+              color-mix(in srgb,#16a34a 14%, white));
+  color:#063a1c;
+  border-color: color-mix(in srgb,#16a34a 46%, white);
+  box-shadow: 0 12px 26px rgba(22,163,74,.20),
+              inset 0 0 0 1px rgba(255,255,255,.26);
+  /* sin espacio extra para icono */
+  padding-left:14px;
+}
+/* por si el template incluye <i class="fa-check..."> dentro del alert */
+.alert-success i.fa-check,
+.alert-success i.fa-check-circle,
+.alert-success i[class*="fa-check"]{ display:none !important; }
+
+/* NEGATIVO */
+.alert-error{
+  background: var(--err-bg-soft);
+  color: var(--err-strong);
+  border-color: var(--err-brd-soft);
+  box-shadow: 0 10px 22px rgba(255,77,95,.18),
+              inset 0 0 0 1px rgba(255,255,255,.18);
+}
+
+/* Tabla de horarios (blanca, viva) */
+.horarios-temp-container{ margin:18px 0 12px; }
+
+.horarios-temp{
+  width:100%; border-collapse:separate; border-spacing:0;
+  background:#fff; border-radius:var(--radius-sm); overflow:hidden;
+  box-shadow:0 6px 18px rgba(0,0,0,.12);
+  table-layout:fixed;
+}
+.horarios-temp thead{
+  background:linear-gradient(180deg,#3563b8,#2a4f9a); color:#fff; display:table-header-group;
+}
+.horarios-temp thead th{
+  padding:11px 12px; font-weight:700; text-transform:uppercase; white-space:nowrap; border:none; text-align:left;
+}
+.horarios-temp tbody tr{ border-top:1px solid var(--slate-100); }
+.horarios-temp tbody td{ padding:10px 12px; color:#0b1220; background:#fff; text-align:center; }
+.horarios-temp tbody tr:nth-child(even){ background:#f9fbff; }
+
+.horarios-temp td input{
+  width:100%; height:36px; padding:6px 10px; border-radius:10px;
+  border:1px solid #dbe4f3; background:#f7fbff; color:#0b1220; font-weight:700; outline:none;
+  transition:border-color .2s, box-shadow .2s, background .2s;
+  text-align:center;
+}
+.horarios-temp td input:hover{ background:#eef5ff; }
+.horarios-temp td input:focus{
+  border-color:var(--ring);
+  box-shadow:0 0 0 3px color-mix(in srgb, var(--ring) 45%, transparent);
+  background:#eef5ff;
+}
+
+/* Botón eliminar */
+.btn-eliminar{
+  background:#e74c3c; color:#fff; border:none; border-radius:8px; width:30px; height:30px; padding:0;
+  display:inline-flex; align-items:center; justify-content:center; cursor:pointer; transition:.18s;
+}
+.btn-eliminar i{ pointer-events:none; }
+.btn-eliminar:hover{ background:#c0392b; transform:translateY(-1px); }
+
+/* ===== Autocomplete (popup claro) — FIX de superposición ===== */
+.autocomplete-results{
+  position:absolute; top:calc(100% + 6px); left:0; right:0;
+  max-height:260px; overflow-y:auto; background:#fff;
+  border:1px solid var(--slate-200); border-radius:var(--radius-sm);
+  box-shadow:0 16px 30px rgba(0,0,0,.16);
+  z-index:10000 !important; 
+  display:none;
+}
+.autocomplete-results.open,
+.autocomplete-results[style*="display: block"]{ display:block; }
+.autocomplete-option{ padding:10px 12px; font-size:15px; cursor:pointer; color:#0b1220; text-align:left; }
+.autocomplete-option:hover{ background:#eaf3ff; }
+.autocomplete-no-result{ padding:10px 12px; font-size:14px; color:#64748b; }
+
+/* Responsive (≤768px) — centrado y tarjetas */
+@media (max-width:768px){
+  .container-horario{
+    width:calc(100vw - 24px);
+    max-width:680px;
+    position:relative; left:50%; transform:translateX(-50%);
+    margin:0 auto !important; float:none !important;
+  }
+
+  .days-container{ gap:10px; }
+  .day-button{ width:34px; height:34px; }
+
+  /* Tabla “lista” */
+  .horarios-temp{ display:block; border-radius:12px; overflow:hidden; }
+  .horarios-temp thead{ display:none !important; }
+  .horarios-temp tbody{ display:block; }
+  .horarios-temp tbody tr{
+    display:block; margin-bottom:14px; border:1px solid var(--slate-200);
+    border-radius:12px; background:#fff!important; box-shadow:0 4px 10px rgba(0,0,0,.08);
+    padding:12px 20px;
+  }
+  .horarios-temp tbody td{
+    display:flex; justify-content:space-between; align-items:center;
+    padding:8px 0; text-align:left; position:relative; background:transparent;
+  }
+  .horarios-temp tbody td::before{
+    content:attr(data-label) ":"; font-size:14px; font-weight:700; color:#2a4f9a; margin-right:10px;
+  }
+  .horarios-temp tbody td input{
+    flex:0 0 140px; width:140px; font-size:16px; padding:8px 10px;
+  }
+  .horarios-temp tbody td:last-child{ justify-content:space-between; padding-right:0; }
+}
+
+/* Centrado limpio si hay :has() */
+@supports selector(:has(*)) {
+  @media (max-width:768px){
+    .page-wrap:has(.container-horario){ display:grid; justify-items:center; }
+    .page-wrap:has(.container-horario) .container-horario{
+      position:static; transform:none; left:auto; width:min(100%,780px); margin-inline:auto;
+    }
+  }
+}
+
+/* Reduce motion */
+@media (prefers-reduced-motion:reduce){
+  .btn-agregar-horario,.btn-guardar-horario,input,select,textarea,.day-button{ transition:none!important; }
+}

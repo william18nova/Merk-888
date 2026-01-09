@@ -1,0 +1,209 @@
+/* static/css/visor_barcode.css */
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap");
+
+:root{
+  --bg-1:#153060; --bg-2:#20497d;
+  --brand:#4da6ff; --brand-2:#3d8cff;
+  --text:#f8fbff;
+  --muted: rgba(248,251,255,.78);
+  --card: rgba(255,255,255,.10);
+  --stroke: rgba(255,255,255,.18);
+  --shadow: 0 20px 60px rgba(0,0,0,.35);
+}
+
+.vb-page{
+  min-height: calc(100vh - 80px);
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  padding: 28px 16px;
+  font-family: "Inter", system-ui, -apple-system, Segoe UI, Roboto, Arial;
+  background: radial-gradient(1200px 600px at 20% 0%, rgba(77,166,255,.22), transparent 60%),
+              radial-gradient(900px 500px at 80% 20%, rgba(61,140,255,.16), transparent 55%),
+              linear-gradient(180deg, var(--bg-2), var(--bg-1));
+}
+
+.vb-card{
+  width: min(820px, 100%);
+  background: var(--card);
+  border: 1px solid var(--stroke);
+  border-radius: 18px;
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  padding: 18px;
+}
+
+.vb-header{
+  display:flex;
+  gap: 14px;
+  align-items:center;
+  margin-bottom: 14px;
+}
+
+.vb-icon{
+  width: 54px;
+  height: 54px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  border-radius: 14px;
+  background: linear-gradient(180deg, rgba(77,166,255,.30), rgba(61,140,255,.16));
+  border: 1px solid rgba(255,255,255,.16);
+  color: var(--text);
+  font-size: 22px;
+}
+
+.vb-title h2{
+  margin:0;
+  color: var(--text);
+  font-size: 22px;
+  letter-spacing: .2px;
+}
+.vb-title p{
+  margin: 2px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.vb-alert{
+  padding: 10px 12px;
+  border-radius: 12px;
+  margin: 10px 0 14px;
+  font-size: 13px;
+}
+.vb-alert--error{
+  background: rgba(255, 77, 77, .14);
+  border: 1px solid rgba(255, 77, 77, .28);
+  color: #ffecec;
+}
+
+.vb-inputwrap label{
+  display:block;
+  color: var(--text);
+  font-weight: 700;
+  font-size: 13px;
+  margin-bottom: 8px;
+}
+
+.vb-inputrow{
+  display:flex;
+  gap: 10px;
+}
+
+.vb-input{
+  flex:1;
+  height: 46px;
+  border-radius: 12px;
+  padding: 0 14px;
+  border: 1px solid rgba(255,255,255,.16);
+  background: rgba(10,20,40,.35);
+  color: var(--text);
+  outline: none;
+  font-size: 15px;
+}
+.vb-input::placeholder{ color: rgba(248,251,255,.55); }
+.vb-input:focus{
+  border-color: rgba(77,166,255,.75);
+  box-shadow: 0 0 0 3px rgba(77,166,255,.18);
+}
+
+.vb-btn{
+  height: 46px;
+  min-width: 46px;
+  border-radius: 12px;
+  border: 1px solid rgba(255,255,255,.16);
+  background: rgba(255,255,255,.06);
+  color: var(--text);
+  cursor:pointer;
+}
+.vb-btn:hover{
+  background: rgba(255,255,255,.10);
+}
+
+.vb-hint{
+  margin-top: 8px;
+  color: rgba(248,251,255,.70);
+  font-size: 12px;
+  display:flex;
+  align-items:center;
+  gap: 8px;
+}
+
+.vb-display{
+  margin-top: 16px;
+  border-radius: 16px;
+  padding: 18px;
+  border: 1px solid rgba(255,255,255,.14);
+  background: linear-gradient(180deg, rgba(255,255,255,.08), rgba(255,255,255,.05));
+}
+
+.vb-display.is-loading{
+  opacity: .75;
+  filter: saturate(.9);
+}
+
+.vb-bigname{
+  color: var(--text);
+  font-size: clamp(24px, 4vw, 44px);
+  font-weight: 800;
+  line-height: 1.08;
+  letter-spacing: .2px;
+  margin-bottom: 10px;
+}
+
+.vb-pricebox{
+  display:flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.vb-price{
+  color: #e9f5ff;
+  font-size: clamp(22px, 3.3vw, 40px);
+  font-weight: 800;
+}
+
+.vb-old{
+  color: rgba(248,251,255,.75);
+  font-size: 14px;
+  text-decoration: line-through;
+}
+
+.vb-meta{
+  display:flex;
+  flex-wrap:wrap;
+  gap: 10px;
+}
+
+.vb-pill{
+  display:inline-flex;
+  align-items:center;
+  padding: 8px 10px;
+  border-radius: 999px;
+  background: rgba(10,20,40,.35);
+  border: 1px solid rgba(255,255,255,.12);
+  color: rgba(248,251,255,.86);
+  font-size: 12px;
+}
+
+.vb-display.pop{
+  animation: vbPop .20s ease-out;
+}
+
+@keyframes vbPop{
+  from { transform: scale(.992); }
+  to   { transform: scale(1); }
+}
+
+/* jQuery UI menu encima */
+.ui-autocomplete{
+  z-index: 99999 !important;
+  max-height: 280px;
+  overflow: auto;
+  border-radius: 12px;
+}
+.ui-menu-item-wrapper{
+  font-family: "Inter", system-ui, -apple-system, Segoe UI, Roboto, Arial;
+}

@@ -1,0 +1,66 @@
+{# mainApp/templates/agregar_categoria.html #}
+{% extends "base.html" %}
+{% load static %}
+{% block title %}Agregar Categoría{% endblock %}
+
+{% block content %}
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1.0">
+  <title>Agregar Categoría</title>
+
+  <!-- Font Awesome -->
+  <link rel="stylesheet"
+        href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+
+  <!-- Hoja de estilos local -->
+  <link rel="stylesheet" href="{% static 'css/agregar_categoria.css' %}">
+</head>
+<body>
+  <div class="container">
+
+    <i class="fas fa-folder-plus icon"></i>
+    <h2>Agregar Categoría</h2>
+
+    {# alertas globales – escondidas hasta que JS inyecta contenido #}
+    <div id="error-message"   class="alert alert-error"   style="display:none"></div>
+    <div id="success-message" class="alert alert-success" style="display:none">
+      <i class="fas fa-check-circle success-icon"></i>
+      <span id="success-text"></span>
+    </div>
+
+    <p class="obligatorio-texto">
+      Todos los campos con <span class="required">*</span> son obligatorios.
+    </p>
+
+    <form id="categoriaForm" action="{% url 'agregar_categoria' %}" method="post">
+      {% csrf_token %}
+
+      <div class="form-group">
+        <label for="{{ form.nombre.id_for_label }}">
+          {{ form.nombre.label }} <span class="required">*</span>
+        </label>
+        {{ form.nombre }}
+        <div class="field-error" id="error-id_nombre"></div>
+      </div>
+
+      <div class="form-group">
+        <label for="{{ form.descripcion.id_for_label }}">
+          {{ form.descripcion.label }}
+        </label>
+        {{ form.descripcion }}
+        <div class="field-error" id="error-id_descripcion"></div>
+      </div>
+
+      <div class="form-group">
+        <button type="submit" class="btn-agregar-categoria">Agregar</button>
+      </div>
+    </form>
+  </div>
+
+  <script src="{% static 'javascript/agregar_categorias.js' %}"></script>
+</body>
+</html>
+{% endblock %}

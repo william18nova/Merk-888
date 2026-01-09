@@ -1,0 +1,267 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Editar Pedido{% endblock %}
+
+{% block extra_head %}
+  <!-- Font-Awesome + DataTables + CSS personalizado -->
+  <link
+    rel="stylesheet"
+    href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"
+  />
+  <link
+    rel="stylesheet"
+    href="https://cdn.datatables.net/1.13.8/css/jquery.dataTables.min.css"
+  />
+  <link
+    rel="stylesheet"
+    href="{% static 'css/agregar_pedido.css' %}"
+  />
+{% endblock %}
+
+{% block content %}
+<div class="container-inventario">
+  <i class="fas fa-truck icon-inventario"></i>
+  <h2>Editar Pedido #{{ pedido.pedidoid }}</h2>
+  <p class="obligatorio-texto">
+    Todos los campos con <span class="required">*</span> son obligatorios.
+  </p>
+
+  <div id="error-message"   class="alert alert-error"></div>
+  <div id="success-message" class="alert alert-success"></div>
+
+  <form
+    id="pedidoForm"
+    method="post"
+    action="{% url 'editar_pedido' pedido.pedidoid %}"
+  >
+    {% csrf_token %}
+    {# ─── Proveedor ──────────────────────── #}
+    <div class="form-group-precio">
+      <label for="id_proveedor_autocomplete">
+        Proveedor <span class="required">*</span>
+      </label>
+      {{ form.proveedor_autocomplete }}
+      {{ form.proveedor }}
+      <div
+        id="proveedor-autocomplete-results"
+        class="autocomplete-results"
+      ></div>
+      <div class="field-error" id="error-id_proveedor"></div>
+    </div>
+
+    {# ─── Sucursal ───────────────────────── #}
+    <div class="form-group-precio">
+      <label for="id_sucursal_autocomplete">
+        Sucursal <span class="required">*</span>
+      </label>
+      {{ form.sucursal_autocomplete }}
+      {{ form.sucursal }}
+      <div
+        id="sucursal-autocomplete-results"
+        class="autocomplete-results"
+      ></div>
+      <div class="field-error" id="error-id_sucursal"></div>
+    </div>
+
+    {# ─── Fecha Estimada ─────────────────── #}
+    <div class="form-group-precio">
+      <label for="id_fechaestimadaentrega">Fecha Estimada</label>
+      {{ form.fechaestimadaentrega }}
+      <div class="field-error" id="error-id_fechaestimadaentrega"></div>
+    </div>
+
+    {# ─── Comentario ─────────────────────── #}
+    <div class="form-group-precio">
+      <label for="id_comentario">Comentario</label>
+      {{ form.comentario }}
+    </div>
+
+    {# ─── Estado ─────────────────────────── #}
+    <div class="form-group-precio">
+      <label for="id_estado">Estado <span class="required">*</span></label>
+      {{ form.estado }}
+      <div class="field-error" id="error-id_estado"></div>
+    </div>
+
+    {# ─── Si "Recibido", monto y caja ────── #}
+    <div
+      id="group-monto-pagado"
+      class="form-group-precio"
+      style="display:none;"
+    >
+      <label for="id_monto_pagado">
+        Monto Pagado <span class="required">*</span>
+      </label>
+      {{ form.monto_pagado }}
+      <div class="field-error" id="error-id_monto_pagado"></div>
+    </div>
+
+    <div
+      id="group-caja-pago"
+      class="form-group-precio"
+      style="display:none;"
+    >
+      <label for="id_caja_pago_autocomplete">
+        Caja de Pago <span class="required">*</span>
+      </label>
+      {{ form.caja_pago_autocomplete }}
+      {{ form.caja_pagoid }}
+      <div
+        id="caja-pago-autocomplete-results"
+        class="autocomplete-results"
+      ></div>
+      <div class="field-error" id="error-id_caja_pagoid"></div>
+    </div>
+
+    {# ─── Agregar Productos ──────────────── #}
+    <div class="form-group-precio">
+      <label for="producto-input">
+        Producto <span class="required">*</span>
+      </label>
+      <input
+        id="producto-input"
+        class="form-control"
+        type="text"
+        placeholder="Buscar producto…"
+        autocomplete="off"
+      />
+      <input type="hidden" id="producto-id" />
+      <div
+        id="producto-autocomplete-results"
+        class="autocomplete-results"
+      ></div>
+      <div class="field-error" id="error-id_detalles"></div>
+    </div>
+    <div class="form-group-precio">
+      <label for="cantidad-input">
+        Cantidad <span class="required">*</span>
+      </label>
+      <input
+        id="cantidad-input"
+        class="form-control"
+        type="number"
+        min="1"
+        value="1"
+      />
+      <div class="field-error" id="error-id_cantidad"></div>
+    </div>
+    <button
+      type="button"
+      id="agregarDetalleBtn"
+      class="btn-agregar-precio"
+    >
+      Agregar Producto
+    </button>
+
+    {# ─── Total Aproximado ───────────────── #}
+    <h3 id="total-aproximado">
+      Total Aproximado:
+      <span id="total-valor">
+        {{ pedido.costototal|floatformat:2 }}
+      </span>
+    </h3>
+
+    {# ─── Tabla de Detalles ──────────────── #}
+    <div class="table-wrap">
+      <table id="detalle-pedido" class="display">
+        <thead>
+          <tr>
+            <th>Producto</th>
+            <th>Cantidad</th>
+            <th>Precio U.</th>
+            <th>Subtotal</th>
+            <th>Acciones</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for det in detalles_qs %}
+          <tr data-id="{{ det.detallepedidoid }}">
+            <td data-label="Producto">
+              {{ det.productoid.nombre }}
+            </td>
+            <td data-label="Cantidad">
+              {{ det.cantidad }}
+            </td>
+            <td data-label="Precio U.">
+              {{ det.preciounitario|floatformat:2 }}
+            </td>
+            <td data-label="Subtotal">
+              {{ det.subtotal|floatformat:2 }}
+            </td>
+            <td data-label="Acciones">
+              <button
+                type="button"
+                class="btn-eliminar btn-eliminar-producto"
+                data-id="{{ det.detallepedidoid }}"
+              >
+                <i class="fas fa-trash-alt"></i>
+              </button>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <input
+      type="hidden"
+      id="id_detalles"
+      name="detalles"
+    />
+    <button
+      type="submit"
+      class="btn-guardar-precio"
+    >
+      Guardar Cambios
+    </button>
+  </form>
+</div>
+
+{# ─── Datos para el JS ───────────────────── #}
+<script>
+  const initialDetalles               = {{ detalles_json|safe }};
+  const proveedorAutocompleteUrl      =
+    "{% url 'proveedor_con_productos_autocomplete' %}";
+  const productoPedidoAutocompleteUrl =
+    "{% url 'producto_pedido_autocomplete' %}";
+  const sucursalAutocompleteUrl       =
+    "{% url 'sucursal_autocomplete' %}";
+  const cajaPagoAutocompleteUrl       =
+    "{% url 'puntopago_horario_caja_autocomplete' %}";
+  const visualizarPedidosUrl          =
+    "{% url 'visualizar_pedidos' %}";
+</script>
+
+{# ─── Librerías y tu JS ───────────────────── #}
+<script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+<script src="https://cdn.datatables.net/1.13.8/js/jquery.dataTables.min.js"></script>
+<script defer src="{% static 'javascript/editar_pedido.js' %}"></script>
+
+{# ─── Inicialización extra ────────────────── #}
+<script>
+  $(function(){
+    // Mostrar/ocultar campos de “Recibido”
+    $('#id_estado')
+      .on('change', function(){
+        if (this.value === 'Recibido') {
+          $('#group-monto-pagado, #group-caja-pago').show();
+        } else {
+          $('#group-monto-pagado, #group-caja-pago').hide();
+          $('#id_monto_pagado, #id_caja_pago_autocomplete, #id_caja_pagoid').val('');
+        }
+      })
+      .trigger('change');
+
+    // Autocomplete caja de pago (filtrado por sucursal_id)
+    autocomplete({
+      inp:    document.getElementById('id_caja_pago_autocomplete'),
+      hidden: document.getElementById('id_caja_pagoid'),
+      box:    document.getElementById('caja-pago-autocomplete-results'),
+      url:    cajaPagoAutocompleteUrl,
+      extra:  () => ({ sucursal_id: $('#id_sucursal').val() }),
+      allowEmpty: true
+    });
+  });
+</script>
+{% endblock %}

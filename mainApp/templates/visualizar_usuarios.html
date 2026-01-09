@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Visualizar Usuarios{% endblock %}
+
+{% block extra_head %}
+  <link rel="stylesheet" href="{% static 'css/visualizar_usuarios.css' %}">
+  <link rel="stylesheet"
+        href="https://cdn.datatables.net/1.11.5/css/jquery.dataTables.min.css">
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/js/all.min.js"></script>
+  <script src="https://code.jquery.com/jquery-3.6.0.min.js" defer></script>
+  <script src="https://cdn.datatables.net/1.11.5/js/jquery.dataTables.min.js" defer></script>
+{% endblock %}
+
+{% block content %}
+  <div class="container">
+    <h2><i class="fas fa-users"></i> Lista de Usuarios</h2>
+
+    {# ---- mensajes Django ---- #}
+    {% if messages %}
+      <div class="messages">
+        {% for message in messages %}
+          <div class="alert {% if message.tags %}alert-{{ message.tags }}{% endif %}">
+            {{ message }}
+          </div>
+        {% endfor %}
+      </div>
+    {% endif %}
+
+    {# ---- buscador externo ---- #}
+    <div class="search-wrapper">
+      <span class="search-icon"><i class="fas fa-search"></i></span>
+      <input id="buscador-usuarios"
+             class="search-input"
+             type="text"
+             placeholder="Buscar…">
+    </div>
+
+    {# ---- tabla ---- #}
+    <table id="usuariosTable" class="display">
+      <thead>
+        <tr>
+          <th>Nombre de Usuario</th>
+          <th>Rol</th>
+          <th class="no-sort">Acciones</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for u in usuarios %}
+        <tr>
+          <td data-label="Nombre de Usuario">{{ u.nombreusuario }}</td>
+          <td data-label="Rol">{{ u.rolid.nombre }}</td>
+
+          <td data-label="Acciones" class="actions-cell">
+            <div class="btn-container">
+              <a href="{% url 'editar_usuario' u.usuarioid %}"
+                 class="btn editar"
+                 title="Editar {{ u.nombreusuario }}"><i class="fas fa-edit"></i></a>
+
+              <button type="button"
+                      class="btn borrar"
+                      data-nombre="{{ u.nombreusuario }}"><i class="fas fa-trash-alt"></i></button>
+            </div>
+
+            <!-- Formulario oculto DELETE -->
+            <form class="delete-form"
+                  action="{% url 'eliminar_usuario' u.usuarioid %}"
+                  method="post" style="display:none;">{% csrf_token %}</form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <script defer src="{% static 'javascript/visualizar_usuarios.js' %}"></script>
+{% endblock %}

@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Visor por Código de Barras{% endblock %}
+
+{% block extra_head %}
+  <link rel="stylesheet"
+        href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"/>
+  <link rel="stylesheet"
+        href="https://code.jquery.com/ui/1.13.3/themes/base/jquery-ui.css"/>
+  <link rel="stylesheet" href="{% static 'css/visor_barcode.css' %}">
+{% endblock %}
+
+{% block content %}
+<div class="vb-page">
+  <div class="vb-card">
+    <div class="vb-header">
+      <div class="vb-icon"><i class="fas fa-barcode"></i></div>
+      <div class="vb-title">
+        <h2>Visor de Producto</h2>
+        <p>Escanea o escribe el código de barras</p>
+      </div>
+    </div>
+
+    <div id="vb-error" class="vb-alert vb-alert--error" style="display:none;"></div>
+
+    <div class="vb-inputwrap">
+      <label for="vb_barcode">Código de barras</label>
+      <div class="vb-inputrow">
+        <input id="vb_barcode" class="vb-input" inputmode="numeric" autocomplete="off"
+               placeholder="Escanea aquí…">
+        <button id="vb_clear" type="button" class="vb-btn vb-btn--ghost" title="Limpiar">
+          <i class="fas fa-eraser"></i>
+        </button>
+      </div>
+      <div class="vb-hint">
+        <i class="fas fa-bolt"></i> Tip: Si usas lector USB, normalmente envía “Enter” al final.
+      </div>
+    </div>
+
+    <div class="vb-display" id="vb_display">
+      <div class="vb-bigname" id="vb_name">—</div>
+      <div class="vb-pricebox">
+        <div class="vb-price" id="vb_price">$0</div>
+        <div class="vb-old" id="vb_old" style="display:none;"></div>
+      </div>
+      <div class="vb-meta">
+        <span class="vb-pill" id="vb_pid">ID: —</span>
+        <span class="vb-pill" id="vb_bar">Barras: —</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  const VISOR_BARRAS_URL  = "{% url 'visor_barcode_buscar' %}";
+  const VISOR_LOOKUP_URL  = "{% url 'visor_barcode_lookup' %}";
+</script>
+
+<script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+<script src="https://code.jquery.com/ui/1.13.3/jquery-ui.min.js"></script>
+<script defer src="{% static 'javascript/visor_barcode.js' %}"></script>
+{% endblock %}

@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Horarios{% endblock %}
+
+{% block extra_head %}
+  <!-- Font-Awesome + DataTables -->
+  <link rel="stylesheet"
+        href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"/>
+  <link rel="stylesheet"
+        href="https://cdn.datatables.net/1.13.8/css/jquery.dataTables.min.css"/>
+
+  <!-- CSS propio -->
+  <link rel="stylesheet" href="{% static 'css/visualizar_horarios.css' %}">
+{% endblock %}
+
+{% block content %}
+  <div class="container">
+    <h2><i class="fas fa-clock"></i> Horarios</h2>
+
+    {% if messages %}
+      <div class="messages">
+        {% for m in messages %}
+          <div class="alert {% if m.tags %}alert-{{ m.tags }}{% endif %}">{{ m }}</div>
+        {% endfor %}
+      </div>
+    {% endif %}
+
+    {# ---------- buscador sucursal ---------- #}
+    <form id="sucursalForm" class="search-wrapper" method="post">
+      {% csrf_token %}
+      <i class="fas fa-search"></i>
+      <input  id="id_sucursal_autocomplete"
+              class="search-input"
+              placeholder="Buscar sucursal…"
+              autocomplete="off"
+              value="{{ sucursal_seleccionada.nombre|default_if_none:'' }}">
+      <input  type="hidden" id="id_sucursal" name="sucursal"
+              value="{{ sucursal_seleccionada.sucursalid|default_if_none:'' }}">
+      <div   id="sucursal-autocomplete-results"
+             class="autocomplete-results"></div>
+    </form>
+
+    {# ---------- botón editar ---------- #}
+    {% if sucursal_seleccionada %}
+      <div class="btn-container">
+        <a  href="{% url 'editar_horarios' sucursal_seleccionada.pk %}"
+            class="btn-editar-horarios">
+          Editar Horarios
+        </a>
+      </div>
+    {% endif %}
+
+    {# ---------- tabla ---------- #}
+    {% if horarios %}
+      <table id="horariosTable" class="display">
+        <thead>
+          <tr>
+            <th>Día</th>
+            <th>Apertura</th>
+            <th>Cierre</th>
+            <th class="no-sort">Acciones</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for h in horarios %}
+            <tr>
+              <td data-label="Día">{{ h.dia_semana }}</td>
+              <td data-label="Apertura">{{ h.horaapertura }}</td>
+              <td data-label="Cierre">{{ h.horacierre }}</td>
+              <td data-label="Acciones" class="actions-cell">
+                <button type="button"
+                        class="btn-eliminar"
+                        data-h-id="{{ h.horarioid }}"
+                        title="Eliminar horario">
+                  <i class="fas fa-trash-alt"></i>
+                </button>
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% endif %}
+  </div>
+
+  {# ---------- scripts ---------- #}
+  <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+  <script src="https://cdn.datatables.net/1.13.8/js/jquery.dataTables.min.js"></script>
+
+  <script>
+    const sucursalAutocompleteUrl = "{% url 'sucursal_horario_visualizar_autocomplete' %}";
+    const eliminarHorarioUrl      = "{% url 'eliminar_horario' 0 %}";
+  </script>
+
+  <script defer src="{% static 'javascript/visualizar_horarios.js' %}"></script>
+{% endblock %}

@@ -1,0 +1,78 @@
+{# templates/agregar_usuario.html #}
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Agregar Usuario{% endblock %}
+
+{% block extra_head %}
+  <link rel="stylesheet" href="{% static 'css/agregar_usuario.css' %}">
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/js/all.min.js"></script>
+{% endblock %}
+
+{% block content %}
+  <div class="container-usuario">
+    <i class="fas fa-user-plus icon-usuario"></i>
+    <h2>Agregar Usuario</h2>
+    <p class="obligatorio-texto">
+      Todos los campos con <span class="required">*</span> son obligatorios.
+    </p>
+
+    <div id="error-message"   class="alert alert-error"   style="display:none;"></div>
+    <div id="success-message" class="alert alert-success" style="display:none;"></div>
+
+    <form id="usuarioForm" method="post" action="{% url 'agregar_usuario' %}">
+      {% csrf_token %}
+
+      {# ---------------- Rol (autocomplete) ---------------- #}
+      <div class="form-group-usuario">
+        <label for="id_rol_autocomplete">Rol <span class="required">*</span></label>
+        {{ form.rol_autocomplete }}
+        {{ form.rolid }}          {# hidden PK #}
+        <div id="rol-autocomplete-results" class="autocomplete-results"></div>
+        <div class="field-error" id="error-id_rolid"></div>
+      </div>
+
+      {# ---------------- Nombre de usuario ---------------- #}
+      <div class="form-group-usuario">
+        <label for="{{ form.nombreusuario.id_for_label }}">
+          {{ form.nombreusuario.label }} <span class="required">*</span>
+        </label>
+        {{ form.nombreusuario }}
+        <div class="field-error" id="error-id_nombreusuario"></div>
+      </div>
+
+      {# ---------------- Contraseña ---------------- #}
+      <div class="form-group-usuario">
+        <label for="{{ form.password1.id_for_label }}">
+          {{ form.password1.label }} <span class="required">*</span>
+        </label>
+        <div class="input-container">
+          {{ form.password1 }}
+          <i class="fas fa-eye toggle-password"
+             onclick="togglePassword('{{ form.password1.id_for_label }}')"></i>
+        </div>
+        <div class="field-error" id="error-id_password1"></div>
+      </div>
+
+      {# -------- Confirmar contraseña -------- #}
+      <div class="form-group-usuario">
+        <label for="{{ form.password2.id_for_label }}">
+          {{ form.password2.label }} <span class="required">*</span>
+        </label>
+        <div class="input-container">
+          {{ form.password2 }}
+          <i class="fas fa-eye toggle-password"
+             onclick="togglePassword('{{ form.password2.id_for_label }}')"></i>
+        </div>
+        <div class="field-error" id="error-id_password2"></div>
+      </div>
+
+      <button type="submit" class="btn-agregar-usuario">Agregar Usuario</button>
+    </form>
+  </div>
+
+  <script>
+    const rolAutocompleteUrl = "{% url 'rol_autocomplete_usuarios' %}";
+  </script>
+  <script defer src="{% static 'javascript/agregar_usuario.js' %}"></script>
+{% endblock %}

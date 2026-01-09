@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Editar permisos del rol{% endblock %}
+
+{% block extra_head %}
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"/>
+  <link rel="stylesheet" href="https://cdn.datatables.net/1.13.8/css/jquery.dataTables.min.css"/>
+  <link rel="stylesheet" href="{% static 'css/roles_permisos.css' %}">
+{% endblock %}
+
+{% block content %}
+<div class="container-rp">
+  <i class="fas fa-key icon-rp"></i>
+  <h2>Editar permisos del rol</h2>
+  <p class="obligatorio-texto" style="margin-top:-6px">
+    Rol seleccionado: <strong>{{ rol.nombre }}</strong>
+  </p>
+
+  <div id="error-message" class="alert alert-error" style="display:none;"></div>
+  <div id="success-message" class="alert alert-success" style="display:none;"></div>
+
+  <form id="rolPermisoForm" method="post" action="{% url 'editar_roles_permisos' rol.pk %}">
+    {% csrf_token %}
+    {{ form.rol }}
+
+    <div class="form-group-rp">
+      <label for="id_permiso_autocomplete">Permiso</label>
+      <input id="id_permiso_autocomplete" type="text" class="form-control"
+             placeholder="Escriba para buscar permiso…" autocomplete="off">
+      {{ form.permisoid }}
+      <div id="permiso-autocomplete-results" class="autocomplete-results"></div>
+      <div class="field-error" id="error-id_permisoid"></div>
+    </div>
+
+    <div class="actions">
+      <button type="button" id="agregarPermisoBtn" class="btn-add">Agregar permiso</button>
+    </div>
+
+    <div class="table-wrap">
+      <table id="permisos-list" class="display">
+        <thead>
+          <tr>
+            <th>Permiso</th>
+            <th class="no-sort">Acciones</th>
+          </tr>
+        </thead>
+        <tbody id="permisos-body">
+          {% for rel in permisos_rel %}
+            <tr>
+              <td data-label="Permiso" data-perm-id="{{ rel.permiso.pk }}">{{ rel.permiso.nombre }}</td>
+              <td data-label="Acciones" class="actions-cell">
+                <button type="button"
+                        class="btn-eliminar"
+                        title="Quitar permiso (borrador)"
+                        data-rp-id="{{ rel.pk }}">
+                  <i class="fas fa-trash-alt"></i>
+                </button>
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Buffers JSON -->
+    <input type="hidden" id="id_permisos_temp"   name="permisos_temp"   value="[]">
+    <input type="hidden" id="id_permisos_borrar" name="permisos_borrar" value="[]">
+
+    <button type="submit" class="btn-save">Guardar cambios</button>
+  </form>
+</div>
+
+<script>
+  const permisoAutocompleteUrl = "{% url 'permiso_para_rol_autocomplete' %}";
+  const currentRolId           = {{ rol.pk }};
+  const visualizarUrl          = "{% url 'visualizar_roles_permisos' %}";
+</script>
+
+<script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+<script src="https://cdn.datatables.net/1.13.8/js/jquery.dataTables.min.js"></script>
+<script defer src="{% static 'javascript/editar_roles_permisos.js' %}"></script>
+{% endblock %}
