@@ -965,11 +965,18 @@ class EditarInventarioView(LoginRequiredMixin, View):
             pid = int(productoid)
 
             # Lock row
-            inv, created = Inventario.objects.select_for_update().get_or_create(
+            inv, _created = Inventario.objects.select_for_update().get_or_create(
                 sucursalid=sucursal,
                 productoid_id=pid,
                 defaults={"cantidad": 0},
             )
+
+            # Para el mensaje del JS
+            producto_nombre = ""
+            try:
+                producto_nombre = (inv.productoid.nombre or "").strip()
+            except Exception:
+                producto_nombre = ""
 
             # ✅ MODO: SUMA (añadir)
             if add_int is not None:
@@ -982,18 +989,34 @@ class EditarInventarioView(LoginRequiredMixin, View):
                         })
                     }, status=400)
 
+                before = int(inv.cantidad or 0)
+
                 Inventario.objects.filter(pk=inv.pk).update(cantidad=F("cantidad") + add_int)
                 inv.refresh_from_db(fields=["cantidad"])
 
+                # (messages opcional)
                 messages.success(request, f"Producto actualizado en «{sucursal.nombre}».")
-                return JsonResponse({"success": True, "new_cantidad": inv.cantidad})
+
+                return JsonResponse({
+                    "success": True,
+                    "mode": "add",
+                    "product_name": producto_nombre,
+                    "delta": int(add_int),         # lo que se agregó (puede ser negativo)
+                    "before": before,              # cantidad anterior
+                    "new_cantidad": int(inv.cantidad),
+                })
 
             # ✅ MODO: SET EXACTO
             inv.cantidad = int(cantidad_int)  # aquí no es None
             inv.save(update_fields=["cantidad"])
 
             messages.success(request, f"Producto actualizado en «{sucursal.nombre}».")
-            return JsonResponse({"success": True, "new_cantidad": inv.cantidad})
+            return JsonResponse({
+                "success": True,
+                "mode": "exact",
+                "product_name": producto_nombre,
+                "new_cantidad": int(inv.cantidad),
+            })
 
         # ───── Submit principal: MERGE (no eliminar faltantes) ─────
         form = EditarInventarioForm(request.POST)
@@ -1026,7 +1049,7 @@ class EditarInventarioView(LoginRequiredMixin, View):
                 continue
             try:
                 pid_int = int(pid)
-                cant_int = int(cant)  # ✅ puede ser negativo o 0
+                cant_int = int(cant)
             except (ValueError, TypeError):
                 continue
             upserts[str(pid_int)] = cant_int

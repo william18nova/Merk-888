@@ -101,6 +101,7 @@ $(function () {
     dt.clear().draw(false);
   }
 
+  // ✅ Limpia SIEMPRE todos los campos (nombre/barras/id/exact/add/hidden + tabla)
   function clearAllFieldsAndUI({ keepMessages=false } = {}){
     clearFieldErrors();
 
@@ -206,7 +207,7 @@ $(function () {
      Autocomplete ULTRA: cache + abort para que sea instantáneo
   ============================================================================= */
   function makeAC($input, urlBuilder, mode){
-    const cache = new Map(); // term -> results[]
+    const cache = new Map();
     let acAbort = null;
 
     $input.autocomplete({
@@ -223,7 +224,6 @@ $(function () {
           return resp(cache.get(key));
         }
 
-        // cancelar request anterior
         try { if (acAbort) acAbort.abort(); } catch {}
         acAbort = new AbortController();
 
@@ -246,7 +246,6 @@ $(function () {
               barcode: x.barcode || ""
             }));
 
-            // cache pequeño (LRU simple)
             cache.set(key, arr);
             if (cache.size > 300){
               const first = cache.keys().next().value;
@@ -309,8 +308,10 @@ $(function () {
   }
 
   /* =============================================================================
-     ✅ Actualizar: si "Añadir cantidad" tiene valor -> suma (DB atómica)
-               si no -> set exacto (puede ser negativo / 0)
+     ✅ Actualizar:
+        - si "Añadir cantidad" tiene valor -> suma
+        - si no -> set exacto
+     ✅ después de guardar: LIMPIA TODO y el OK dice nombre + cuánto se agregó
   ============================================================================= */
   function validateSingle(){
     clearFieldErrors();
@@ -322,10 +323,11 @@ $(function () {
     let bad = false;
     if (!pid) { fieldError("productoid", "Debe seleccionar un producto."); bad = true; }
 
-    // Si hay add, se usa add; si no hay add, se usa exact
     if (qtyAdd !== ""){
-      if (!isIntString(qtyAdd)){ fieldError("add_cantidad", "Añadir cantidad debe ser entero (puede ser negativo o 0)."); bad = true; }
-      // regla local de aviso (además del backend)
+      if (!isIntString(qtyAdd)){
+        fieldError("add_cantidad", "Añadir cantidad debe ser entero (puede ser negativo o 0).");
+        bad = true;
+      }
       if ((current.cantidad || 0) > 9000){
         fieldError("add_cantidad", "Este producto nunca se ha contado, cuéntelo antes de surtir.");
         bad = true;
@@ -334,7 +336,6 @@ $(function () {
       return { pid, qtyExact, qtyAdd, mode:"add" };
     }
 
-    // exact
     if (qtyExact === ""){
       fieldError("cantidad", "Ingrese la cantidad exacta.");
       bad = true;
@@ -347,12 +348,23 @@ $(function () {
     return { pid, qtyExact, qtyAdd:"", mode:"exact" };
   }
 
+  function formatDeltaMsg(delta){
+    delta = Number(delta);
+    if (!Number.isFinite(delta)) return "se agregaron 0";
+    if (delta > 0) return `se agregaron ${delta}`;
+    if (delta < 0) return `se restaron ${Math.abs(delta)}`;
+    return "se agregaron 0";
+  }
+
   let saving = false;
   $btnUpd.on("click", function(){
     if (saving) return;
 
     const v = validateSingle();
     if (!v) return;
+
+    // Guardar nombre antes de limpiar UI
+    const fallbackName = current.nombre || $inpNom.val() || "Producto";
 
     saving = true;
     $btnUpd.prop("disabled", true);
@@ -363,7 +375,6 @@ $(function () {
 
     if (v.mode === "add"){
       fd.append("add_cantidad", v.qtyAdd);
-      // mandamos también cantidad exacta por si quieres, pero el backend suma con add_cantidad
       fd.append("cantidad", v.qtyExact || String(current.cantidad || 0));
     } else {
       fd.append("cantidad", v.qtyExact);
@@ -386,16 +397,23 @@ $(function () {
         return;
       }
 
-      const newQty = Number(data.new_cantidad);
-      if (Number.isFinite(newQty)){
-        current.cantidad = newQty;
-        $qtyExact.val(String(newQty));
-        renderSingleRow();
+      // Si tu backend ya envía product_name / mode / delta, lo usamos.
+      // Si NO, hacemos fallback con current + lo que digitó.
+      const pname = String(data.product_name || fallbackName || "Producto").trim();
+      const mode  = String(data.mode || v.mode || "").trim();
+
+      if (mode === "add") {
+        const delta = (data.delta !== undefined) ? data.delta : v.qtyAdd;
+        const newQty = (data.new_cantidad !== undefined) ? Number(data.new_cantidad) : NaN;
+        const msg = `✅ ${pname}: ${formatDeltaMsg(delta)}. Nuevo stock: ${Number.isFinite(newQty) ? newQty : ""}`;
+        showOk(msg);
+      } else {
+        const newQty = (data.new_cantidad !== undefined) ? Number(data.new_cantidad) : Number(v.qtyExact);
+        showOk(`✅ ${pname}: cantidad exacta actualizada a ${Number.isFinite(newQty) ? newQty : ""}`);
       }
 
-      $qtyAdd.val(""); // ✅ listo para seguir surtiendo rápido
-      showOk("✅ Producto actualizado.");
-      setTimeout(() => $qtyAdd.trigger("focus"), 0);
+      // ✅ SIEMPRE limpiar TODO después de actualizar/guardar
+      clearAllFieldsAndUI({ keepMessages:true });
     })
     .catch(err => {
       try {
