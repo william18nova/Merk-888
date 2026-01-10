@@ -3269,6 +3269,7 @@ class GenerarVentaView(LoginRequiredMixin, View):
         foot = ["-" * WIDTH]
 
         # ✅ si hubo devolución, muéstrala en positivo
+        line("Klk MW"),
         if refund_total > 0:
             foot.append(lr("DEVUELTO:", money(refund_total)))
 
