@@ -181,6 +181,16 @@ $(function () {
   }
   const enforceTotalIntegritySoft = throttle(enforceTotalIntegrity, 150);
 
+  /* ================== Modal open/close helpers (se usan en clear) ================== */
+  function openModal(){
+    $modal.addClass("is-open").show();
+    $("body").addClass("modal-open");
+  }
+  function closeModal(){
+    $modal.removeClass("is-open").hide();
+    $("body").removeClass("modal-open");
+  }
+
   function clearCartAndTotals() {
     productos.length = 0;
     cantidades.length = 0;
@@ -195,7 +205,7 @@ $(function () {
 
     $("#monto-recibido").val("");
     $("#cambio").text("");
-    $("#myModal").hide();
+    closeModal();
     lastAddedPid = null;
   }
 
@@ -1483,12 +1493,14 @@ $(function () {
     el.value = cleaned;
     return cleaned;
   }
+
+  // ✅ IMPORTANTE: aquí sí permitimos 0 para borrar fila (coherente con applyQtyInstant)
   function commitRowQtyInput(el){
     const raw = String(el.value || "").trim();
     const n = parseInt(raw, 10);
-    if (!Number.isFinite(n) || n === 0) { el.value = "1"; return 1; }
+    if (!Number.isFinite(n)) { el.value = "1"; return 1; }
     el.value = String(n);
-    return n;
+    return n; // puede ser 0 o negativo
   }
 
   $tbody.on("input change", ".qty-input", function () {
@@ -1646,15 +1658,6 @@ $(function () {
 
   function isMixtoUI(){
     return !!($mixMode && $mixMode.length && $mixMode.prop("checked"));
-  }
-
-  function openModal(){
-    $modal.addClass("is-open").show();
-    $("body").addClass("modal-open");
-  }
-  function closeModal(){
-    $modal.removeClass("is-open").hide();
-    $("body").removeClass("modal-open");
   }
 
   function showMixError(msg){
@@ -1925,6 +1928,7 @@ $(function () {
   }
 
   /* ================== ✅ MODAL INSTANT / o BYPASS si total <= 0 ================== */
+  let confirmSubmitting = false; // ✅ se resetea al abrir modal y en fallos de submit
   $("#generar-venta").off("click").on("click", () => {
     if (!productos.length) { alert("Agregue productos."); return; }
     if (!hasSucursal() || !$("#puntopago_id").val()) { alert("Seleccione sucursal y punto de pago."); return; }
@@ -1960,12 +1964,13 @@ $(function () {
     // default: efectivo
     $modal.find(".pm-check[value='efectivo']").prop("checked", true);
 
-    applyModeRules();
-    openModal();
-
+    confirmSubmitting = false; // ✅ reset aquí
     const $btnConfirm = $("#confirmar-pago");
     $modal.attr("data-loading-prices","0");
     $btnConfirm.prop("disabled", false);
+
+    applyModeRules();
+    openModal();
 
     queueMicrotask(() => {
       if (!isMixtoUI() && $amountIn.is(":visible")) { $amountIn.focus(); $amountIn[0]?.select?.(); }
@@ -2114,7 +2119,6 @@ $(function () {
   });
 
   /* ================== CLICK CONFIRM (MIXTO / NO MIXTO) ================== */
-  let confirmSubmitting = false;
   $(document).off("click.confirmPago").on("click.confirmPago", "#confirmar-pago", function (e) {
     e.preventDefault();
     if (confirmSubmitting) return;
@@ -2234,6 +2238,7 @@ $(function () {
     .then(async (r) => {
       if (!r || !r.success) {
         saleSubmitting = false;
+        confirmSubmitting = false; // ✅ permitir reintento
         if ($submitBtn.length) $submitBtn.prop("disabled", false);
         alert((r && r.error) || "Error");
         return;
@@ -2268,6 +2273,7 @@ $(function () {
     })
     .catch(() => {
       saleSubmitting = false;
+      confirmSubmitting = false; // ✅ permitir reintento
       if ($submitBtn.length) $submitBtn.prop("disabled", false);
       alert("Error de red");
     });
