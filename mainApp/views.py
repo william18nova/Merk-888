@@ -3214,6 +3214,7 @@ class GenerarVentaView(LoginRequiredMixin, View):
     def _build_receipt_text(venta_data, detalles, total, pagos):
         """
         TEXTO (para POS Agent). Ajustado a 80mm (48 columnas aprox).
+        Incluye: CAJERO + DEVUELTO (si aplica)
         """
         def money(n):
             try:
@@ -3235,13 +3236,18 @@ class GenerarVentaView(LoginRequiredMixin, View):
             return left + (" " * space) + right
 
         ahora = timezone.localtime()
+
+        cajero_nombre = (venta_data or {}).get("cajero_nombre", "") or "—"
+        refund_total  = GenerarVentaView._to_decimal((venta_data or {}).get("refund_total", 0))
+
         head = [
             line("NOVA POS"),
             line("MERK2888"),
             line("NIT: 28.565.875 - 4"),
             line("FACTURA"),
             lr("Fecha:", ahora.strftime("%Y-%m-%d %H:%M")),
-            lr("Sucursal:", venta_data.get("sucursal_nombre", "")),
+            lr("Sucursal:", (venta_data or {}).get("sucursal_nombre", "")),
+            lr("Cajero:", cajero_nombre),
             "-" * WIDTH,
         ]
 
@@ -3259,8 +3265,14 @@ class GenerarVentaView(LoginRequiredMixin, View):
             mp = (p.get("medio_pago") or "").upper().replace("_", " ")
             pay_lines.append(lr(mp[:18], money(p.get("monto", 0))))
 
-        foot = [
-            "-" * WIDTH,
+        foot = ["-" * WIDTH]
+
+        # ✅ si hubo devolución, muéstrala en positivo
+        if refund_total > 0:
+            # (opcional) también podrías mostrar "VENTA:" (bruto), pero aquí solo lo pedido
+            foot.append(lr("DEVUELTO:", money(refund_total)))
+
+        foot += [
             lr("TOTAL:", money(total)),
             "",
             line("¡Gracias por su compra!"),
@@ -3286,13 +3298,26 @@ class GenerarVentaView(LoginRequiredMixin, View):
         try:
             ahora = timezone.localtime()
 
+            # ✅ cajero (nombre visible en factura)
+            empleado = getattr(user, "empleado", None)
+            if empleado is None:
+                return JsonResponse({'success': False, 'error': 'El usuario no tiene un empleado asociado.'})
+
+            cajero_nombre = f"{getattr(empleado, 'nombre', '')} {getattr(empleado, 'apellido', '')}".strip()
+            if not cajero_nombre:
+                cajero_nombre = (getattr(user, "get_full_name", lambda: "")() or getattr(user, "username", "") or "—").strip()
+
+            # ✅ dinero devuelto (solo por items con qty < 0)
+            refund_total = sum(
+                (-(d.get("subtotal") or Decimal("0")))
+                for d in (detalles or [])
+                if int(d.get("cantidad") or 0) < 0
+            )
+            if refund_total < 0:
+                refund_total = Decimal("0")
+
             with transaction.atomic():
-                empleado = getattr(user, "empleado", None)
-                if empleado is None:
-                    return JsonResponse({'success': False, 'error': 'El usuario no tiene un empleado asociado.'})
-
                 cliente_inst = Cliente.objects.filter(pk=cliente_id).first() if cliente_id else None
-
                 mediopago = "mixto" if len(pagos) >= 2 else (pagos[0]["medio_pago"] if pagos else "sin_pago").lower()
 
                 venta = Venta.objects.create(
@@ -3310,8 +3335,8 @@ class GenerarVentaView(LoginRequiredMixin, View):
                 qty_map  = {int(d["productoid"]): int(d["cantidad"]) for d in detalles}
 
                 inv_qs = (Inventario.objects
-                          .select_for_update()
-                          .filter(sucursalid=suc_inst, productoid_id__in=prod_ids))
+                        .select_for_update()
+                        .filter(sucursalid=suc_inst, productoid_id__in=prod_ids))
 
                 inv_list = list(inv_qs)
                 inv_map = {inv.productoid_id: inv for inv in inv_list}
@@ -3339,6 +3364,7 @@ class GenerarVentaView(LoginRequiredMixin, View):
                 ]
                 DetalleVenta.objects.bulk_create(det_objs, batch_size=500)
 
+                # ✅ qty negativo => resta (-qty) => suma stock (OK)
                 for pid, qty in qty_map.items():
                     inv = inv_map[pid]
                     inv.cantidad = (inv.cantidad or 0) - qty
@@ -3368,12 +3394,21 @@ class GenerarVentaView(LoginRequiredMixin, View):
                         dinerocaja=F("dinerocaja") + efectivo_monto
                     )
 
-            # ✅ Para POS Agent (texto)
+            # ✅ Para POS Agent (texto): ahora incluye CAJERO + DEVUELTO
             receipt_text = GenerarVentaView._build_receipt_text(
-                {"sucursal_nombre": getattr(suc_inst, 'nombre', str(suc_inst))},
+                {
+                    "sucursal_nombre": getattr(suc_inst, "nombre", str(suc_inst)),
+                    "cajero_nombre": cajero_nombre,
+                    "refund_total": refund_total,
+                },
                 detalles, total, pagos
             )
-            return JsonResponse({'success': True, 'venta_id': venta.pk, 'receipt_text': receipt_text})
+
+            return JsonResponse({
+                "success": True,
+                "venta_id": venta.pk,
+                "receipt_text": receipt_text,
+            })
 
         except Exception as e:
             if getattr(settings, "DEBUG", False):
@@ -3513,9 +3548,16 @@ def _line():
 def _build_ticket_lines(venta: Venta) -> list[str]:
     """
     Devuelve líneas ya formateadas a 48 columnas (80mm).
-    (Luego: texto para POS Agent o ESC/POS bytes para impresora)
+    Incluye: CAJERO + DEVUELTO (si aplica)
     """
     out: list[str] = []
+
+    # --- helpers locales ---
+    def _to_dec(x):
+        try:
+            return Decimal(x)
+        except Exception:
+            return Decimal("0")
 
     out += _wrap("NOVA ADVANCE")
     out += _wrap("NIT: 900.000.000-1")
@@ -3523,6 +3565,12 @@ def _build_ticket_lines(venta: Venta) -> list[str]:
     out += _wrap(f"Factura #{venta.pk}")
     out += _wrap(f"Fecha: {venta.fecha}  {venta.hora.strftime('%H:%M')}")
     out += _wrap(f"Sucursal: {venta.sucursalid.nombre}")
+
+    # ✅ CAJERO
+    emp = getattr(venta, "empleadoid", None)
+    cajero = f"{getattr(emp, 'nombre', '')} {getattr(emp, 'apellido', '')}".strip() if emp else ""
+    out += _wrap(f"Cajero: {cajero or '—'}")
+
     if getattr(venta, "clienteid", None):
         out += _wrap(f"Cliente: {venta.clienteid.nombre}")
     out.append(_line())
@@ -3531,11 +3579,17 @@ def _build_ticket_lines(venta: Venta) -> list[str]:
                 .filter(ventaid=venta)
                 .select_related("productoid"))
 
+    # ✅ calcular devuelto (sumatoria de qty<0 en positivo)
+    refund_total = Decimal("0")
+
     for det in detalles:
         nombre = (det.productoid.nombre or "").strip() or "(Producto)"
-        pu     = det.preciounitario or 0
-        qty    = det.cantidad or 0
-        subtotal = pu * qty
+        pu     = _to_dec(det.preciounitario or 0)
+        qty    = int(det.cantidad or 0)
+        subtotal = pu * Decimal(qty)
+
+        if qty < 0:
+            refund_total += (-subtotal)  # positivo
 
         lines = _wrap(nombre)
         out.append(lines[0])
@@ -3546,6 +3600,10 @@ def _build_ticket_lines(venta: Venta) -> list[str]:
             out.append(extra)
 
     out.append(_line())
+
+    if refund_total > 0:
+        out.append(f"{'DEVUELTO':<{TICKET_WIDTH_CHARS-10}}{_fmt_money(refund_total):>10}")
+
     out.append(f"{'TOTAL':<{TICKET_WIDTH_CHARS-10}}{_fmt_money(venta.total):>10}")
     out.append(_line())
     out += _wrap(f"Medio de pago: {str(venta.mediopago or '').upper()}")
