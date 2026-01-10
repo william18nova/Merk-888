@@ -3,7 +3,7 @@ $(function () {
   "use strict";
   const $ = window.jQuery;
 
-  console.log("⚡ generar_venta.js — AC ultra + snapshot L1 + live price + anti-zero + burst last-only + atajos + modal + POS Agent + submit ultrarrápido + ✅ scanner: qty-guard => code + ✅ live snapshot sync (precio/barcode AC) + ✅ pagos MIXTO + ✅ restante en vivo + ✅ AC independiente por ID + ✅ modal instant + ✅ finalize/kick ultra fast + ✅ repricing pooled (8) + ✅ total 1x");
+  console.log("⚡ generar_venta.js — AC ultra + snapshot L1 + live price + ✅ allow qty negativo (devolución) + modal MIXTO + POS Agent + submit ultrarrápido + scanner qty-guard");
 
   /* ================== URLs inyectadas ================== */
   const SUCURSAL_URL    = window.sucursalAutocompleteUrl;
@@ -27,16 +27,23 @@ $(function () {
   const $inpId      = $("#producto_busqueda_id"); // ✅ input independiente ID
   const $inpCode    = $("#codigo_o_barras");
   const $pid        = $("#producto_id");
-  const $cantidad   = $("#cantidad"); // (si no existe, no rompe)
-  const $agregar    = $("#agregar-producto"); // (si no existe, no rompe)
+
+  // (si no existen, no rompen)
+  const $cantidad   = $("#cantidad");
+  const $agregar    = $("#agregar-producto");
+
   const $tbody      = $("#detalle-productos tbody");
   const $totalEl    = $("#total");
   const $buscarCart = $("#buscar-detalles");
   const $btnVaciar  = $("#vaciar-carrito");
 
   // ✅ pagos mixto
-  const $hidPagos     = $("#pagos");      // input hidden name="pagos"
+  const $hidPagos     = $("#pagos");      // hidden input name="pagos"
   const $hidMedioPago = $("#medio_pago"); // compat (efectivo/tarjeta/transferencia/mixto)
+
+  // ✅ Modal refs (para total en vivo)
+  const $modal      = $("#myModal");
+  const $modalTotal = $("#modal-total");
 
   /* ================== CSRF / Ajax ================== */
   function getCSRF() {
@@ -80,12 +87,25 @@ $(function () {
     return s;
   };
 
-  const clampQty = (x) => {
-    const n = parseInt(String(x).replace(/\D+/g, ""), 10);
-    return Number.isFinite(n) && n > 0 ? n : 1;
-  };
+  function safeNumber(x){
+    const n = Number(x);
+    return Number.isFinite(n) ? n : 0;
+  }
 
-  const now = () => Date.now();
+  // ✅ admite "1,25" -> 1.25 ; solo >0
+  function parseAmt(v){
+    const n = parseFloat(String(v||"").trim().replace(",", "."));
+    return Number.isFinite(n) && n > 0 ? n : 0;
+  }
+
+  // ✅ 2 decimales
+  function to2(n){
+    const x = Number(n);
+    if (!Number.isFinite(x)) return "0.00";
+    return (Math.round(x * 100) / 100).toFixed(2);
+  }
+
+  function now(){ return Date.now(); }
 
   function classifyQuery(term){
     const raw = String(term || "").trim();
@@ -95,24 +115,6 @@ $(function () {
     const isPureDigits = digits.length > 0 && digits.length === compact.length;
     const isBarcodeLike = isPureDigits && digits.length >= 6;
     return { raw, digits, hasLetters, isPureDigits, isBarcodeLike };
-  }
-
-  function safeNumber(x){
-    const n = Number(x);
-    return Number.isFinite(n) ? n : 0;
-  }
-
-  // ✅ mantiene decimales (admite "1,25" -> 1.25)
-  function parseAmt(v){
-    const n = parseFloat(String(v||"").trim().replace(",", "."));
-    return Number.isFinite(n) && n > 0 ? n : 0;
-  }
-
-  // ✅ siempre 2 decimales "seguros"
-  function to2(n){
-    const x = Number(n);
-    if (!Number.isFinite(x)) return "0.00";
-    return (Math.round(x * 100) / 100).toFixed(2);
   }
 
   /* ================== Estado persistido ================== */
@@ -125,8 +127,8 @@ $(function () {
   const hasSucursal = () => /^\d+$/.test(String(sucursalID || ""));
 
   /* ================== Estado venta ================== */
-  const productos  = [];
-  const cantidades = [];
+  const productos  = []; // ["12","99"...]
+  const cantidades = []; // [ 1, -2, ... ]
   let runningTotal = 0;
   let lastAddedPid = null;
 
@@ -138,20 +140,14 @@ $(function () {
     });
   }
 
-  // ✅ Modal refs (para total en vivo)
-  const $modal      = $("#myModal");
-  const $modalTotal = $("#modal-total");
-
   function setTotal(v) {
-    const safe = Math.max(0, Number(v) || 0);
-    runningTotal = safe;
-    $totalEl.text(money(safe));
+    const safe = Number(v);
+    runningTotal = Number.isFinite(safe) ? safe : 0;
+    $totalEl.text(money(runningTotal));
 
-    // ✅ si el modal está abierto, mantener el total en vivo
     if ($modal && $modal.length && $modal.is(":visible") && $modalTotal && $modalTotal.length) {
-      $modalTotal.text(money(safe));
+      $modalTotal.text(money(runningTotal));
     }
-
     syncHiddenFields();
   }
   function addToTotal(delta) {
@@ -164,8 +160,8 @@ $(function () {
       const $r = $(this);
       const counted = !!$r.data("counted");
       const price = Number($r.data("price")) || 0;
-      const qty   = Number($r.attr("data-qty")) || Number($r.find(".qty-input").val()) || 1;
-      if (counted && price > 0 && qty > 0) sum += price * qty;
+      const qty   = Number($r.attr("data-qty")) || Number($r.find(".qty-input").val()) || 0;
+      if (counted && price > 0 && qty !== 0) sum += price * qty;
     });
     return sum;
   }
@@ -211,6 +207,11 @@ $(function () {
     }
   });
 
+  let catalogPollTimer = null;
+  function stopCatalogPolling(){
+    if (catalogPollTimer) clearInterval(catalogPollTimer);
+    catalogPollTimer = null;
+  }
   window.addEventListener("beforeunload", () => {
     try { clearCartAndTotals(); } catch (_){ }
     try { stopCatalogPolling(); } catch (_){ }
@@ -225,7 +226,6 @@ $(function () {
     $q[0]?.select?.();
     return true;
   }
-
   function focusQtySmart(){
     if (lastAddedPid) {
       const $r = $tbody.find(`tr[data-pid='${String(lastAddedPid)}']`);
@@ -243,7 +243,6 @@ $(function () {
     }
     return false;
   }
-
   function refreshLastAddedPidAfterRemoval(removedPid){
     const rp = String(removedPid || "");
     if (rp && String(lastAddedPid || "") === rp) lastAddedPid = null;
@@ -319,7 +318,6 @@ $(function () {
 
       idx.names.push({ id, nnameU, toks, label: rawName || "", price: p.price, stock: p.stock, barcode: barcodeRaw || "" });
       idx.codes.push({ id, nbarcode, label: barcodeRaw || rawName || "", price: p.price, stock: p.stock });
-
       idx.ids.push({ id, idStr, label: idStr, name: rawName || "", barcode: barcodeRaw || "", price: p.price, stock: p.stock });
 
       idx.map.set(String(id), { id, name: rawName || "", barcode: barcodeRaw || "", price: p.price, stock: p.stock });
@@ -369,7 +367,7 @@ $(function () {
     catch { return catalogBySucursal.get(sid) || []; }
   }
 
-  /* ================== Ranking local ================== */
+  /* ================== Ranking local (LRU + scoring) ================== */
   class LRU {
     constructor(max=200){ this.max=max; this.map=new Map(); }
     get(k){ if(!this.map.has(k)) return null; const v=this.map.get(k); this.map.delete(k); this.map.set(k,v); return v; }
@@ -431,7 +429,6 @@ $(function () {
 
     if (qTokens.length) {
       let hits = 0, strongHits = 0;
-
       for (let i=0;i<qTokens.length;i++){
         const t = qTokens[i];
         if (!t) continue;
@@ -445,7 +442,6 @@ $(function () {
         }
         if (!found) score -= (strong ? 190 : 70);
       }
-
       if (hits) score += hits * 45;
       if (hits === qTokens.length) score += 260;
       if (strongTokens.length && strongHits === strongTokens.length) score += 360;
@@ -475,14 +471,12 @@ $(function () {
   function rankNameLocal(term, idx, limit=40){
     const qU = normalizeUnits(term);
     if (!qU) return [];
-
     const qTokens = qU.split(/\s+/).filter(Boolean).slice(0, 6);
     const strongTokens = qTokens.filter(isStrongToken);
 
     const top = [];
     for (let i=0;i<idx.names.length;i++){
       const c = idx.names[i];
-
       if (qTokens.length) {
         const t0 = qTokens[0];
         if (t0 && c.nnameU.indexOf(t0) === -1) continue;
@@ -553,7 +547,6 @@ $(function () {
   function buildLocalSmart(term, idx, limit=40){
     const t = (term || "").trim();
     const info = classifyQuery(t);
-
     const locals = [];
     const seen = new Set();
 
@@ -594,7 +587,6 @@ $(function () {
     $row.find(".price-cell").text(money(price));
   }
 
-  // ✅ IMPORTANTE: durante repricing del modal NO recalculamos total 20 veces
   let repricingMode = false;
 
   function refreshRowPriceIfNeeded($row) {
@@ -603,7 +595,7 @@ $(function () {
       if (!Number.isFinite(live) || live <= 0) return false;
 
       const old = Number($row.data("price")) || 0;
-      const qty = Number($row.attr("data-qty")) || Number($row.find(".qty-input").val()) || 1;
+      const qty = Number($row.attr("data-qty")) || Number($row.find(".qty-input").val()) || 0;
 
       setRowPriceUI($row, live);
       $row.find(".subtotal-cell").text(money(live * qty));
@@ -641,10 +633,12 @@ $(function () {
     const subtotalTxt = hasPrice ? money(cachedPrice * qty) : "…";
     const priceTxt    = hasPrice ? money(cachedPrice) : "—";
     const pendingCls  = hasPrice ? "" : "pending-price";
+
+    // ✅ allow qty negativo y 0 en input (0 lo trataremos como borrar)
     return (
       `<tr data-pid="${pid}" data-price="${hasPrice ? cachedPrice : 0}" data-qty="${qty}" class="${pendingCls}">
          <td>${onlyName(name)}</td>
-         <td><input type="number" class="qty-input" min="1" inputmode="numeric" pattern="\\d*" value="${qty}" /></td>
+         <td><input type="number" class="qty-input" step="1" inputmode="numeric" value="${qty}" /></td>
          <td class="price-cell">${priceTxt}</td>
          <td class="subtotal-cell">${subtotalTxt}</td>
          <td class="text-center">
@@ -656,16 +650,41 @@ $(function () {
     );
   }
 
+  function removeRowByPid(pid){
+    const key = String(pid);
+    const $r = $tbody.find(`tr[data-pid='${key}']`);
+    if (!$r.length) return false;
+
+    const idx = productos.indexOf(key);
+    const price = Number($r.data("price")) || 0;
+    const qty = Number($r.attr("data-qty")) || Number($r.find(".qty-input").val()) || 0;
+
+    if ($r.data("counted")) addToTotal(-(price * qty));
+    if (idx > -1) { productos.splice(idx, 1); cantidades.splice(idx, 1); }
+    $r.remove();
+    enforceTotalIntegritySoft();
+    refreshLastAddedPidAfterRemoval(key);
+    return true;
+  }
+
   function insertOrUpdateRowInstant(pid, qty, name, cachedPrice) {
     const key = String(pid);
     const idx = productos.indexOf(key);
     const hasPrice = Number.isFinite(cachedPrice) && cachedPrice > 0;
 
     if (idx > -1) {
-      cantidades[idx] += qty;
+      const prevQty = Number(cantidades[idx]) || 0;
+      const newQty = prevQty + qty;
+
+      // ✅ si queda 0 => eliminar
+      if (newQty === 0) {
+        removeRowByPid(pid);
+        return;
+      }
+
+      cantidades[idx] = newQty;
 
       const $r = $tbody.find(`tr[data-pid='${pid}']`);
-      const newQty = cantidades[idx];
       $r.attr("data-qty", newQty);
 
       const $qin = $r.find(".qty-input");
@@ -680,6 +699,8 @@ $(function () {
         scheduleVerifyRowPrice($r, 120);
       }
     } else {
+      if (qty === 0) return;
+
       productos.push(key);
       cantidades.push(qty);
 
@@ -710,7 +731,7 @@ $(function () {
   }
   const burstAdd = { timer: null, last: null, windowMs: 60 };
   function addToCartLastOnly(pid, qty = 1) {
-    if (!pid || !qty || qty < 1) return;
+    if (!pid || qty === 0) return;
     burstAdd.last = { pid: String(pid), qty: Number(qty) || 1 };
     if (burstAdd.timer) clearTimeout(burstAdd.timer);
     burstAdd.timer = setTimeout(() => {
@@ -721,7 +742,7 @@ $(function () {
   }
 
   function addToCart(pid, qty = 1) {
-    if (!pid || qty < 1) return;
+    if (!pid || qty === 0) return;
 
     const key    = String(pid);
     const cached = productCache.get(key) || {};
@@ -1141,8 +1162,6 @@ $(function () {
 
   /* ================== LIVE SNAPSHOT SYNC (precio/barcode AC) ================== */
   const catalogSigBySucursal = new Map();
-  let catalogPollTimer = null;
-  let catalogPollSid = null;
 
   function buildCatalogSignature(items) {
     const parts = [];
@@ -1167,7 +1186,6 @@ $(function () {
 
     const newSig = buildCatalogSignature(items);
     const oldSig = catalogSigBySucursal.get(sid);
-
     if (oldSig && oldSig === newSig) return false;
 
     catalogSigBySucursal.set(sid, newSig);
@@ -1186,14 +1204,8 @@ $(function () {
     try { termCacheId.map.clear(); } catch {}
 
     queueMicrotask(() => {
-      try {
-        const w = $inpNombre.autocomplete("widget");
-        if (w && w.is(":visible")) $inpNombre.autocomplete("search", $inpNombre.val() || "");
-      } catch (_){}
-      try {
-        const w = $inpCode.autocomplete("widget");
-        if (w && w.is(":visible")) $inpCode.autocomplete("search", $inpCode.val() || "");
-      } catch (_){}
+      try { const w = $inpNombre.autocomplete("widget"); if (w && w.is(":visible")) $inpNombre.autocomplete("search", $inpNombre.val() || ""); } catch (_){}
+      try { const w = $inpCode.autocomplete("widget"); if (w && w.is(":visible")) $inpCode.autocomplete("search", $inpCode.val() || ""); } catch (_){}
       try {
         if ($inpId && $inpId.length) {
           const w = $inpId.autocomplete("widget");
@@ -1214,26 +1226,19 @@ $(function () {
     return items;
   }
 
-  function stopCatalogPolling() {
-    if (catalogPollTimer) clearInterval(catalogPollTimer);
-    catalogPollTimer = null;
-    catalogPollSid = null;
-  }
-
   function startCatalogPolling(sid, { intervalMs = 2500 } = {}) {
     stopCatalogPolling();
-    catalogPollSid = String(sid || "");
-    if (!catalogPollSid) return;
+    const pollSid = String(sid || "");
+    if (!pollSid) return;
 
     async function tick() {
       if (!hasSucursal()) return;
-      if (String(sucursalID) !== String(catalogPollSid)) return;
+      if (String(sucursalID) !== String(pollSid)) return;
       if (document.visibilityState !== "visible") return;
 
-      const items = await fetchSnapshotNoStore(catalogPollSid);
+      const items = await fetchSnapshotNoStore(pollSid);
       if (!items) return;
-
-      applySnapshotIfChanged(catalogPollSid, items);
+      applySnapshotIfChanged(pollSid, items);
     }
 
     tick();
@@ -1262,7 +1267,7 @@ $(function () {
     $("#puntopago_id").val(savedPunto.id);
   }
 
-  /* ================== AC Sucursal / Punto (FIX: req.term) ================== */
+  /* ================== AC Sucursal / Punto ================== */
   async function fetchJSON(url){ try{ const r=await fetch(url, { cache: "no-store" }); if(!r.ok) return null; return await r.json(); } catch { return null; } }
   async function fetchAny(baseUrl, paramsList) {
     for (const p of paramsList) {
@@ -1322,10 +1327,6 @@ $(function () {
       await ensureCatalog(sucursalID, { force:true });
       initCatalogSignature(sucursalID);
       startCatalogPolling(sucursalID, { intervalMs: 2500 });
-
-      termCacheName.set(`${sucursalID}|warm|name`, []);
-      termCacheCode.set(`${sucursalID}|warm|code`, []);
-      termCacheId.set(`${sucursalID}|warm|id`, []);
     }
   });
 
@@ -1361,7 +1362,7 @@ $(function () {
     }
   });
 
-  /* ================== Cliente (FIX: req.term) ================== */
+  /* ================== Cliente ================== */
   createAC({
     $inp: $inpCliente,
     minChars: 1,
@@ -1402,28 +1403,27 @@ $(function () {
   });
 
   /* ================== Cantidad principal (#cantidad): (si existe) ================== */
-  function sanitizeDigitsKeepEmpty(el){
-    const raw = String(el.value || "");
-    const digits = raw.replace(/\D+/g, "");
-    el.value = digits;
-    return digits;
-  }
   function normalizeQtyOnCommit(el){
     const raw = String(el.value || "").trim();
     const n = parseInt(raw, 10);
-    if (!Number.isFinite(n) || n < 1) el.value = "1";
+    if (!Number.isFinite(n) || n === 0) el.value = "1";
+    else el.value = String(n);
     return el.value;
+  }
+  function clampQtyAnySign(x){
+    const n = parseInt(String(x).trim(), 10);
+    if (!Number.isFinite(n) || n === 0) return 1;
+    return n;
   }
 
   if ($cantidad && $cantidad.length) {
     $cantidad
       .on("keydown", function(e){
-        const ok = ["Backspace","Delete","ArrowLeft","ArrowRight","Tab","Home","End"].includes(e.key);
+        const ok = ["Backspace","Delete","ArrowLeft","ArrowRight","Tab","Home","End","-"].includes(e.key);
         if (ok) return;
         if (e.ctrlKey || e.metaKey) return;
         if (!/^\d$/.test(e.key)) e.preventDefault();
       })
-      .on("input", function(){ sanitizeDigitsKeepEmpty(this); })
       .on("blur", function(){ normalizeQtyOnCommit(this); });
   }
 
@@ -1442,8 +1442,14 @@ $(function () {
     const pid = String($row.data("pid") || "");
     if (!pid) return;
 
-    const oldQty = clampQty($row.attr("data-qty") || $row.find(".qty-input").val() || 1);
+    const oldQty = Number($row.attr("data-qty")) || Number($row.find(".qty-input").val()) || 0;
     const wasCounted = !!$row.data("counted");
+
+    // ✅ 0 => eliminar fila
+    if (newQty === 0) {
+      removeRowByPid(pid);
+      return;
+    }
 
     $row.attr("data-qty", newQty);
 
@@ -1469,25 +1475,28 @@ $(function () {
   }
 
   function sanitizeRowQtyInput(el){
+    // ✅ permite '-' solo al inicio
     const raw = String(el.value || "");
-    const digits = raw.replace(/\D+/g, "");
-    el.value = digits;
-    return digits;
+    const cleaned = raw
+      .replace(/[^\d-]/g, "")
+      .replace(/(?!^)-/g, ""); // elimina '-' no inicial
+    el.value = cleaned;
+    return cleaned;
   }
   function commitRowQtyInput(el){
     const raw = String(el.value || "").trim();
     const n = parseInt(raw, 10);
-    if (!Number.isFinite(n) || n < 1) { el.value = "1"; return 1; }
+    if (!Number.isFinite(n) || n === 0) { el.value = "1"; return 1; }
     el.value = String(n);
     return n;
   }
 
   $tbody.on("input change", ".qty-input", function () {
     const $row = $(this).closest("tr");
-    const digits = sanitizeRowQtyInput(this);
-    if (!digits) return;
-    const n = parseInt(digits, 10);
-    if (!Number.isFinite(n) || n < 1) return;
+    const v = sanitizeRowQtyInput(this);
+    if (v === "" || v === "-") return;
+    const n = parseInt(v, 10);
+    if (!Number.isFinite(n)) return;
     applyQtyInstant($row, n);
     scheduleVerifyRowPrice($row, 220);
   });
@@ -1500,7 +1509,7 @@ $(function () {
   });
 
   $tbody.on("keydown", ".qty-input", function (e) {
-    const ok = ["Backspace","Delete","ArrowLeft","ArrowRight","Tab","Home","End","Enter"].includes(e.key);
+    const ok = ["Backspace","Delete","ArrowLeft","ArrowRight","Tab","Home","End","Enter","-"].includes(e.key);
     if (!ok && !e.ctrlKey && !e.metaKey && !/^\d$/.test(e.key)) e.preventDefault();
 
     if (e.key === "Enter") {
@@ -1523,9 +1532,9 @@ $(function () {
   if ($agregar && $agregar.length) {
     $agregar.off("click").on("click", () => {
       const pid = $pid.val();
-      const qty = clampQty($cantidad.val());
+      const qty = clampQtyAnySign($cantidad.val());
       $cantidad.val(String(qty));
-      if (!pid || !qty || qty < 1) return;
+      if (!pid || qty === 0) return;
       addToCartLastOnly(pid, qty);
     });
   }
@@ -1534,12 +1543,10 @@ $(function () {
     $cantidad.off("keydown.confirm").on("keydown.confirm", function (e) {
       if (e.key === "Enter" && $agregar && $agregar.length && !$agregar.prop("disabled")) {
         e.preventDefault();
-
         const committed = normalizeQtyOnCommit(this);
-        const qty = clampQty(committed);
-
+        const qty = clampQtyAnySign(committed);
         const pid = $pid.val();
-        if (!pid || !qty || qty < 1) return;
+        if (!pid || qty === 0) return;
 
         addToCartLastOnly(pid, qty);
 
@@ -1555,16 +1562,8 @@ $(function () {
 
   $tbody.on("click", ".eliminar-producto", function () {
     const $row = $(this).closest("tr");
-    const pid = $row.data("pid").toString();
-    const idx = productos.indexOf(pid);
-    const price = Number($row.data("price")) || 0;
-    const qty = clampQty($row.attr("data-qty") || $row.find(".qty-input").val());
-
-    if ($row.data("counted")) addToTotal(-(price * qty));
-    if (idx > -1) { productos.splice(idx, 1); cantidades.splice(idx, 1); }
-    $row.remove();
-    enforceTotalIntegritySoft();
-    refreshLastAddedPidAfterRemoval(pid);
+    const pid = String($row.data("pid") || "");
+    removeRowByPid(pid);
   });
 
   // ✅ Vaciar carrito (limpia pagos también)
@@ -1583,7 +1582,7 @@ $(function () {
   });
 
   $buscarCart.on("keyup", function () {
-    const t = $(this).val().toLowerCase();
+    const t = ($(this).val() || "").toLowerCase();
     const rows = $tbody.find("tr");
     for (let i=0;i<rows.length;i++){
       const el = rows[i];
@@ -1597,7 +1596,6 @@ $(function () {
     const rows = $tbody.find("tr").toArray();
     if (!rows.length) { setTotal(0); return true; }
 
-    // normaliza qty (barato) y marca "no contado" (evita sumar 20 veces)
     for (const tr of rows) {
       const $row = $(tr);
       const $qin = $row.find(".qty-input");
@@ -1622,7 +1620,6 @@ $(function () {
       Array.from({ length: Math.min(concurrency, rows.length) }, worker)
     );
 
-    // total final UNA sola vez
     let newTotal = 0;
     for (const tr of rows) {
       const $row = $(tr);
@@ -1630,22 +1627,21 @@ $(function () {
       if (!counted) continue;
 
       const price = Number($row.data("price")) || 0;
-      const qty   = Number($row.attr("data-qty")) || 1;
-      if (price > 0 && qty > 0) newTotal += price * qty;
+      const qty   = Number($row.attr("data-qty")) || 0;
+      if (price > 0 && qty !== 0) newTotal += price * qty;
     }
 
     setTotal(newTotal);
     return true;
   }
 
-  /* ================== ✅ Modal de pago (MIXTO / NO-MIXTO) + RESTANTE ================== */
+  /* ================== ✅ Modal de pago (MIXTO / NO-MIXTO) ================== */
   const $efOptions  = $("#efectivo-options");
   const $amountIn   = $("#monto-recibido");
   const $changeOut  = $("#cambio");
   const $mixMode    = $("#mix-mode");
   const $pendingOut = $("#monto-pendiente");
 
-  // ✅ CAMBIO CLAVE: NO recalcular precios al abrir modal
   const REPRICE_ON_MODAL = false;
 
   function isMixtoUI(){
@@ -1862,16 +1858,19 @@ $(function () {
   });
 
   function buildPagosJSONOrError(){
+    const total = safeNumber(runningTotal);
+
+    // ✅ si total <= 0 => NO exigir pagos (coincide con backend)
+    if (total <= 0) return { pagos: [] };
+
     const medios = getCheckedMedios();
     if (!medios.length) return { error: "Seleccione al menos un medio de pago." };
 
-    const total = safeNumber(runningTotal);
     const mixto = isMixtoUI();
 
     if (!mixto){
       if (medios.length !== 1) return { error: "Seleccione solo un medio de pago (o active Pago mixto)." };
       const m = medios[0];
-
       const pagos = [{ medio_pago: m, monto: to2(total) }];
 
       if (m === "efectivo"){
@@ -1880,7 +1879,6 @@ $(function () {
         if (recibido < total) return { error: "Monto recibido en efectivo insuficiente." };
         if (raw === "") $amountIn.val(to2(total));
       }
-
       return { pagos };
     }
 
@@ -1897,16 +1895,13 @@ $(function () {
     }
 
     const diff = total - suma;
-
     if (Math.abs(diff) > 0.01) {
       return { error: `La suma de pagos (${money(suma)}) debe ser igual al total (${money(total)}).` };
     }
-
     if (Math.abs(diff) > 0 && pagos.length) {
       const last = pagos[pagos.length - 1];
       last.monto = to2(parseAmt(last.monto) + diff);
     }
-
     return { pagos };
   }
 
@@ -1926,22 +1921,27 @@ $(function () {
 
     const k = String(oe.key || "");
     if (/^[0-9]$/.test(k)) return Number(k);
-
     return null;
   }
 
-  /* ================== ✅ MODAL INSTANT (sin recalcular precios) ================== */
+  /* ================== ✅ MODAL INSTANT / o BYPASS si total <= 0 ================== */
   $("#generar-venta").off("click").on("click", () => {
     if (!productos.length) { alert("Agregue productos."); return; }
     if (!hasSucursal() || !$("#puntopago_id").val()) { alert("Seleccione sucursal y punto de pago."); return; }
 
+    enforceTotalIntegrity();
+
+    // ✅ total <= 0 => no pagos, submit directo (backend no exige pagos)
+    if (safeNumber(runningTotal) <= 0) {
+      $hidPagos.val("[]");
+      $hidMedioPago.val("");
+      queueMicrotask(() => $("#venta-form").trigger("submit"));
+      return;
+    }
+
     ensureMixUIExists();
     showMixError("");
 
-    // ✅ total coherente (BARATO, sin tocar precios de red)
-    enforceTotalIntegrity();
-
-    // UI instantánea
     $("#modal-total").text(money(runningTotal));
 
     $hidPagos.val("");
@@ -1957,13 +1957,12 @@ $(function () {
     if ($mixMode.length) $mixMode.prop("checked", false);
     $modal.attr("data-mixto","0");
 
-    // por defecto: efectivo
+    // default: efectivo
     $modal.find(".pm-check[value='efectivo']").prop("checked", true);
 
     applyModeRules();
     openModal();
 
-    // ✅ CONFIRM INSTANT
     const $btnConfirm = $("#confirmar-pago");
     $modal.attr("data-loading-prices","0");
     $btnConfirm.prop("disabled", false);
@@ -1972,7 +1971,6 @@ $(function () {
       if (!isMixtoUI() && $amountIn.is(":visible")) { $amountIn.focus(); $amountIn[0]?.select?.(); }
     });
 
-    // (Opcional) si algún día quieres volver a recalcular al abrir:
     if (REPRICE_ON_MODAL) {
       $btnConfirm.prop("disabled", true);
       $modal.attr("data-loading-prices","1");
@@ -1997,7 +1995,7 @@ $(function () {
   });
 
   $(".close").on("click", closeModal);
-  $(window).on("click", (e) => { if (e.target === $modal[0]) closeModal(); });
+  $(window).on("click", (e) => { if ($modal.length && e.target === $modal[0]) closeModal(); });
 
   $(document).on("keydown", function (e) {
     if (!$modal.is(":visible")) return;
@@ -2057,8 +2055,6 @@ $(function () {
     } else {
       $chk.prop("checked", next).trigger("change");
     }
-
-    try { $(this).closest(".modal-content").attr("tabindex","-1").focus(); } catch (_){}
   });
 
   $amountIn.on("input", function () {
@@ -2083,12 +2079,10 @@ $(function () {
         if (d === 6) {
           if ($mixMode && $mixMode.length) {
             $mixMode.prop("checked", !$mixMode.prop("checked")).trigger("change");
-            try { $modal.find(".modal-content").attr("tabindex", "-1").focus(); } catch (_){}
           }
           return;
         }
 
-        // alt + 1..9 selecciona medio, alt+0 el 10 (si existe)
         const $checks = $modal.find(".pm-check").filter(":enabled").not("#mix-mode");
         const idx0 = (d === 0) ? 9 : (d - 1);
         const $target = $checks.eq(idx0);
@@ -2126,8 +2120,6 @@ $(function () {
     if (confirmSubmitting) return;
 
     showMixError("");
-
-    // ✅ solo bloquea si estuvieras usando repricing en modal
     if (REPRICE_ON_MODAL && $modal.attr("data-loading-prices") === "1") return;
 
     const built = buildPagosJSONOrError();
@@ -2144,12 +2136,10 @@ $(function () {
     $hidMedioPago.val(medioCompat);
 
     closeModal();
-
-    // submit ultra rápido
     queueMicrotask(() => $("#venta-form").trigger("submit"));
   });
 
-  /* ================== Agente local helpers ================== */
+  /* ================== POS Agent helpers ================== */
   async function agentPrintSafe(text, { timeout = 700 } = {}) {
     if (!POS_AGENT_TOKEN) return;
     const ctrl = new AbortController();
@@ -2181,7 +2171,6 @@ $(function () {
     finally { clearTimeout(t); }
   }
 
-  // ✅ warmup del agente: baja latencia del primer /print y /kick
   (function agentWarmup(){
     if (!POS_AGENT_TOKEN) return;
     fetch(POS_AGENT_URL + "/ping", {
@@ -2191,7 +2180,6 @@ $(function () {
     }).catch(()=>{});
   })();
 
-  // ✅ espera “un poquito” por el agente, pero no bloquea UX
   function settleWithDeadline(proms, maxWaitMs=250){
     return Promise.race([
       Promise.allSettled(proms),
@@ -2204,7 +2192,6 @@ $(function () {
   const formEl = document.getElementById("venta-form");
   const formAction = formEl ? String($(formEl).attr("action") || "") : "";
 
-  // ✅ helpers pagos (NO depender del checkbox del modal)
   function readPagosFromHidden(){
     try { return JSON.parse($hidPagos.val() || "[]"); } catch { return []; }
   }
@@ -2219,7 +2206,6 @@ $(function () {
     if (saleSubmitting) return;
     saleSubmitting = true;
 
-    // refresca precios pendientes, pero sin bloquear
     const $bad = $tbody.find("tr").filter((_, tr) => {
       const p = Number($(tr).data("price"));
       const counted = $(tr).data("counted");
@@ -2256,22 +2242,18 @@ $(function () {
       const pagos = readPagosFromHidden();
       const totalNum = safeNumber(runningTotal);
 
-      // ✅ cambio correcto SOLO si es efectivo y NO mixto
+      // ✅ cambio SOLO si efectivo y NO mixto y total > 0
       let cambio = 0;
       const esMixto = isMixtoFromPagos(pagos);
       const ef = (pagos || []).find(p => String(p.medio_pago || "").toLowerCase() === "efectivo");
-      if (ef && !esMixto) {
-        const raw = ($amountIn.val() || "").trim();
+      if (totalNum > 0 && ef && !esMixto) {
+        const raw = ($("#monto-recibido").val() || "").trim();
         const recibido = raw === "" ? totalNum : parseAmt(raw);
         cambio = Math.max(0, recibido - totalNum);
       }
 
-      // limpia UI/estado ya (instantáneo)
       clearCartAndTotals();
 
-      // ✅ caja/impresión lo más rápido posible:
-      // - kick + print en paralelo
-      // - espera muy poco (deadline) para no frenar UX
       try {
         const receiptText = (r.receipt_text || "Factura\n\n");
         const p1 = agentKickSafe({ timeout: 450 });
@@ -2279,9 +2261,9 @@ $(function () {
         await settleWithDeadline([p1, p2], 250);
       } catch (_) {}
 
-      alert(`✅ Venta registrada\n\nTotal: ${money(totalNum)}\nCambio: ${money(cambio)}`);
+      const msgCambio = (totalNum > 0) ? `\nCambio: ${money(cambio)}` : "";
+      alert(`✅ Venta registrada\n\nTotal: ${money(totalNum)}${msgCambio}`);
 
-      // recarga rápida, pero no tan inmediata para evitar cortar el keepalive
       setTimeout(() => { location.replace(location.href); }, 90);
     })
     .catch(() => {
@@ -2333,14 +2315,7 @@ $(function () {
     if (!$first.length) return;
     e.preventDefault(); e.stopPropagation();
     const pid = String($first.data("pid") || "");
-    const price = Number($first.data("price")) || 0;
-    const qty = clampQty($first.attr("data-qty") || $first.find(".qty-input").val());
-    if ($first.data("counted")) addToTotal(-(price * qty));
-    const idx = productos.indexOf(pid);
-    if (idx > -1) { productos.splice(idx, 1); cantidades.splice(idx, 1); }
-    $first.remove();
-    enforceTotalIntegritySoft();
-    refreshLastAddedPidAfterRemoval(pid);
+    removeRowByPid(pid);
   });
 
   /* ================== ✅ SCANNER GUARD: qty-guard => code ================== */
@@ -2370,7 +2345,7 @@ $(function () {
   function commitCurrentQtyLikeEnterIfNeeded(originEl){
     if ($cantidad && $cantidad.length && originEl === $cantidad[0]) {
       const committed = normalizeQtyOnCommit($cantidad[0]);
-      const qty = clampQty(committed);
+      const qty = clampQtyAnySign(committed);
       const pid = $pid.val();
       if (pid && $agregar && $agregar.length && !$agregar.prop("disabled")) addToCartLastOnly(pid, qty);
       return;

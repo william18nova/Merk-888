@@ -1940,6 +1940,9 @@ class GenerarVentaForm(forms.Form):
     # ✅ pagos mixtos: JSON oculto
     pagos = forms.CharField(widget=forms.HiddenInput(), required=False)
 
+    # ✅ NUEVO: efectivo recibido para calcular cambio (hidden)
+    efectivo_recibido = forms.CharField(widget=forms.HiddenInput(), required=False)
+
     # ───── helpers JSON ─────
     def _clean_json(self, field, default="[]"):
         raw = self.cleaned_data.get(field, default)
@@ -1986,6 +1989,16 @@ class GenerarVentaForm(forms.Form):
             monto = it.get("monto", "0")
             cleaned.append({"medio_pago": medio, "monto": monto})
         return cleaned
+
+    def clean_efectivo_recibido(self):
+        raw = (self.cleaned_data.get("efectivo_recibido") or "").strip()
+        if raw in ("", "null", "None"):
+            return Decimal("0")
+        try:
+            # JS manda "12345.00"
+            return Decimal(raw.replace(",", "."))
+        except (InvalidOperation, ValueError):
+            raise forms.ValidationError("Efectivo recibido inválido.")
     
     
 

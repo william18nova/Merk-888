@@ -3115,12 +3115,16 @@ class GenerarVentaView(LoginRequiredMixin, View):
 
         medio_pago_simple = (data.get("medio_pago") or "").strip().lower()
 
+        # ✅ NUEVO: efectivo recibido (para CAMBIO)
+        efectivo_recibido = data.get("efectivo_recibido") or Decimal("0")
+
         if getattr(settings, "DEBUG", False):
             try:
                 print("\n[VENTA DEBUG] ---------------------------")
                 print("TOTAL_BACK:", total, "type:", type(total))
                 print("MEDIO_BACK:", medio_pago_simple, "raw:", data.get("medio_pago"))
                 print("PAGOS_BACK:", pagos, "type:", type(pagos))
+                print("EFECTIVO_RECIBIDO_BACK:", efectivo_recibido, "type:", type(efectivo_recibido))
                 print("PROD_IDS:", prod_ids)
                 print("CANTIDADES:", cantidades)
                 print("DETALLES_BACK:", [
@@ -3144,7 +3148,8 @@ class GenerarVentaView(LoginRequiredMixin, View):
             request.user, suc_inst, pp_inst,
             data.get('cliente_id'),
             pagos_normalizados,
-            detalles, total
+            detalles, total,
+            efectivo_recibido,  # ✅ nuevo
         )
 
     def _base_context(self, form, detalles=None, total=Decimal('0')):
@@ -3215,7 +3220,7 @@ class GenerarVentaView(LoginRequiredMixin, View):
     def _build_receipt_text(venta_data: Dict[str, Any], detalles: list[dict], total, pagos: list[dict]):
         """
         TEXTO (para POS Agent). Ajustado a 80mm (48 columnas aprox).
-        Incluye: CAJERO + DEVUELTO (si aplica)
+        Incluye: CAJERO + DEVUELTO (devoluciones) + CAMBIO (efectivo)
         """
         def money(n):
             try:
@@ -3224,7 +3229,7 @@ class GenerarVentaView(LoginRequiredMixin, View):
                 q = Decimal("0")
             return f"${int(q):,}".replace(",", ".")
 
-        WIDTH = 48  # ✅ 80mm (Font A) típico
+        WIDTH = 48
 
         def line(txt=""):
             t = str(txt or "")
@@ -3240,6 +3245,7 @@ class GenerarVentaView(LoginRequiredMixin, View):
 
         cajero_nombre = (venta_data or {}).get("cajero_nombre", "") or "—"
         refund_total  = Decimal((venta_data or {}).get("refund_total", 0) or 0)
+        cambio        = Decimal((venta_data or {}).get("cambio", 0) or 0)
 
         head = [
             line("NOVA POS"),
@@ -3268,37 +3274,25 @@ class GenerarVentaView(LoginRequiredMixin, View):
 
         foot = ["-" * WIDTH]
 
-        # ✅ si hubo devolución, muéstrala en positivo
         if refund_total > 0:
             foot.append(lr("DEVUELTO:", money(refund_total)))
+
+        if cambio > 0:
+            foot.append(lr("CAMBIO:", money(cambio)))
 
         foot += [
             lr("TOTAL:", money(total)),
             "",
             line("¡Gracias por su compra! MMW"),
-            line(""),
-            line(""),
-            line(""),
-            line(""),
-            line(""),
-            line(""),
-            line(""),
-            line(""),
-            line(""),
-            line(""),
-            line(""),
-            line(""),
-            line(""),
             ""
         ]
-        return "\n".join(head + body + pay_lines + foot) + "\n\n\n"
+        return "\n".join(head + body + pay_lines + foot) + "\n\n\n\n\n\n\n\n\n"
 
     @staticmethod
-    def _crear_venta(user, suc_inst, pp_inst, cliente_id, pagos, detalles, total):
+    def _crear_venta(user, suc_inst, pp_inst, cliente_id, pagos, detalles, total, efectivo_recibido):
         try:
             ahora = timezone.localtime()
 
-            # ✅ cajero (nombre visible en factura)
             empleado = getattr(user, "empleado", None)
             if empleado is None:
                 return JsonResponse({'success': False, 'error': 'El usuario no tiene un empleado asociado.'})
@@ -3364,7 +3358,7 @@ class GenerarVentaView(LoginRequiredMixin, View):
                 ]
                 DetalleVenta.objects.bulk_create(det_objs, batch_size=500)
 
-                # ✅ qty negativo => resta (-qty) => suma stock (OK)
+                # ✅ qty negativo => resta (-qty) => suma stock
                 for pid, qty in qty_map.items():
                     inv = inv_map[pid]
                     inv.cantidad = (inv.cantidad or 0) - qty
@@ -3394,12 +3388,19 @@ class GenerarVentaView(LoginRequiredMixin, View):
                         dinerocaja=F("dinerocaja") + efectivo_monto
                     )
 
-            # ✅ Para POS Agent (texto): ahora incluye CAJERO + DEVUELTO
+            # ✅ CAMBIO: SOLO cuando pago simple en efectivo y total > 0
+            efectivo_recibido = GenerarVentaView._to_decimal(efectivo_recibido)
+            cambio = Decimal("0")
+            if total > 0 and pagos and len(pagos) == 1 and (pagos[0].get("medio_pago") or "").lower() == "efectivo":
+                if efectivo_recibido > total:
+                    cambio = efectivo_recibido - total
+
             receipt_text = GenerarVentaView._build_receipt_text(
                 {
                     "sucursal_nombre": getattr(suc_inst, "nombre", str(suc_inst)),
                     "cajero_nombre": cajero_nombre,
                     "refund_total": refund_total,
+                    "cambio": cambio,  # ✅ ahora sí llega
                 },
                 detalles, total, pagos
             )
@@ -3414,7 +3415,6 @@ class GenerarVentaView(LoginRequiredMixin, View):
             if getattr(settings, "DEBUG", False):
                 return JsonResponse({'success': False, 'error': f'Error al crear la venta: {e!s}'})
             return JsonResponse({'success': False, 'error': 'Error al crear la venta.'})
-
 
 # ============================================================================
 # 2) AUTOCOMPLETE SOLO POR ID (FIX: startswith en IntegerField)

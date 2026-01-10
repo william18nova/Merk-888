@@ -51,7 +51,7 @@
 
       <div id="interactive" class="viewport"></div>
 
-      <!-- ✅ NUEVO: autocomplete independiente SOLO por ID -->
+      <!-- ✅ autocomplete independiente SOLO por ID -->
       <div class="form-group">
         <label for="producto_busqueda_id">Producto (ID)</label>
         <input
@@ -72,8 +72,11 @@
       <!-- ✅ compat -->
       <input type="hidden" id="medio_pago" name="medio_pago">
 
-      <!-- ✅ NUEVO: pagos mixtos JSON -->
+      <!-- ✅ pagos mixtos JSON -->
       <input type="hidden" id="pagos" name="pagos">
+
+      <!-- ✅ NUEVO: efectivo recibido (para CAMBIO) -->
+      <input type="hidden" id="efectivo_recibido" name="efectivo_recibido">
     </form>
   </section>
 
@@ -128,8 +131,6 @@
   window.imprimirFacturaUrl             = "{% url 'imprimir_factura' %}";
   window.abrirCajaUrl                   = "{% url 'abrir_caja' %}";
   window.productoSnapshotUrl            = "{% url 'producto_snapshot' %}";
-
-  // ✅ NUEVO: endpoint del autocomplete SOLO ID
   window.productoAutocompleteIdUrl      = "{% url 'producto_autocomplete_id' %}";
 </script>
 
