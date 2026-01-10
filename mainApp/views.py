@@ -3278,7 +3278,7 @@ class GenerarVentaView(LoginRequiredMixin, View):
             foot.append(lr("DEVUELTO:", money(refund_total)))
 
         if cambio > 0:
-            foot.append(lr("CAMBIO:", money(cambio)) + "\n\n\n\n\n\n\n\n\n")
+            foot.append(lr("CAMBIO:", money(cambio)) + "\n\n\n\n\n\n\n\n\n\n\n\n\n\n\nn\n\n\n\n")
 
         foot += [
             lr("TOTAL:", money(total)),
