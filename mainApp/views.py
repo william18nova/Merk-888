@@ -77,6 +77,7 @@ from django.views.decorators.http import require_POST
 from django.conf import settings
 from datetime import timedelta
 import pytz
+from typing import List, Dict, Any
 
 
 CO_TZ = ZoneInfo("America/Bogota")
@@ -3211,7 +3212,7 @@ class GenerarVentaView(LoginRequiredMixin, View):
         return []
 
     @staticmethod
-    def _build_receipt_text(venta_data, detalles, total, pagos):
+    def _build_receipt_text(venta_data: Dict[str, Any], detalles: list[dict], total, pagos: list[dict]):
         """
         TEXTO (para POS Agent). Ajustado a 80mm (48 columnas aprox).
         Incluye: CAJERO + DEVUELTO (si aplica)
@@ -3220,7 +3221,7 @@ class GenerarVentaView(LoginRequiredMixin, View):
             try:
                 q = Decimal(n)
             except Exception:
-                q = Decimal('0')
+                q = Decimal("0")
             return f"${int(q):,}".replace(",", ".")
 
         WIDTH = 48  # ✅ 80mm (Font A) típico
@@ -3238,7 +3239,7 @@ class GenerarVentaView(LoginRequiredMixin, View):
         ahora = timezone.localtime()
 
         cajero_nombre = (venta_data or {}).get("cajero_nombre", "") or "—"
-        refund_total  = GenerarVentaView._to_decimal((venta_data or {}).get("refund_total", 0))
+        refund_total  = Decimal((venta_data or {}).get("refund_total", 0) or 0)
 
         head = [
             line("NOVA POS"),
@@ -3255,8 +3256,8 @@ class GenerarVentaView(LoginRequiredMixin, View):
         for d in detalles:
             nom = str(d.get("producto", ""))[:WIDTH]
             qty = d.get("cantidad", 1)
-            pu  = d.get("precio_unitario", Decimal('0'))
-            sub = d.get("subtotal", Decimal('0'))
+            pu  = d.get("precio_unitario", Decimal("0"))
+            sub = d.get("subtotal", Decimal("0"))
             body.append(line(nom))
             body.append(lr(f" x{qty}  @ {money(pu)}", money(sub)))
 
@@ -3269,7 +3270,6 @@ class GenerarVentaView(LoginRequiredMixin, View):
 
         # ✅ si hubo devolución, muéstrala en positivo
         if refund_total > 0:
-            # (opcional) también podrías mostrar "VENTA:" (bruto), pero aquí solo lo pedido
             foot.append(lr("DEVUELTO:", money(refund_total)))
 
         foot += [
@@ -3532,18 +3532,49 @@ DOTS_PER_MM        = 8       # 203dpi ~ 8 dots/mm
 LABEL_HEIGHT_DOTS  = int(LABEL_HEIGHT_MM * DOTS_PER_MM)  # 60mm => 480 dots aprox
 LINE_HEIGHT_DOTS   = 24      # línea Font A aprox (default)
 
-def _fmt_money(v):
+def _fmt_money(x: Decimal) -> str:
+    """
+    Formato COP sin decimales: $1.234.567
+    """
     try:
-        n = Decimal(v or 0)
+        q = Decimal(x or "0")
     except Exception:
-        n = Decimal("0")
-    return f"${n:,.0f}".replace(",", ".")
+        q = Decimal("0")
 
-def _wrap(text, width=TICKET_WIDTH_CHARS):
-    return textwrap.wrap(str(text or ""), width=width, break_long_words=True, break_on_hyphens=False)
+    # Miles con punto (estilo Colombia)
+    return f"${int(q):,}".replace(",", ".")
 
-def _line():
+def _wrap(text: str, width: int = TICKET_WIDTH_CHARS) -> List[str]:
+    """
+    Wrap simple por palabras, recorta a width.
+    """
+    s = str(text or "").strip()
+    if not s:
+        return [""]
+
+    words = s.split()
+    lines: List[str] = []
+    cur = ""
+
+    for w in words:
+        if not cur:
+            cur = w
+            continue
+
+        if len(cur) + 1 + len(w) <= width:
+            cur = cur + " " + w
+        else:
+            lines.append(cur[:width])
+            cur = w
+
+    if cur:
+        lines.append(cur[:width])
+
+    return lines or [""]
+
+def _line() -> str:
     return "-" * TICKET_WIDTH_CHARS
+
 
 def _build_ticket_lines(venta: Venta) -> list[str]:
     """
@@ -3575,9 +3606,11 @@ def _build_ticket_lines(venta: Venta) -> list[str]:
         out += _wrap(f"Cliente: {venta.clienteid.nombre}")
     out.append(_line())
 
-    detalles = (DetalleVenta.objects
-                .filter(ventaid=venta)
-                .select_related("productoid"))
+    detalles = (
+        DetalleVenta.objects
+        .filter(ventaid=venta)
+        .select_related("productoid")
+    )
 
     # ✅ calcular devuelto (sumatoria de qty<0 en positivo)
     refund_total = Decimal("0")
@@ -3593,9 +3626,12 @@ def _build_ticket_lines(venta: Venta) -> list[str]:
 
         lines = _wrap(nombre)
         out.append(lines[0])
+
         left  = f"{qty} x {_fmt_money(pu)}"
         right = _fmt_money(subtotal)
+
         out.append(f"{left:<{TICKET_WIDTH_CHARS-len(right)}}{right}")
+
         for extra in lines[1:]:
             out.append(extra)
 

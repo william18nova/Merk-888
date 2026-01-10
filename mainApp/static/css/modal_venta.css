@@ -275,15 +275,11 @@ body.modal-open{
 
 /* =========================================================
    ✅ FILAS (TARJETAS) DE MÉTODOS
-   - Soporta .mix-row o .radio-wrap (por si tu HTML usa ese)
    ========================================================= */
 #myModal .mix-row,
 #myModal .radio-wrap{
   display:grid;
-
-  /* ✅ por defecto NO reservamos espacio para input */
   grid-template-columns: 1fr !important;
-
   gap: 12px;
   align-items:center;
 
@@ -304,7 +300,6 @@ body.modal-open{
   border-color: rgba(255,255,255,.16);
 }
 
-/* ✅ Solo cuando debe mostrarse el input */
 #myModal .mix-row.show-amt,
 #myModal .radio-wrap.show-amt{
   grid-template-columns: 1fr 190px !important;
@@ -333,12 +328,10 @@ body.modal-open{
 }
 
 /* =========================================================
-   ✅ INPUT MONTO (FIX MIXTO: que SIEMPRE se vea si está activo)
+   ✅ INPUT MONTO (FIX MIXTO)
    ========================================================= */
 #myModal .pm-amt{
-  /* por defecto oculto */
   display:none;
-
   width: 100% !important;
   min-width: 0 !important;
   height: 42px;
@@ -355,18 +348,15 @@ body.modal-open{
   transition: box-shadow .14s var(--na-ease), border-color .14s var(--na-ease), transform .14s var(--na-ease);
 }
 
-/* cuando JS pone .show-amt */
 #myModal .mix-row.show-amt .pm-amt,
 #myModal .radio-wrap.show-amt .pm-amt{
   display:block;
 }
 
-/* ✅ Fallback: si el input está habilitado (mixto + check), que se vea sí o sí */
 #myModal .pm-amt:not(:disabled){
   display:block !important;
 }
 
-/* ✅ Si hay soporte :has, ajusta columnas automáticamente sin depender de .show-amt */
 @supports selector(.mix-row:has(.pm-amt)){
   #myModal .mix-row:has(.pm-amt:not(:disabled)),
   #myModal .radio-wrap:has(.pm-amt:not(:disabled)){
@@ -381,7 +371,6 @@ body.modal-open{
   transform: translateY(-1px);
 }
 
-/* Disabled (no-mixto) */
 #myModal .pm-amt:disabled{
   opacity: .92;
   cursor: not-allowed;
@@ -396,7 +385,6 @@ body.modal-open{
 }
 #myModal input[type="number"]{ -moz-appearance:textfield; }
 
-/* Resaltado al marcar (si hay soporte :has) */
 #myModal .mix-row:has(.pm-check:checked),
 #myModal .radio-wrap:has(.pm-check:checked){
   background: linear-gradient(180deg, rgba(77,166,255,.18), rgba(255,255,255,.06));
@@ -450,7 +438,6 @@ body.modal-open{
   text-shadow: 0 10px 22px rgba(0,0,0,.22);
 }
 
-/* ✅ fuerza extra: en mixto NUNCA mostrar efectivo-options aunque alguien lo ponga inline */
 #myModal.modal[data-mixto="1"] #efectivo-options{
   display:none !important;
 }
@@ -459,7 +446,7 @@ body.modal-open{
    ✅ ERROR MIX
    ========================================================= */
 #myModal #mix-error{
-  display:none; /* JS lo muestra con texto */
+  display:none;
   border-radius: 14px;
   padding: 10px 12px;
   background: rgba(255,77,109,.12);
@@ -506,7 +493,7 @@ body.modal-open{
 }
 
 /* =========================================================
-   ✅ RESPONSIVE (evita desbordes en móvil)
+   ✅ RESPONSIVE
    ========================================================= */
 @media (max-width: 520px){
   #myModal .modal-content{
@@ -515,14 +502,12 @@ body.modal-open{
     border-radius: 18px;
   }
 
-  /* en móvil, siempre una columna */
   #myModal .mix-row.show-amt,
   #myModal .radio-wrap.show-amt{
     grid-template-columns: 1fr !important;
     gap: 10px;
   }
 
-  /* fallback móvil si :has está activo */
   @supports selector(.mix-row:has(.pm-amt)){
     #myModal .mix-row:has(.pm-amt:not(:disabled)),
     #myModal .radio-wrap:has(.pm-amt:not(:disabled)){
@@ -534,12 +519,10 @@ body.modal-open{
   #myModal .pm-amt{ height: 44px; }
 }
 
-/* Accesibilidad: menos animación */
 @media (prefers-reduced-motion: reduce){
   #myModal .modal-content { transition:none; }
 }
 
-/* Alto contraste del sistema */
 @media (forced-colors: active){
   #myModal.modal{ background: rgba(0,0,0,.6); }
   #myModal .modal-content{

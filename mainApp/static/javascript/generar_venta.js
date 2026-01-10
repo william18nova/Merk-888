@@ -137,10 +137,21 @@ $(function () {
       $("#cantidades").val(JSON.stringify(cantidades));
     });
   }
+
+  // ✅ Modal refs (para total en vivo)
+  const $modal      = $("#myModal");
+  const $modalTotal = $("#modal-total");
+
   function setTotal(v) {
     const safe = Math.max(0, Number(v) || 0);
     runningTotal = safe;
     $totalEl.text(money(safe));
+
+    // ✅ si el modal está abierto, mantener el total en vivo
+    if ($modal && $modal.length && $modal.is(":visible") && $modalTotal && $modalTotal.length) {
+      $modalTotal.text(money(safe));
+    }
+
     syncHiddenFields();
   }
   function addToTotal(delta) {
@@ -1628,7 +1639,6 @@ $(function () {
   }
 
   /* ================== ✅ Modal de pago (MIXTO / NO-MIXTO) + RESTANTE ================== */
-  const $modal      = $("#myModal");
   const $efOptions  = $("#efectivo-options");
   const $amountIn   = $("#monto-recibido");
   const $changeOut  = $("#cambio");
@@ -1638,7 +1648,7 @@ $(function () {
   // ✅ CAMBIO CLAVE: NO recalcular precios al abrir modal
   const REPRICE_ON_MODAL = false;
 
-  function isMixto(){
+  function isMixtoUI(){
     return !!($mixMode && $mixMode.length && $mixMode.prop("checked"));
   }
 
@@ -1710,7 +1720,7 @@ $(function () {
     const medios = getCheckedMedios();
     if (!medios.length) return 0;
 
-    if (!isMixto()) {
+    if (!isMixtoUI()) {
       return (medios.length === 1) ? total : 0;
     }
     return sumMixtoSelectedAmounts();
@@ -1723,7 +1733,7 @@ $(function () {
 
     if (!$pendingOut.length) return;
 
-    if (isMixto() && paid > total && Math.abs(diff) > 0.01) {
+    if (isMixtoUI() && paid > total && Math.abs(diff) > 0.01) {
       $pendingOut.text(`Sobra por asignar: ${money(Math.abs(diff))}`);
       return;
     }
@@ -1733,7 +1743,7 @@ $(function () {
   function refreshEfectivoUI(){
     const hasEf = getCheckedMedios().includes("efectivo");
 
-    if (isMixto()){
+    if (isMixtoUI()){
       $modal.attr("data-mixto","1");
       $efOptions.hide();
       $amountIn.val("");
@@ -1771,7 +1781,7 @@ $(function () {
 
   function updateRowUI($check){
     const medio = String($check.val() || "");
-    const mixto = isMixto();
+    const mixto = isMixtoUI();
     const on    = $check.prop("checked");
 
     const $row = rowForCheck($check);
@@ -1807,7 +1817,7 @@ $(function () {
   }
 
   function applyModeRules(){
-    const mixto = isMixto();
+    const mixto = isMixtoUI();
     $modal.attr("data-mixto", mixto ? "1" : "0");
 
     if (!mixto){
@@ -1830,7 +1840,7 @@ $(function () {
   $modal.on("change", "#mix-mode", function(){
     showMixError("");
 
-    if (isMixto()){
+    if (isMixtoUI()){
       const medios = getCheckedMedios();
       if (medios.length === 1){
         const m = medios[0];
@@ -1856,7 +1866,7 @@ $(function () {
     if (!medios.length) return { error: "Seleccione al menos un medio de pago." };
 
     const total = safeNumber(runningTotal);
-    const mixto = isMixto();
+    const mixto = isMixtoUI();
 
     if (!mixto){
       if (medios.length !== 1) return { error: "Seleccione solo un medio de pago (o active Pago mixto)." };
@@ -1959,7 +1969,7 @@ $(function () {
     $btnConfirm.prop("disabled", false);
 
     queueMicrotask(() => {
-      if (!isMixto() && $amountIn.is(":visible")) { $amountIn.focus(); $amountIn[0]?.select?.(); }
+      if (!isMixtoUI() && $amountIn.is(":visible")) { $amountIn.focus(); $amountIn[0]?.select?.(); }
     });
 
     // (Opcional) si algún día quieres volver a recalcular al abrir:
@@ -1979,7 +1989,7 @@ $(function () {
             $modal.attr("data-loading-prices","0");
             $btnConfirm.prop("disabled", false);
             queueMicrotask(() => {
-              if (!isMixto() && $amountIn.is(":visible")) { $amountIn.focus(); $amountIn[0]?.select?.(); }
+              if (!isMixtoUI() && $amountIn.is(":visible")) { $amountIn.focus(); $amountIn[0]?.select?.(); }
             });
           });
       });
@@ -2008,7 +2018,7 @@ $(function () {
   $modal.on("change", ".pm-check", function(){
     if (this.id === "mix-mode") return;
 
-    const mixto = isMixto();
+    const mixto = isMixtoUI();
     if (!mixto && this.checked){
       $modal.find(".pm-check").not(this).not("#mix-mode").prop("checked", false);
     }
@@ -2038,7 +2048,7 @@ $(function () {
     const $chk = $(this).find(".pm-check").not("#mix-mode").first();
     if (!$chk.length) return;
 
-    const mixto = isMixto();
+    const mixto = isMixtoUI();
     const next = !$chk.prop("checked");
 
     if (!mixto && next) {
@@ -2194,6 +2204,16 @@ $(function () {
   const formEl = document.getElementById("venta-form");
   const formAction = formEl ? String($(formEl).attr("action") || "") : "";
 
+  // ✅ helpers pagos (NO depender del checkbox del modal)
+  function readPagosFromHidden(){
+    try { return JSON.parse($hidPagos.val() || "[]"); } catch { return []; }
+  }
+  function isMixtoFromPagos(pagos){
+    if (Array.isArray(pagos) && pagos.length >= 2) return true;
+    const m = String($hidMedioPago.val() || "").toLowerCase().trim();
+    return m === "mixto";
+  }
+
   $("#venta-form").off("submit").on("submit", function (e) {
     e.preventDefault();
     if (saleSubmitting) return;
@@ -2233,13 +2253,12 @@ $(function () {
         return;
       }
 
-      let pagos = [];
-      try { pagos = JSON.parse($hidPagos.val() || "[]"); } catch { pagos = []; }
-
+      const pagos = readPagosFromHidden();
       const totalNum = safeNumber(runningTotal);
 
+      // ✅ cambio correcto SOLO si es efectivo y NO mixto
       let cambio = 0;
-      const esMixto = isMixto();
+      const esMixto = isMixtoFromPagos(pagos);
       const ef = (pagos || []).find(p => String(p.medio_pago || "").toLowerCase() === "efectivo");
       if (ef && !esMixto) {
         const raw = ($amountIn.val() || "").trim();
