@@ -61,8 +61,9 @@ $(function () {
   });
 
   /* ================== Utils ================== */
-  const money = (n) => new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP" })
-    .format(Number(n) || 0);
+  const money = (n) =>
+    new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP" })
+      .format(Number(n) || 0);
 
   const onlyDigits = (s) => String(s||"").replace(/\D+/g, "");
   const norm = (s)=> (s||"").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").trim();
@@ -179,6 +180,42 @@ $(function () {
       if (!t || ts-t>=ms){ run(); } else { if (!timer) timer=setTimeout(run, ms-(ts-t)); }
     };
   }
+
+  // ✅ throttle para funciones async (devuelve Promise)
+  function throttleAsync(fn, ms=60){
+    let lastExec = 0;
+    let timer = null;
+    let lastArgs = null;
+    let pending = [];
+
+    async function exec(){
+      timer = null;
+      lastExec = Date.now();
+      const p = pending.slice();
+      pending = [];
+      try {
+        const res = await fn.apply(null, lastArgs || []);
+        p.forEach(x => x.resolve(res));
+      } catch (err){
+        p.forEach(x => x.reject(err));
+      }
+    }
+
+    return function(...args){
+      lastArgs = args;
+      return new Promise((resolve, reject) => {
+        pending.push({ resolve, reject });
+        const nowTs = Date.now();
+        const wait = Math.max(0, ms - (nowTs - lastExec));
+
+        if (!timer){
+          if (wait === 0) exec();
+          else timer = setTimeout(exec, wait);
+        }
+      });
+    };
+  }
+
   const enforceTotalIntegritySoft = throttle(enforceTotalIntegrity, 150);
 
   /* ================== Modal open/close helpers (se usan en clear) ================== */
@@ -917,7 +954,7 @@ $(function () {
   })();
 
   /* ============ Búsquedas ultra-rápidas (red) ============ */
-  const netSearchName = throttle(async (term, signal) => {
+  const netSearchName = throttleAsync(async (term, signal) => {
     const tU = normalizeUnits(term);
     const url = PRODUCTO_URL + "?" + new URLSearchParams({ term: tU || term, sucursal_id: sucursalID, limit: 40, _ts: Date.now() });
     const r = await fetch(url, { signal, cache: "no-store" }).catch(()=>null);
@@ -932,7 +969,7 @@ $(function () {
     }));
   }, 45);
 
-  const netSearchCode = throttle(async (term, signal) => {
+  const netSearchCode = throttleAsync(async (term, signal) => {
     const [dCod, dBar] = await Promise.all([
       fetch(AC_CODIGO_URL + "?" + new URLSearchParams({ term, sucursal_id: sucursalID, limit: 25, _ts: Date.now() }), { signal, cache: "no-store" })
         .then(r=> r && r.ok ? r.json() : {results:[]}).catch(()=>({results:[]})),
@@ -955,7 +992,7 @@ $(function () {
     return net;
   }, 45);
 
-  const netSearchId = throttle(async (term, signal) => {
+  const netSearchId = throttleAsync(async (term, signal) => {
     const t = onlyDigits(term);
     if (!t || !PRODUCTO_ID_URL) return [];
     const url = PRODUCTO_ID_URL + "?" + new URLSearchParams({ term: t, sucursal_id: sucursalID, limit: 40, _ts: Date.now() });
@@ -2247,36 +2284,38 @@ $(function () {
       const pagos = readPagosFromHidden();
       const totalNum = safeNumber(runningTotal);
 
-      // ✅ cambio SOLO si efectivo y NO mixto y total > 0
-      let cambio = 0;
       const esMixto = isMixtoFromPagos(pagos);
       const ef = (pagos || []).find(p => String(p.medio_pago || "").toLowerCase() === "efectivo");
+
+      // ✅ capturar recibido ANTES de limpiar inputs
+      let recibidoEfectivo = totalNum;
       if (totalNum > 0 && ef && !esMixto) {
         const raw = ($("#monto-recibido").val() || "").trim();
-        const recibido = raw === "" ? totalNum : parseAmt(raw);
-        cambio = Math.max(0, recibido - totalNum);
+        recibidoEfectivo = (raw === "" ? totalNum : parseAmt(raw));
+        if (raw === "") $("#monto-recibido").val(to2(totalNum));
       }
 
-      clearCartAndTotals();
+      // ✅ cambio SOLO si efectivo y NO mixto y total > 0
+      const cambio = (totalNum > 0 && ef && !esMixto)
+        ? Math.max(0, recibidoEfectivo - totalNum)
+        : 0;
 
+      // ✅ imprimir (sin bloquear la UI)
       try {
         let receiptText = (r.receipt_text || "Factura\n\n");
 
-        // ✅ Agregar cambio al texto impreso (solo si aplica)
         if (totalNum > 0 && ef && !esMixto) {
-          const raw = ($("#monto-recibido").val() || "").trim();
-          const recibido = raw === "" ? totalNum : parseAmt(raw);
-          const cambioImp = Math.max(0, recibido - totalNum);
-
-          // (opcional) si quieres también imprimir "Recibido"
-          receiptText += `\nRecibido: ${money(recibido)}\nCambio:   ${money(cambioImp)}\n`;
+          receiptText += `\nRecibido: ${money(recibidoEfectivo)}\nCambio:   ${money(cambio)}\n`;
         }
 
         const p1 = agentKickSafe({ timeout: 450 });
-        const p2 = agentPrintSafe(receiptText, { timeout: 850 })
+        const p2 = agentPrintSafe(receiptText, { timeout: 850 });
+        await settleWithDeadline([p1, p2], 250);
       } catch (_) {}
 
-      const msgCambio = (totalNum > 0) ? `\nCambio: ${money(cambio)}` : "";
+      clearCartAndTotals();
+
+      const msgCambio = (totalNum > 0 && ef && !esMixto) ? `\nCambio: ${money(cambio)}` : "";
       alert(`✅ Venta registrada\n\nTotal: ${money(totalNum)}${msgCambio}`);
 
       setTimeout(() => { location.replace(location.href); }, 90);
