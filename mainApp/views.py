@@ -3283,7 +3283,19 @@ class GenerarVentaView(LoginRequiredMixin, View):
         foot += [
             lr("TOTAL:", money(total)),
             "",
-            line("¡Gracias por su compra! MMW"),
+            line("¡Gracias por su compra! :) "),
+            line(""),
+            line(""),
+            line(""),
+            line(""),
+            line(""),
+            line(""),
+            line(""),
+            line(""),
+            line(""),
+            line(""),
+            line(""),
+            line(""),
             ""
         ]
         return "\n".join(head + body + pay_lines + foot) + "\n\n\n\n\n\n\n\n\n"
