@@ -2260,10 +2260,20 @@ $(function () {
       clearCartAndTotals();
 
       try {
-        const receiptText = (r.receipt_text || "Factura\n\n");
+        let receiptText = (r.receipt_text || "Factura\n\n");
+
+        // ✅ Agregar cambio al texto impreso (solo si aplica)
+        if (totalNum > 0 && ef && !esMixto) {
+          const raw = ($("#monto-recibido").val() || "").trim();
+          const recibido = raw === "" ? totalNum : parseAmt(raw);
+          const cambioImp = Math.max(0, recibido - totalNum);
+
+          // (opcional) si quieres también imprimir "Recibido"
+          receiptText += `\nRecibido: ${money(recibido)}\nCambio:   ${money(cambioImp)}\n`;
+        }
+
         const p1 = agentKickSafe({ timeout: 450 });
-        const p2 = agentPrintSafe(receiptText, { timeout: 850 });
-        await settleWithDeadline([p1, p2], 250);
+        const p2 = agentPrintSafe(receiptText, { timeout: 850 })
       } catch (_) {}
 
       const msgCambio = (totalNum > 0) ? `\nCambio: ${money(cambio)}` : "";
