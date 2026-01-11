@@ -3246,6 +3246,7 @@ class GenerarVentaView(LoginRequiredMixin, View):
         cajero_nombre = (venta_data or {}).get("cajero_nombre", "") or "—"
         refund_total  = Decimal((venta_data or {}).get("refund_total", 0) or 0)
         cambio        = Decimal((venta_data or {}).get("cambio", 0) or 0)
+        espacios = "\n\n\n\n\n\n\n\n\n\n\n"
 
         head = [
             line("NOVA POS"),
@@ -3278,7 +3279,7 @@ class GenerarVentaView(LoginRequiredMixin, View):
             foot.append(lr("DEVUELTO:", money(refund_total)))
 
         if cambio > 0:
-            foot.append(lr("CAMBIO:", money(cambio)))
+            foot.append(lr("CAMBIO :( :", money(cambio)))
 
         foot += [
             lr("TOTAL:", money(total)),
@@ -3286,6 +3287,9 @@ class GenerarVentaView(LoginRequiredMixin, View):
             line("¡Gracias por su compra! :) "),
             ""
         ]
+
+        
+
         return "\n".join(head + body + pay_lines + foot)
 
     @staticmethod
@@ -3400,7 +3404,8 @@ class GenerarVentaView(LoginRequiredMixin, View):
                     "sucursal_nombre": getattr(suc_inst, "nombre", str(suc_inst)),
                     "cajero_nombre": cajero_nombre,
                     "refund_total": refund_total,
-                    "cambio": cambio,  # ✅ ahora sí llega
+                    "cambio": cambio,
+                    "espacios": "\n\n\n\n\n\n\n\n\n\n\n"  # ✅ ahora sí llega
                 },
                 detalles, total, pagos
             )

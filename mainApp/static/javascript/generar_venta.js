@@ -2305,8 +2305,13 @@ $(function () {
         let receiptText = (r.receipt_text || "Factura\n\n");
 
         if (totalNum > 0 && ef && !esMixto) {
-          receiptText += `\nRecibido: ${money(recibidoEfectivo)}\nCambio:   ${money(cambio)}\n`;
+          receiptText += `\nRecibido: ${money(recibidoEfectivo)}\nCambio:   ${money(cambio)}\n\n\n\n\n\n\n\n\n\n\n\n\n`;
         }
+        else{
+          receiptText += `\n\n\n\n\n\n\n\n\n\n\n\n\n`;
+
+        }
+
 
         const p1 = agentKickSafe({ timeout: 450 });
         const p2 = agentPrintSafe(receiptText, { timeout: 850 });
