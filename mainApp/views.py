@@ -3278,7 +3278,7 @@ class GenerarVentaView(LoginRequiredMixin, View):
             foot.append(lr("DEVUELTO:", money(refund_total)))
 
         if cambio > 0:
-            foot.append(lr("CAMBIO:", money(cambio)), "\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\nn\n\n\n\n")
+            foot.append(lr("CAMBIO:", money(cambio)))
 
         foot += [
             lr("TOTAL:", money(total)),
@@ -3286,7 +3286,7 @@ class GenerarVentaView(LoginRequiredMixin, View):
             line("¡Gracias por su compra! :) "),
             ""
         ]
-        return "\n".join(head + body + pay_lines + foot)
+        return "\n".join(head + body + pay_lines + foot + "\n\n\n\n\n\n\n\n\n\n\n\n\n")
 
     @staticmethod
     def _crear_venta(user, suc_inst, pp_inst, cliente_id, pagos, detalles, total, efectivo_recibido):
