@@ -3286,7 +3286,7 @@ class GenerarVentaView(LoginRequiredMixin, View):
             line("¡Gracias por su compra! :) "),
             ""
         ]
-        return "\n".join(head + body + pay_lines + foot.apeend("\n\n\n\n\n\n\n\n\n\n\n\n\n"))
+        return "\n".join(head + body + pay_lines + foot)
 
     @staticmethod
     def _crear_venta(user, suc_inst, pp_inst, cliente_id, pagos, detalles, total, efectivo_recibido):
