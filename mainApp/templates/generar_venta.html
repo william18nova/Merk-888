@@ -18,65 +18,79 @@
   <section class="panel panel-left">
     <h1>Generar Venta</h1>
 
-    <form id="venta-form" action="{% url 'generar_venta' %}" method="post">
+    <form id="venta-form" action="{% url 'generar_venta' %}" method="post" novalidate>
       {% csrf_token %}
 
+      <!-- Cliente -->
       <div class="form-group">
         <label for="cliente_busqueda">Cliente</label>
-        <input type="text" id="cliente_busqueda" placeholder="Buscar por nombre o cédula">
+        <input type="text" id="cliente_busqueda" placeholder="Buscar por nombre o cédula" autocomplete="off">
         <input type="hidden" id="cliente_id" name="cliente_id">
       </div>
 
+      <!-- Sucursal -->
       <div class="form-group">
         <label for="sucursal_autocomplete">Sucursal <span class="req">*</span></label>
-        <input type="text" id="sucursal_autocomplete" placeholder="Buscar…" required aria-required="true">
+        <input type="text" id="sucursal_autocomplete" placeholder="Buscar…" required aria-required="true" autocomplete="off">
         <input type="hidden" id="sucursal_id" name="sucursal">
       </div>
 
+      <!-- Punto de pago -->
       <div class="form-group">
         <label for="puntopago_autocomplete">Punto de Pago <span class="req">*</span></label>
-        <input type="text" id="puntopago_autocomplete" placeholder="Buscar…" required aria-required="true">
+        <input type="text" id="puntopago_autocomplete" placeholder="Buscar…" required aria-required="true" autocomplete="off">
         <input type="hidden" id="puntopago_id" name="puntopago">
       </div>
 
+      <hr class="sep">
+
+      <!-- Producto por nombre -->
       <div class="form-group">
         <label for="producto_busqueda_nombre">Producto</label>
         <input type="text" id="producto_busqueda_nombre" placeholder="Buscar por nombre" autocomplete="off">
       </div>
 
+      <!-- Código / Barras -->
       <div class="form-group">
         <label for="codigo_o_barras">Código / Barras</label>
         <input type="text" id="codigo_o_barras" placeholder="Escribe o escanea…" autocomplete="off">
+        <button type="button" id="btnEscanear" class="btn btn-secondary btn-escanear">
+          <i class="fa-solid fa-camera"></i> Escanear
+        </button>
       </div>
 
-      <div id="interactive" class="viewport"></div>
-
-      <!-- ✅ autocomplete independiente SOLO por ID -->
+      <!-- ✅ Autocomplete SOLO por ID (independiente) -->
       <div class="form-group">
         <label for="producto_busqueda_id">Producto (ID)</label>
-        <input
-          type="text"
-          id="producto_busqueda_id"
-          placeholder="Buscar por ID (productoid)..."
-          inputmode="numeric"
-          autocomplete="off"
-        >
-        <button type="button" id="btnEscanear" class="btn-escanear">Escanear</button>
+        <div class="row-inline">
+          <input
+            type="text"
+            id="producto_busqueda_id"
+            placeholder="Buscar por ID (productoid)..."
+            inputmode="numeric"
+            autocomplete="off"
+          >
+        </div>
+        <small class="hint">Tip: Ctrl+1 nombre, Ctrl+2 código.</small>
       </div>
 
-      <!-- ocultos -->
-      <input type="hidden" id="producto_id">
-      <input type="hidden" id="productos"  name="productos">
-      <input type="hidden" id="cantidades" name="cantidades">
+      <!-- Quagga viewport (si lo usas con tu botón Escanear) -->
+      <div id="interactive" class="viewport" style="display:none;"></div>
 
-      <!-- ✅ compat -->
-      <input type="hidden" id="medio_pago" name="medio_pago">
+      <!-- ocultos que el JS llena -->
+      <input type="hidden" id="producto_id">
+
+      <input type="hidden" id="productos"  name="productos"  value="[]">
+      <input type="hidden" id="cantidades" name="cantidades" value="[]">
+
+      <!-- ✅ compat (efectivo/tarjeta/transferencia/mixto) -->
+      <input type="hidden" id="medio_pago" name="medio_pago" value="">
 
       <!-- ✅ pagos mixtos JSON -->
-      <input type="hidden" id="pagos" name="pagos">
+      <input type="hidden" id="pagos" name="pagos" value="">
 
-      <!-- ✅ NUEVO: efectivo recibido (para CAMBIO) -->
-      <input type="hidden" id="efectivo_recibido" name="efectivo_recibido">
+      <!-- (por si luego lo usas en backend) -->
+      <input type="hidden" id="efectivo_recibido" name="efectivo_recibido" value="">
     </form>
   </section>
 
@@ -85,12 +99,18 @@
     <header class="right-header">
       <div class="right-title">
         <h2>Detalles de la Venta</h2>
-        <h3 class="total-line">Total: <span id="total" class="total-color">{{ total|default:"$ 0,00" }}</span></h3>
+        <h3 class="total-line">
+          Total: <span id="total" class="total-color">{{ total|default:"$ 0" }}</span>
+        </h3>
       </div>
 
       <div class="right-actions">
-        <button type="button" class="btn btn-primary" id="generar-venta">Generar Venta</button>
-        <input type="text" id="buscar-detalles" placeholder="Buscar en el carrito…">
+        <button type="button" class="btn btn-primary" id="generar-venta">
+          <i class="fa-solid fa-receipt"></i> Generar Venta
+        </button>
+
+        <input type="text" id="buscar-detalles" placeholder="Buscar en el carrito…" autocomplete="off">
+
         <button type="button" class="btn btn-vaciar" id="vaciar-carrito">
           <i class="fas fa-trash-can"></i> Vaciar carrito
         </button>
@@ -100,17 +120,28 @@
     <div class="table-wrap">
       <table id="detalle-productos" class="table">
         <thead>
-        <tr>
-          <th>Producto</th><th>Cant.</th><th>Precio U.</th><th>Subtotal</th><th>Acc.</th>
-        </tr>
+          <tr>
+            <th>Producto</th>
+            <th>Cant.</th>
+            <th>Precio U.</th>
+            <th>Subtotal</th>
+            <th class="text-center">Acc.</th>
+          </tr>
         </thead>
         <tbody></tbody>
       </table>
+    </div>
+
+    <div class="right-footer">
+      <small class="hint">
+        Enter en el modal confirma pago • Alt+Espacio abre/confirmar
+      </small>
     </div>
   </section>
 
 </div>
 
+{# Modal de pagos #}
 {% include "modal_venta.html" %}
 
 <!-- libs -->
@@ -126,12 +157,15 @@
   window.productoAutocompleteUrl        = "{% url 'producto_autocomplete' %}";
   window.productoAutocompleteCodigoUrl  = "{% url 'producto_autocomplete_codigo' %}";
   window.productoAutocompleteBarrasUrl  = "{% url 'producto_autocomplete_barras' %}";
+  window.productoAutocompleteIdUrl      = "{% url 'producto_autocomplete_id' %}";
+
   window.verificarProductoUrl           = "{% url 'verificar_producto' %}";
   window.buscarProductoPorCodigoUrl     = "{% url 'buscar_producto_por_codigo' %}";
+  window.productoSnapshotUrl            = "{% url 'producto_snapshot' %}";
+
+  /* (opcional/legacy) si aún existen en tu backend */
   window.imprimirFacturaUrl             = "{% url 'imprimir_factura' %}";
   window.abrirCajaUrl                   = "{% url 'abrir_caja' %}";
-  window.productoSnapshotUrl            = "{% url 'producto_snapshot' %}";
-  window.productoAutocompleteIdUrl      = "{% url 'producto_autocomplete_id' %}";
 </script>
 
 <!-- POS Agent -->

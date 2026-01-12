@@ -5,7 +5,8 @@
    - Banner Total tipo “chip”
    - Filas (mix-row) como tarjetas interactivas
    - Sección efectivo como card elegante
-   - ❌ Sin scroll (ni lateral ni vertical)
+   - ❌ Sin scroll (ni lateral ni vertical) EN DESKTOP
+   - ✅ MOBILE: scroll vertical permitido, horizontal bloqueado
    - ✅ Por encima del navbar (z-index máximo)
    - ✅ Bloqueo de scroll automático con :has() + fallback modal-open
    - ✅ Reglas Pago Mixto:
@@ -77,7 +78,7 @@ body.modal-open{
   justify-content:center;
   padding: 18px;
 
-  /* ❌ sin barras */
+  /* ❌ sin barras en desktop */
   overflow: hidden !important;
 
   /* animación */
@@ -96,13 +97,13 @@ body.modal-open{
 }
 
 /* =========================================================
-   ✅ CONTENEDOR (sin scroll interno)
+   ✅ CONTENEDOR (sin scroll interno EN DESKTOP)
    ========================================================= */
 #myModal .modal-content{
   width: min(580px, 94vw);
   margin: 0;
 
-  /* ❌ sin scroll vertical/lateral interno */
+  /* ❌ sin scroll vertical/lateral interno en desktop */
   max-height: none !important;
   overflow: hidden !important;
   overflow-x: hidden !important;
@@ -493,15 +494,43 @@ body.modal-open{
 }
 
 /* =========================================================
-   ✅ RESPONSIVE
+   ✅ RESPONSIVE (MOBILE)
+   ✅ Scroll vertical SÍ, horizontal NO
    ========================================================= */
-@media (max-width: 520px){
+@media (max-width: 600px){
+
+  /* Backdrop puede scrollear vertical (NO horizontal) */
+  #myModal.modal{
+    align-items: flex-start;
+    justify-content: center;
+    padding: 12px 10px;
+
+    overflow-y: auto !important;     /* ✅ vertical */
+    overflow-x: hidden !important;   /* ❌ lateral */
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* El card también puede scrollear vertical */
   #myModal .modal-content{
-    width: min(560px, 96vw);
+    width: min(580px, 96vw);
+    margin: 12px 0;
+
+    max-height: calc(100dvh - 24px);
+    overflow-y: auto !important;     /* ✅ vertical */
+    overflow-x: hidden !important;   /* ❌ lateral */
+    -webkit-overflow-scrolling: touch;
+
     padding: 16px 14px 14px;
     border-radius: 18px;
   }
 
+  /* Anti-scroll horizontal extremo (por si algún hijo se desborda) */
+  #myModal,
+  #myModal *{
+    overflow-x: hidden !important;
+  }
+
+  /* En móvil: montos debajo del label (1 columna) */
   #myModal .mix-row.show-amt,
   #myModal .radio-wrap.show-amt{
     grid-template-columns: 1fr !important;
@@ -519,8 +548,12 @@ body.modal-open{
   #myModal .pm-amt{ height: 44px; }
 }
 
+/* =========================================================
+   ✅ ACCESIBILIDAD / SISTEMA
+   ========================================================= */
 @media (prefers-reduced-motion: reduce){
   #myModal .modal-content { transition:none; }
+  #myModal.modal{ transition:none; }
 }
 
 @media (forced-colors: active){

@@ -2309,9 +2309,7 @@ $(function () {
         }
         else{
           receiptText += `\n\n\n\n\n\n\n\n\n\n\n\n\n`;
-
         }
-
 
         const p1 = agentKickSafe({ timeout: 450 });
         const p2 = agentPrintSafe(receiptText, { timeout: 850 });
