@@ -53,10 +53,17 @@
       <!-- Código / Barras -->
       <div class="form-group">
         <label for="codigo_o_barras">Código / Barras</label>
-        <input type="text" id="codigo_o_barras" placeholder="Escribe o escanea…" autocomplete="off">
-        <button type="button" id="btnEscanear" class="btn btn-secondary btn-escanear">
-          <i class="fa-solid fa-camera"></i> Escanear
-        </button>
+
+        <div class="row-inline">
+          <input type="text" id="codigo_o_barras" placeholder="Escribe o escanea…" autocomplete="off">
+
+          <!-- ✅ IMPORTANTE: este ID debe ser btn-scan-cam (es el que tu JS escucha) -->
+          <button type="button" id="btn-scan-cam" class="btn btn-secondary btn-escanear">
+            <i class="fa-solid fa-camera"></i> Escanear
+          </button>
+        </div>
+
+        <small class="hint">Tip: Alt+7 abre la cámara. (Requiere HTTPS o localhost)</small>
       </div>
 
       <!-- ✅ Autocomplete SOLO por ID (independiente) -->
@@ -71,11 +78,11 @@
             autocomplete="off"
           >
         </div>
-        <small class="hint">Tip: Ctrl+1 nombre, Ctrl+2 código.</small>
+        <small class="hint">Atajos: Ctrl+1 nombre • Ctrl+2 código • Ctrl+4 qty</small>
       </div>
 
-      <!-- Quagga viewport (si lo usas con tu botón Escanear) -->
-      <div id="interactive" class="viewport" style="display:none;"></div>
+      <!-- ❌ Quagga viewport: YA NO se usa (tu JS usa BarcodeDetector). Puedes eliminarlo. -->
+      {# <div id="interactive" class="viewport" style="display:none;"></div> #}
 
       <!-- ocultos que el JS llena -->
       <input type="hidden" id="producto_id">
@@ -134,7 +141,7 @@
 
     <div class="right-footer">
       <small class="hint">
-        Enter en el modal confirma pago • Alt+Espacio abre/confirmar
+        Enter en el modal confirma pago • Alt+Espacio abre/confirmar • Alt+7 cámara
       </small>
     </div>
   </section>
@@ -147,7 +154,9 @@
 <!-- libs -->
 <script src="https://code.jquery.com/jquery-3.6.4.min.js"></script>
 <script src="https://code.jquery.com/ui/1.13.2/jquery-ui.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/quagga/0.12.1/quagga.min.js"></script>
+
+<!-- ✅ Ya NO necesitas Quagga si usas BarcodeDetector -->
+{# <script src="https://cdnjs.cloudflare.com/ajax/libs/quagga/0.12.1/quagga.min.js"></script> #}
 
 <!-- endpoints -->
 <script>

@@ -2400,6 +2400,212 @@ $(function () {
     resolveByBarcode(clean).then(pid => { if (pid) addToCartLastOnly(pid, 1); });
   }
 
+  let camStream = null;
+  let camRunning = false;
+  let camDetector = null;
+
+  function ensureCamUI() {
+    // Botón (si no existe en HTML, lo creamos al lado del input de código)
+    if (!document.getElementById("btn-scan-cam")) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.id = "btn-scan-cam";
+      btn.className = "btn btn-chip"; // usa tus clases
+      btn.innerHTML = "📷 Escanear";
+
+      // intenta ponerlo al lado del input #codigo_o_barras
+      const ref = document.getElementById("codigo_o_barras");
+      if (ref && ref.parentElement) ref.parentElement.appendChild(btn);
+      else document.body.appendChild(btn);
+    }
+
+    // Overlay + video (si no existe)
+    if (!document.getElementById("cam-scan-overlay")) {
+      const overlay = document.createElement("div");
+      overlay.id = "cam-scan-overlay";
+      overlay.style.cssText = `
+        position:fixed; inset:0; background:rgba(0,0,0,.75); z-index:99999;
+        display:none; align-items:center; justify-content:center; padding:16px;
+      `;
+
+      const box = document.createElement("div");
+      box.style.cssText = `
+        width:min(560px, 92vw); background:#0b1220; border-radius:14px;
+        overflow:hidden; box-shadow:0 18px 50px rgba(0,0,0,.45);
+      `;
+
+      const header = document.createElement("div");
+      header.style.cssText = `
+        display:flex; align-items:center; justify-content:space-between;
+        padding:10px 12px; color:#fff; font-weight:600;
+        background:rgba(255,255,255,.06);
+      `;
+      header.innerHTML = `<span>Escanear con cámara</span>`;
+
+      const closeBtn = document.createElement("button");
+      closeBtn.type = "button";
+      closeBtn.id = "cam-scan-close";
+      closeBtn.textContent = "✕";
+      closeBtn.style.cssText = `
+        border:0; background:transparent; color:#fff; font-size:18px; cursor:pointer;
+        padding:6px 10px; border-radius:10px;
+      `;
+      header.appendChild(closeBtn);
+
+      const video = document.createElement("video");
+      video.id = "cam-scan-video";
+      video.setAttribute("playsinline", "true");
+      video.muted = true;
+      video.autoplay = true;
+      video.style.cssText = `
+        width:100%; height:auto; background:#000; display:block;
+      `;
+
+      const hint = document.createElement("div");
+      hint.id = "cam-scan-hint";
+      hint.style.cssText = `
+        color:#cbd5e1; font-size:13px; padding:10px 12px;
+      `;
+      hint.textContent = "Apunta al código de barras…";
+
+      box.appendChild(header);
+      box.appendChild(video);
+      box.appendChild(hint);
+      overlay.appendChild(box);
+      document.body.appendChild(overlay);
+
+      closeBtn.addEventListener("click", stopCameraScanner);
+      overlay.addEventListener("click", (e) => { if (e.target === overlay) stopCameraScanner(); });
+    }
+  }
+
+  function isSecureContextForCamera() {
+    // secure context: https OR localhost
+    const h = location.hostname;
+    const isLocal = (h === "localhost" || h === "127.0.0.1");
+    return window.isSecureContext || isLocal;
+  }
+
+  async function getDetector() {
+    if (camDetector) return camDetector;
+
+    if (!("BarcodeDetector" in window)) {
+      return null; // fallback: necesitas librería externa (ZXing/Quagga)
+    }
+
+    // En algunos navegadores existe getSupportedFormats
+    try {
+      const formats = await window.BarcodeDetector.getSupportedFormats?.();
+      const wanted = ["ean_13","ean_8","code_128","code_39","upc_a","upc_e","qr_code"];
+      const use = Array.isArray(formats) && formats.length
+        ? formats.filter(f => wanted.includes(f))
+        : wanted;
+      camDetector = new window.BarcodeDetector({ formats: use });
+      return camDetector;
+    } catch {
+      // fallback simple
+      camDetector = new window.BarcodeDetector();
+      return camDetector;
+    }
+  }
+
+  async function startCameraScanner() {
+    ensureCamUI();
+
+    const $overlay = $("#cam-scan-overlay");
+    const video = document.getElementById("cam-scan-video");
+    const hint = document.getElementById("cam-scan-hint");
+
+    if (!isSecureContextForCamera()) {
+      alert("La cámara solo funciona en HTTPS o localhost. Abre la página en https://");
+      return;
+    }
+
+    const detector = await getDetector();
+    if (!detector) {
+      alert("Este navegador no soporta BarcodeDetector. Si quieres, te paso la versión con ZXing (librería).");
+      return;
+    }
+
+    // pedir cámara
+    try {
+      camStream = await navigator.mediaDevices.getUserMedia({
+        audio: false,
+        video: {
+          facingMode: { ideal: "environment" },
+          width: { ideal: 1280 },
+          height: { ideal: 720 }
+        }
+      });
+    } catch (err) {
+      console.warn("[CAM] getUserMedia error:", err);
+      alert("No se pudo abrir la cámara. Revisa permisos del navegador.");
+      return;
+    }
+
+    camRunning = true;
+    $overlay.css("display", "flex");
+    hint.textContent = "Apunta al código de barras…";
+
+    video.srcObject = camStream;
+    try { await video.play(); } catch {}
+
+    // loop de detección
+    const tick = async () => {
+      if (!camRunning) return;
+
+      try {
+        const codes = await detector.detect(video);
+        if (codes && codes.length) {
+          const raw = (codes[0].rawValue || "").trim();
+          if (raw) {
+            hint.textContent = "✅ Detectado: " + raw;
+            stopCameraScanner();
+            // usa tu flujo actual
+            pushCodeIntoCodeInputAndAdd(raw);
+            return;
+          }
+        }
+      } catch (_){}
+
+      requestAnimationFrame(tick);
+    };
+
+    requestAnimationFrame(tick);
+  }
+
+  function stopCameraScanner() {
+    camRunning = false;
+
+    const $overlay = $("#cam-scan-overlay");
+    $overlay.hide();
+
+    try {
+      const video = document.getElementById("cam-scan-video");
+      if (video) video.srcObject = null;
+    } catch (_){}
+
+    if (camStream) {
+      try { camStream.getTracks().forEach(t => t.stop()); } catch (_){}
+      camStream = null;
+    }
+  }
+
+  // bind botón
+  $(document).off("click.scanCam").on("click.scanCam", "#btn-scan-cam", function(){
+    startCameraScanner();
+  });
+
+  // atajo: Alt + 7 abre cámara (si no estás en modal)
+  $(document).on("keydown", function(e){
+    if ($("#myModal").is(":visible")) return;
+    if (!e.altKey || e.ctrlKey || e.metaKey) return;
+    if (e.key === "7") {
+      e.preventDefault(); e.stopPropagation();
+      startCameraScanner();
+    }
+  });
+
   function commitCurrentQtyLikeEnterIfNeeded(originEl){
     if ($cantidad && $cantidad.length && originEl === $cantidad[0]) {
       const committed = normalizeQtyOnCommit($cantidad[0]);
