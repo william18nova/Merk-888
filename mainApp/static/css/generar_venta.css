@@ -292,21 +292,21 @@ body::before{
   min-height:var(--ctrl-h) !important;
 
   padding:0 !important;
-  margin:0 !important;                 /* ✅ elimina desfase */
-  align-self:center !important;         /* ✅ por si flex intenta estirar */
+  margin:0 !important;
+  align-self:center !important;
   border-radius:14px !important;
 
   background:var(--btn-grad) !important;
   color:#fff !important;
   box-shadow:var(--btn-shadow) !important;
 
-  /* ✅ CENTRADO PERFECTO del contenido */
-  display:grid !important;
-  place-items:center !important;
-  line-height:0 !important;             /* ✅ evita baseline */
+  /* ✅ para centrar bien el ::before */
+  position:relative !important;
+  display:block !important;
+  line-height:0 !important;
   overflow:hidden !important;
 
-  /* oculta texto “ESCANEAR” si existe y deja el ícono */
+  /* oculta texto “ESCANEAR” si existe */
   font-size:0 !important;
   letter-spacing:0 !important;
   text-transform:none !important;
@@ -327,14 +327,17 @@ body::before{
   font-weight:900;
   font-size:18px;
 
-  /* ✅ ocupa todo el botón y se centra */
+  position:absolute !important;
+  inset:0 !important;
+
   display:grid !important;
   place-items:center !important;
-  width:100% !important;
-  height:100% !important;
+
+  /* ✅ evita baseline y corrige el “sube un poquito” */
+  line-height:0 !important;
+  transform:translateY(1px) !important;
   margin:0 !important;
   padding:0 !important;
-  line-height:1 !important;
 }
 
 /* hover/active */
