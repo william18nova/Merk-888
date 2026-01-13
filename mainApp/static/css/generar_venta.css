@@ -4,6 +4,7 @@
    ✅ Compatible con tu generar_venta.html + generar_venta.js
    ✅ Responsive MAX + NUNCA scroll lateral
    ✅ Autocomplete: sin scroll lateral + clamp + ✅ opciones multilínea
+   ✅ Código/Barras: mismo alto que inputs + botón escanear tipo ícono (pequeño) + ✅ ALINEADO + ✅ ÍCONO CENTRADO
    ========================================================== */
 
 /* Fuente */
@@ -38,6 +39,10 @@
   --radius:16px; --radius-sm:12px;
   --font:'Inter', system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
   --transition:.22s cubic-bezier(.2,.6,.2,1);
+
+  /* ✅ Control heights */
+  --ctrl-h: 48px;          /* alto “igual que los otros” */
+  --scan-btn: 48px;        /* ancho del botón ícono */
 }
 
 /* ==========================================================
@@ -138,6 +143,7 @@ body::before{
   font-size:15px;
   outline:none;
   transition: background var(--transition), border-color var(--transition), box-shadow var(--transition), transform var(--transition);
+  min-height:var(--ctrl-h); /* ✅ alto consistente */
 }
 .form-group input::placeholder{ color:var(--text-muted); }
 .form-group input:hover,
@@ -227,7 +233,7 @@ body::before{
   box-shadow:0 14px 30px rgba(77,166,255,.45), inset 0 0 0 1px rgba(255,255,255,.26);
 }
 
-/* secundario (para Escanear) */
+/* secundario */
 .btn-secondary{
   background:rgba(255,255,255,.12);
   color:var(--text);
@@ -240,7 +246,139 @@ body::before{
   background:rgba(255,255,255,.16);
 }
 
-/* ✅ Botón “Escanear” — ID real del HTML: #btn-scan-cam */
+/* ==========================================================
+   ✅ CÓDIGO / BARRAS — input igual a otros + botón escanear tipo ícono + ✅ ALINEADO + ✅ ÍCONO CENTRADO
+   (funciona con ids típicos: #codigo_barras / #id_codigo_barras / name="codigo_barras"
+    y con botón #btn-scan-cam o #btnEscanear)
+   ========================================================== */
+
+/* ✅ la fila debe centrar verticalmente para no “bajar” el botón */
+.form-group .row-inline{
+  align-items:center !important;
+}
+
+/* input “Código/Barras” (fija alto/line-height para que quede igual a los demás) */
+.form-group .row-inline > input#codigo_barras,
+.form-group .row-inline > input#id_codigo_barras,
+.form-group .row-inline > input[name="codigo_barras"],
+.form-group .row-inline > input[id*="codigo_barras"],
+.form-group .row-inline > input[id*="barras"],
+.form-group .row-inline > input[name*="barras"]{
+  height:var(--ctrl-h) !important;
+  min-height:var(--ctrl-h) !important;
+  line-height:calc(var(--ctrl-h) - 2px) !important; /* ✅ centra texto */
+  padding-top:0 !important;
+  padding-bottom:0 !important;
+  padding-left:14px !important;
+  padding-right:14px !important;
+  border-radius:var(--radius-sm);
+}
+
+/* ✅ Botón escanear pequeño (ícono), al lado del input */
+.form-group .row-inline > input#codigo_barras + button#btn-scan-cam,
+.form-group .row-inline > input#codigo_barras + button#btnEscanear,
+.form-group .row-inline > input#id_codigo_barras + button#btn-scan-cam,
+.form-group .row-inline > input#id_codigo_barras + button#btnEscanear,
+.form-group .row-inline > input[name="codigo_barras"] + button#btn-scan-cam,
+.form-group .row-inline > input[name="codigo_barras"] + button#btnEscanear,
+.form-group .row-inline > input[id*="barras"] + button#btn-scan-cam,
+.form-group .row-inline > input[id*="barras"] + button#btnEscanear{
+  flex:0 0 var(--scan-btn) !important;
+  width:var(--scan-btn) !important;
+  min-width:var(--scan-btn) !important;
+  max-width:var(--scan-btn) !important;
+
+  height:var(--ctrl-h) !important;
+  min-height:var(--ctrl-h) !important;
+
+  padding:0 !important;
+  margin:0 !important;                 /* ✅ elimina desfase */
+  align-self:center !important;         /* ✅ por si flex intenta estirar */
+  border-radius:14px !important;
+
+  background:var(--btn-grad) !important;
+  color:#fff !important;
+  box-shadow:var(--btn-shadow) !important;
+
+  /* ✅ CENTRADO PERFECTO del contenido */
+  display:grid !important;
+  place-items:center !important;
+  line-height:0 !important;             /* ✅ evita baseline */
+  overflow:hidden !important;
+
+  /* oculta texto “ESCANEAR” si existe y deja el ícono */
+  font-size:0 !important;
+  letter-spacing:0 !important;
+  text-transform:none !important;
+  white-space:nowrap !important;
+}
+
+/* ícono cámara usando FontAwesome (ya lo cargas en el HTML) */
+.form-group .row-inline > input#codigo_barras + button#btn-scan-cam::before,
+.form-group .row-inline > input#codigo_barras + button#btnEscanear::before,
+.form-group .row-inline > input#id_codigo_barras + button#btn-scan-cam::before,
+.form-group .row-inline > input#id_codigo_barras + button#btnEscanear::before,
+.form-group .row-inline > input[name="codigo_barras"] + button#btn-scan-cam::before,
+.form-group .row-inline > input[name="codigo_barras"] + button#btnEscanear::before,
+.form-group .row-inline > input[id*="barras"] + button#btn-scan-cam::before,
+.form-group .row-inline > input[id*="barras"] + button#btnEscanear::before{
+  content:"\f030"; /* fa-camera */
+  font-family:"Font Awesome 6 Free";
+  font-weight:900;
+  font-size:18px;
+
+  /* ✅ ocupa todo el botón y se centra */
+  display:grid !important;
+  place-items:center !important;
+  width:100% !important;
+  height:100% !important;
+  margin:0 !important;
+  padding:0 !important;
+  line-height:1 !important;
+}
+
+/* hover/active */
+.form-group .row-inline > input#codigo_barras + button#btn-scan-cam:hover,
+.form-group .row-inline > input#codigo_barras + button#btnEscanear:hover,
+.form-group .row-inline > input#id_codigo_barras + button#btn-scan-cam:hover,
+.form-group .row-inline > input#id_codigo_barras + button#btnEscanear:hover,
+.form-group .row-inline > input[name="codigo_barras"] + button#btn-scan-cam:hover,
+.form-group .row-inline > input[name="codigo_barras"] + button#btnEscanear:hover,
+.form-group .row-inline > input[id*="barras"] + button#btn-scan-cam:hover,
+.form-group .row-inline > input[id*="barras"] + button#btnEscanear:hover{
+  background:var(--btn-grad-hov) !important;
+  transform:translateY(-1px);
+  filter:saturate(1.06);
+  box-shadow:0 14px 30px rgba(77,166,255,.45), inset 0 0 0 1px rgba(255,255,255,.26);
+}
+.form-group .row-inline > input#codigo_barras + button#btn-scan-cam:active,
+.form-group .row-inline > input#codigo_barras + button#btnEscanear:active,
+.form-group .row-inline > input#id_codigo_barras + button#btn-scan-cam:active,
+.form-group .row-inline > input#id_codigo_barras + button#btnEscanear:active,
+.form-group .row-inline > input[name="codigo_barras"] + button#btn-scan-cam:active,
+.form-group .row-inline > input[name="codigo_barras"] + button#btnEscanear:active,
+.form-group .row-inline > input[id*="barras"] + button#btn-scan-cam:active,
+.form-group .row-inline > input[id*="barras"] + button#btnEscanear:active{
+  transform:translateY(0);
+}
+
+/* foco accesible */
+.form-group .row-inline > input#codigo_barras + button#btn-scan-cam:focus-visible,
+.form-group .row-inline > input#codigo_barras + button#btnEscanear:focus-visible,
+.form-group .row-inline > input#id_codigo_barras + button#btn-scan-cam:focus-visible,
+.form-group .row-inline > input#id_codigo_barras + button#btnEscanear:focus-visible,
+.form-group .row-inline > input[name="codigo_barras"] + button#btn-scan-cam:focus-visible,
+.form-group .row-inline > input[name="codigo_barras"] + button#btnEscanear:focus-visible,
+.form-group .row-inline > input[id*="barras"] + button#btn-scan-cam:focus-visible,
+.form-group .row-inline > input[id*="barras"] + button#btnEscanear:focus-visible{
+  outline:none;
+  box-shadow:0 0 0 3px color-mix(in srgb, var(--ring) 55%, transparent), var(--btn-shadow) !important;
+}
+
+/* ==========================================================
+   Botón “Escanear” antiguo (si en algún lugar aún existe como botón grande)
+   — lo dejamos, pero el selector de arriba lo “encoge” cuando va junto al input de barras
+   ========================================================== */
 #btn-scan-cam.btn-escanear,
 #btnEscanear.btn-escanear{
   display:block;
@@ -620,6 +758,20 @@ body::before{
 @media (max-width: 640px){
   .row-inline > button{ width:100%; min-width:0; }
   .ui-autocomplete{ max-width:calc(100vw - 16px) !important; }
+
+  /* ✅ en móvil: el botón ícono de barras NO se vuelve gigante */
+  .form-group .row-inline > input#codigo_barras + button#btn-scan-cam,
+  .form-group .row-inline > input#codigo_barras + button#btnEscanear,
+  .form-group .row-inline > input#id_codigo_barras + button#btn-scan-cam,
+  .form-group .row-inline > input#id_codigo_barras + button#btnEscanear,
+  .form-group .row-inline > input[name="codigo_barras"] + button#btn-scan-cam,
+  .form-group .row-inline > input[name="codigo_barras"] + button#btnEscanear,
+  .form-group .row-inline > input[id*="barras"] + button#btn-scan-cam,
+  .form-group .row-inline > input[id*="barras"] + button#btnEscanear{
+    width:var(--scan-btn) !important;
+    min-width:var(--scan-btn) !important;
+    flex:0 0 var(--scan-btn) !important;
+  }
 }
 
 /* Reduced motion */
