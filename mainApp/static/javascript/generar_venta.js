@@ -3,7 +3,7 @@ $(function () {
   "use strict";
   const $ = window.jQuery;
 
-  console.log("⚡ generar_venta.js — AC ultra + snapshot L1 + live price + ✅ allow qty negativo (devolución) + modal MIXTO + POS Agent + submit ultrarrápido + scanner qty-guard");
+  console.log("⚡ generar_venta.js — AC ultra + snapshot L1 + live price + ✅ allow qty negativo (devolución) + modal MIXTO + POS Agent + submit ultrarrápido + scanner qty-guard + ✅ cámara universal (BarcodeDetector + ZXing fallback)");
 
   /* ================== URLs inyectadas ================== */
   const SUCURSAL_URL    = window.sucursalAutocompleteUrl;
@@ -2400,9 +2400,30 @@ $(function () {
     resolveByBarcode(clean).then(pid => { if (pid) addToCartLastOnly(pid, 1); });
   }
 
+  /* =======================================================================================
+     ✅ ESCÁNER CÁMARA UNIVERSAL (BarcodeDetector + ZXing fallback) — iPhone/Safari OK
+     - BarcodeDetector: Chrome/Android + algunos navegadores
+     - ZXing fallback: iOS Safari, etc.
+     ======================================================================================= */
   let camStream = null;
   let camRunning = false;
+
+  // BarcodeDetector
   let camDetector = null;
+
+  // ZXing fallback
+  let zxingReader = null;
+  let zxingLoaded = false;
+
+  function isSecureContextForCamera() {
+    const h = location.hostname;
+    const isLocal = (h === "localhost" || h === "127.0.0.1");
+    return !!(window.isSecureContext || isLocal);
+  }
+
+  function hasGetUserMedia() {
+    return !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+  }
 
   function ensureCamUI() {
     // Botón (si no existe en HTML, lo creamos al lado del input de código)
@@ -2410,10 +2431,9 @@ $(function () {
       const btn = document.createElement("button");
       btn.type = "button";
       btn.id = "btn-scan-cam";
-      btn.className = "btn btn-chip"; // usa tus clases
-      btn.innerHTML = "📷 Escanear";
+      btn.className = "btn btn-chip"; // usa tus clases (CSS lo deja como iconito si quieres)
+      btn.innerHTML = "📷";
 
-      // intenta ponerlo al lado del input #codigo_o_barras
       const ref = document.getElementById("codigo_o_barras");
       if (ref && ref.parentElement) ref.parentElement.appendChild(btn);
       else document.body.appendChild(btn);
@@ -2454,7 +2474,7 @@ $(function () {
 
       const video = document.createElement("video");
       video.id = "cam-scan-video";
-      video.setAttribute("playsinline", "true");
+      video.setAttribute("playsinline", "true"); // iOS
       video.muted = true;
       video.autoplay = true;
       video.style.cssText = `
@@ -2479,78 +2499,73 @@ $(function () {
     }
   }
 
-  function isSecureContextForCamera() {
-    // secure context: https OR localhost
-    const h = location.hostname;
-    const isLocal = (h === "localhost" || h === "127.0.0.1");
-    return window.isSecureContext || isLocal;
-  }
-
-  async function getDetector() {
+  async function getBarcodeDetector() {
     if (camDetector) return camDetector;
+    if (!("BarcodeDetector" in window)) return null;
 
-    if (!("BarcodeDetector" in window)) {
-      return null; // fallback: necesitas librería externa (ZXing/Quagga)
-    }
-
-    // En algunos navegadores existe getSupportedFormats
     try {
       const formats = await window.BarcodeDetector.getSupportedFormats?.();
       const wanted = ["ean_13","ean_8","code_128","code_39","upc_a","upc_e","qr_code"];
-      const use = Array.isArray(formats) && formats.length
-        ? formats.filter(f => wanted.includes(f))
-        : wanted;
+      const use = Array.isArray(formats) && formats.length ? formats.filter(f => wanted.includes(f)) : wanted;
       camDetector = new window.BarcodeDetector({ formats: use });
       return camDetector;
     } catch {
-      // fallback simple
       camDetector = new window.BarcodeDetector();
       return camDetector;
     }
   }
 
-  async function startCameraScanner() {
-    ensureCamUI();
+  function loadZXing() {
+    if (zxingLoaded) return Promise.resolve(true);
 
-    const $overlay = $("#cam-scan-overlay");
-    const video = document.getElementById("cam-scan-video");
-    const hint = document.getElementById("cam-scan-hint");
+    return new Promise((resolve) => {
+      const existing = document.getElementById("zxing-cdn");
+      if (existing) { zxingLoaded = true; resolve(true); return; }
 
-    if (!isSecureContextForCamera()) {
-      alert("La cámara solo funciona en HTTPS o localhost. Abre la página en https://");
-      return;
-    }
+      const s = document.createElement("script");
+      s.id = "zxing-cdn";
+      s.src = "https://cdn.jsdelivr.net/npm/@zxing/library@0.20.0/umd/index.min.js";
+      s.async = true;
 
-    const detector = await getDetector();
-    if (!detector) {
-      alert("Este navegador no soporta BarcodeDetector. Si quieres, te paso la versión con ZXing (librería).");
-      return;
-    }
+      s.onload = () => { zxingLoaded = true; resolve(true); };
+      s.onerror = () => { zxingLoaded = false; resolve(false); };
 
-    // pedir cámara
+      document.head.appendChild(s);
+    });
+  }
+
+  async function getZXingReader() {
+    if (zxingReader) return zxingReader;
+    const ok = await loadZXing();
+    if (!ok) return null;
+
+    const ZXing = window.ZXing;
+    if (!ZXing) return null;
+
     try {
-      camStream = await navigator.mediaDevices.getUserMedia({
-        audio: false,
-        video: {
-          facingMode: { ideal: "environment" },
-          width: { ideal: 1280 },
-          height: { ideal: 720 }
-        }
-      });
-    } catch (err) {
-      console.warn("[CAM] getUserMedia error:", err);
-      alert("No se pudo abrir la cámara. Revisa permisos del navegador.");
-      return;
+      zxingReader = new ZXing.BrowserMultiFormatReader();
+      return zxingReader;
+    } catch {
+      return null;
     }
+  }
 
-    camRunning = true;
-    $overlay.css("display", "flex");
-    hint.textContent = "Apunta al código de barras…";
+  async function openCameraStream() {
+    camStream = await navigator.mediaDevices.getUserMedia({
+      audio: false,
+      video: {
+        facingMode: { ideal: "environment" },
+        width: { ideal: 1280 },
+        height: { ideal: 720 }
+      }
+    });
+    return camStream;
+  }
 
-    video.srcObject = camStream;
-    try { await video.play(); } catch {}
+  async function startWithBarcodeDetector(video, hint) {
+    const detector = await getBarcodeDetector();
+    if (!detector) return false;
 
-    // loop de detección
     const tick = async () => {
       if (!camRunning) return;
 
@@ -2559,9 +2574,8 @@ $(function () {
         if (codes && codes.length) {
           const raw = (codes[0].rawValue || "").trim();
           if (raw) {
-            hint.textContent = "✅ Detectado: " + raw;
+            if (hint) hint.textContent = "✅ Detectado: " + raw;
             stopCameraScanner();
-            // usa tu flujo actual
             pushCodeIntoCodeInputAndAdd(raw);
             return;
           }
@@ -2572,13 +2586,81 @@ $(function () {
     };
 
     requestAnimationFrame(tick);
+    return true;
+  }
+
+  async function startWithZXing(video, hint) {
+    const reader = await getZXingReader();
+    if (!reader) return false;
+
+    // Loop suave: intenta decodeOnce; si falla, vuelve a intentar
+    const loop = async () => {
+      if (!camRunning) return;
+      try {
+        const result = await reader.decodeOnceFromVideoElement(video);
+        const text = (result && result.getText && result.getText()) ? result.getText() : "";
+        if (text) {
+          if (hint) hint.textContent = "✅ Detectado: " + text;
+          stopCameraScanner();
+          pushCodeIntoCodeInputAndAdd(text);
+          return;
+        }
+      } catch (_) {
+        // ZXing lanza error cuando no detecta; seguimos intentando
+      }
+      requestAnimationFrame(loop);
+    };
+
+    requestAnimationFrame(loop);
+    return true;
+  }
+
+  async function startCameraScanner() {
+    ensureCamUI();
+
+    const $overlay = $("#cam-scan-overlay");
+    const video = document.getElementById("cam-scan-video");
+    const hint  = document.getElementById("cam-scan-hint");
+
+    if (!isSecureContextForCamera()) {
+      alert("La cámara solo funciona en HTTPS o localhost.");
+      return;
+    }
+    if (!hasGetUserMedia()) {
+      alert("Este navegador no permite acceso a cámara (getUserMedia no disponible).");
+      return;
+    }
+
+    try {
+      await openCameraStream();
+    } catch (err) {
+      console.warn("[CAM] getUserMedia error:", err);
+      alert("No se pudo abrir la cámara. Revisa permisos del navegador.");
+      return;
+    }
+
+    camRunning = true;
+    $overlay.css("display", "flex");
+    if (hint) hint.textContent = "Apunta al código de barras…";
+
+    video.srcObject = camStream;
+    try { await video.play(); } catch {}
+
+    // Preferimos BarcodeDetector, si no hay: ZXing
+    const okBD = await startWithBarcodeDetector(video, hint);
+    if (okBD) return;
+
+    const okZX = await startWithZXing(video, hint);
+    if (okZX) return;
+
+    stopCameraScanner();
+    alert("No se pudo iniciar el escáner en este dispositivo.");
   }
 
   function stopCameraScanner() {
     camRunning = false;
 
-    const $overlay = $("#cam-scan-overlay");
-    $overlay.hide();
+    $("#cam-scan-overlay").hide();
 
     try {
       const video = document.getElementById("cam-scan-video");
@@ -2589,6 +2671,8 @@ $(function () {
       try { camStream.getTracks().forEach(t => t.stop()); } catch (_){}
       camStream = null;
     }
+
+    try { zxingReader?.reset?.(); } catch(_){}
   }
 
   // bind botón
