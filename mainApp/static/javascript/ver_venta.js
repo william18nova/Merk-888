@@ -61,7 +61,6 @@
     const mixto = esMixto();
 
     if (bloquePagos) bloquePagos.style.display = mixto ? "" : "none";
-    // bloqueReint se muestra solo si mixto y hay devolución
     if (!mixto) {
       if (bloqueReint) bloqueReint.style.display = "none";
       return;

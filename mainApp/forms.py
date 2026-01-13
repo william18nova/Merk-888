@@ -13,12 +13,13 @@ from datetime import date
 from django.utils import timezone
 from decimal import Decimal
 
-MEDIO_PAGO_CHOICES = (
-    ('nequi', 'Nequi'),
-    ('daviplata', 'Daviplata'),
-    ('efectivo', 'Efectivo'),
-    ('tarjeta', 'Tarjeta'),
-)
+MEDIOS_PAGO = [
+    ("efectivo", "Efectivo"),
+    ("nequi", "Nequi"),
+    ("daviplata", "Daviplata"),
+    ("tarjeta", "Tarjeta"),
+    ("banco_caja_social", "Banco Caja Social"),
+]
 
 telefono_validator = RegexValidator(
     regex=r'^\d{10}$',

@@ -4212,12 +4212,144 @@ class VentaDataTableView(LoginRequiredMixin, View):
 
 
 Q2 = Decimal("0.01")
-
 def _to_q2(x: Decimal) -> Decimal:
     return (x or Decimal("0.00")).quantize(Q2)
 
-class VentaDetailView(LoginRequiredMixin, DenyRolesMixin , View):
-    deny_roles = ["Cajero", "Auxiliar"]
+
+class VentaListView(LoginRequiredMixin, ListView):
+    """
+    Todas las ventas con la MÁS RECIENTE primero.
+    """
+    model = Venta
+    template_name = "visualizar_ventas.html"
+    context_object_name = "ventas"
+    paginate_by = None
+
+    def get_queryset(self):
+        return (
+            Venta.objects
+            .select_related("clienteid", "empleadoid", "sucursalid", "puntopagoid")
+            .order_by("-ventaid")  # ✅ más recientes primero
+        )
+
+    def get_paginate_by(self, queryset):
+        return None
+
+
+class VentaDataTableView(LoginRequiredMixin, View):
+    """
+    Endpoint server-side ultra-rápido para DataTables en visualizar_ventas.
+    Devuelve solo las ventas necesarias para la página actual.
+    """
+
+    def get(self, request, *args, **kwargs):
+        from django.http import JsonResponse
+
+        draw   = int(request.GET.get("draw", "1"))
+        start  = int(request.GET.get("start", "0"))
+        length = int(request.GET.get("length", "25"))
+        search_value = request.GET.get("search[value]", "").strip()
+
+        base_qs = Venta.objects.select_related(
+            "clienteid", "empleadoid", "sucursalid", "puntopagoid"
+        )
+
+        records_total = base_qs.count()
+        qs = base_qs
+
+        if search_value:
+            tokens = search_value.split()
+            for token in tokens:
+                qs = qs.filter(
+                    Q(ventaid__icontains=token) |
+                    Q(clienteid__nombre__icontains=token) |
+                    Q(clienteid__apellido__icontains=token) |
+                    Q(empleadoid__nombre__icontains=token) |
+                    Q(empleadoid__apellido__icontains=token) |
+                    Q(sucursalid__nombre__icontains=token) |
+                    Q(puntopagoid__nombre__icontains=token) |
+                    Q(mediopago__icontains=token)
+                )
+
+        records_filtered = qs.count()
+
+        order_column_index = request.GET.get("order[0][column]", "0")
+        order_dir          = request.GET.get("order[0][dir]", "desc")
+
+        columns = [
+            "ventaid",                   # 0
+            "fecha",                     # 1
+            "hora",                      # 2
+            "clienteid__nombre",         # 3
+            "empleadoid__nombre",        # 4
+            "sucursalid__nombre",        # 5
+            "puntopagoid__nombre",       # 6
+            "total",                     # 7
+            "mediopago",                 # 8
+        ]
+
+        try:
+            idx = int(order_column_index)
+            order_column = columns[idx]
+        except (ValueError, IndexError):
+            order_column = "ventaid"
+
+        if order_dir == "desc":
+            order_column = "-" + order_column
+
+        qs_page = (
+            qs.order_by(order_column)
+              .values(
+                  "ventaid",
+                  "fecha",
+                  "hora",
+                  "total",
+                  "mediopago",
+                  "clienteid__nombre",
+                  "clienteid__apellido",
+                  "empleadoid__nombre",
+                  "empleadoid__apellido",
+                  "sucursalid__nombre",
+                  "puntopagoid__nombre",
+              )[start:start + length]
+        )
+
+        data = []
+        for v in qs_page:
+            cliente = "—"
+            if v["clienteid__nombre"]:
+                apellido = v["clienteid__apellido"] or ""
+                cliente = f"{v['clienteid__nombre']} {apellido}".strip()
+
+            empleado = f"{v['empleadoid__nombre']} {(v['empleadoid__apellido'] or '')}".strip()
+            sucursal = v["sucursalid__nombre"] or "—"
+            punto    = v["puntopagoid__nombre"] or "—"
+            medio    = (v["mediopago"] or "").title()
+
+            fecha_str = v["fecha"].strftime("%d/%m/%Y") if v["fecha"] else ""
+            hora_str  = v["hora"].strftime("%H:%M") if v["hora"] else ""
+
+            data.append({
+                "ventaid"   : v["ventaid"],
+                "fecha"     : fecha_str,
+                "hora"      : hora_str,
+                "cliente"   : cliente,
+                "empleado"  : empleado,
+                "sucursal"  : sucursal,
+                "puntopago" : punto,
+                "total"     : f"${v['total']:.2f}",
+                "mediopago" : medio,
+            })
+
+        return JsonResponse({
+            "draw"            : draw,
+            "recordsTotal"    : records_total,
+            "recordsFiltered" : records_filtered,
+            "data"            : data,
+        })
+
+
+class VentaDetailView(LoginRequiredMixin, View):
     template_name = "ver_venta.html"
 
     # -------------------------
@@ -4228,18 +4360,18 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin , View):
 
     def _build_pagos_initial(self, venta):
         """
-        Precarga pagos actuales desde venta_pagos (PagoVenta.monto) agrupado por metodo.
+        Precarga pagos actuales desde venta_pagos (PagoVenta.monto) agrupado por medio_pago.
         """
         pagos_bd = {}
         if self._venta_es_mixta(venta):
             rows = (
                 PagoVenta.objects
                 .filter(ventaid=venta)
-                .values("metodo")                # ✅
+                .values("medio_pago")
                 .annotate(total=Sum("monto"))
             )
             pagos_bd = {
-                (r["metodo"] or "").strip().lower(): (r["total"] or Decimal("0.00"))
+                (r["medio_pago"] or "").strip().lower(): (r["total"] or Decimal("0.00"))
                 for r in rows
             }
 
@@ -4303,7 +4435,7 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin , View):
             medio = (row.get("medio_pago") or "").strip().lower()
             monto = (row.get("monto") or Decimal("0.00")).quantize(Q2)
             if monto > 0:
-                nuevos.append(PagoVenta(ventaid=venta, metodo=medio, monto=monto))  # ✅ metodo
+                nuevos.append(PagoVenta(ventaid=venta, medio_pago=medio, monto=monto))
 
         if nuevos:
             PagoVenta.objects.bulk_create(nuevos)
@@ -4321,7 +4453,7 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin , View):
         if total > 0 and medio:
             PagoVenta.objects.create(
                 ventaid=venta,
-                medio_pago=medio,   # ✅ NO "metodo"
+                medio_pago=medio,   # ✅ ESTE ES EL CAMPO REAL EN DJANGO
                 monto=total
             )
 
@@ -4333,7 +4465,7 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin , View):
         qs = PagoVenta.objects.select_for_update().filter(ventaid=venta)
 
         for p in qs:
-            medio = (p.metodo or "").strip().lower()  # ✅
+            medio = (p.medio_pago or "").strip().lower()
             if medio in out:
                 out[medio] += (p.monto or Decimal("0.00"))
 
@@ -4387,8 +4519,8 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin , View):
             qs = (
                 PagoVenta.objects
                 .select_for_update()
-                .filter(ventaid=venta, metodo=metodo)  # ✅
-                .order_by("id")                        # ✅
+                .filter(ventaid=venta, medio_pago=metodo)  # ✅
+                .order_by("id")
             )
 
             for p in qs:
@@ -4407,8 +4539,11 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin , View):
             if restante > 0:
                 raise ValueError(f"No hay suficiente saldo en {metodo} para restar {monto_restar}.")
 
+    
+
     # -------------------------
     # Cambio de medio (no-mixto -> no-mixto) mueve dinero en el turno
+    
     # -------------------------
     def _mover_turno_por_cambio_medio(self, venta, metodo_old: str, metodo_new: str, monto: Decimal):
         metodo_old = (metodo_old or "").strip().lower()
@@ -4525,7 +4660,6 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin , View):
                 return redirect(reverse_lazy("ver_venta", kwargs={"venta_id": venta_id}))
             self._guardar_pagos_mixtos(venta, pagos_formset)
         else:
-            # ✅ mantener pago único
             self._guardar_pago_unico(venta)
 
         if accion == "volver_lista":
@@ -4538,12 +4672,22 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin , View):
 
         det_map = {d.pk: d for d in detalles}
         devoluciones = []
+
         for row in dev_formset.cleaned_data:
             cant = int(row.get("devolver") or 0)
-            if cant > 0:
-                det = det_map.get(row["detalle_id"])
-                if det:
-                    devoluciones.append({"detalle": det, "cantidad": cant})
+            if cant <= 0:
+                continue
+
+            det = det_map.get(row["detalle_id"])
+            if not det:
+                continue
+
+            # ✅ NO permitir devolver más de lo vendido
+            if cant > int(det.cantidad):
+                messages.error(request, f"⚠️ No puedes devolver {cant} porque solo se vendieron {det.cantidad}.")
+                return redirect(reverse_lazy("ver_venta", kwargs={"venta_id": venta_id}))
+
+            devoluciones.append({"detalle": det, "cantidad": cant})
 
         if not devoluciones:
             # Solo guardó medio/pagos
@@ -4551,14 +4695,14 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin , View):
 
         total_reintegro = self._calcular_total_reintegro(detalles, dev_formset)
 
-        # 3) Devolver dinero + stock
+        # 3) Devolver dinero + stock + turno + registrar cambio + total venta
         if self._venta_es_mixta(venta):
             ok, err, reintegro_map = self._validar_reintegro_mixto(venta, reintegro_formset, total_reintegro)
             if not ok:
                 messages.error(request, f"⚠️ {err}")
                 return redirect(reverse_lazy("ver_venta", kwargs={"venta_id": venta_id}))
 
-            # A) devolución completa (inventario + turno + total venta)
+            # A) devolución completa
             CambioDevolucion.registrar_devolucion(venta, devoluciones, reintegro_map=reintegro_map)
 
             # B) restar de venta_pagos según reintegro_map
@@ -4567,12 +4711,30 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin , View):
         else:
             # no mixto
             CambioDevolucion.registrar_devolucion(venta, devoluciones)
+
             # sincronizar pago único con nuevo total
             venta.refresh_from_db()
             self._guardar_pago_unico(venta)
 
         messages.success(request, "✅ Devolución registrada correctamente.")
         return redirect(reverse_lazy("visualizar_ventas"))
+    
+    @staticmethod
+    def _get_field_esperado_name(obj) -> str:
+        """
+        Detecta el nombre real del campo esperado en TurnoCajaMedio
+        (por si en tu modelo se llama distinto).
+        """
+        for name in ("esperado", "monto_esperado", "monto", "total", "valor"):
+            if hasattr(obj, name):
+                return name
+        raise ValueError(
+            "No encontré el campo 'esperado' en TurnoCajaMedio. "
+            "Revisa tu modelo: debe existir un DecimalField tipo esperado/monto_esperado/monto/etc."
+        )
+
+    
+
 
 class CambiosListView(LoginRequiredMixin, ListView):
     model = CambioDevolucion

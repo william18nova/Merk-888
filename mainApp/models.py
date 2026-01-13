@@ -435,151 +435,263 @@ class TurnoCajaMedio(models.Model):
         unique_together = (("turno", "metodo"),)
         
 Q2 = Decimal("0.01")
-
-
-def q2(x):
+def _to_q2(x: Decimal) -> Decimal:
     return (x or Decimal("0.00")).quantize(Q2)
 
 
 class CambioDevolucion(models.Model):
-    cambioid = models.AutoField(primary_key=True)
-    productoid = models.ForeignKey("Producto", null=True, blank=True, on_delete=models.PROTECT, db_column="productoid")
+    TIPO_CHOICES = (
+        ("Cambio", "Cambio"),
+        ("Devolucion", "Devolucion"),
+    )
+    ESTADO_CHOICES = (
+        ("Pendiente", "Pendiente"),
+        ("Completado", "Completado"),
+        ("Cancelado", "Cancelado"),
+    )
+
+    cambioid = models.AutoField(primary_key=True, db_column="cambioid")
+
+    productoid = models.ForeignKey(
+        "Producto",
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        db_column="productoid",
+        related_name="cambios"
+    )
+
     cantidad = models.IntegerField()
-    proveedorid = models.ForeignKey("Proveedor", null=True, blank=True, on_delete=models.PROTECT, db_column="proveedorid")
-    tipo = models.CharField(max_length=50)
-    estado = models.CharField(max_length=50)
+    proveedorid = models.ForeignKey(
+        "Proveedor",
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        db_column="proveedorid",
+        related_name="cambios"
+    )
+
+    tipo = models.CharField(max_length=50, choices=TIPO_CHOICES)
+    estado = models.CharField(max_length=50, choices=ESTADO_CHOICES)
     fecha = models.DateField()
+
     motivo = models.TextField(null=True, blank=True)
-    ventaid = models.ForeignKey(Venta, null=True, blank=True, on_delete=models.CASCADE, db_column="ventaid")
-    detalle_id = models.ForeignKey(DetalleVenta, null=True, blank=True, on_delete=models.PROTECT, db_column="detalle_id")
+
+    venta = models.ForeignKey(
+        "Venta",
+        on_delete=models.CASCADE,
+        null=True, blank=True,
+        db_column="ventaid",
+        related_name="cambios"
+    )
+
+    detalle = models.ForeignKey(
+        "DetalleVenta",
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        db_column="detalle_id",
+        related_name="cambios"
+    )
 
     class Meta:
         db_table = "cambiosdevoluciones"
 
-    # =============================
-    # Helpers de turno (locked)
-    # =============================
+    def __str__(self):
+        return f"{self.tipo} #{self.cambioid}"
+
+    # -------------------------
+    # Helpers internos
+    # -------------------------
     @staticmethod
-    def _get_turno_abierto_locked(puntopago_id):
+    def _upsert_inventario_delta(sucursal_id: int, product_id: int, delta_cantidad: int):
+        """
+        DEVOLUCIÓN => delta_cantidad positivo => inventario +delta
+        """
+        from .models import Inventario
+
+        inv = (
+            Inventario.objects
+            .select_for_update()
+            .filter(sucursalid_id=sucursal_id, productoid_id=product_id)
+            .first()
+        )
+        if inv:
+            Inventario.objects.filter(pk=inv.pk).update(cantidad=F("cantidad") + int(delta_cantidad))
+        else:
+            Inventario.objects.create(
+                sucursalid_id=sucursal_id,
+                productoid_id=product_id,
+                cantidad=int(delta_cantidad)
+            )
+
+    @staticmethod
+    def _upsert_turno_medio_delta(turno, metodo: str, delta):
+        """
+        ✅ Nunca revienta si el medio no existe:
+        - Tu FK real se llama TURNO (no turnocaja)
+        - Si no existe TurnoCajaMedio para ese metodo, lo crea en 0
+        - Aplica delta en esperado
+        - Si queda negativo, lo deja en 0 (no explota)
+        """
+        from mainApp.models import TurnoCajaMedio  # evita ciclos
+
+        metodo = (metodo or "").strip().lower()
+        delta = _to_q2(delta)
+
+        if not metodo or delta == 0:
+            return
+
+        # 1) Buscar registro del medio (LOCK)
+        obj = (
+            TurnoCajaMedio.objects
+            .select_for_update()
+            .filter(turno=turno, metodo=metodo)   # ✅ FK real: turno
+            .first()
+        )
+
+        # 2) Si no existe, crearlo
+        if obj is None:
+            obj = TurnoCajaMedio.objects.create(
+                turno=turno,                      # ✅ FK real: turno
+                metodo=metodo,
+                esperado=Decimal("0.00"),
+                contado=Decimal("0.00"),
+                diferencia=Decimal("0.00"),
+            )
+            obj = TurnoCajaMedio.objects.select_for_update().get(pk=obj.pk)
+
+        # 3) Aplicar delta a esperado
+        actual = _to_q2(obj.esperado)
+        nuevo = (actual + delta).quantize(Q2)
+
+        # clamp a 0 si queda negativo
+        if nuevo < 0:
+            nuevo = Decimal("0.00").quantize(Q2)
+
+        obj.esperado = nuevo
+
+        # mantener diferencia coherente si ya existe contado
+        try:
+            obj.diferencia = (obj.contado - obj.esperado).quantize(Q2)
+            obj.save(update_fields=["esperado", "diferencia"])
+        except Exception:
+            obj.save(update_fields=["esperado"])
+
+    @staticmethod
+    def _turno_abierto_para_venta_locked(venta):
+        from .models import TurnoCaja
         return (
             TurnoCaja.objects
             .select_for_update()
-            .filter(puntopago_id=puntopago_id, estado__in=["ABIERTO", "CIERRE"])
+            .filter(puntopago_id=venta.puntopagoid_id, estado__in=["ABIERTO", "CIERRE"])
             .order_by("-inicio")
             .first()
         )
 
-    @staticmethod
-    def _upsert_turno_medio_delta(turno: TurnoCaja, metodo: str, delta: Decimal):
-        metodo = (metodo or "").strip().lower()
-        delta = (delta or Decimal("0.00")).quantize(Q2)
-        if not metodo or delta == 0:
+    # -------------------------
+    # ✅ Método principal
+    # -------------------------
+    @classmethod
+    def registrar_devolucion(cls, venta, devoluciones, reintegro_map: dict | None = None):
+        """
+        ✅ Hace TODO:
+        - Registra en cambiosdevoluciones
+        - inventario += cantidad devuelta
+        - detalleventa.cantidad -= devuelto (para consistencia visual)
+        - venta.total -= total devuelto
+        - Ajusta turno (ventas_total / ventas_efectivo / ventas_no_efectivo + turno_caja_medios.esperado)
+        """
+        from .models import DetalleVenta, TurnoCaja
+
+        reintegro_map = reintegro_map or {}
+
+        # 1) calcular total devolución
+        total_dev = Decimal("0.00")
+        for item in devoluciones:
+            det: DetalleVenta = item["detalle"]
+            cant = int(item["cantidad"] or 0)
+            if cant <= 0:
+                continue
+            precio = (det.preciounitario or Decimal("0.00"))
+            total_dev += (Decimal(cant) * precio)
+
+        total_dev = _to_q2(total_dev)
+        if total_dev <= 0:
             return
 
-        obj, _ = (
-            TurnoCajaMedio.objects
-            .select_for_update()
-            .get_or_create(
-                turno=turno,
-                metodo=metodo,
-                defaults={"esperado": Decimal("0.00")}
-            )
-        )
+        now = timezone.localdate()
 
-        obj.esperado = ((obj.esperado or Decimal("0.00")) + delta).quantize(Q2)
-        if obj.esperado < 0:
-            obj.esperado = Decimal("0.00")
-        obj.save(update_fields=["esperado"])
-
-    # =============================
-    # DEVOLUCIÓN COMPLETA
-    # =============================
-    @staticmethod
-    @transaction.atomic
-    def registrar_devolucion(venta, devoluciones: list):
-        """
-        devoluciones = [
-          {"detalle": <DetalleVenta>, "cantidad": int},
-          ...
-        ]
-
-        Efecto:
-        - Suma inventario en la sucursal de la venta
-        - Resta del total de la venta
-        - Reduce/elimina DetalleVenta
-        - Crea registros en cambiosdevoluciones
-        """
-
-        # 🔒 Bloquea la venta para que nadie la modifique al tiempo
-        venta = (
-            venta.__class__.objects
-            .select_for_update()
-            .select_related("sucursalid")
-            .get(pk=venta.pk)
-        )
-
-        total_devuelto = Decimal("0.00")
-
-        # Recorre cada devolución
+        # 2) inventario + detalle - + crear registros cambios
         for item in devoluciones:
-            det = item["detalle"]
+            det: DetalleVenta = item["detalle"]
             cant = int(item["cantidad"] or 0)
-
             if cant <= 0:
                 continue
 
-            # 🔒 Bloquea el detalle
-            det = (
-                det.__class__.objects
-                .select_for_update()
-                .select_related("productoid")
-                .get(pk=det.pk, ventaid=venta)
-            )
+            product_id = det.productoid_id
+            sucursal_id = venta.sucursalid_id
 
-            if cant > int(det.cantidad):
-                raise ValueError(
-                    f"No puedes devolver {cant} porque el detalle solo tiene {det.cantidad}."
-                )
+            # ✅ inventario sube
+            cls._upsert_inventario_delta(sucursal_id, product_id, cant)
 
-            precio_u = q2(det.preciounitario)
-            subtotal_dev = q2(Decimal(cant) * precio_u)
-            total_devuelto += subtotal_dev
+            # ✅ detalle baja (recomendado)
+            DetalleVenta.objects.filter(pk=det.pk).update(cantidad=F("cantidad") - cant)
 
-            # 1) ✅ SUMAR inventario
-            # Inventario tiene unique (sucursalid, productoid) según tu SQL
-            inv, _created = Inventario.objects.select_for_update().get_or_create(
-                sucursalid=venta.sucursalid,
-                productoid=det.productoid,
-                defaults={"cantidad": 0},
-            )
-            inv.cantidad = F("cantidad") + cant
-            inv.save(update_fields=["cantidad"])
-
-            # 2) ✅ RESTAR cantidad del detalle (o eliminarlo si queda en 0)
-            nueva_cant = int(det.cantidad) - cant
-            if nueva_cant <= 0:
-                det.delete()
-            else:
-                det.cantidad = nueva_cant
-                det.save(update_fields=["cantidad"])
-
-            # 3) ✅ Guardar trazabilidad en cambiosdevoluciones
-            CambioDevolucion.objects.create(
-                venta=venta,              # si tu FK se llama venta
-                detalle=det,              # si tu FK se llama detalle
-                productoid=det.productoid,
+            # ✅ registrar devolucion
+            cls.objects.create(
+                venta=venta,
+                productoid_id=product_id,
                 cantidad=cant,
                 tipo="Devolucion",
                 estado="Completado",
-                fecha=timezone.localdate(),
-                motivo="Devolución desde ver_venta",
+                fecha=now,
+                motivo="Devolución registrada",
+                detalle_id=det.pk,
             )
 
-        # 4) ✅ RESTAR al total de la venta (nunca negativo)
-        total_devuelto = q2(total_devuelto)
-        venta_total_actual = q2(venta.total)
+        # 3) venta.total baja
+        venta.refresh_from_db()
+        nuevo_total = _to_q2((venta.total or Decimal("0.00")) - total_dev)
+        if nuevo_total < 0:
+            raise ValueError(f"La devolución ({total_dev}) deja el total negativo ({nuevo_total}).")
 
-        venta.total = q2(max(Decimal("0.00"), venta_total_actual - total_devuelto))
+        venta.total = nuevo_total
         venta.save(update_fields=["total"])
 
-        return total_devuelto
+        # 4) ajustar turno
+        turno = cls._turno_abierto_para_venta_locked(venta)
+        if not turno:
+            return
+
+        # ventas_total siempre baja
+        TurnoCaja.objects.filter(pk=turno.pk).update(ventas_total=F("ventas_total") - total_dev)
+
+        medio_venta = (venta.mediopago or "").strip().lower()
+
+        # 4A) no mixto => por el mismo medio
+        if medio_venta != "mixto":
+            cls._upsert_turno_medio_delta(turno, medio_venta, -total_dev)
+
+            if medio_venta == "efectivo":
+                TurnoCaja.objects.filter(pk=turno.pk).update(ventas_efectivo=F("ventas_efectivo") - total_dev)
+            else:
+                TurnoCaja.objects.filter(pk=turno.pk).update(ventas_no_efectivo=F("ventas_no_efectivo") - total_dev)
+            return
+
+        # 4B) mixto => usar reintegro_map
+        suma = Decimal("0.00")
+
+        for metodo, monto in reintegro_map.items():
+            monto = _to_q2(monto)
+            if monto <= 0:
+                continue
+            suma += monto
+
+            cls._upsert_turno_medio_delta(turno, metodo, -monto)
+
+            if (metodo or "").strip().lower() == "efectivo":
+                TurnoCaja.objects.filter(pk=turno.pk).update(ventas_efectivo=F("ventas_efectivo") - monto)
+            else:
+                TurnoCaja.objects.filter(pk=turno.pk).update(ventas_no_efectivo=F("ventas_no_efectivo") - monto)
+
+        suma = _to_q2(suma)
+        if suma != total_dev:
+            raise ValueError(f"Reintegro mixto ({suma}) != total devolución ({total_dev}).")
