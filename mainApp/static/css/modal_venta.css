@@ -1,17 +1,8 @@
 /* =========================================================
    ✅ MODAL “Pagos (puede ser mixto)” — ULTRA estético (Nova)
-   - Centrado real + animación
-   - Glassmorphism premium + borde iluminado
-   - Banner Total tipo “chip”
-   - Filas (mix-row) como tarjetas interactivas
-   - Sección efectivo como card elegante
-   - ❌ Sin scroll (ni lateral ni vertical) EN DESKTOP
-   - ✅ MOBILE: scroll vertical permitido, horizontal bloqueado
-   - ✅ Por encima del navbar (z-index máximo)
-   - ✅ Bloqueo de scroll automático con :has() + fallback modal-open
-   - ✅ Reglas Pago Mixto:
-       - NO mixto: solo 1 check, input solo efectivo (fijo = total)
-       - Mixto: varios checks, input en seleccionados (arriba/abajo sin bug)
+   - Desktop: ❌ sin scroll (modal ni card)
+   - Mobile: ✅ 1 SOLO SCROLL (backdrop #myModal)
+   - Page scroll bloqueado (body/html)
    ========================================================= */
 
 :root{
@@ -40,7 +31,7 @@
 }
 
 /* =========================================================
-   ✅ BLOQUEO SCROLL AUTOMÁTICO DEL DOCUMENTO (sin JS)
+   ✅ BLOQUEO SCROLL DEL DOCUMENTO (sin JS) + fallback
    ========================================================= */
 html:has(#myModal.modal[style*="display: block"]),
 body:has(#myModal.modal[style*="display: block"]),
@@ -49,7 +40,6 @@ body:has(#myModal.modal.is-open){
   overflow: hidden !important;
 }
 
-/* fallback por si prefieres con JS: body.classList.add("modal-open") */
 body.modal-open{
   overflow: hidden !important;
 }
@@ -61,8 +51,6 @@ body.modal-open{
   display:none;
   position:fixed;
   inset:0;
-
-  /* 🔥 por encima de TODO (navbar, dropdowns, etc.) */
   z-index: 2147483647 !important;
 
   background:
@@ -78,35 +66,29 @@ body.modal-open{
   justify-content:center;
   padding: 18px;
 
-  /* ❌ sin barras en desktop */
+  /* Desktop: sin scroll */
   overflow: hidden !important;
 
-  /* animación */
   opacity: 0;
   transition: opacity .18s var(--na-ease);
 }
 
-/* abierto: show() => display:block */
-#myModal.modal[style*="display: block"]{
-  display:flex !important;
-  opacity: 1;
-}
+/* abierto */
+#myModal.modal[style*="display: block"],
 #myModal.modal.is-open{
   display:flex !important;
   opacity: 1;
 }
 
 /* =========================================================
-   ✅ CONTENEDOR (sin scroll interno EN DESKTOP)
+   ✅ CONTENEDOR (desktop sin scroll)
    ========================================================= */
 #myModal .modal-content{
   width: min(580px, 94vw);
   margin: 0;
 
-  /* ❌ sin scroll vertical/lateral interno en desktop */
   max-height: none !important;
   overflow: hidden !important;
-  overflow-x: hidden !important;
 
   padding: 18px 18px 16px;
   border-radius: var(--na-radius);
@@ -130,7 +112,7 @@ body.modal-open{
   transform: translateY(0) scale(1);
 }
 
-/* Asegura que nada se salga por ancho (causa scroll lateral) */
+/* Anti overflow lateral global dentro del modal */
 #myModal *,
 #myModal *::before,
 #myModal *::after{
@@ -138,7 +120,6 @@ body.modal-open{
   max-width: 100%;
 }
 
-/* refuerzo anti-scroll lateral */
 #myModal .mix-grid,
 #myModal .mix-row,
 #myModal .radio-wrap{
@@ -148,7 +129,8 @@ body.modal-open{
 /* Halo / borde iluminado */
 #myModal .modal-content::before{
   content:"";
-  position:absolute; inset:-1px;
+  position:absolute;
+  inset:-1px;
   border-radius: var(--na-radius);
   pointer-events:none;
   background: linear-gradient(180deg, rgba(255,255,255,.26), rgba(255,255,255,.04));
@@ -270,13 +252,10 @@ body.modal-open{
 }
 
 /* =========================================================
-   ✅ GRID / SEPARACIÓN
+   ✅ FILAS (TARJETAS) DE MÉTODOS
    ========================================================= */
 #myModal .mix-grid{ display:block; }
 
-/* =========================================================
-   ✅ FILAS (TARJETAS) DE MÉTODOS
-   ========================================================= */
 #myModal .mix-row,
 #myModal .radio-wrap{
   display:grid;
@@ -306,7 +285,6 @@ body.modal-open{
   grid-template-columns: 1fr 190px !important;
 }
 
-/* Label + checkbox */
 #myModal .mix-check{
   display:flex;
   align-items:center;
@@ -318,8 +296,6 @@ body.modal-open{
   letter-spacing: .1px;
   text-shadow: 0 8px 18px rgba(0,0,0,.22);
 }
-
-/* Checkbox */
 #myModal .mix-check input[type="checkbox"]{
   width: 18px;
   height: 18px;
@@ -329,7 +305,7 @@ body.modal-open{
 }
 
 /* =========================================================
-   ✅ INPUT MONTO (FIX MIXTO)
+   ✅ INPUT MONTO
    ========================================================= */
 #myModal .pm-amt{
   display:none;
@@ -353,7 +329,6 @@ body.modal-open{
 #myModal .radio-wrap.show-amt .pm-amt{
   display:block;
 }
-
 #myModal .pm-amt:not(:disabled){
   display:block !important;
 }
@@ -371,7 +346,6 @@ body.modal-open{
   box-shadow: 0 0 0 3px rgba(77,166,255,.18), 0 12px 24px rgba(0,0,0,.14);
   transform: translateY(-1px);
 }
-
 #myModal .pm-amt:disabled{
   opacity: .92;
   cursor: not-allowed;
@@ -494,37 +468,38 @@ body.modal-open{
 }
 
 /* =========================================================
-   ✅ RESPONSIVE (MOBILE)
-   ✅ Scroll vertical SÍ, horizontal NO
+   ✅ MOBILE: 1 SOLO SCROLL (backdrop)
    ========================================================= */
 @media (max-width: 600px){
 
-  /* Backdrop puede scrollear vertical (NO horizontal) */
+  /* ✅ Ahora el scroll vive AQUÍ */
   #myModal.modal{
     align-items: flex-start;
     justify-content: center;
     padding: 12px 10px;
 
-    overflow-y: auto !important;     /* ✅ vertical */
+    overflow-y: auto !important;     /* ✅ único scroll */
     overflow-x: hidden !important;   /* ❌ lateral */
     -webkit-overflow-scrolling: touch;
+
+    /* evita “arrastre” al body (aunque esté locked) */
+    overscroll-behavior: contain;
+    touch-action: pan-y;
   }
 
-  /* El card también puede scrollear vertical */
+  /* ❌ El card NO scrollea (para evitar doble scroll) */
   #myModal .modal-content{
     width: min(580px, 96vw);
     margin: 12px 0;
 
-    max-height: calc(100dvh - 24px);
-    overflow-y: auto !important;     /* ✅ vertical */
-    overflow-x: hidden !important;   /* ❌ lateral */
-    -webkit-overflow-scrolling: touch;
+    max-height: none !important;
+    overflow: visible !important;
 
     padding: 16px 14px 14px;
     border-radius: 18px;
   }
 
-  /* Anti-scroll horizontal extremo (por si algún hijo se desborda) */
+  /* Anti-scroll horizontal extremo */
   #myModal,
   #myModal *{
     overflow-x: hidden !important;
@@ -552,7 +527,7 @@ body.modal-open{
    ✅ ACCESIBILIDAD / SISTEMA
    ========================================================= */
 @media (prefers-reduced-motion: reduce){
-  #myModal .modal-content { transition:none; }
+  #myModal .modal-content{ transition:none; }
   #myModal.modal{ transition:none; }
 }
 
