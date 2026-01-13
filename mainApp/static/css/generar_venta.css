@@ -2,6 +2,8 @@
    generar_venta.css — Nova look (SOLO Generar Venta)
    ✅ Modal en otro CSS (NO incluir estilos .modal / .modal-content)
    ✅ Compatible con tu generar_venta.html + generar_venta.js
+   ✅ Responsive MAX + NUNCA scroll lateral
+   ✅ Autocomplete: sin scroll lateral + clamp + ✅ opciones multilínea
    ========================================================== */
 
 /* Fuente */
@@ -38,15 +40,18 @@
   --transition:.22s cubic-bezier(.2,.6,.2,1);
 }
 
-/* Fondo base */
+/* ==========================================================
+   RESET + ANTI SCROLL LATERAL (GLOBAL)
+   ========================================================== */
 *{box-sizing:border-box;margin:0;padding:0}
-html,body{height:100%}
+html,body{height:100%; width:100%; max-width:100%;}
+html{overflow-x:hidden;}
 body{
   font-family:var(--font);
   color:var(--text);
   min-height:100svh;
   overflow-x:hidden;
-  padding:clamp(20px,4vw,32px);
+  padding:clamp(14px,3.2vw,32px);
   background:
     radial-gradient(1400px 800px at 10% 20%, rgba(77,166,255,.35), transparent 60%),
     radial-gradient(1200px 700px at 85% 85%, rgba(77,166,255,.25), transparent 60%),
@@ -59,14 +64,17 @@ body::before{
   filter:blur(12px);
 }
 
+/* ✅ Todo lo que vive en grid/flex debe poder encogerse */
+.page-grid, .panel, .panel *{ min-width:0; }
+
 /* ==========================================================
-   LAYOUT (2 columnas)
+   LAYOUT (2 columnas) — robusto contra overflow
    ========================================================== */
 .page-grid{
   max-width:1400px;
   margin:0 auto;
   display:grid;
-  grid-template-columns:minmax(420px,1fr) minmax(560px,1fr);
+  grid-template-columns:minmax(0, 1fr) minmax(0, 1fr);
   gap:22px;
 }
 .panel{
@@ -76,8 +84,8 @@ body::before{
   border:1px solid var(--glass-brd);
   border-radius:var(--radius);
   box-shadow:var(--glass-sh);
-  padding:clamp(22px,3.5vw,32px);
-  min-height:calc(100svh - clamp(20px,4vw,32px)*2);
+  padding:clamp(20px,3.5vw,32px);
+  min-height:calc(100svh - clamp(14px,3.2vw,32px)*2);
   display:flex;
   flex-direction:column;
 }
@@ -91,12 +99,16 @@ body::before{
   text-shadow:0 6px 16px rgba(0,0,0,.22);
   margin:0 0 14px;
   text-align:center;
+  overflow-wrap:anywhere;
+  word-break:break-word;
 }
 .panel-right h3{
   margin:0;
   text-align:center;
   font-weight:700;
   font-size:clamp(16px,1.6vw,18px);
+  overflow-wrap:anywhere;
+  word-break:break-word;
 }
 
 /* separador */
@@ -117,6 +129,7 @@ body::before{
 .form-group input,
 .form-group select{
   width:100%;
+  max-width:100%;
   padding:14px;
   border-radius:var(--radius-sm);
   border:1px solid var(--input-brd);
@@ -156,14 +169,19 @@ body::before{
   box-shadow:0 0 0 3px rgba(255,77,95,.22);
 }
 
-/* filas inline (ID + Escanear / Cantidad + Agregar) */
+/* filas inline (ID + Escanear / Cantidad + Agregar) — ✅ wrap anti overflow */
 .row-inline{
   display:flex;
   gap:10px;
   align-items:stretch;
+  flex-wrap:wrap;
 }
-.row-inline > input{ flex:1; }
-.row-inline > button{ flex:0 0 auto; white-space:nowrap; }
+.row-inline > input{ flex:1 1 220px; min-width:0; }
+.row-inline > button{
+  flex:1 1 180px;
+  min-width:180px;
+  white-space:nowrap;
+}
 
 /* ayudas */
 .hint{
@@ -192,6 +210,7 @@ body::before{
   text-transform:uppercase;
   transition: transform .2s, filter .22s, box-shadow .22s, background .22s, opacity .2s;
   user-select:none;
+  max-width:100%;
 }
 .btn:active{ transform:translateY(0); }
 .btn:disabled, .btn[disabled]{ opacity:.70; cursor:not-allowed; filter:saturate(.85); }
@@ -221,11 +240,12 @@ body::before{
   background:rgba(255,255,255,.16);
 }
 
-/* ✅ Botón “Escanear” (MEJOR CENTRADO Y PRO) */
+/* ✅ Botón “Escanear” — ID real del HTML: #btn-scan-cam */
+#btn-scan-cam.btn-escanear,
 #btnEscanear.btn-escanear{
-  display:block;              /* clave para que margin auto centre */
+  display:block;
   width:100%;
-  max-width:260px;
+  max-width:320px;
   margin:12px auto 18px;
   padding:12px 16px;
 
@@ -238,15 +258,16 @@ body::before{
   color:#fff;
   box-shadow:var(--btn-shadow);
 }
+#btn-scan-cam.btn-escanear:hover,
 #btnEscanear.btn-escanear:hover{
   background:var(--btn-grad-hov);
   transform:translateY(-1px);
   filter:saturate(1.06);
 }
+#btn-scan-cam.btn-escanear:active,
 #btnEscanear.btn-escanear:active{ transform:translateY(0); }
-#btnEscanear{ align-self:center; justify-self:center; } /* backup */
 
-/* Botón eliminar del carrito (tu JS usa: .btn.btn-chip-danger.eliminar-producto) */
+/* Botón eliminar del carrito */
 .btn-chip-danger{
   display:inline-flex;
   align-items:center;
@@ -262,6 +283,7 @@ body::before{
   transition:transform .16s ease, box-shadow .2s ease, filter .2s ease, opacity .2s;
   font-weight:900;
   text-transform:uppercase;
+  max-width:100%;
 }
 .btn-chip-danger:hover{
   transform:translateY(-1px);
@@ -273,7 +295,7 @@ body::before{
 .btn-chip-danger span{ font-size:12px; letter-spacing:.25px; }
 
 /* ==========================================================
-   PANEL DERECHO (header centrado + total verde grande)
+   PANEL DERECHO
    ========================================================== */
 .right-header{
   display:flex;
@@ -283,6 +305,7 @@ body::before{
   gap:10px;
   margin-bottom:14px;
   text-align:center;
+  width:100%;
 }
 .right-actions{
   display:flex;
@@ -291,9 +314,10 @@ body::before{
   justify-content:center;
   gap:10px;
   width:100%;
+  min-width:0;
 }
 
-/* total verde grande */
+/* total */
 #total{
   display:inline-block;
   color:#1f8b2a;
@@ -303,18 +327,16 @@ body::before{
   margin-left:4px;
 }
 
-/* botón generar venta centrado */
 #generar-venta{
   display:block;
   width:100%;
-  max-width:320px;
+  max-width:420px;
   margin:0 auto;
 }
 
-/* buscador carrito */
 #buscar-detalles{
   width:100%;
-  max-width:360px;
+  max-width:420px;
   padding:10px 12px;
   border:1px solid var(--input-brd);
   border-radius:12px;
@@ -329,7 +351,6 @@ body::before{
   box-shadow:0 0 0 3px color-mix(in srgb,var(--brand) 35%, transparent);
 }
 
-/* vaciar carrito */
 #vaciar-carrito{
   display:inline-flex;
   align-items:center;
@@ -341,19 +362,22 @@ body::before{
   border-radius:12px;
   font-weight:900;
   box-shadow:0 6px 16px rgba(177,43,60,.18);
+  max-width:100%;
 }
 #vaciar-carrito:hover{ filter:saturate(1.05); transform:translateY(-1px); }
 #vaciar-carrito:active{ transform:translateY(0); }
 
-/* tabla scroll interno */
 .table-wrap{
   flex:1;
   min-height:0;
-  overflow:auto;
+  width:100%;
+  min-width:0;
+  overflow-x:auto;
+  overflow-y:auto;
   border-radius:12px;
+  -webkit-overflow-scrolling:touch;
 }
 
-/* footer */
 .right-footer{
   margin-top:12px;
   text-align:center;
@@ -372,6 +396,7 @@ body::before{
   overflow:hidden;
   box-shadow:0 6px 18px rgba(0,0,0,.12);
   margin-bottom:0;
+  max-width:100%;
 }
 #detalle-productos th{
   background:linear-gradient(180deg,#3563b8,#2a4f9a);
@@ -379,6 +404,10 @@ body::before{
   padding:11px 12px;
   font-weight:800;
   white-space:nowrap;
+}
+#detalle-productos td, #detalle-productos th{
+  overflow-wrap:anywhere;
+  word-break:break-word;
 }
 
 #detalle-productos thead th:nth-child(1),
@@ -399,7 +428,6 @@ body::before{
 }
 #detalle-productos tr:nth-child(even){ background:#f9fbff; }
 
-/* centrar acciones en desktop */
 @media (min-width: 641px){
   #detalle-productos tbody td:nth-child(5){
     display:flex;
@@ -431,50 +459,51 @@ body::before{
   box-shadow:0 0 0 3px color-mix(in srgb,var(--brand) 35%, transparent);
 }
 
-/* cuando el JS marca pending price */
 .pending-price .price-cell,
 .pending-price .subtotal-cell{ opacity:.6; }
 
 /* ==========================================================
-   Escáner (Quagga viewport) — SOLO contenedor
-   (tu JS lo puede mostrar/ocultar)
-   ========================================================== */
-#interactive.viewport{
-  display:none;
-  width:100%;
-  max-width:640px;
-  height:480px;
-  margin-top:16px;
-  background:#f0f8ff;
-  border-radius:12px;
-  overflow:hidden;
-}
-
-/* ==========================================================
-   jQuery UI Autocomplete (lista)
+   jQuery UI Autocomplete — ✅ MULTILÍNEA + SIN SCROLL HORIZONTAL
    ========================================================== */
 .ui-autocomplete{
   position:absolute !important;
   z-index:3000 !important;
+
   max-height:260px;
-  overflow-y:auto;
-  box-sizing:border-box;
+  overflow-y:auto !important;
+  overflow-x:hidden !important;
+
+  box-sizing:border-box !important;
   background:#fff !important;
   border:1px solid var(--slate-200) !important;
   border-radius:12px !important;
   box-shadow:0 16px 30px rgba(0,0,0,.16) !important;
   padding:4px 0;
+
+  /* clamp viewport */
+  max-width:calc(100vw - 24px) !important;
 }
-.ui-menu .ui-menu-item{ list-style:none; }
+
+.ui-autocomplete.ui-menu{ overflow-x:hidden !important; }
+.ui-menu .ui-menu-item{ list-style:none; max-width:100% !important; }
+
+/* ✅ cada opción puede crecer en altura (multilínea) */
 .ui-menu-item-wrapper{
+  max-width:100% !important;
+  overflow:hidden !important;
   padding:10px 12px !important;
   font-size:15px !important;
   color:#0b1220 !important;
-  line-height:1.2;
+  line-height:1.25 !important;
   cursor:pointer !important;
   border:none !important;
   background:transparent !important;
+
+  white-space:normal !important;         /* ✅ permite multilínea */
+  overflow-wrap:anywhere !important;     /* ✅ rompe strings largos */
+  word-break:break-word !important;
 }
+
 .ui-state-active,
 .ui-menu-item-wrapper.ui-state-active,
 .ui-menu .ui-state-focus{
@@ -483,45 +512,62 @@ body::before{
   border:none !important;
 }
 
-/* ======= template del JS (ac-row) ======= */
+/* ✅ layout: izquierda se envuelve, precio a la derecha fijo */
 .ui-autocomplete .ac-row{
+  width:100% !important;
   display:flex;
-  align-items:center;
+  align-items:flex-start;                /* ✅ para que multi-line no descuadre */
   justify-content:space-between;
   gap:.75rem;
-  max-width:72ch;
+
+  white-space:normal !important;         /* ✅ multilínea */
+  min-width:0 !important;
 }
+
 .ui-autocomplete .ac-left{
-  min-width:0;
-  overflow:hidden;
-  text-overflow:ellipsis;
-  white-space:nowrap;
+  flex:1 1 auto;
+  min-width:0 !important;
+
+  white-space:normal !important;         /* ✅ multilínea */
+  overflow:visible !important;
+  overflow-wrap:anywhere !important;
+  word-break:break-word !important;
 }
-.ui-autocomplete .ac-code{ opacity:.85; }
-.ui-autocomplete .ac-name{ font-weight:600; }
-.ui-autocomplete .ac-price{ opacity:.85; }
+
+/* ✅ dentro del lado izquierdo, NO usar ellipsis */
+.ui-autocomplete .ac-code,
+.ui-autocomplete .ac-name{
+  display:inline;
+  white-space:normal !important;         /* ✅ multilínea */
+  overflow-wrap:anywhere !important;
+  word-break:break-word !important;
+}
+
+/* ✅ precio no se envuelve y queda alineado */
+.ui-autocomplete .ac-price{
+  flex:0 0 auto;
+  white-space:nowrap !important;
+  opacity:.85;
+  margin-left:.5rem;
+}
 
 /* ==========================================================
-   Responsive: de 2 columnas a 1
+   Responsive: 2 columnas -> 1 columna
    ========================================================== */
-@media (max-width: 1024px){
+@media (max-width: 1180px){
   .page-grid{ grid-template-columns:1fr; }
   .panel{ min-height:auto; }
   #generar-venta, #buscar-detalles{ width:100%; }
 }
 
-/* ==========================================================
-   Tabla modo tarjeta (móvil)
-   ========================================================== */
-@media (max-width: 640px){
-  .row-inline{ flex-direction:column; }
-  .row-inline > button{ width:100%; }
-
+/* Tabla modo tarjeta */
+@media (max-width: 860px){
   #detalle-productos{
     border-radius:14px;
     overflow:visible;
     background:transparent;
     box-shadow:none;
+    table-layout:auto;
   }
   #detalle-productos thead{ display:none; }
   #detalle-productos tbody{ display:block; }
@@ -545,6 +591,7 @@ body::before{
     align-items:center;
     font-size:14px;
     text-align:left;
+    min-width:0;
   }
 
   #detalle-productos tbody td:nth-child(1)::before{ content:"Producto";  font-weight:800; color:#2a4f9a; margin-right:10px; }
@@ -556,9 +603,7 @@ body::before{
   #detalle-productos tbody td:nth-child(1){ grid-column:1 / -1; grid-row:1; }
   #detalle-productos tbody td:nth-child(2){
     grid-column:1 / -1; grid-row:2;
-    display:flex !important;
     justify-content:space-between !important;
-    align-items:center !important;
     width:100%;
   }
   #detalle-productos tbody td:nth-child(2)::before{ display:inline-block; flex-shrink:0; }
@@ -572,9 +617,12 @@ body::before{
   #detalle-productos tbody td:nth-child(5) .btn-chip-danger{ margin-left:auto; }
 }
 
-/* ==========================================================
-   Reduced motion
-   ========================================================== */
+@media (max-width: 640px){
+  .row-inline > button{ width:100%; min-width:0; }
+  .ui-autocomplete{ max-width:calc(100vw - 16px) !important; }
+}
+
+/* Reduced motion */
 @media (prefers-reduced-motion:reduce){
   .btn,
   .form-group input,
