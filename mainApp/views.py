@@ -4349,7 +4349,8 @@ class VentaDataTableView(LoginRequiredMixin, View):
         })
 
 
-class VentaDetailView(LoginRequiredMixin, View):
+class VentaDetailView(LoginRequiredMixin, DenyRolesMixin, View):
+    deny_roles = ["Cajero", "Auxiliar"]
     template_name = "ver_venta.html"
 
     # -------------------------
