@@ -1,0 +1,155 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Administrar Turnos de Caja{% endblock %}
+
+{% block extra_head %}
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"/>
+  <link rel="stylesheet" href="{% static 'css/turnos_caja_admin.css' %}">
+{% endblock %}
+
+{% block content %}
+<div class="tca-wrap">
+  <div class="tca-card">
+    <div class="tca-head">
+      <h2><i class="fa-solid fa-gear"></i> Administrar — Turnos de caja</h2>
+      <div id="flash" class="alert" style="display:none"></div>
+    </div>
+
+    <!-- Lista rápida (reusa tu dashboard existente si quieres). Aquí dejamos simple: -->
+    <div class="tca-note">
+      <i class="fa-solid fa-circle-info"></i>
+      Abre un turno desde el dashboard y aquí puedes editar/eliminar (solo admin).
+    </div>
+
+    <div class="tca-row">
+      <label class="lbl">ID del turno</label>
+      <div class="field">
+        <input id="turnoId" class="in" placeholder="Ej: 47" inputmode="numeric">
+        <button id="btnLoad" class="btn btn-primary" type="button"><i class="fa-solid fa-magnifying-glass"></i> Cargar</button>
+      </div>
+    </div>
+
+    <!-- Editor -->
+    <div id="editor" class="editor" style="display:none;">
+      <div class="grid">
+        <div class="block">
+          <div class="btitle"><i class="fa-solid fa-pen-to-square"></i> Datos del turno</div>
+
+          <div class="form-grid">
+            <div>
+              <label>Estado</label>
+              <select id="estado" class="in">
+                <option value="ABIERTO">ABIERTO</option>
+                <option value="CIERRE">CIERRE</option>
+                <option value="CERRADO">CERRADO</option>
+              </select>
+            </div>
+
+            <div>
+              <label>Base (saldo apertura efectivo)</label>
+              <input id="base" class="in" type="number" step="0.01" min="0" placeholder="0.00">
+            </div>
+
+            <div>
+              <label>Inicio</label>
+              <input id="inicio" class="in" type="datetime-local">
+            </div>
+
+            <div>
+              <label>Cierre iniciado</label>
+              <input id="cierre" class="in" type="datetime-local">
+            </div>
+
+            <div>
+              <label>Fin</label>
+              <input id="fin" class="in" type="datetime-local">
+            </div>
+
+            <div>
+              <label>Efectivo real (TOTAL caja) (opcional)</label>
+              <input id="efectivoReal" class="in" type="number" step="0.01" min="0" placeholder="0.00">
+            </div>
+          </div>
+
+          <div class="mini">
+            <div><span>Punto de pago:</span> <b id="ppName">—</b></div>
+            <div><span>Cajero:</span> <b id="cajName">—</b></div>
+          </div>
+        </div>
+
+        <div class="block">
+          <div class="btitle"><i class="fa-solid fa-chart-simple"></i> Totales (auto)</div>
+          <div class="metrics">
+            <div class="m">
+              <div class="k">Esperado total</div>
+              <div id="mEsperado" class="v">—</div>
+            </div>
+            <div class="m">
+              <div class="k">Ventas total</div>
+              <div id="mVentas" class="v">—</div>
+            </div>
+            <div class="m">
+              <div class="k">Diferencia</div>
+              <div id="mDiff" class="v">—</div>
+            </div>
+            <div class="m">
+              <div class="k">Deuda</div>
+              <div id="mDeuda" class="v">—</div>
+            </div>
+            <div class="m">
+              <div class="k">Efectivo (ventas)</div>
+              <div id="mEf" class="v">—</div>
+            </div>
+            <div class="m">
+              <div class="k">No efectivo</div>
+              <div id="mNoEf" class="v">—</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="block">
+        <div class="btitle"><i class="fa-solid fa-wallet"></i> Medios de pago (editar)</div>
+
+        <div class="table-wrap">
+          <table class="tbl">
+            <thead>
+              <tr>
+                <th>Medio</th>
+                <th class="num">Esperado</th>
+                <th class="num">Contado</th>
+                <th class="num">Diferencia</th>
+              </tr>
+            </thead>
+            <tbody id="mediosBody"></tbody>
+          </table>
+        </div>
+
+        <div class="actions">
+          <button id="btnSave" class="btn btn-primary" type="button">
+            <i class="fa-solid fa-floppy-disk"></i> Guardar cambios
+          </button>
+
+          <button id="btnDelete" class="btn btn-danger" type="button">
+            <i class="fa-solid fa-trash"></i> Eliminar turno
+          </button>
+        </div>
+
+        <div class="warn">
+          <i class="fa-solid fa-triangle-exclamation"></i>
+          Editar o borrar turnos cambia la contabilidad del día. Hazlo solo si estás seguro.
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  const API_DETAIL = (id) => "{% url 'api_admin_turno_detail' 999999 %}".replace("999999", String(id));
+  const API_UPDATE = (id) => "{% url 'api_admin_turno_update' 999999 %}".replace("999999", String(id));
+  const API_DELETE = (id) => "{% url 'api_admin_turno_delete' 999999 %}".replace("999999", String(id));
+</script>
+
+<script defer src="{% static 'javascript/turnos_caja_admin.js' %}"></script>
+{% endblock %}

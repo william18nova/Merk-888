@@ -289,8 +289,19 @@ urlpatterns = [
          name="turno_caja_iniciar_cierre"),
     path("turno_caja/api/cerrar/", views.TurnoCajaCerrarApi.as_view(),
          name="turno_caja_cerrar"),
+     
+     path("turnos_caja_dashboard/", views.TurnosCajaDashboardView.as_view(), name="turnos_caja_dashboard"),
 
+    # APIs dashboard
+    path("api/turnos_caja/list/", views.TurnosCajaDashboardListAPI.as_view(), name="api_turnos_caja_list"),
+    path("api/turnos_caja/<int:turno_id>/", views.TurnoCajaDashboardDetailAPI.as_view(), name="api_turno_caja_detail"),
 
+    path("turnos_caja_admin/", views.TurnosCajaAdminPageView.as_view(), name="turnos_caja_admin"),
+
+    # APIs Admin
+    path("api/admin/turnos_caja/<int:turno_id>/", views.TurnoCajaAdminDetailAPI.as_view(), name="api_admin_turno_detail"),
+    path("api/admin/turnos_caja/<int:turno_id>/update/", views.TurnoCajaAdminUpdateAPI.as_view(), name="api_admin_turno_update"),
+    path("api/admin/turnos_caja/<int:turno_id>/delete/", views.TurnoCajaAdminDeleteAPI.as_view(), name="api_admin_turno_delete"),
 
 
 

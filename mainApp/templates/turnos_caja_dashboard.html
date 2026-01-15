@@ -1,0 +1,155 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Dashboard Turnos de Caja{% endblock %}
+
+{% block extra_head %}
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"/>
+  <link rel="stylesheet" href="{% static 'css/turnos_caja_dashboard.css' %}">
+{% endblock %}
+
+{% block content %}
+<div class="tcd-wrap">
+  <div class="tcd-card">
+    <div class="tcd-head">
+      <h2><i class="fa-solid fa-chart-line"></i> Dashboard — Turnos de caja</h2>
+      <div id="flash" class="alert" style="display:none"></div>
+    </div>
+
+    <!-- Filtros -->
+    <div class="tcd-filters">
+      <div class="f">
+        <label>Estado</label>
+        <select id="fEstado" class="in">
+          <option value="ALL">Todos</option>
+          <option value="ABIERTO">ABIERTO</option>
+          <option value="CIERRE">CIERRE</option>
+          <option value="CERRADO">CERRADO</option>
+        </select>
+      </div>
+
+      <div class="f">
+        <label>Buscar</label>
+        <input id="fQ" class="in" placeholder="Punto de pago o cajero…">
+      </div>
+
+      <div class="f">
+        <label>Desde</label>
+        <input id="fFrom" class="in" type="date">
+      </div>
+
+      <div class="f">
+        <label>Hasta</label>
+        <input id="fTo" class="in" type="date">
+      </div>
+
+      <div class="f actions">
+        <button id="btnRefresh" class="btn btn-primary" type="button">
+          <i class="fa-solid fa-rotate"></i> Actualizar
+        </button>
+      </div>
+    </div>
+
+    <!-- Tabla -->
+    <div class="tcd-table-wrap">
+      <table class="tcd-table" id="tblTurnos">
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Estado</th>
+            <th>Punto de pago</th>
+            <th>Cajero</th>
+            <th>Inicio</th>
+            <th>Fin</th>
+            <th class="num">Esperado (BD)</th>
+            <th class="num">Real (Usuario)</th>
+            <th class="num">Diferencia</th>
+            <th class="num">Deuda</th>
+            <th class="act">Acciones</th>
+          </tr>
+        </thead>
+        <tbody id="tbodyTurnos">
+          <!-- JS -->
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Paginación -->
+    <div class="tcd-pager">
+      <button id="btnPrev" class="btn btn-ghost" type="button"><i class="fa-solid fa-chevron-left"></i></button>
+      <div class="pg">
+        <span id="pgInfo">—</span>
+      </div>
+      <button id="btnNext" class="btn btn-ghost" type="button"><i class="fa-solid fa-chevron-right"></i></button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal detalle -->
+<div id="modal" class="m-backdrop" style="display:none;">
+  <div class="m-card">
+    <div class="m-head">
+      <div class="ttl">
+        <div class="t1"><i class="fa-solid fa-receipt"></i> Detalle del turno</div>
+        <div class="t2" id="mSub">—</div>
+      </div>
+      <button id="mClose" class="m-x" type="button"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+
+    <div class="m-body">
+      <div class="m-metrics">
+        <div class="metric">
+          <div class="lbl">Esperado (BD)</div>
+          <div id="mEsperadoBD" class="val">—</div>
+        </div>
+        <div class="metric">
+          <div class="lbl">Esperado (calc)</div>
+          <div id="mEsperadoCalc" class="val">—</div>
+        </div>
+        <div class="metric">
+          <div class="lbl">Real (usuario)</div>
+          <div id="mReal" class="val">—</div>
+        </div>
+        <div class="metric">
+          <div class="lbl">Diferencia</div>
+          <div id="mDiff" class="val">—</div>
+        </div>
+        <div class="metric">
+          <div class="lbl">Deuda</div>
+          <div id="mDeuda" class="val">—</div>
+        </div>
+      </div>
+
+      <div class="m-actions">
+        <button id="btnCalcExpected" class="btn btn-warn" type="button">
+          <i class="fa-solid fa-bolt"></i> Calcular esperado (live)
+        </button>
+      </div>
+
+      <div class="m-table-wrap">
+        <table class="m-table">
+          <thead>
+            <tr>
+              <th>Medio</th>
+              <th class="num">Esperado (BD)</th>
+              <th class="num">Esperado (calc)</th>
+              <th class="num">Contado</th>
+              <th class="num">Diferencia</th>
+            </tr>
+          </thead>
+          <tbody id="mBodyMedios">
+            <!-- JS -->
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  const API_LIST   = "{% url 'api_turnos_caja_list' %}";
+  const API_DETAIL = (id) => "{% url 'api_turno_caja_detail' 999999 %}".replace("999999", String(id));
+</script>
+
+<script defer src="{% static 'javascript/turnos_caja_dashboard.js' %}"></script>
+{% endblock %}
