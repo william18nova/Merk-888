@@ -1,7 +1,7 @@
 /* =========================================================
    ✅ MODAL “Pagos (puede ser mixto)” — ULTRA estético (Nova)
-   - Desktop: ❌ sin scroll (modal ni card)
-   - Mobile: ✅ 1 SOLO SCROLL (backdrop #myModal)
+   - Desktop: ✅ scroll vertical en el BACKDROP (#myModal)
+   - Mobile:  ✅ 1 SOLO SCROLL (backdrop #myModal)
    - Page scroll bloqueado (body/html)
    ========================================================= */
 
@@ -45,7 +45,8 @@ body.modal-open{
 }
 
 /* =========================================================
-   ✅ MODAL BACKDROP + CENTRADO (siempre sobre navbar)
+   ✅ MODAL BACKDROP
+   ✅ Desktop/Mobile: el scroll VIVE AQUÍ (no en la card)
    ========================================================= */
 #myModal.modal{
   display:none;
@@ -62,12 +63,24 @@ body.modal-open{
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
 
-  align-items:center;
-  justify-content:center;
-  padding: 18px;
+  /* 🔥 CLAVE: que el backdrop sí tenga altura y sí scrollee */
+  height: 100vh;
+  max-height: 100vh;
 
-  /* Desktop: sin scroll */
-  overflow: hidden !important;
+  /* 🔥 CLAVE: NO FLEX en desktop (evita “captura” rara del overflow) */
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+  -webkit-overflow-scrolling: touch;
+
+  /* Espacio para que el card no pegue arriba/abajo */
+  padding: 22px 18px;
+
+  /* evita “arrastre” al body (aunque esté locked) */
+  overscroll-behavior: contain;
+  touch-action: pan-y;
+
+  /* estabilidad del layout cuando aparece scrollbar */
+  scrollbar-gutter: stable;
 
   opacity: 0;
   transition: opacity .18s var(--na-ease);
@@ -76,19 +89,24 @@ body.modal-open{
 /* abierto */
 #myModal.modal[style*="display: block"],
 #myModal.modal.is-open{
-  display:flex !important;
+  display:block !important; /* 🔥 block + overflow auto = scroll seguro */
   opacity: 1;
 }
 
 /* =========================================================
-   ✅ CONTENEDOR (desktop sin scroll)
+   ✅ CONTENEDOR (CARD)
+   - Se centra con margin auto
+   - NO scrollea (evita doble scroll)
    ========================================================= */
 #myModal .modal-content{
   width: min(580px, 94vw);
-  margin: 0;
 
+  /* Centrado horizontal + top-aligned (y el backdrop scrollea) */
+  margin: 0 auto;
+
+  /* ✅ NO scroll en la card */
   max-height: none !important;
-  overflow: hidden !important;
+  overflow: visible !important;
 
   padding: 18px 18px 16px;
   border-radius: var(--na-radius);
@@ -468,33 +486,21 @@ body.modal-open{
 }
 
 /* =========================================================
-   ✅ MOBILE: 1 SOLO SCROLL (backdrop)
+   ✅ MOBILE: se mantiene 1 SOLO SCROLL (backdrop)
    ========================================================= */
 @media (max-width: 600px){
-
-  /* ✅ Ahora el scroll vive AQUÍ */
   #myModal.modal{
-    align-items: flex-start;
-    justify-content: center;
     padding: 12px 10px;
-
-    overflow-y: auto !important;     /* ✅ único scroll */
-    overflow-x: hidden !important;   /* ❌ lateral */
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
     -webkit-overflow-scrolling: touch;
-
-    /* evita “arrastre” al body (aunque esté locked) */
     overscroll-behavior: contain;
     touch-action: pan-y;
   }
 
-  /* ❌ El card NO scrollea (para evitar doble scroll) */
   #myModal .modal-content{
     width: min(580px, 96vw);
-    margin: 12px 0;
-
-    max-height: none !important;
-    overflow: visible !important;
-
+    margin: 0 auto;
     padding: 16px 14px 14px;
     border-radius: 18px;
   }
