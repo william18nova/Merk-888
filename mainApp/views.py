@@ -2128,7 +2128,8 @@ class RolAutocompleteView(PaginatedAutocompleteMixin):
     per_page   = 10
 
 
-class UsuarioListView(LoginRequiredMixin, ListView):
+class UsuarioListView(LoginRequiredMixin,DenyRolesMixin, ListView):
+    deny_roles = ["Cajero", "Auxiliar"]
     """
     Muestra los usuarios en una tabla paginada con DataTables.
 
@@ -2136,6 +2137,7 @@ class UsuarioListView(LoginRequiredMixin, ListView):
     • Se ordena alfabéticamente por nombre de usuario.
     • `context_object_name = "usuarios"` → variable en la plantilla.
     """
+    
     model               = Usuario
     template_name       = "visualizar_usuarios.html"
     context_object_name = "usuarios"
@@ -2157,7 +2159,8 @@ def eliminar_usuario_view(request, usuarioid):
     return redirect('visualizar_usuarios')
 
 
-class UsuarioUpdateAJAXView(LoginRequiredMixin, UpdateView):
+class UsuarioUpdateAJAXView(LoginRequiredMixin, DenyRolesMixin, UpdateView):
+    deny_roles = ["Cajero", "Auxiliar"]
     """
     Vista de actualización de usuarios:
 
