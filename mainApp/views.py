@@ -3041,17 +3041,11 @@ class GenerarVentaView(LoginRequiredMixin, View):
     # Helpers TURNO / LOCK
     # =========================
     def _get_turno_activo(self, user):
-        """
-        Turno obligatorio para vender.
-        Ajusta el filtro si tu campo/estado se llama diferente.
-        """
-        return (
-            TurnoCaja.objects
-            .select_related("puntopago")
-            .filter(cajero=user, estado="ABIERTO")   # ✅ turno iniciado
-            .order_by("-inicio")
-            .first()
-        )
+        return (TurnoCaja.objects
+                .select_related("puntopago")
+                .filter(cajero=user, estado="ABIERTO")
+                .order_by("-inicio")
+                .first())
 
     def _resolve_sucursal_from_turno(self, turno):
         """
@@ -3079,7 +3073,10 @@ class GenerarVentaView(LoginRequiredMixin, View):
     # ---------- GET ----------
     def get(self, request, *args, **kwargs):
         turno = self._get_turno_activo(request.user)
-
+        if not turno:
+            messages.error(request, "Debes iniciar un turno de caja para poder generar ventas.")
+            return redirect("turno_caja")
+        
         initial = {}
         suc_inst = None
         pp_inst = None
