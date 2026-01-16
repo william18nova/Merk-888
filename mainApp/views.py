@@ -3101,9 +3101,6 @@ class GenerarVentaView(LoginRequiredMixin, View):
         ctx = self._base_context(form)
         ctx["turno_activo"] = bool(turno)
         ctx["turno_id"]     = getattr(turno, "pk", None)
-
-        # ✅ para que el HTML muestre texto en los inputs (si tu form tiene esos fields)
-        # (si no existen, simplemente no pasa nada)
         ctx["sucursal_nombre"]  = getattr(suc_inst, "nombre", "") if suc_inst else ""
         ctx["puntopago_nombre"] = getattr(pp_inst, "nombre", "") if pp_inst else ""
 
@@ -3120,7 +3117,7 @@ class GenerarVentaView(LoginRequiredMixin, View):
             })
 
         # ✅ 2) sucursal y punto pago SOLO salen del turno (no del POST)
-        pp_inst = getattr(turno, "puntopago", None)
+        pp_inst  = getattr(turno, "puntopago", None)
         suc_inst = self._resolve_sucursal_from_turno(turno)
 
         if not pp_inst or not suc_inst:
@@ -3142,7 +3139,6 @@ class GenerarVentaView(LoginRequiredMixin, View):
 
         data = form.cleaned_data
 
-        # 👇 OJO: ya NO usamos data['sucursal'] / data['puntopago'] (backend manda la verdad)
         productos  = data['productos']     # LISTA (por clean_productos)
         cantidades = data['cantidades']    # LISTA (por clean_cantidades)
 
@@ -3157,25 +3153,28 @@ class GenerarVentaView(LoginRequiredMixin, View):
         if len(cantidades) < len(prod_ids):
             return JsonResponse({'success': False, 'error': 'Faltan cantidades para algunos productos.'})
 
-        prods_qs  = Producto.objects.filter(productoid__in=prod_ids)
+        # ✅ parse qty 1 vez (más rápido)
+        try:
+            qty_list = [int(cantidades[i]) for i in range(len(prod_ids))]
+        except (ValueError, TypeError):
+            return JsonResponse({'success': False, 'error': 'Cantidad inválida en el carrito.'})
+
+        # ✅ 1 query y solo campos necesarios
+        prods_qs = (
+            Producto.objects
+            .filter(productoid__in=prod_ids)
+            .only("productoid", "nombre", "precio")
+        )
         prods_map = {p.productoid: p for p in prods_qs}
 
         detalles = []
         total = Decimal('0')
 
-        for idx, pid in enumerate(prod_ids):
+        for pid, qty in zip(prod_ids, qty_list):
+            if qty == 0:
+                continue
             prod = prods_map.get(pid)
             if not prod:
-                continue
-
-            try:
-                qty = int(cantidades[idx])
-            except (ValueError, TypeError):
-                return JsonResponse({'success': False, 'error': f'Cantidad inválida para producto {pid}.'})
-
-            # qty == 0 => ignora
-            # qty < 0  => permitido (devolución/ajuste)
-            if qty == 0:
                 continue
 
             try:
@@ -3206,47 +3205,40 @@ class GenerarVentaView(LoginRequiredMixin, View):
                 pagos = []
 
         medio_pago_simple = (data.get("medio_pago") or "").strip().lower()
-
-        # ✅ efectivo recibido (para CAMBIO)
         efectivo_recibido = data.get("efectivo_recibido") or Decimal("0")
 
+        # 🔥 si quieres máxima velocidad en prod, NO imprimas debug
         if getattr(settings, "DEBUG", False):
             try:
                 print("\n[VENTA DEBUG] ---------------------------")
-                print("TOTAL_BACK:", total, "type:", type(total))
-                print("MEDIO_BACK:", medio_pago_simple, "raw:", data.get("medio_pago"))
-                print("PAGOS_BACK:", pagos, "type:", type(pagos))
-                print("EFECTIVO_RECIBIDO_BACK:", efectivo_recibido, "type:", type(efectivo_recibido))
-                print("PROD_IDS:", prod_ids)
-                print("CANTIDADES:", cantidades)
-                print("DETALLES_BACK:", [
-                    (d["productoid"], d["cantidad"], d["precio_unitario"], d["subtotal"])
-                    for d in detalles
-                ])
+                print("TOTAL_BACK:", total)
+                print("MEDIO_BACK:", medio_pago_simple)
+                print("PAGOS_BACK:", pagos)
+                print("EFECTIVO_RECIBIDO_BACK:", efectivo_recibido)
                 print("TURNO_ACTIVO:", getattr(turno, "pk", None))
-                print("SUC_TURNO:", getattr(suc_inst, "pk", None), getattr(suc_inst, "nombre", ""))
-                print("PP_TURNO:", getattr(pp_inst, "pk", None), getattr(pp_inst, "nombre", ""))
-            except Exception as _e:
-                print("[VENTA DEBUG] error imprimiendo debug:", _e)
+            except Exception:
+                pass
 
         pagos_normalizados = self._normalize_payments(pagos, total, medio_pago_simple)
 
-        # si total > 0: exige pagos
-        # si total <= 0: NO exige pagos (ajustes / devoluciones)
         if total > 0 and not pagos_normalizados:
             return JsonResponse({'success': False, 'error': 'Debe indicar el/los pagos.'})
 
         if total <= 0:
             pagos_normalizados = []
 
-        return self._crear_venta(
-            request.user, suc_inst, pp_inst,          # ✅ del turno
+        # ✅ ULTRA FAST: inventario en 1 UPDATE atómico
+        return self._crear_venta_ultra_fast(
+            request.user, suc_inst, pp_inst,
             data.get('cliente_id'),
             pagos_normalizados,
             detalles, total,
             efectivo_recibido,
         )
 
+    # =========================
+    # base / pagos
+    # =========================
     def _base_context(self, form, detalles=None, total=Decimal('0')):
         return {'form': form, 'detalles': detalles or [], 'total': total}
 
@@ -3262,17 +3254,9 @@ class GenerarVentaView(LoginRequiredMixin, View):
         allowed = {"nequi", "efectivo", "daviplata", "tarjeta", "banco_caja_social"}
         total = GenerarVentaView._to_decimal(total)
 
-        if getattr(settings, "DEBUG", False):
-            try:
-                print("[PAGOS DEBUG] total=", total, "medio_simple=", medio_pago_simple,
-                      "type(pagos_list)=", type(pagos_list), "pagos_list=", pagos_list)
-            except Exception as _e:
-                print("[PAGOS DEBUG] error imprimiendo debug:", _e)
-
         if total <= 0:
             return []
 
-        # Caso 1: pagos mixtos en LISTA
         if isinstance(pagos_list, list) and len(pagos_list) > 0:
             acc = []
             for it in pagos_list:
@@ -3294,7 +3278,6 @@ class GenerarVentaView(LoginRequiredMixin, View):
 
             suma = sum((p["monto"] for p in acc), Decimal("0"))
             diff = suma - total
-
             if diff.copy_abs() > Decimal("0.01"):
                 return []
 
@@ -3304,19 +3287,17 @@ class GenerarVentaView(LoginRequiredMixin, View):
 
             return acc
 
-        # Caso 2: pago simple
         medio = (medio_pago_simple or "").strip().lower()
         if medio in allowed:
             return [{"medio_pago": medio, "monto": total}]
 
         return []
 
+    # =========================
+    # Receipt
+    # =========================
     @staticmethod
     def _build_receipt_text(venta_data: Dict[str, Any], detalles: list[dict], total, pagos: list[dict]):
-        """
-        TEXTO (para POS Agent). Ajustado a 80mm (48 columnas aprox).
-        Incluye: CAJERO + DEVUELTO (devoluciones) + CAMBIO (efectivo)
-        """
         def money(n):
             try:
                 q = Decimal(n)
@@ -3368,11 +3349,8 @@ class GenerarVentaView(LoginRequiredMixin, View):
             pay_lines.append(lr(mp[:18], money(p.get("monto", 0))))
 
         foot = ["-" * WIDTH]
-
         if refund_total > 0:
             foot.append(lr("DEVUELTO:", money(refund_total)))
-
-        # ✅ fix: cerrabas mal el paréntesis y el texto del cambio
         if cambio > 0:
             foot.append(lr("CAMBIO:", money(cambio)))
 
@@ -3385,8 +3363,17 @@ class GenerarVentaView(LoginRequiredMixin, View):
 
         return "\n".join(head + body + pay_lines + foot)
 
+    # =========================
+    # ✅ ULTRA FAST CREAR VENTA
+    # =========================
     @staticmethod
-    def _crear_venta(user, suc_inst, pp_inst, cliente_id, pagos, detalles, total, efectivo_recibido):
+    def _crear_venta_ultra_fast(user, suc_inst, pp_inst, cliente_id, pagos, detalles, total, efectivo_recibido):
+        """
+        ULTRA FAST:
+        - NO select_for_update + NO bulk_update con loop Python
+        - 1 UPDATE atómico con Case/When para inventario
+        - bulk_create detalles y pagos
+        """
         try:
             ahora = timezone.localtime()
 
@@ -3398,7 +3385,6 @@ class GenerarVentaView(LoginRequiredMixin, View):
             if not cajero_nombre:
                 cajero_nombre = (getattr(user, "get_full_name", lambda: "")() or getattr(user, "username", "") or "—").strip()
 
-            # ✅ dinero devuelto (solo por items con qty < 0)
             refund_total = sum(
                 (-(d.get("subtotal") or Decimal("0")))
                 for d in (detalles or [])
@@ -3406,6 +3392,9 @@ class GenerarVentaView(LoginRequiredMixin, View):
             )
             if refund_total < 0:
                 refund_total = Decimal("0")
+
+            prod_ids = [int(d["productoid"]) for d in detalles]
+            qty_map  = {int(d["productoid"]): int(d["cantidad"]) for d in detalles}
 
             with transaction.atomic():
                 cliente_inst = Cliente.objects.filter(pk=cliente_id).first() if cliente_id else None
@@ -3422,28 +3411,7 @@ class GenerarVentaView(LoginRequiredMixin, View):
                     mediopago   = mediopago
                 )
 
-                prod_ids = [int(d["productoid"]) for d in detalles]
-                qty_map  = {int(d["productoid"]): int(d["cantidad"]) for d in detalles}
-
-                inv_qs = (Inventario.objects
-                        .select_for_update()
-                        .filter(sucursalid=suc_inst, productoid_id__in=prod_ids))
-
-                inv_list = list(inv_qs)
-                inv_map = {inv.productoid_id: inv for inv in inv_list}
-
-                missing = [pid for pid in prod_ids if pid not in inv_map]
-                if missing:
-                    Inventario.objects.bulk_create(
-                        [Inventario(sucursalid=suc_inst, productoid_id=pid, cantidad=0) for pid in missing],
-                        batch_size=500
-                    )
-                    inv_list = list(
-                        Inventario.objects.select_for_update()
-                        .filter(sucursalid=suc_inst, productoid_id__in=prod_ids)
-                    )
-                    inv_map = {inv.productoid_id: inv for inv in inv_list}
-
+                # Detalles (bulk)
                 det_objs = [
                     DetalleVenta(
                         ventaid=venta,
@@ -3453,39 +3421,53 @@ class GenerarVentaView(LoginRequiredMixin, View):
                     )
                     for d in detalles
                 ]
-                DetalleVenta.objects.bulk_create(det_objs, batch_size=500)
+                DetalleVenta.objects.bulk_create(det_objs, batch_size=1000)
 
-                # ✅ qty negativo => resta (-qty) => suma stock
-                for pid, qty in qty_map.items():
-                    inv = inv_map[pid]
-                    inv.cantidad = (inv.cantidad or 0) - qty
+                # Asegura inventarios existentes (solo ids)
+                existentes = set(
+                    Inventario.objects
+                    .filter(sucursalid=suc_inst, productoid_id__in=prod_ids)
+                    .values_list("productoid_id", flat=True)
+                )
+                missing = [pid for pid in prod_ids if pid not in existentes]
+                if missing:
+                    Inventario.objects.bulk_create(
+                        [Inventario(sucursalid=suc_inst, productoid_id=pid, cantidad=0) for pid in missing],
+                        batch_size=2000,
+                        ignore_conflicts=True
+                    )
 
-                Inventario.objects.bulk_update(inv_list, ["cantidad"], batch_size=500)
+                # ✅ 1 UPDATE atómico: cantidad = cantidad - qty
+                whens = [When(productoid_id=pid, then=Value(qty)) for pid, qty in qty_map.items()]
+                delta = Case(*whens, default=Value(0), output_field=IntegerField())
 
+                Inventario.objects.filter(
+                    sucursalid=suc_inst,
+                    productoid_id__in=prod_ids
+                ).update(
+                    cantidad=F("cantidad") - delta
+                )
+
+                # Pagos (bulk)
                 pagos_objs = []
                 efectivo_monto = Decimal("0")
                 for p in pagos:
                     mp = (p.get("medio_pago") or "").lower()
                     monto = GenerarVentaView._to_decimal(p.get("monto", 0))
-
-                    pagos_objs.append(PagoVenta(
-                        ventaid=venta,
-                        medio_pago=mp,
-                        monto=monto
-                    ))
-
+                    pagos_objs.append(PagoVenta(ventaid=venta, medio_pago=mp, monto=monto))
                     if mp == "efectivo":
                         efectivo_monto += monto
 
                 if pagos_objs:
-                    PagoVenta.objects.bulk_create(pagos_objs, batch_size=200)
+                    PagoVenta.objects.bulk_create(pagos_objs, batch_size=500)
 
+                # caja (1 update)
                 if efectivo_monto > 0:
                     PuntosPago.objects.filter(pk=pp_inst.pk).update(
                         dinerocaja=F("dinerocaja") + efectivo_monto
                     )
 
-            # ✅ CAMBIO: SOLO cuando pago simple en efectivo y total > 0
+            # CAMBIO: solo pago simple en efectivo
             efectivo_recibido = GenerarVentaView._to_decimal(efectivo_recibido)
             cambio = Decimal("0")
             if total > 0 and pagos and len(pagos) == 1 and (pagos[0].get("medio_pago") or "").lower() == "efectivo":
