@@ -3037,23 +3037,112 @@ class GenerarVentaView(LoginRequiredMixin, View):
     template_name = "generar_venta.html"
     success_url   = reverse_lazy("generar_venta")
 
+    # =========================
+    # Helpers TURNO / LOCK
+    # =========================
+    def _get_turno_activo(self, user):
+        """
+        Turno obligatorio para vender.
+        Ajusta el filtro si tu campo/estado se llama diferente.
+        """
+        return (
+            TurnoCaja.objects
+            .select_related("puntopago")
+            .filter(cajero=user, estado="ABIERTO")   # ✅ turno iniciado
+            .order_by("-inicio")
+            .first()
+        )
+
+    def _resolve_sucursal_from_turno(self, turno):
+        """
+        Intenta deducir sucursal desde el punto de pago del turno.
+        Ajusta según tu modelo (pp.sucursalid / pp.sucursal).
+        """
+        pp = getattr(turno, "puntopago", None)
+        if not pp:
+            return None
+        return getattr(pp, "sucursalid", None) or getattr(pp, "sucursal", None)
+
+    def _lock_fields(self, form):
+        """
+        Bloquea campos en el form (solo UX; el backend igual ignora POST).
+        """
+        for fname in ("sucursal", "puntopago"):
+            if fname in form.fields:
+                form.fields[fname].disabled = True
+                form.fields[fname].widget.attrs.update({
+                    "readonly": "readonly",
+                    "data-locked": "1",
+                })
+        return form
+
     # ---------- GET ----------
     def get(self, request, *args, **kwargs):
-        form = GenerarVentaForm(request.GET or None)
-        return render(request, self.template_name, self._base_context(form))
+        turno = self._get_turno_activo(request.user)
+
+        initial = {}
+        suc_inst = None
+        pp_inst = None
+
+        if turno:
+            pp_inst = getattr(turno, "puntopago", None)
+            suc_inst = self._resolve_sucursal_from_turno(turno)
+
+            if suc_inst:
+                initial["sucursal"] = getattr(suc_inst, "pk", suc_inst)
+            if pp_inst:
+                initial["puntopago"] = getattr(pp_inst, "pk", pp_inst)
+
+        form = GenerarVentaForm(request.GET or None, initial=initial)
+
+        if turno:
+            form = self._lock_fields(form)
+
+        ctx = self._base_context(form)
+        ctx["turno_activo"] = bool(turno)
+        ctx["turno_id"]     = getattr(turno, "pk", None)
+
+        # ✅ para que el HTML muestre texto en los inputs (si tu form tiene esos fields)
+        # (si no existen, simplemente no pasa nada)
+        ctx["sucursal_nombre"]  = getattr(suc_inst, "nombre", "") if suc_inst else ""
+        ctx["puntopago_nombre"] = getattr(pp_inst, "nombre", "") if pp_inst else ""
+
+        return render(request, self.template_name, ctx)
 
     # ---------- POST ----------
     def post(self, request, *args, **kwargs):
-        form = GenerarVentaForm(request.POST)
+        # ✅ 1) turno obligatorio
+        turno = self._get_turno_activo(request.user)
+        if not turno:
+            return JsonResponse({
+                "success": False,
+                "error": "No puedes generar ventas porque NO tienes un turno de caja iniciado (ABIERTO)."
+            })
+
+        # ✅ 2) sucursal y punto pago SOLO salen del turno (no del POST)
+        pp_inst = getattr(turno, "puntopago", None)
+        suc_inst = self._resolve_sucursal_from_turno(turno)
+
+        if not pp_inst or not suc_inst:
+            return JsonResponse({
+                "success": False,
+                "error": "Tu turno activo no tiene punto de pago y/o sucursal asociada. Revisa la configuración."
+            })
+
+        # ✅ 3) inyectar sucursal/puntopago para que el form valide aunque estén disabled
+        post_data = request.POST.copy()
+        post_data["sucursal"]  = str(getattr(suc_inst, "pk", suc_inst))
+        post_data["puntopago"] = str(getattr(pp_inst, "pk", pp_inst))
+
+        form = GenerarVentaForm(post_data)
         if not form.is_valid():
             if getattr(settings, "DEBUG", False):
                 return JsonResponse({'success': False, 'error': 'Formulario inválido.', 'details': form.errors})
             return JsonResponse({'success': False, 'error': 'Formulario inválido.'})
 
         data = form.cleaned_data
-        suc_inst = data['sucursal']
-        pp_inst  = data['puntopago']
 
+        # 👇 OJO: ya NO usamos data['sucursal'] / data['puntopago'] (backend manda la verdad)
         productos  = data['productos']     # LISTA (por clean_productos)
         cantidades = data['cantidades']    # LISTA (por clean_cantidades)
 
@@ -3118,7 +3207,7 @@ class GenerarVentaView(LoginRequiredMixin, View):
 
         medio_pago_simple = (data.get("medio_pago") or "").strip().lower()
 
-        # ✅ NUEVO: efectivo recibido (para CAMBIO)
+        # ✅ efectivo recibido (para CAMBIO)
         efectivo_recibido = data.get("efectivo_recibido") or Decimal("0")
 
         if getattr(settings, "DEBUG", False):
@@ -3134,6 +3223,9 @@ class GenerarVentaView(LoginRequiredMixin, View):
                     (d["productoid"], d["cantidad"], d["precio_unitario"], d["subtotal"])
                     for d in detalles
                 ])
+                print("TURNO_ACTIVO:", getattr(turno, "pk", None))
+                print("SUC_TURNO:", getattr(suc_inst, "pk", None), getattr(suc_inst, "nombre", ""))
+                print("PP_TURNO:", getattr(pp_inst, "pk", None), getattr(pp_inst, "nombre", ""))
             except Exception as _e:
                 print("[VENTA DEBUG] error imprimiendo debug:", _e)
 
@@ -3148,11 +3240,11 @@ class GenerarVentaView(LoginRequiredMixin, View):
             pagos_normalizados = []
 
         return self._crear_venta(
-            request.user, suc_inst, pp_inst,
+            request.user, suc_inst, pp_inst,          # ✅ del turno
             data.get('cliente_id'),
             pagos_normalizados,
             detalles, total,
-            efectivo_recibido,  # ✅ nuevo
+            efectivo_recibido,
         )
 
     def _base_context(self, form, detalles=None, total=Decimal('0')):
@@ -3249,7 +3341,6 @@ class GenerarVentaView(LoginRequiredMixin, View):
         cajero_nombre = (venta_data or {}).get("cajero_nombre", "") or "—"
         refund_total  = Decimal((venta_data or {}).get("refund_total", 0) or 0)
         cambio        = Decimal((venta_data or {}).get("cambio", 0) or 0)
-        espacios = "\n\n\n\n\n\n\n\n\n\n\n"
 
         head = [
             line("NOVA POS"),
@@ -3281,8 +3372,9 @@ class GenerarVentaView(LoginRequiredMixin, View):
         if refund_total > 0:
             foot.append(lr("DEVUELTO:", money(refund_total)))
 
+        # ✅ fix: cerrabas mal el paréntesis y el texto del cambio
         if cambio > 0:
-            foot.append(lr("CAMBIO :( :", money(cambio)))
+            foot.append(lr("CAMBIO:", money(cambio)))
 
         foot += [
             lr("TOTAL:", money(total)),
@@ -3290,8 +3382,6 @@ class GenerarVentaView(LoginRequiredMixin, View):
             line("¡Gracias por su compra! :) "),
             ""
         ]
-
-        
 
         return "\n".join(head + body + pay_lines + foot)
 
@@ -3408,7 +3498,6 @@ class GenerarVentaView(LoginRequiredMixin, View):
                     "cajero_nombre": cajero_nombre,
                     "refund_total": refund_total,
                     "cambio": cambio,
-                    "espacios": "\n\n\n\n\n\n\n\n\n\n\n"  # ✅ ahora sí llega
                 },
                 detalles, total, pagos
             )

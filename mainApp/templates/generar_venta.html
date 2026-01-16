@@ -18,6 +18,12 @@
   <section class="panel panel-left">
     <h1>Generar Venta</h1>
 
+    {% if not turno_activo %}
+      <div class="alert alert-danger" style="margin-bottom:12px;">
+        Debes iniciar un turno de caja para poder generar ventas.
+      </div>
+    {% endif %}
+
     <form id="venta-form" action="{% url 'generar_venta' %}" method="post" novalidate>
       {% csrf_token %}
 
@@ -28,18 +34,36 @@
         <input type="hidden" id="cliente_id" name="cliente_id">
       </div>
 
-      <!-- Sucursal -->
+      <!-- Sucursal (LOCKED) -->
       <div class="form-group">
         <label for="sucursal_autocomplete">Sucursal <span class="req">*</span></label>
-        <input type="text" id="sucursal_autocomplete" placeholder="Buscar…" required aria-required="true" autocomplete="off">
-        <input type="hidden" id="sucursal_id" name="sucursal">
+        <input
+          type="text"
+          id="sucursal_autocomplete"
+          placeholder="Sucursal del turno"
+          required aria-required="true"
+          autocomplete="off"
+          value="{{ sucursal_nombre|default:'' }}"
+          readonly
+          data-locked="1"
+        >
+        <input type="hidden" id="sucursal_id" name="sucursal" value="{{ form.initial.sucursal|default:'' }}">
       </div>
 
-      <!-- Punto de pago -->
+      <!-- Punto de pago (LOCKED) -->
       <div class="form-group">
         <label for="puntopago_autocomplete">Punto de Pago <span class="req">*</span></label>
-        <input type="text" id="puntopago_autocomplete" placeholder="Buscar…" required aria-required="true" autocomplete="off">
-        <input type="hidden" id="puntopago_id" name="puntopago">
+        <input
+          type="text"
+          id="puntopago_autocomplete"
+          placeholder="Caja del turno"
+          required aria-required="true"
+          autocomplete="off"
+          value="{{ puntopago_nombre|default:'' }}"
+          readonly
+          data-locked="1"
+        >
+        <input type="hidden" id="puntopago_id" name="puntopago" value="{{ form.initial.puntopago|default:'' }}">
       </div>
 
       <hr class="sep">
@@ -57,7 +81,6 @@
         <div class="row-inline">
           <input type="text" id="codigo_o_barras" placeholder="Escribe o escanea…" autocomplete="off">
 
-          <!-- ✅ IMPORTANTE: este ID debe ser btn-scan-cam (es el que tu JS escucha) -->
           <button type="button" id="btn-scan-cam" class="btn btn-secondary btn-escanear">
             <i class="fa-solid fa-camera"></i> Escanear
           </button>
@@ -81,22 +104,14 @@
         <small class="hint">Atajos: Ctrl+1 nombre • Ctrl+2 código • Ctrl+4 qty</small>
       </div>
 
-      <!-- ❌ Quagga viewport: YA NO se usa (tu JS usa BarcodeDetector). Puedes eliminarlo. -->
-      {# <div id="interactive" class="viewport" style="display:none;"></div> #}
-
       <!-- ocultos que el JS llena -->
       <input type="hidden" id="producto_id">
 
       <input type="hidden" id="productos"  name="productos"  value="[]">
       <input type="hidden" id="cantidades" name="cantidades" value="[]">
 
-      <!-- ✅ compat (efectivo/tarjeta/transferencia/mixto) -->
       <input type="hidden" id="medio_pago" name="medio_pago" value="">
-
-      <!-- ✅ pagos mixtos JSON -->
       <input type="hidden" id="pagos" name="pagos" value="">
-
-      <!-- (por si luego lo usas en backend) -->
       <input type="hidden" id="efectivo_recibido" name="efectivo_recibido" value="">
     </form>
   </section>
@@ -112,7 +127,12 @@
       </div>
 
       <div class="right-actions">
-        <button type="button" class="btn btn-primary" id="generar-venta">
+        <button
+          type="button"
+          class="btn btn-primary"
+          id="generar-venta"
+          {% if not turno_activo %}disabled aria-disabled="true"{% endif %}
+        >
           <i class="fa-solid fa-receipt"></i> Generar Venta
         </button>
 
@@ -148,18 +168,16 @@
 
 </div>
 
-{# Modal de pagos #}
 {% include "modal_venta.html" %}
 
 <!-- libs -->
 <script src="https://code.jquery.com/jquery-3.6.4.min.js"></script>
 <script src="https://code.jquery.com/ui/1.13.2/jquery-ui.min.js"></script>
 
-<!-- ✅ Ya NO necesitas Quagga si usas BarcodeDetector -->
-{# <script src="https://cdnjs.cloudflare.com/ajax/libs/quagga/0.12.1/quagga.min.js"></script> #}
-
 <!-- endpoints -->
 <script>
+  // ✅ si tu JS aún intenta inicializar AC de sucursal/caja, no pasa nada
+  // porque los inputs están readonly y el backend ignora cualquier cambio.
   window.sucursalAutocompleteUrl        = "{% url 'sucursal_autocomplete' %}";
   window.puntopagoAutocompleteUrl       = "{% url 'puntopago_autocomplete' %}";
   window.clienteAutocompleteUrl         = "{% url 'cliente_autocomplete' %}";
@@ -172,7 +190,6 @@
   window.buscarProductoPorCodigoUrl     = "{% url 'buscar_producto_por_codigo' %}";
   window.productoSnapshotUrl            = "{% url 'producto_snapshot' %}";
 
-  /* (opcional/legacy) si aún existen en tu backend */
   window.imprimirFacturaUrl             = "{% url 'imprimir_factura' %}";
   window.abrirCajaUrl                   = "{% url 'abrir_caja' %}";
 </script>
