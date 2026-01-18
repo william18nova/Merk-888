@@ -19,22 +19,19 @@
 
   function flash(ok, msg) {
     const box = $("#flash");
+    if (!box) return;
     box.className = "alert " + (ok ? "alert-success" : "alert-error");
-    box.textContent = msg;
+    box.textContent = msg || (ok ? "OK" : "Error");
     box.style.display = "block";
     setTimeout(() => (box.style.display = "none"), 3500);
   }
 
   // ====== Autocomplete simple con paginado ======
   function setupAutocomplete(inp, hid, box, url) {
-    let page = 1,
-      more = true,
-      loading = false,
-      term = "",
-      cache = Object.create(null),
-      req = 0;
+    let page = 1, more = true, loading = false, term = "", cache = Object.create(null), req = 0;
 
     function render(list, replace = true) {
+      if (!box) return;
       if (replace) box.innerHTML = "";
       const frag = document.createDocumentFragment();
       (list || []).forEach((r) => {
@@ -49,6 +46,7 @@
     }
 
     function fetchPage(q, p, replace = true) {
+      if (!url) return;
       const qs = new URLSearchParams({ term: q || "", page: String(p) }).toString();
 
       if (cache[qs]) {
@@ -126,9 +124,7 @@
 
     const txt = await r.text();
     let data = null;
-    try {
-      data = JSON.parse(txt);
-    } catch (e) {}
+    try { data = JSON.parse(txt); } catch (e) {}
 
     if (!r.ok) {
       console.error("POST error", r.status, txt);
@@ -139,15 +135,12 @@
 
   // ====== Elements ======
   const stepStart = $("#stepStart");
-  const stepOpen = $("#stepOpen");
+  const stepOpen  = $("#stepOpen");
   const stepClose = $("#stepClose");
 
-  const ppInp = $("#pp_ac"),
-    ppHid = $("#pp_id"),
-    ppBox = $("#pp_box");
-  const cajInp = $("#cajero_ac"),
-    cajHid = $("#cajero_id"),
-    cajBox = $("#cajero_box");
+  const ppInp = $("#pp_ac"), ppHid = $("#pp_id"), ppBox = $("#pp_box");
+  const cajInp = $("#cajero_ac"), cajHid = $("#cajero_id"), cajBox = $("#cajero_box");
+
   const passInp = $("#password");
   const baseInp = $("#base");
 
@@ -167,29 +160,30 @@
   const mediosBody = $("#mediosBody");
 
   const mVentas = $("#mVentas");
-  const mEsperado = $("#mEsperado");
-  const mDiff = $("#mDiff");
   const mDeuda = $("#mDeuda");
 
-  setupAutocomplete(ppInp, ppHid, ppBox, PP_AC_URL);
-  setupAutocomplete(cajInp, cajHid, cajBox, CAJERO_AC_URL);
+  if (typeof PP_AC_URL !== "undefined" && ppInp && ppHid && ppBox)
+    setupAutocomplete(ppInp, ppHid, ppBox, PP_AC_URL);
+  if (typeof CAJERO_AC_URL !== "undefined" && cajInp && cajHid && cajBox)
+    setupAutocomplete(cajInp, cajHid, cajBox, CAJERO_AC_URL);
 
   // ====== State ======
   let TURNO_ID = null;
   let BASE = 0;
 
-  // medios: array {metodo,label,esperado}
+  // medios: array {metodo,label}
   let MEDIOS = [];
   // contados: metodo -> number
   const CONTADOS = Object.create(null);
 
   function showSection(which) {
-    stepStart.style.display = which === "start" ? "block" : "none";
-    stepOpen.style.display = which === "open" ? "block" : "none";
-    stepClose.style.display = which === "close" ? "block" : "none";
+    if (stepStart) stepStart.style.display = which === "start" ? "block" : "none";
+    if (stepOpen)  stepOpen.style.display  = which === "open"  ? "block" : "none";
+    if (stepClose) stepClose.style.display = which === "close" ? "block" : "none";
   }
 
   function setBadge(el, estado) {
+    if (!el) return;
     el.textContent = estado;
     el.classList.remove("pill-open", "pill-close", "pill-done");
     if (estado === "ABIERTO") el.classList.add("pill-open");
@@ -197,62 +191,45 @@
     else el.classList.add("pill-done");
   }
 
-  // ====== Recalc cierre ======
+  // ====== Recalc cierre (solo ventas/deuda) ======
   let raf = null;
   function scheduleRecalc() {
     if (raf) return;
-    raf = requestAnimationFrame(() => {
-      raf = null;
-      recalc();
-    });
+    raf = requestAnimationFrame(() => { raf = null; recalc(); });
   }
 
   function recalc() {
+    if (!efectivoEntregadoInp) return;
+
     const efectivoEntregado = getNumber(efectivoEntregadoInp.value);
     const efectivoContado = Math.max(0, efectivoEntregado - BASE);
 
     let sumContado = 0;
-    let sumEsperado = 0;
 
     CONTADOS["efectivo"] = efectivoContado;
 
     for (const m of MEDIOS) {
       const metodo = m.metodo;
-      const esperado = getNumber(m.esperado);
       const contado = metodo === "efectivo" ? efectivoContado : getNumber(CONTADOS[metodo] || 0);
-      const diff = contado - esperado;
-
       sumContado += contado;
-      sumEsperado += esperado;
 
-      const diffEl = document.querySelector(`[data-diff='${metodo}']`);
-      const contadoEl = document.querySelector(`[data-contado='${metodo}']`);
-
-      if (diffEl) {
-        diffEl.textContent = money2(diff);
-        diffEl.classList.toggle("neg", diff < 0);
-        diffEl.classList.toggle("pos", diff > 0);
-      }
-      if (contadoEl && metodo === "efectivo") {
-        contadoEl.textContent = money2(contado);
+      if (metodo === "efectivo") {
+        const contadoEl = document.querySelector(`[data-contado='${metodo}']`);
+        if (contadoEl) contadoEl.textContent = money2(contado);
       }
     }
 
-    const diferenciaTotal = sumContado - sumEsperado;
-    const deudaTotal = diferenciaTotal < 0 ? diferenciaTotal : 0;
+    // deuda: aquí la dejamos en 0 (porque ya no existe "esperado" para comparar)
+    // si quieres que deuda sea "negativos" de algún cálculo, eso requiere esperado.
+    const deudaTotal = 0;
 
-    mVentas.textContent = money2(sumContado);
-    mEsperado.textContent = money2(sumEsperado);
-    mDiff.textContent = money2(diferenciaTotal);
-    mDeuda.textContent = money2(deudaTotal);
-
-    mDiff.classList.toggle("neg", diferenciaTotal < 0);
-    mDiff.classList.toggle("pos", diferenciaTotal > 0);
-    mDeuda.classList.toggle("neg", deudaTotal < 0);
-    mDeuda.classList.toggle("pos", deudaTotal > 0);
+    if (mVentas) mVentas.textContent = money2(sumContado);
+    if (mDeuda)  mDeuda.textContent  = money2(deudaTotal);
   }
 
   function buildTable() {
+    if (!mediosBody) return;
+
     mediosBody.innerHTML = "";
     CONTADOS["efectivo"] = 0;
 
@@ -265,36 +242,27 @@
       tdM.innerHTML = `<span class="chip">${m.label}</span>`;
       tr.appendChild(tdM);
 
-      const tdE = document.createElement("td");
-      tdE.className = "num";
-      tdE.textContent = money2(m.esperado);
-      tr.appendChild(tdE);
-
       const tdC = document.createElement("td");
       tdC.className = "num";
 
       if (m.metodo === "efectivo") {
-        tdC.innerHTML = `<span class="readonly" data-contado="${m.metodo}">${money2(
-          0
-        )}</span>
-                         <div class="hint">Efectivo contado = (entregado - base)</div>`;
+        tdC.innerHTML = `
+          <span class="readonly" data-contado="${m.metodo}">${money2(0)}</span>
+          <div class="hint">Efectivo contado = (entregado - base)</div>
+        `;
       } else {
-        tdC.innerHTML = `<input class="in-num" type="number" step="0.01" min="0"
-                          data-in="${m.metodo}" placeholder="0.00">`;
+        tdC.innerHTML = `
+          <input class="in-num" type="number" step="0.01" min="0"
+                 data-in="${m.metodo}" placeholder="0.00">
+        `;
       }
+
       tr.appendChild(tdC);
-
-      const tdD = document.createElement("td");
-      tdD.className = "num";
-      tdD.innerHTML = `<span class="diff" data-diff="${m.metodo}">${money2(0)}</span>`;
-      tr.appendChild(tdD);
-
       frag.appendChild(tr);
     });
 
     mediosBody.appendChild(frag);
 
-    // listeners inputs
     mediosBody.querySelectorAll("[data-in]").forEach((inp) => {
       inp.addEventListener("input", (e) => {
         const metodo = e.target.getAttribute("data-in");
@@ -303,27 +271,34 @@
       });
     });
 
-    // evita duplicar listeners si buildTable se llama varias veces
-    efectivoEntregadoInp.oninput = scheduleRecalc;
+    if (efectivoEntregadoInp) efectivoEntregadoInp.oninput = scheduleRecalc;
 
     scheduleRecalc();
   }
 
   // ====== Rellena UI con datos de backend ======
   function hydrateTurno(data) {
-    TURNO_ID = data.turno_id;
+    TURNO_ID = data.turno_id || data.turno?.id || null;
 
-    // ✅ tolerante: backend puede mandar base o saldo_apertura_efectivo
-    BASE = Number((data.base ?? data.saldo_apertura_efectivo) ?? 0);
+    const baseFrom =
+      data.base ??
+      data.saldo_apertura_efectivo ??
+      data.turno?.saldo_apertura_efectivo ??
+      0;
 
-    infoPP.textContent = data.puntopago?.nombre || ppInp.value || "—";
-    infoCajero.textContent = data.cajero?.nombreusuario || cajInp.value || "—";
-    infoInicio.textContent = (data.inicio || "—")
-      .replace("T", " ")
-      .replace(/:\d\d\..*$/, "");
-    infoBase.textContent = money2(BASE);
+    BASE = Number(baseFrom ?? 0);
 
-    const estado = data.estado || "ABIERTO";
+    const ppObj = data.puntopago ?? data.turno?.puntopago;
+    const cajObj = data.cajero ?? data.turno?.cajero;
+
+    if (infoPP) infoPP.textContent = ppObj?.nombre || ppInp?.value || data.turno?.puntopago || "—";
+    if (infoCajero) infoCajero.textContent = cajObj?.nombreusuario || cajInp?.value || data.turno?.cajero || "—";
+
+    const inicioTxt = data.inicio || data.turno?.inicio || "—";
+    if (infoInicio) infoInicio.textContent = String(inicioTxt).replace("T", " ").replace(/:\d\d\..*$/, "");
+    if (infoBase) infoBase.textContent = money2(BASE);
+
+    const estado = data.estado || data.turno?.estado || "ABIERTO";
 
     if (estado === "ABIERTO") {
       setBadge(estadoBadge, "ABIERTO");
@@ -335,12 +310,13 @@
       setBadge(estadoBadge2, "CIERRE");
 
       MEDIOS = (data.medios || []).map((x) => ({
-        metodo: x.metodo,
-        label: x.label,
-        esperado: Number(x.esperado || 0),
+        metodo: (x.metodo || "").toLowerCase().trim(),
+        label:
+          x.label ||
+          (x.metodo || "").replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()),
       }));
 
-      efectivoEntregadoInp.value = "";
+      if (efectivoEntregadoInp) efectivoEntregadoInp.value = "";
       for (const k of Object.keys(CONTADOS)) delete CONTADOS[k];
 
       buildTable();
@@ -352,154 +328,146 @@
   }
 
   // ====== Actions ======
-  btnIniciar.addEventListener("click", async () => {
-    const pp_id = (ppHid.value || "").trim();
-    const cajero_id = (cajHid.value || "").trim();
-    const password = passInp.value || "";
-    const base = baseInp.value || "0";
+  if (btnIniciar) {
+    btnIniciar.addEventListener("click", async () => {
+      const pp_id = (ppHid?.value || "").trim();
+      const cajero_id = (cajHid?.value || "").trim();
+      const password = passInp?.value || "";
+      const base = baseInp?.value || "0";
 
-    if (!pp_id || !cajero_id) {
-      flash(false, "Selecciona punto de pago y cajero.");
-      return;
-    }
-
-    btnIniciar.disabled = true;
-    try {
-      // ✅ MUY IMPORTANTE: action, si no la View responde 400 "Acción inválida"
-      // ✅ ENVIAMOS AMBOS KEYS (usuario_id y cajero_id) para evitar 400 por nombres
-      const data = await postForm(API_RECUPERAR, {
-        action: "recuperar_o_iniciar",
-        puntopago_id: pp_id,
-        usuario_id: cajero_id,
-        cajero_id: cajero_id,
-        password: password,
-        saldo_apertura_efectivo: base,
-      });
-
-      if (!data.success) {
-        flash(false, data.error || "Error");
+      if (!pp_id || !cajero_id) {
+        flash(false, "Selecciona punto de pago y cajero.");
         return;
       }
 
-      flash(true, data.msg || "Turno recuperado/iniciado.");
-      hydrateTurno(data);
-    } catch (e) {
-      flash(false, "Error de red");
-    } finally {
-      btnIniciar.disabled = false;
-    }
-  });
+      btnIniciar.disabled = true;
+      try {
+        const data = await postForm(API_RECUPERAR, {
+          action: "recuperar_o_iniciar",
+          puntopago_id: pp_id,
+          usuario_id: cajero_id,
+          cajero_id: cajero_id,
+          password: password,
+          saldo_apertura_efectivo: base,
+        });
 
-  btnIniCierre.addEventListener("click", async () => {
-    if (!TURNO_ID) {
-      flash(false, "No hay turno activo.");
-      return;
-    }
+        if (!data.success) {
+          flash(false, data.error || "Error");
+          return;
+        }
 
-    btnIniCierre.disabled = true;
-    try {
-      const data = await postForm(API_INI_CIERRE, { turno_id: TURNO_ID });
-
-      if (!data.success) {
-        flash(false, data.error || "Error");
-        return;
+        flash(true, data.msg || "Turno recuperado/iniciado.");
+        hydrateTurno(data);
+      } catch (e) {
+        flash(false, "Error de red");
+      } finally {
+        btnIniciar.disabled = false;
       }
-
-      setBadge(estadoBadge2, data.estado || "CIERRE");
-
-      BASE = Number((data.base ?? data.saldo_apertura_efectivo) ?? BASE);
-
-      MEDIOS = (data.medios || []).map((x) => ({
-        metodo: x.metodo,
-        label: x.label,
-        esperado: Number(x.esperado || 0),
-      }));
-
-      // orden visual
-      const order = ["efectivo", "nequi", "daviplata", "tarjeta", "banco_caja_social"];
-      MEDIOS.sort((a, b) => {
-        const ia = order.indexOf(a.metodo);
-        const ib = order.indexOf(b.metodo);
-        if (ia === -1 && ib === -1) return String(a.label).localeCompare(String(b.label));
-        if (ia === -1) return 1;
-        if (ib === -1) return -1;
-        return ia - ib;
-      });
-
-      efectivoEntregadoInp.value = "";
-      for (const k of Object.keys(CONTADOS)) delete CONTADOS[k];
-
-      buildTable();
-      flash(true, "Cierre iniciado.");
-      showSection("close");
-    } catch (e) {
-      flash(false, "Error de red");
-    } finally {
-      btnIniCierre.disabled = false;
-    }
-  });
-
-  btnCerrar.addEventListener("click", async () => {
-    if (!TURNO_ID) {
-      flash(false, "No hay turno en cierre.");
-      return;
-    }
-
-    const efectivoEntregado = getNumber(efectivoEntregadoInp.value);
-    if (efectivoEntregado <= 0) {
-      flash(false, "Ingresa el efectivo entregado (total caja).");
-      return;
-    }
-
-    const mediosSend = [];
-    MEDIOS.forEach((m) => {
-      if (m.metodo === "efectivo") return;
-      mediosSend.push({ metodo: m.metodo, contado: getNumber(CONTADOS[m.metodo] || 0) });
     });
+  }
 
-    btnCerrar.disabled = true;
-    try {
-      const data = await postForm(API_CERRAR, {
-        turno_id: TURNO_ID,
-        efectivo_entregado: String(efectivoEntregado),
-        medios_json: JSON.stringify(mediosSend),
-      });
-
-      if (!data.success) {
-        flash(false, data.error || "Error");
+  if (btnIniCierre) {
+    btnIniCierre.addEventListener("click", async () => {
+      if (!TURNO_ID) {
+        flash(false, "No hay turno activo.");
         return;
       }
 
-      flash(true, data.msg || "Turno cerrado.");
-      alert(
-        `Turno cerrado.\n` +
-          `Ventas (usuario): ${money2(data.ventas_total)}\n` +
-          `Esperado (BD): ${money2(data.esperado_total)}\n` +
-          `Diferencia: ${money2(data.diferencia_total)}\n` +
-          `Deuda: ${money2(data.deuda_total)}`
-      );
+      btnIniCierre.disabled = true;
+      try {
+        const data = await postForm(API_INI_CIERRE, { turno_id: TURNO_ID });
 
-      // reset
-      TURNO_ID = null;
-      BASE = 0;
-      MEDIOS = [];
-      showSection("start");
-      ppInp.value = "";
-      ppHid.value = "";
-      cajInp.value = "";
-      cajHid.value = "";
-      passInp.value = "";
-      baseInp.value = "";
-      efectivoEntregadoInp.value = "";
-      mediosBody.innerHTML = "";
-      mVentas.textContent = "—";
-      mEsperado.textContent = "—";
-      mDiff.textContent = "—";
-      mDeuda.textContent = "—";
-    } catch (e) {
-      flash(false, "Error de red");
-    } finally {
-      btnCerrar.disabled = false;
-    }
-  });
+        if (!data.success) {
+          flash(false, data.error || "Error");
+          return;
+        }
+
+        flash(true, "Cierre iniciado.");
+        hydrateTurno({
+          ...data,
+          turno_id: data.turno_id || TURNO_ID,
+          estado: data.estado || "CIERRE",
+          base: data.base ?? BASE,
+        });
+      } catch (e) {
+        flash(false, "Error de red");
+      } finally {
+        btnIniCierre.disabled = false;
+      }
+    });
+  }
+
+  if (btnCerrar) {
+    btnCerrar.addEventListener("click", async () => {
+      if (!TURNO_ID) {
+        flash(false, "No hay turno en cierre.");
+        return;
+      }
+
+      const efectivoEntregado = getNumber(efectivoEntregadoInp?.value);
+      if (efectivoEntregado < 0) {
+        flash(false, "El efectivo entregado no puede ser negativo.");
+        return;
+      }
+
+      const mediosOut = [];
+      MEDIOS.forEach((m) => {
+        if (m.metodo === "efectivo") return;
+        mediosOut.push({
+          metodo: m.metodo,
+          contado: getNumber(CONTADOS[m.metodo] || 0),
+        });
+      });
+
+      btnCerrar.disabled = true;
+      try {
+        const data = await postForm(API_CERRAR, {
+          turno_id: TURNO_ID,
+          efectivo_entregado: String(efectivoEntregado),
+          medios_json: JSON.stringify(mediosOut),
+        });
+
+        if (!data.success) {
+          flash(false, data.error || "Error");
+          return;
+        }
+
+        flash(true, data.msg || "Turno cerrado.");
+
+        alert(
+          `Turno cerrado.\n` +
+          `Ventas (usuario): ${money2(data.ventas_total ?? 0)}\n` +
+          `Deuda: ${money2(data.deuda_total ?? 0)}`
+        );
+
+        // reset UI
+        TURNO_ID = null;
+        BASE = 0;
+        MEDIOS = [];
+        for (const k of Object.keys(CONTADOS)) delete CONTADOS[k];
+
+        showSection("start");
+
+        if (ppInp) ppInp.value = "";
+        if (ppHid) ppHid.value = "";
+        if (cajInp) cajInp.value = "";
+        if (cajHid) cajHid.value = "";
+        if (passInp) passInp.value = "";
+        if (baseInp) baseInp.value = "";
+        if (efectivoEntregadoInp) efectivoEntregadoInp.value = "";
+
+        if (mediosBody) mediosBody.innerHTML = "";
+
+        if (mVentas) mVentas.textContent = "—";
+        if (mDeuda) mDeuda.textContent = "—";
+      } catch (e) {
+        flash(false, "Error de red");
+      } finally {
+        btnCerrar.disabled = false;
+      }
+    });
+  }
+
+  // init
+  showSection("start");
 })();

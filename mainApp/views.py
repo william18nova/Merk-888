@@ -3076,7 +3076,6 @@ class GenerarVentaView(LoginRequiredMixin, View):
         if not turno:
             messages.error(request, "Debes iniciar un turno de caja para poder generar ventas.")
             return redirect("turno_caja")
-        
         initial = {}
         suc_inst = None
         pp_inst = None
@@ -6112,12 +6111,21 @@ def _expected_por_metodo(turno: TurnoCaja) -> tuple[dict[str, Decimal], Decimal,
 # =========================
 # PAGE
 # =========================
-class TurnoCajaPageView(LoginRequiredMixin, View):
+class TurnoCajaPageView(LoginRequiredMixin, TemplateView):
     template_name = "turno_caja.html"
 
-    def get(self, request: HttpRequest):
-        return render(request, self.template_name, {})
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
 
+        # ✅ Ajusta a tu lógica real:
+        # Opción A: por grupos
+        hide_bd = self.request.user.groups.filter(name__in=["Cajero", "Auxiliar"]).exists()
+
+        # Opción B: si tienes un campo rol (ej: user.rol)
+        # hide_bd = getattr(self.request.user, "rol", "") in ["Cajero", "Auxiliar"]
+
+        ctx["hide_bd_cols"] = hide_bd
+        return ctx
 
 # =========================
 # AUTOCOMPLETES
@@ -6178,7 +6186,10 @@ class TurnoCajaIniciarApi(LoginRequiredMixin, View):
 
         # Evita dos turnos abiertos por punto de pago
         if TurnoCaja.objects.filter(puntopago=pp, estado__in=["ABIERTO", "CIERRE"]).exists():
-            return JsonResponse({"success": False, "error": "Ya existe un turno ABIERTO/CIERRE en este punto de pago."}, status=409)
+            return JsonResponse(
+                {"success": False, "error": "Ya existe un turno ABIERTO/CIERRE en este punto de pago."},
+                status=409
+            )
 
         base = _to_decimal(base_str, Decimal("0.00"))
         turno = TurnoCaja.objects.create(
@@ -6188,15 +6199,17 @@ class TurnoCajaIniciarApi(LoginRequiredMixin, View):
             estado="ABIERTO",
         )
 
-        # regreso info mínima
         return JsonResponse({
             "success": True,
             "turno_id": turno.id,
             "estado": turno.estado,
-            "inicio": _iso_co(timezone.localtime(turno.inicio, CO_TZ)) ,
+            "inicio": _iso_co(timezone.localtime(turno.inicio, CO_TZ)),
             "base": float(turno.saldo_apertura_efectivo),
             "puntopago": {"id": pp.pk, "nombre": getattr(pp, "nombre", str(pp.pk))},
             "cajero": {"id": cajero.pk, "nombreusuario": getattr(cajero, "nombreusuario", str(cajero.pk))},
+
+            # ✅ CLAVE
+            "hide_bd_cols": _hide_bd_cols_for_user(request.user),
         })
 
 
@@ -6210,7 +6223,10 @@ class TurnoCajaIniciarCierreApi(LoginRequiredMixin, View):
         turno = get_object_or_404(TurnoCaja, pk=int(turno_id))
 
         if turno.estado != "ABIERTO":
-            return JsonResponse({"success": False, "error": f"El turno no está ABIERTO (estado={turno.estado})."}, status=409)
+            return JsonResponse(
+                {"success": False, "error": f"El turno no está ABIERTO (estado={turno.estado})."},
+                status=409
+            )
 
         turno.cierre_iniciado = _now_co()
         turno.estado = "CIERRE"
@@ -6218,7 +6234,6 @@ class TurnoCajaIniciarCierreApi(LoginRequiredMixin, View):
 
         expected, esperado_total, esperado_efectivo, esperado_no_efectivo = _expected_por_metodo(turno)
 
-        # snapshot ventas (BD) en el turno
         turno.ventas_total = esperado_total
         turno.ventas_efectivo = esperado_efectivo
         turno.ventas_no_efectivo = esperado_no_efectivo
@@ -6229,7 +6244,6 @@ class TurnoCajaIniciarCierreApi(LoginRequiredMixin, View):
             "esperado_total"
         ])
 
-        # crear/actualizar medios
         all_methods = list(dict.fromkeys(DEFAULT_METODOS + list(expected.keys())))
         for metodo in all_methods:
             TurnoCajaMedio.objects.update_or_create(
@@ -6242,7 +6256,6 @@ class TurnoCajaIniciarCierreApi(LoginRequiredMixin, View):
                 }
             )
 
-        # payload
         medios_payload = []
         for metodo in all_methods:
             medios_payload.append({
@@ -6255,12 +6268,15 @@ class TurnoCajaIniciarCierreApi(LoginRequiredMixin, View):
             "success": True,
             "turno_id": turno.id,
             "estado": turno.estado,
-            "cierre_iniciado": _iso_co(timezone.localtime(turno.cierre_iniciado, CO_TZ)) ,
+            "cierre_iniciado": _iso_co(timezone.localtime(turno.cierre_iniciado, CO_TZ)),
             "base": float(turno.saldo_apertura_efectivo),
             "esperado_total": float(esperado_total),
             "esperado_efectivo": float(esperado_efectivo),
             "esperado_no_efectivo": float(esperado_no_efectivo),
             "medios": medios_payload,
+
+            # ✅ CLAVE
+            "hide_bd_cols": _hide_bd_cols_for_user(request.user),
         })
 
 
@@ -6274,19 +6290,18 @@ class TurnoCajaCerrarApi(LoginRequiredMixin, View):
         turno = get_object_or_404(TurnoCaja, pk=int(turno_id))
 
         if turno.estado != "CIERRE":
-            return JsonResponse({"success": False, "error": f"El turno no está en CIERRE (estado={turno.estado})."}, status=409)
+            return JsonResponse(
+                {"success": False, "error": f"El turno no está en CIERRE (estado={turno.estado})."},
+                status=409
+            )
 
-        # efectivo entregado (input grande)
         efectivo_entregado = _to_decimal(request.POST.get("efectivo_entregado"), Decimal("0.00"))
         if efectivo_entregado < 0:
             return JsonResponse({"success": False, "error": "Efectivo entregado no puede ser negativo."}, status=400)
 
-        # efectivo contado = entregado - base
         base = turno.saldo_apertura_efectivo or Decimal("0.00")
         efectivo_contado = (efectivo_entregado - base).quantize(Decimal("0.01"))
 
-        # medios enviados: viene como JSON en un campo "medios_json"
-        # cada item: {metodo, contado}
         import json
         medios_json = request.POST.get("medios_json", "[]")
         try:
@@ -6294,28 +6309,25 @@ class TurnoCajaCerrarApi(LoginRequiredMixin, View):
         except Exception:
             return JsonResponse({"success": False, "error": "medios_json inválido."}, status=400)
 
-        # cargar medios existentes
         medios_db = {m.metodo: m for m in turno.medios.all()}
 
-        # asegurar que exista fila efectivo
         if "efectivo" not in medios_db:
             medios_db["efectivo"] = TurnoCajaMedio.objects.create(
                 turno=turno, metodo="efectivo", esperado=Decimal("0.00")
             )
 
-        # aplicar contado para NO efectivo desde inputs (efectivo lo calculamos)
         contados: dict[str, Decimal] = {}
-
         for item in medios_in:
             metodo = _normalize_metodo(item.get("metodo"))
             if not metodo or metodo == "efectivo":
                 continue
+
             contado = _to_decimal(item.get("contado"), Decimal("0.00"))
             if contado < 0:
                 contado = Decimal("0.00")
+
             contados[metodo] = contado
 
-            # si no existía ese medio en DB, lo creo con esperado=0
             if metodo not in medios_db:
                 medios_db[metodo] = TurnoCajaMedio.objects.create(
                     turno=turno, metodo=metodo, esperado=Decimal("0.00")
@@ -6323,20 +6335,19 @@ class TurnoCajaCerrarApi(LoginRequiredMixin, View):
 
         contados["efectivo"] = efectivo_contado
 
-        # calcula diferencias por medio y actualiza rows
         sum_contado = Decimal("0.00")
         sum_esperado = Decimal("0.00")
         esperado_efectivo = Decimal("0.00")
+
+        deuda_total = Decimal("0.00")  # NEGATIVA o 0
 
         for metodo, medio_obj in medios_db.items():
             esperado = medio_obj.esperado or Decimal("0.00")
             contado = contados.get(metodo)
 
-            # si no mandaron ese método y no es efectivo -> lo tomamos 0 (para que sume coherente)
             if contado is None and metodo != "efectivo":
                 contado = Decimal("0.00")
 
-            # efectivo siempre calculado
             if metodo == "efectivo":
                 contado = efectivo_contado
                 esperado_efectivo = esperado
@@ -6351,11 +6362,12 @@ class TurnoCajaCerrarApi(LoginRequiredMixin, View):
             sum_contado += contado
             sum_esperado += esperado
 
-        diferencia_total = (sum_contado - sum_esperado).quantize(Decimal("0.01"))
-        deuda_total = diferencia_total if diferencia_total < 0 else Decimal("0.00")
+            if diff < 0:
+                deuda_total += diff  # diff negativo
 
-        # real_total = efectivo_entregado + lo "entregado" no efectivo (nequi/davi/tarjeta etc.)
-        # (esto coincide con "entregó por cada medio")
+        diferencia_total = (sum_contado - sum_esperado).quantize(Decimal("0.01"))
+        deuda_total = deuda_total.quantize(Decimal("0.01"))
+
         real_total = (efectivo_entregado + (sum_contado - efectivo_contado)).quantize(Decimal("0.01"))
 
         turno.fin = _now_co()
@@ -6364,13 +6376,9 @@ class TurnoCajaCerrarApi(LoginRequiredMixin, View):
         turno.efectivo_real = efectivo_entregado
         turno.diferencia_efectivo = (efectivo_contado - esperado_efectivo).quantize(Decimal("0.01"))
 
-        # esperado_total ya estaba guardado al iniciar cierre, pero lo recalculamos consistente
         turno.esperado_total = sum_esperado
         turno.real_total = real_total
-
-        # ventas_total aquí lo usamos como "ventas según usuario" (como tú pediste)
         turno.ventas_total = sum_contado
-
         turno.diferencia_total = diferencia_total
         turno.deuda_total = deuda_total
 
@@ -6382,7 +6390,9 @@ class TurnoCajaCerrarApi(LoginRequiredMixin, View):
             "diferencia_total", "deuda_total",
         ])
 
-        msg = "Cierre OK. Sin faltantes." if deuda_total == 0 else f"⚠️ Faltante: {deuda_total} (deuda_total)."
+        faltante_abs = abs(deuda_total)
+        msg = "Cierre OK. Sin faltantes." if deuda_total == 0 else f"⚠️ Faltante: {faltante_abs}."
+
         return JsonResponse({
             "success": True,
             "turno_id": turno.id,
@@ -6392,9 +6402,10 @@ class TurnoCajaCerrarApi(LoginRequiredMixin, View):
             "diferencia_total": float(turno.diferencia_total),
             "deuda_total": float(turno.deuda_total),
             "msg": msg,
+
+            # ✅ CLAVE (para mantener el ocultamiento en frontend)
+            "hide_bd_cols": _hide_bd_cols_for_user(request.user),
         })
-
-
 
 
 
@@ -6501,522 +6512,65 @@ def _calcular_esperados_por_metodo(pp_id, start_dt, end_dt):
     return esperado_total, esperado_por
 
 
-# =========================
-# Página dashboard
-# =========================
-@method_decorator(login_required, name="dispatch")
-class TurnosCajaDashboardView(View):
-    template_name = "turnos_caja_dashboard.html"
-
-    def get(self, request):
-        return render(request, self.template_name, {})
-
-
-# =========================
-# Autocomplete punto de pago
-# =========================
-@method_decorator(login_required, name="dispatch")
-class PuntoPagoAutocompleteSimple(View):
-    def get(self, request):
-        term = (request.GET.get("term") or "").strip()
-        qs = PuntosPago.objects.all().order_by("nombre")
-        if term:
-            qs = qs.filter(nombre__icontains=term)
-        data = [{"id": p.pk, "text": p.nombre} for p in qs[:30]]
-        return JsonResponse({"results": data})
-
-
-# =========================
-# API: listar turnos en curso
-# =========================
-@method_decorator(login_required, name="dispatch")
-class TurnosCajaListAPI(View):
-    def get(self, request):
-        pp_id = request.GET.get("puntopago_id")
-        estado = (request.GET.get("estado") or "").strip().upper()  # "", ABIERTO, CIERRE
-
-        qs = TurnoCaja.objects.exclude(estado="CERRADO").select_related("puntopago", "cajero").order_by("-inicio")
-
-        if pp_id and str(pp_id).isdigit():
-            qs = qs.filter(puntopago_id=int(pp_id))
-        if estado in {"ABIERTO", "CIERRE"}:
-            qs = qs.filter(estado=estado)
-
-        out = []
-        for t in qs[:200]:
-            out.append({
-                "id": t.id,
-                "estado": t.estado,
-                "puntopago": getattr(t.puntopago, "nombre", str(t.puntopago_id)),
-                "cajero": getattr(t.cajero, "nombreusuario", str(t.cajero_id)),
-                "inicio": t.inicio.astimezone(timezone.get_current_timezone()).strftime("%Y-%m-%d %H:%M:%S"),
-                "cierre_iniciado": t.cierre_iniciado.astimezone(timezone.get_current_timezone()).strftime("%Y-%m-%d %H:%M:%S") if t.cierre_iniciado else None,
-            })
-
-        return JsonResponse({"success": True, "turnos": out})
-
-
-# =========================
-# API: iniciar cierre (set cierre_iniciado + generar esperados)
-# =========================
-@method_decorator(login_required, name="dispatch")
-class TurnoCajaIniciarCierreAPI(View):
-    @transaction.atomic
-    def post(self, request, turno_id: int):
-        turno = get_object_or_404(TurnoCaja.objects.select_for_update(), pk=turno_id)
-
-        if turno.estado == "CERRADO":
-            return JsonResponse({"success": False, "error": "El turno ya está cerrado."}, status=400)
-
-        # si aún no inició cierre, lo marcamos ahora
-        if not turno.cierre_iniciado:
-            turno.cierre_iniciado = timezone.now()
-            turno.estado = "CIERRE"
-            turno.save(update_fields=["cierre_iniciado", "estado"])
-
-        # calcular esperados entre inicio y cierre_iniciado (intervalo cerrado)
-        esperado_total, esperado_por = _calcular_esperados_por_metodo(
-            pp_id=turno.puntopago_id,
-            start_dt=turno.inicio,
-            end_dt=turno.cierre_iniciado,
-        )
-
-        # upsert TurnoCajaMedio
-        for metodo in CANON_ORDER:
-            TurnoCajaMedio.objects.update_or_create(
-                turno=turno,
-                metodo=metodo,
-                defaults={"esperado": esperado_por.get(metodo, Decimal("0"))}
-            )
-
-        # guardar snapshot esperado_total
-        # (ventas_total aquí NO, porque eso es lo que el usuario reporta al cerrar)
-        turno.esperado_total = esperado_total
-        turno.save(update_fields=["esperado_total"])
-
-        medios = []
-        for m in turno.medios.all().order_by("metodo"):
-            medios.append({
-                "metodo": m.metodo,
-                "esperado": float(m.esperado or 0),
-                "contado": float(m.contado or 0) if m.contado is not None else None,
-                "diferencia": float(m.diferencia or 0),
-            })
-
-        return JsonResponse({
-            "success": True,
-            "turno": {
-                "id": turno.id,
-                "estado": turno.estado,
-                "puntopago": getattr(turno.puntopago, "nombre", str(turno.puntopago_id)),
-                "cajero": getattr(turno.cajero, "nombreusuario", str(turno.cajero_id)),
-                "inicio": turno.inicio.astimezone(timezone.get_current_timezone()).strftime("%Y-%m-%d %H:%M:%S"),
-                "cierre_iniciado": turno.cierre_iniciado.astimezone(timezone.get_current_timezone()).strftime("%Y-%m-%d %H:%M:%S"),
-                "saldo_apertura_efectivo": float(turno.saldo_apertura_efectivo or 0),
-                "esperado_total": float(turno.esperado_total or 0),
-            },
-            "medios": medios,
-        })
-
-
-# =========================
-# API: snapshot (para continuar cierres ya iniciados)
-# =========================
-@method_decorator(login_required, name="dispatch")
-class TurnoCajaSnapshotAPI(View):
-    def get(self, request, turno_id: int):
-        turno = get_object_or_404(TurnoCaja.objects.select_related("puntopago", "cajero"), pk=turno_id)
-
-        if turno.estado == "CERRADO":
-            return JsonResponse({"success": False, "error": "El turno ya está cerrado."}, status=400)
-
-        # si no tiene cierre iniciado, obliga a iniciar por el endpoint correspondiente
-        if not turno.cierre_iniciado:
-            return JsonResponse({"success": False, "error": "Este turno aún no tiene cierre iniciado."}, status=400)
-
-        # asegurar medios (por si faltan)
-        for metodo in CANON_ORDER:
-            TurnoCajaMedio.objects.get_or_create(turno=turno, metodo=metodo, defaults={"esperado": Decimal("0")})
-
-        medios = []
-        for m in TurnoCajaMedio.objects.filter(turno=turno).order_by("metodo"):
-            medios.append({
-                "metodo": m.metodo,
-                "esperado": float(m.esperado or 0),
-                "contado": float(m.contado or 0) if m.contado is not None else None,
-                "diferencia": float(m.diferencia or 0),
-            })
-
-        return JsonResponse({
-            "success": True,
-            "turno": {
-                "id": turno.id,
-                "estado": turno.estado,
-                "puntopago": getattr(turno.puntopago, "nombre", str(turno.puntopago_id)),
-                "cajero": getattr(turno.cajero, "nombreusuario", str(turno.cajero_id)),
-                "inicio": turno.inicio.astimezone(timezone.get_current_timezone()).strftime("%Y-%m-%d %H:%M:%S"),
-                "cierre_iniciado": turno.cierre_iniciado.astimezone(timezone.get_current_timezone()).strftime("%Y-%m-%d %H:%M:%S"),
-                "saldo_apertura_efectivo": float(turno.saldo_apertura_efectivo or 0),
-                "esperado_total": float(turno.esperado_total or 0),
-                "efectivo_real": float(turno.efectivo_real or 0) if turno.efectivo_real is not None else None,
-                "ventas_total": float(turno.ventas_total or 0),
-                "deuda_total": float(turno.deuda_total or 0),
-            },
-            "medios": medios,
-        })
-
-
-# =========================
-# API: cerrar turno (guardar contados + diferencias + fin)
-# =========================
-@method_decorator(login_required, name="dispatch")
-class TurnoCajaCerrarAPI(View):
-    @transaction.atomic
-    def post(self, request, turno_id: int):
-        import json
-        turno = get_object_or_404(TurnoCaja.objects.select_for_update(), pk=turno_id)
-
-        if turno.estado == "CERRADO":
-            return JsonResponse({"success": False, "error": "El turno ya está cerrado."}, status=400)
-        if not turno.cierre_iniciado:
-            return JsonResponse({"success": False, "error": "Primero inicia el cierre."}, status=400)
-
-        try:
-            payload = json.loads(request.body.decode("utf-8"))
-        except Exception:
-            return JsonResponse({"success": False, "error": "JSON inválido."}, status=400)
-
-        efectivo_entregado = Decimal(str(payload.get("efectivo_entregado") or "0"))
-        contados = payload.get("contados") or {}  # {metodo: contado}
-
-        # efectivo contado = efectivo_entregado - base
-        base = turno.saldo_apertura_efectivo or Decimal("0")
-        efectivo_contado = efectivo_entregado - base
-        if efectivo_contado < 0:
-            efectivo_contado = Decimal("0")
-
-        # asegurar medios
-        for metodo in CANON_ORDER:
-            TurnoCajaMedio.objects.get_or_create(turno=turno, metodo=metodo, defaults={"esperado": Decimal("0")})
-
-        # aplicar contados
-        ventas_no_efectivo_real = Decimal("0")
-        for m in TurnoCajaMedio.objects.filter(turno=turno):
-            metodo = _canon_metodo(m.metodo)
-
-            if metodo == "efectivo":
-                m.contado = efectivo_contado
-            else:
-                v = Decimal(str(contados.get(metodo) or "0"))
-                if v < 0: v = Decimal("0")
-                m.contado = v
-                ventas_no_efectivo_real += v
-
-            m.diferencia = (m.contado or Decimal("0")) - (m.esperado or Decimal("0"))
-            m.save(update_fields=["contado", "diferencia"])
-
-        # recomputar esperado_total por seguridad (intervalo cerrado inicio->cierre_iniciado)
-        esperado_total, esperado_por = _calcular_esperados_por_metodo(
-            pp_id=turno.puntopago_id,
-            start_dt=turno.inicio,
-            end_dt=turno.cierre_iniciado,
-        )
-
-        # ventas_total (según tu regla): suma inputs no-efectivo + (efectivo_entregado - base)
-        ventas_total_real = ventas_no_efectivo_real + efectivo_contado
-
-        diferencia_total = ventas_total_real - esperado_total
-        deuda_total = (esperado_total - ventas_total_real)
-        if deuda_total <= 0:
-            deuda_total = Decimal("0")
-
-        # snapshot ventas por efectivo / no-efectivo (REAL)
-        turno.ventas_total = ventas_total_real
-        turno.ventas_efectivo = efectivo_contado
-        turno.ventas_no_efectivo = ventas_no_efectivo_real
-
-        turno.esperado_total = esperado_total
-        turno.efectivo_real = efectivo_entregado
-
-        turno.diferencia_total = diferencia_total
-        turno.diferencia_efectivo = (efectivo_contado - esperado_por.get("efectivo", Decimal("0")))
-
-        turno.deuda_total = deuda_total
-
-        turno.fin = timezone.now()
-        turno.estado = "CERRADO"
-        turno.save(update_fields=[
-            "ventas_total","ventas_efectivo","ventas_no_efectivo",
-            "esperado_total","efectivo_real","diferencia_total","diferencia_efectivo",
-            "deuda_total","fin","estado"
-        ])
-
-        return JsonResponse({
-            "success": True,
-            "turno_id": turno.id,
-            "ventas_total": float(turno.ventas_total or 0),
-            "esperado_total": float(turno.esperado_total or 0),
-            "deuda_total": float(turno.deuda_total or 0),
-        })
-
-
-class TurnoCajaRecuperarOIniciarView(LoginRequiredMixin, View):
-    @transaction.atomic
-    def post(self, request):
-        action = (request.POST.get("action") or "").strip()
-        if action != "recuperar_o_iniciar":
-            return JsonResponse({"success": False, "error": "Acción inválida."}, status=400)
-
-        puntopago_id = (request.POST.get("puntopago_id") or "").strip()
-        usuario_id   = (request.POST.get("usuario_id") or request.POST.get("cajero_id") or "").strip()
-        password     = request.POST.get("password", "")
-        base_str     = (request.POST.get("saldo_apertura_efectivo") or "0").strip()
-
-        if not puntopago_id.isdigit():
-            return JsonResponse({"success": False, "error": "Falta puntopago_id."}, status=400)
-        if not usuario_id.isdigit():
-            return JsonResponse({"success": False, "error": "Falta usuario_id/cajero_id."}, status=400)
-
-        try:
-            base = Decimal(base_str.replace(",", "").strip() or "0")
-            if base < 0:
-                base = Decimal("0")
-        except Exception:
-            return JsonResponse({"success": False, "error": "Base inválida."}, status=400)
-
-        pp = get_object_or_404(PuntosPago, pk=int(puntopago_id))
-        cajero = get_object_or_404(Usuario, pk=int(usuario_id))
-
-        # Ajusta si tu Usuario no usa check_password
-        if not hasattr(cajero, "check_password") or not cajero.check_password(password):
-            return JsonResponse({"success": False, "error": "Contraseña incorrecta."}, status=403)
-
-        turno = (TurnoCaja.objects
-                 .select_for_update()
-                 .filter(puntopago=pp, estado__in=["ABIERTO", "CIERRE"])
-                 .order_by("-inicio")
-                 .first())
-
-        if turno:
-            return JsonResponse({
-                "success": True,
-                "msg": "Turno retomado.",
-                "modo": "RETOMADO",
-                "turno_id": turno.pk,
-                "estado": turno.estado,
-                "inicio": _iso_co(turno.inicio) ,
-                "cierre_iniciado": _iso_co(turno.cierre_iniciado) if turno.cierre_iniciado else None,
-                "base": float(turno.saldo_apertura_efectivo or 0),
-                "puntopago": {"id": pp.pk, "nombre": getattr(pp, "nombre", str(pp.pk))},
-                "cajero": {"id": cajero.pk, "nombreusuario": getattr(cajero, "nombreusuario", str(cajero.pk))},
-            })
-
-        turno = TurnoCaja.objects.create(
-            puntopago=pp,
-            cajero=cajero,
-            saldo_apertura_efectivo=base,
-            estado="ABIERTO",
-        )
-
-        return JsonResponse({
-            "success": True,
-            "msg": "Turno creado.",
-            "modo": "CREADO",
-            "turno_id": turno.pk,
-            "estado": turno.estado,
-            "inicio": _iso_co(turno.inicio) ,
-            "base": float(turno.saldo_apertura_efectivo or 0),
-            "puntopago": {"id": pp.pk, "nombre": getattr(pp, "nombre", str(pp.pk))},
-            "cajero": {"id": cajero.pk, "nombreusuario": getattr(cajero, "nombreusuario", str(cajero.pk))},
-        })
-
-
-@method_decorator(login_required, name="dispatch")
-class TurnosCajaDashboardView(View):
-    template_name = "turnos_caja_dashboard.html"
-
-    def get(self, request: HttpRequest):
-        return render(request, self.template_name, {})
-
-
-@method_decorator(login_required, name="dispatch")
-class TurnosCajaDashboardListAPI(View):
-    """
-    Lista turnos (ABIERTO/CIERRE/CERRADO) con filtros + paginación.
-    """
-    def get(self, request: HttpRequest):
-        estado = (request.GET.get("estado") or "ALL").strip().upper()  # ALL, ABIERTO, CIERRE, CERRADO
-        q = (request.GET.get("q") or "").strip()
-        pp_id = (request.GET.get("puntopago_id") or "").strip()
-        cajero_id = (request.GET.get("cajero_id") or "").strip()
-
-        date_from = (request.GET.get("date_from") or "").strip()  # YYYY-MM-DD
-        date_to   = (request.GET.get("date_to") or "").strip()    # YYYY-MM-DD
-
-        page = int(request.GET.get("page") or 1)
-        page_size = int(request.GET.get("page_size") or 25)
-        page = max(1, page)
-        page_size = min(max(10, page_size), 200)
-
-        qs = (TurnoCaja.objects
-              .select_related("puntopago", "cajero")
-              .all()
-              .order_by("-inicio"))
-
-        if estado in {"ABIERTO", "CIERRE", "CERRADO"}:
-            qs = qs.filter(estado=estado)
-
-        if pp_id.isdigit():
-            qs = qs.filter(puntopago_id=int(pp_id))
-        if cajero_id.isdigit():
-            qs = qs.filter(cajero_id=int(cajero_id))
-
-        # rango de fechas por inicio
-        if date_from:
-            qs = qs.filter(inicio__date__gte=date_from)
-        if date_to:
-            qs = qs.filter(inicio__date__lte=date_to)
-
-        if q:
-            # búsqueda simple por nombres (ajusta campos si tus modelos cambian)
-            qs = qs.filter(
-                Q(puntopago__nombre__icontains=q) |
-                Q(cajero__nombreusuario__icontains=q)
-            )
-
-        total = qs.count()
-        start = (page - 1) * page_size
-        end = start + page_size
-
-        items = []
-        for t in qs[start:end]:
-            items.append({
-                "id": t.id,
-                "estado": t.estado,
-                "puntopago": getattr(t.puntopago, "nombre", str(t.puntopago_id)),
-                "cajero": getattr(t.cajero, "nombreusuario", str(t.cajero_id)),
-                "inicio": timezone.localtime(t.inicio).strftime("%Y-%m-%d %H:%M:%S") if t.inicio else None,
-                "cierre_iniciado": timezone.localtime(t.cierre_iniciado).strftime("%Y-%m-%d %H:%M:%S") if t.cierre_iniciado else None,
-                "fin": timezone.localtime(t.fin).strftime("%Y-%m-%d %H:%M:%S") if t.fin else None,
-
-                "base": float(getattr(t, "saldo_apertura_efectivo", Decimal("0")) or 0),
-
-                # snapshots (si existen)
-                "esperado_total": float(getattr(t, "esperado_total", Decimal("0")) or 0),
-                "ventas_total": float(getattr(t, "ventas_total", Decimal("0")) or 0),
-                "diferencia_total": float(getattr(t, "diferencia_total", Decimal("0")) or 0),
-                "deuda_total": float(getattr(t, "deuda_total", Decimal("0")) or 0),
-            })
-
-        return JsonResponse({
-            "success": True,
-            "page": page,
-            "page_size": page_size,
-            "total": total,
-            "has_more": end < total,
-            "items": items,
-        })
-
-
-@method_decorator(login_required, name="dispatch")
-class TurnoCajaDashboardDetailAPI(View):
-    """
-    Detalle de un turno + desglose por medios.
-    Si el turno está ABIERTO (sin cierre iniciado), puede calcular esperado_live:
-      ?compute_expected=1
-    """
-    def get(self, request: HttpRequest, turno_id: int):
-        compute_expected = (request.GET.get("compute_expected") or "0").strip() == "1"
-
-        turno = get_object_or_404(
-            TurnoCaja.objects.select_related("puntopago", "cajero"),
-            pk=turno_id
-        )
-
-        # Siempre trae medios existentes (si no existen, los creamos con esperado=0)
-        # Usa tus CANON_ORDER si lo tienes
-        try:
-            canon_order = list(CANON_ORDER)
-        except Exception:
-            canon_order = ["efectivo", "nequi", "daviplata", "tarjeta", "banco_caja_social"]
-
-        for m in canon_order:
-            TurnoCajaMedio.objects.get_or_create(
-                turno=turno, metodo=m, defaults={"esperado": Decimal("0.00")}
-            )
-
-        # Esperado calculado (opcional):
-        esperado_total_calc = None
-        esperado_por_calc = None
-
-        if compute_expected:
-            end_dt = turno.cierre_iniciado or (turno.fin if turno.estado == "CERRADO" else timezone.now())
-            esperado_total_calc, esperado_por_calc = _calcular_esperados_por_metodo(
-                pp_id=turno.puntopago_id,
-                start_dt=turno.inicio,
-                end_dt=end_dt,
-            )
-
-        medios_out = []
-        medios_qs = TurnoCajaMedio.objects.filter(turno=turno)
-
-        # orden por canon_order + extras
-        order_index = {m: i for i, m in enumerate(canon_order)}
-        medios_list = sorted(list(medios_qs), key=lambda x: order_index.get((x.metodo or "").lower(), 999))
-
-        for medio in medios_list:
-            metodo = (medio.metodo or "").lower().strip()
-
-            esperado = medio.esperado or Decimal("0.00")
-            contado = medio.contado  # puede ser None si aún no cerró
-            diferencia = medio.diferencia or Decimal("0.00")
-
-            # Si compute_expected=1 y hay calculado, muestra esperado_calc por método (sin pisar BD)
-            esperado_calc = None
-            if esperado_por_calc is not None:
-                esperado_calc = esperado_por_calc.get(metodo, Decimal("0.00"))
-
-            medios_out.append({
-                "metodo": metodo,
-                "esperado_bd": float(esperado),
-                "esperado_calc": float(esperado_calc) if esperado_calc is not None else None,
-                "contado": float(contado) if contado is not None else None,
-                "diferencia": float(diferencia),
-            })
-
-        out = {
-            "success": True,
-            "turno": {
-                "id": turno.id,
-                "estado": turno.estado,
-                "puntopago": getattr(turno.puntopago, "nombre", str(turno.puntopago_id)),
-                "cajero": getattr(turno.cajero, "nombreusuario", str(turno.cajero_id)),
-                "inicio": timezone.localtime(turno.inicio).strftime("%Y-%m-%d %H:%M:%S") if turno.inicio else None,
-                "cierre_iniciado": timezone.localtime(turno.cierre_iniciado).strftime("%Y-%m-%d %H:%M:%S") if turno.cierre_iniciado else None,
-                "fin": timezone.localtime(turno.fin).strftime("%Y-%m-%d %H:%M:%S") if turno.fin else None,
-                "base": float(getattr(turno, "saldo_apertura_efectivo", Decimal("0")) or 0),
-
-                # snapshots guardados
-                "esperado_total_bd": float(getattr(turno, "esperado_total", Decimal("0")) or 0),
-                "ventas_total": float(getattr(turno, "ventas_total", Decimal("0")) or 0),
-                "diferencia_total": float(getattr(turno, "diferencia_total", Decimal("0")) or 0),
-                "deuda_total": float(getattr(turno, "deuda_total", Decimal("0")) or 0),
-                "efectivo_real": float(getattr(turno, "efectivo_real", Decimal("0")) or 0) if getattr(turno, "efectivo_real", None) is not None else None,
-            },
-            "medios": medios_out,
-        }
-
-        if compute_expected:
-            out["expected_calc"] = {
-                "esperado_total_calc": float(esperado_total_calc or 0),
-            }
-
-        return JsonResponse(out)
-    
+PAGE_SIZE = 30
+
+# Orden canónico de métodos
+try:
+    CANON_ORDER = list(CANON_ORDER)  # si ya existe
+except Exception:
+    CANON_ORDER = ["efectivo", "nequi", "daviplata", "tarjeta", "banco_caja_social"]
 
 ESTADOS_TURNO = ("ABIERTO", "CIERRE", "CERRADO")
 
 
+# =========================
+# ✅ Helpers rol (ocultar BD)
+# =========================
+def _role_name(user) -> str:
+    """
+    Intenta inferir el nombre del rol de forma robusta:
+    - user.rol (str o FK con .nombre/.name)
+    - user.role
+    - user.perfil.rol, etc.
+    - grupos de Django (si aplicara)
+    """
+    for key in ("rol", "role", "perfil", "cargo"):
+        obj = getattr(user, key, None)
+        if not obj:
+            continue
+        if isinstance(obj, str):
+            return obj
+        for attr in ("nombre", "name", "rol", "tipo"):
+            if hasattr(obj, attr):
+                try:
+                    v = getattr(obj, attr)
+                    if v:
+                        return str(v)
+                except Exception:
+                    pass
+        try:
+            return str(obj)
+        except Exception:
+            pass
+
+    try:
+        g = user.groups.first()
+        if g:
+            return str(g.name)
+    except Exception:
+        pass
+
+    return ""
+
+
+def _hide_bd_cols_for_user(user) -> bool:
+    # ✅ Cajero y Auxiliar NO deben ver columnas BD
+    return user.groups.filter(name__in=["Cajero", "Auxiliar"]).exists()
+
+
+# =========================
+# Helpers num / fechas (admin)
+# =========================
 def _to_dec(v, default=Decimal("0.00")):
     try:
         s = str(v).strip()
@@ -7042,20 +6596,14 @@ def _iso_dt_local_input(dt):
 
 
 def _require_admin(user):
-    # Ajusta a tu gusto (staff, superuser, o un permiso custom)
     return bool(getattr(user, "is_staff", False) or getattr(user, "is_superuser", False))
 
 
-def _recalc_turno_from_medios(turno: TurnoCaja):
+def _recalc_turno_from_medios(turno):
     """
-    Recalcula:
-      esperado_total = sum(esperado)
-      ventas_total = sum(contado, None=>0)
-      deuda_total = max(0, esperado_total - ventas_total)
-      diferencia_total = ventas_total - esperado_total
-      ventas_efectivo = contado(efectivo)
-      ventas_no_efectivo = ventas_total - ventas_efectivo
-      diferencia_efectivo = ventas_efectivo - esperado_efectivo
+    ✅ REGLA AJUSTADA:
+      - deuda_total = SUMA SOLO de diferencias negativas (diff < 0), queda NEGATIVA o 0
+      - diferencia_total = sum(contado) - sum(esperado)  (neto)
     """
     medios = list(TurnoCajaMedio.objects.filter(turno=turno))
 
@@ -7064,6 +6612,8 @@ def _recalc_turno_from_medios(turno: TurnoCaja):
 
     esperado_ef = Decimal("0.00")
     contado_ef = Decimal("0.00")
+
+    deuda_total = Decimal("0.00")  # ✅ suma SOLO negativos
 
     for m in medios:
         esp = (m.esperado or Decimal("0.00")).quantize(Decimal("0.01"))
@@ -7076,18 +6626,15 @@ def _recalc_turno_from_medios(turno: TurnoCaja):
             esperado_ef = esp
             contado_ef = con
 
-        # diferencia por fila (si contado es None, lo tratamos como 0 para consistencia)
-        m.diferencia = (con - esp).quantize(Decimal("0.01"))
-        if m.contado is None:
-            # dejamos None si quieres distinguir "no diligenciado"
-            # pero diferencia la dejamos calculada contra 0
-            pass
+        diff = (con - esp).quantize(Decimal("0.01"))
+        m.diferencia = diff
         m.save(update_fields=["diferencia"])
 
+        if diff < 0:
+            deuda_total += diff  # ✅ solo negativos
+
     diferencia_total = (ventas_total - esperado_total).quantize(Decimal("0.01"))
-    deuda_total = (esperado_total - ventas_total).quantize(Decimal("0.01"))
-    if deuda_total < 0:
-        deuda_total = Decimal("0.00")
+    deuda_total = deuda_total.quantize(Decimal("0.01"))  # negativo o 0
 
     turno.esperado_total = esperado_total
     turno.ventas_total = ventas_total
@@ -7103,6 +6650,476 @@ def _recalc_turno_from_medios(turno: TurnoCaja):
     ])
 
 
+# =========================
+# Página dashboard
+# =========================
+@method_decorator(login_required, name="dispatch")
+class TurnosCajaDashboardView(View):
+    template_name = "turnos_caja_dashboard.html"
+
+    def get(self, request: HttpRequest):
+        return render(request, self.template_name, {})
+
+
+# =========================
+# Autocomplete punto de pago
+# =========================
+@method_decorator(login_required, name="dispatch")
+class PuntoPagoAutocompleteSimple(View):
+    def get(self, request: HttpRequest):
+        term = (request.GET.get("term") or "").strip()
+        qs = PuntosPago.objects.all().order_by("nombre")
+        if term:
+            qs = qs.filter(nombre__icontains=term)
+        data = [{"id": p.pk, "text": p.nombre} for p in qs[:30]]
+        return JsonResponse({"results": data})
+
+
+# =========================
+# API: listar turnos en curso
+# =========================
+@method_decorator(login_required, name="dispatch")
+class TurnosCajaListAPI(View):
+    def get(self, request: HttpRequest):
+        pp_id = request.GET.get("puntopago_id")
+        estado = (request.GET.get("estado") or "").strip().upper()  # "", ABIERTO, CIERRE
+
+        qs = TurnoCaja.objects.exclude(estado="CERRADO").select_related("puntopago", "cajero").order_by("-inicio")
+
+        if pp_id and str(pp_id).isdigit():
+            qs = qs.filter(puntopago_id=int(pp_id))
+        if estado in {"ABIERTO", "CIERRE"}:
+            qs = qs.filter(estado=estado)
+
+        out = []
+        for t in qs[:200]:
+            out.append({
+                "id": t.id,
+                "estado": t.estado,
+                "puntopago": getattr(t.puntopago, "nombre", str(t.puntopago_id)),
+                "cajero": getattr(t.cajero, "nombreusuario", str(t.cajero_id)),
+                "inicio": timezone.localtime(t.inicio).strftime("%Y-%m-%d %H:%M:%S") if t.inicio else None,
+                "cierre_iniciado": timezone.localtime(t.cierre_iniciado).strftime("%Y-%m-%d %H:%M:%S") if t.cierre_iniciado else None,
+            })
+
+        return JsonResponse({"success": True, "turnos": out})
+
+
+# =========================
+# API: iniciar cierre (set cierre_iniciado + generar esperados)
+# =========================
+@method_decorator(login_required, name="dispatch")
+class TurnoCajaIniciarCierreAPI(View):
+    @transaction.atomic
+    def post(self, request: HttpRequest, turno_id: int):
+        turno = get_object_or_404(TurnoCaja.objects.select_for_update(), pk=turno_id)
+
+        if turno.estado == "CERRADO":
+            return JsonResponse({"success": False, "error": "El turno ya está cerrado."}, status=400)
+
+        if not turno.cierre_iniciado:
+            turno.cierre_iniciado = timezone.now()
+            turno.estado = "CIERRE"
+            turno.save(update_fields=["cierre_iniciado", "estado"])
+
+        esperado_total, esperado_por = _calcular_esperados_por_metodo(
+            pp_id=turno.puntopago_id,
+            start_dt=turno.inicio,
+            end_dt=turno.cierre_iniciado,
+        )
+
+        for metodo in CANON_ORDER:
+            TurnoCajaMedio.objects.update_or_create(
+                turno=turno,
+                metodo=metodo,
+                defaults={"esperado": esperado_por.get(metodo, Decimal("0.00"))}
+            )
+
+        turno.esperado_total = esperado_total
+        turno.save(update_fields=["esperado_total"])
+
+        medios = []
+        for m in TurnoCajaMedio.objects.filter(turno=turno).order_by("metodo"):
+            medios.append({
+                "metodo": (m.metodo or "").strip().lower(),
+                "esperado": float(m.esperado or 0),
+                "contado": float(m.contado or 0) if m.contado is not None else None,
+                "diferencia": float(m.diferencia or 0),
+            })
+
+        return JsonResponse({
+            "success": True,
+            "turno": {
+                "id": turno.id,
+                "estado": turno.estado,
+                "puntopago": getattr(turno.puntopago, "nombre", str(turno.puntopago_id)),
+                "cajero": getattr(turno.cajero, "nombreusuario", str(turno.cajero_id)),
+                "inicio": timezone.localtime(turno.inicio).strftime("%Y-%m-%d %H:%M:%S"),
+                "cierre_iniciado": timezone.localtime(turno.cierre_iniciado).strftime("%Y-%m-%d %H:%M:%S"),
+                "saldo_apertura_efectivo": float(turno.saldo_apertura_efectivo or 0),
+                "esperado_total": float(turno.esperado_total or 0),
+            },
+            "medios": medios,
+            # ✅ para el front
+            "hide_bd_cols": _hide_bd_cols_for_user(request.user),
+        })
+
+
+# =========================
+# API: snapshot (para continuar cierres ya iniciados)
+# =========================
+@method_decorator(login_required, name="dispatch")
+class TurnoCajaSnapshotAPI(View):
+    def get(self, request: HttpRequest, turno_id: int):
+        turno = get_object_or_404(TurnoCaja.objects.select_related("puntopago", "cajero"), pk=turno_id)
+
+        if turno.estado == "CERRADO":
+            return JsonResponse({"success": False, "error": "El turno ya está cerrado."}, status=400)
+
+        if not turno.cierre_iniciado:
+            return JsonResponse({"success": False, "error": "Este turno aún no tiene cierre iniciado."}, status=400)
+
+        for metodo in CANON_ORDER:
+            TurnoCajaMedio.objects.get_or_create(turno=turno, metodo=metodo, defaults={"esperado": Decimal("0.00")})
+
+        medios = []
+        for m in TurnoCajaMedio.objects.filter(turno=turno).order_by("metodo"):
+            medios.append({
+                "metodo": (m.metodo or "").strip().lower(),
+                "esperado": float(m.esperado or 0),
+                "contado": float(m.contado or 0) if m.contado is not None else None,
+                "diferencia": float(m.diferencia or 0),
+            })
+
+        return JsonResponse({
+            "success": True,
+            "turno": {
+                "id": turno.id,
+                "estado": turno.estado,
+                "puntopago": getattr(turno.puntopago, "nombre", str(turno.puntopago_id)),
+                "cajero": getattr(turno.cajero, "nombreusuario", str(turno.cajero_id)),
+                "inicio": timezone.localtime(turno.inicio).strftime("%Y-%m-%d %H:%M:%S") if turno.inicio else None,
+                "cierre_iniciado": timezone.localtime(turno.cierre_iniciado).strftime("%Y-%m-%d %H:%M:%S") if turno.cierre_iniciado else None,
+                "saldo_apertura_efectivo": float(turno.saldo_apertura_efectivo or 0),
+                "esperado_total": float(turno.esperado_total or 0),
+                "efectivo_real": float(turno.efectivo_real or 0) if turno.efectivo_real is not None else None,
+                "ventas_total": float(turno.ventas_total or 0),
+                "deuda_total": float(turno.deuda_total or 0),
+            },
+            "medios": medios,
+            "hide_bd_cols": _hide_bd_cols_for_user(request.user),
+        })
+
+
+# =========================
+# API: cerrar turno (guardar contados + diferencias + fin)
+# =========================
+@method_decorator(login_required, name="dispatch")
+class TurnoCajaCerrarAPI(View):
+    @transaction.atomic
+    def post(self, request: HttpRequest, turno_id: int):
+        turno = get_object_or_404(TurnoCaja.objects.select_for_update(), pk=turno_id)
+
+        if turno.estado == "CERRADO":
+            return JsonResponse({"success": False, "error": "El turno ya está cerrado."}, status=400)
+        if not turno.cierre_iniciado:
+            return JsonResponse({"success": False, "error": "Primero inicia el cierre."}, status=400)
+
+        try:
+            payload = json.loads(request.body.decode("utf-8"))
+        except Exception:
+            return JsonResponse({"success": False, "error": "JSON inválido."}, status=400)
+
+        efectivo_entregado = _to_dec(payload.get("efectivo_entregado"), Decimal("0.00"))
+        contados = payload.get("contados") or {}
+
+        base = turno.saldo_apertura_efectivo or Decimal("0.00")
+        efectivo_contado = (efectivo_entregado - base).quantize(Decimal("0.01"))
+        if efectivo_contado < 0:
+            efectivo_contado = Decimal("0.00")
+
+        for metodo in CANON_ORDER:
+            TurnoCajaMedio.objects.get_or_create(turno=turno, metodo=metodo, defaults={"esperado": Decimal("0.00")})
+
+        ventas_no_efectivo_real = Decimal("0.00")
+        for m in TurnoCajaMedio.objects.filter(turno=turno):
+            metodo = _canon_metodo(m.metodo)
+
+            if metodo == "efectivo":
+                m.contado = efectivo_contado
+            else:
+                v = _to_dec(contados.get(metodo), Decimal("0.00"))
+                if v < 0:
+                    v = Decimal("0.00")
+                m.contado = v
+                ventas_no_efectivo_real += v
+
+            m.diferencia = (m.contado or Decimal("0.00")) - (m.esperado or Decimal("0.00"))
+            m.save(update_fields=["contado", "diferencia"])
+
+        esperado_total, esperado_por = _calcular_esperados_por_metodo(
+            pp_id=turno.puntopago_id,
+            start_dt=turno.inicio,
+            end_dt=turno.cierre_iniciado,
+        )
+
+        ventas_total_real = (ventas_no_efectivo_real + efectivo_contado).quantize(Decimal("0.01"))
+        diferencia_total = (ventas_total_real - esperado_total).quantize(Decimal("0.01"))
+
+        # ✅ deuda_total = SUMA SOLO de negativos por medio (diff < 0). Queda NEGATIVA o 0.
+        deuda_total = Decimal("0.00")
+        for m in TurnoCajaMedio.objects.filter(turno=turno):
+            diff = (m.diferencia or Decimal("0.00")).quantize(Decimal("0.01"))
+            if diff < 0:
+                deuda_total += diff
+        deuda_total = deuda_total.quantize(Decimal("0.01"))
+
+        turno.ventas_total = ventas_total_real
+        turno.ventas_efectivo = efectivo_contado
+        turno.ventas_no_efectivo = ventas_no_efectivo_real
+
+        turno.esperado_total = esperado_total
+        turno.efectivo_real = efectivo_entregado
+
+        turno.diferencia_total = diferencia_total
+        turno.diferencia_efectivo = (efectivo_contado - esperado_por.get("efectivo", Decimal("0.00"))).quantize(Decimal("0.01"))
+
+        turno.deuda_total = deuda_total
+
+        turno.fin = timezone.now()
+        turno.estado = "CERRADO"
+        turno.save(update_fields=[
+            "ventas_total","ventas_efectivo","ventas_no_efectivo",
+            "esperado_total","efectivo_real","diferencia_total","diferencia_efectivo",
+            "deuda_total","fin","estado"
+        ])
+
+        return JsonResponse({
+            "success": True,
+            "turno_id": turno.id,
+            "ventas_total": float(turno.ventas_total or 0),
+            "esperado_total": float(turno.esperado_total or 0),
+            "diferencia_total": float(turno.diferencia_total or 0),
+            "deuda_total": float(turno.deuda_total or 0),  # negativo o 0
+            "hide_bd_cols": _hide_bd_cols_for_user(request.user),
+        })
+
+
+# =========================
+# Recuperar o iniciar (tu endpoint actual)
+# =========================
+class TurnoCajaRecuperarOIniciarView(LoginRequiredMixin, View):
+    @transaction.atomic
+    def post(self, request: HttpRequest):
+        action = (request.POST.get("action") or "").strip()
+        if action != "recuperar_o_iniciar":
+            return JsonResponse({"success": False, "error": "Acción inválida."}, status=400)
+
+        puntopago_id = (request.POST.get("puntopago_id") or "").strip()
+        usuario_id   = (request.POST.get("usuario_id") or request.POST.get("cajero_id") or "").strip()
+        password     = request.POST.get("password", "")
+        base_str     = (request.POST.get("saldo_apertura_efectivo") or "0").strip()
+
+        if not puntopago_id.isdigit():
+            return JsonResponse({"success": False, "error": "Falta puntopago_id."}, status=400)
+        if not usuario_id.isdigit():
+            return JsonResponse({"success": False, "error": "Falta usuario_id/cajero_id."}, status=400)
+
+        base = _to_dec(base_str, Decimal("0.00"))
+        if base < 0:
+            base = Decimal("0.00")
+
+        pp = get_object_or_404(PuntosPago, pk=int(puntopago_id))
+        cajero = get_object_or_404(Usuario, pk=int(usuario_id))
+
+        if not hasattr(cajero, "check_password") or not cajero.check_password(password):
+            return JsonResponse({"success": False, "error": "Contraseña incorrecta."}, status=403)
+
+        turno = (TurnoCaja.objects
+                 .select_for_update()
+                 .filter(puntopago=pp, estado__in=["ABIERTO", "CIERRE"])
+                 .order_by("-inicio")
+                 .first())
+
+        if turno:
+            return JsonResponse({
+                "success": True,
+                "msg": "Turno retomado.",
+                "modo": "RETOMADO",
+                "turno_id": turno.pk,
+                "estado": turno.estado,
+                "inicio": _iso_dt(turno.inicio),
+                "cierre_iniciado": _iso_dt(turno.cierre_iniciado) if turno.cierre_iniciado else None,
+                "base": float(turno.saldo_apertura_efectivo or 0),
+                "puntopago": {"id": pp.pk, "nombre": getattr(pp, "nombre", str(pp.pk))},
+                "cajero": {"id": cajero.pk, "nombreusuario": getattr(cajero, "nombreusuario", str(cajero.pk))},
+                "hide_bd_cols": _hide_bd_cols_for_user(request.user),
+            })
+
+        turno = TurnoCaja.objects.create(
+            puntopago=pp,
+            cajero=cajero,
+            saldo_apertura_efectivo=base,
+            estado="ABIERTO",
+        )
+
+        return JsonResponse({
+            "success": True,
+            "msg": "Turno creado.",
+            "modo": "CREADO",
+            "turno_id": turno.pk,
+            "estado": turno.estado,
+            "inicio": _iso_dt(turno.inicio),
+            "base": float(turno.saldo_apertura_efectivo or 0),
+            "puntopago": {"id": pp.pk, "nombre": getattr(pp, "nombre", str(pp.pk))},
+            "cajero": {"id": cajero.pk, "nombreusuario": getattr(cajero, "nombreusuario", str(cajero.pk))},
+            "hide_bd_cols": _hide_bd_cols_for_user(request.user),
+        })
+
+
+# =========================
+# Dashboard extra APIs (las que pegaste)
+# =========================
+@method_decorator(login_required, name="dispatch")
+class TurnosCajaDashboardListAPI(View):
+    def get(self, request: HttpRequest):
+        estado = (request.GET.get("estado") or "ALL").strip().upper()
+        q = (request.GET.get("q") or "").strip()
+        pp_id = (request.GET.get("puntopago_id") or "").strip()
+        cajero_id = (request.GET.get("cajero_id") or "").strip()
+        date_from = (request.GET.get("date_from") or "").strip()
+        date_to   = (request.GET.get("date_to") or "").strip()
+
+        page = max(1, int(request.GET.get("page") or 1))
+        page_size = min(max(10, int(request.GET.get("page_size") or 25)), 200)
+
+        qs = (TurnoCaja.objects.select_related("puntopago", "cajero").all().order_by("-inicio"))
+
+        if estado in {"ABIERTO", "CIERRE", "CERRADO"}:
+            qs = qs.filter(estado=estado)
+
+        if pp_id.isdigit():
+            qs = qs.filter(puntopago_id=int(pp_id))
+        if cajero_id.isdigit():
+            qs = qs.filter(cajero_id=int(cajero_id))
+
+        if date_from:
+            qs = qs.filter(inicio__date__gte=date_from)
+        if date_to:
+            qs = qs.filter(inicio__date__lte=date_to)
+
+        if q:
+            qs = qs.filter(Q(puntopago__nombre__icontains=q) | Q(cajero__nombreusuario__icontains=q))
+
+        total = qs.count()
+        start = (page - 1) * page_size
+        end = start + page_size
+
+        items = []
+        for t in qs[start:end]:
+            items.append({
+                "id": t.id,
+                "estado": t.estado,
+                "puntopago": getattr(t.puntopago, "nombre", str(t.puntopago_id)),
+                "cajero": getattr(t.cajero, "nombreusuario", str(t.cajero_id)),
+                "inicio": _iso_dt(t.inicio),
+                "cierre_iniciado": _iso_dt(t.cierre_iniciado),
+                "fin": _iso_dt(t.fin),
+                "base": float(getattr(t, "saldo_apertura_efectivo", Decimal("0")) or 0),
+                "esperado_total": float(getattr(t, "esperado_total", Decimal("0")) or 0),
+                "ventas_total": float(getattr(t, "ventas_total", Decimal("0")) or 0),
+                "diferencia_total": float(getattr(t, "diferencia_total", Decimal("0")) or 0),
+                "deuda_total": float(getattr(t, "deuda_total", Decimal("0")) or 0),
+            })
+
+        return JsonResponse({
+            "success": True,
+            "page": page,
+            "page_size": page_size,
+            "total": total,
+            "has_more": end < total,
+            "items": items,
+        })
+
+
+@method_decorator(login_required, name="dispatch")
+class TurnoCajaDashboardDetailAPI(View):
+    def get(self, request: HttpRequest, turno_id: int):
+        compute_expected = (request.GET.get("compute_expected") or "0").strip() == "1"
+
+        turno = get_object_or_404(TurnoCaja.objects.select_related("puntopago", "cajero"), pk=turno_id)
+
+        try:
+            canon_order = list(CANON_ORDER)
+        except Exception:
+            canon_order = ["efectivo", "nequi", "daviplata", "tarjeta", "banco_caja_social"]
+
+        for m in canon_order:
+            TurnoCajaMedio.objects.get_or_create(turno=turno, metodo=m, defaults={"esperado": Decimal("0.00")})
+
+        esperado_total_calc = None
+        esperado_por_calc = None
+        if compute_expected:
+            end_dt = turno.cierre_iniciado or (turno.fin if turno.estado == "CERRADO" else timezone.now())
+            esperado_total_calc, esperado_por_calc = _calcular_esperados_por_metodo(
+                pp_id=turno.puntopago_id,
+                start_dt=turno.inicio,
+                end_dt=end_dt,
+            )
+
+        medios_qs = TurnoCajaMedio.objects.filter(turno=turno)
+
+        order_index = {m: i for i, m in enumerate(canon_order)}
+        medios_list = sorted(list(medios_qs), key=lambda x: order_index.get((x.metodo or "").lower(), 999))
+
+        medios_out = []
+        for medio in medios_list:
+            metodo = (medio.metodo or "").lower().strip()
+            esperado = medio.esperado or Decimal("0.00")
+            contado = medio.contado
+            diferencia = medio.diferencia or Decimal("0.00")
+
+            esperado_calc = None
+            if esperado_por_calc is not None:
+                esperado_calc = esperado_por_calc.get(metodo, Decimal("0.00"))
+
+            medios_out.append({
+                "metodo": metodo,
+                "esperado_bd": float(esperado),
+                "esperado_calc": float(esperado_calc) if esperado_calc is not None else None,
+                "contado": float(contado) if contado is not None else None,
+                "diferencia": float(diferencia),
+            })
+
+        out = {
+            "success": True,
+            "turno": {
+                "id": turno.id,
+                "estado": turno.estado,
+                "puntopago": getattr(turno.puntopago, "nombre", str(turno.puntopago_id)),
+                "cajero": getattr(turno.cajero, "nombreusuario", str(turno.cajero_id)),
+                "inicio": _iso_dt(turno.inicio),
+                "cierre_iniciado": _iso_dt(turno.cierre_iniciado),
+                "fin": _iso_dt(turno.fin),
+                "base": float(getattr(turno, "saldo_apertura_efectivo", Decimal("0")) or 0),
+                "esperado_total_bd": float(getattr(turno, "esperado_total", Decimal("0")) or 0),
+                "ventas_total": float(getattr(turno, "ventas_total", Decimal("0")) or 0),
+                "diferencia_total": float(getattr(turno, "diferencia_total", Decimal("0")) or 0),
+                "deuda_total": float(getattr(turno, "deuda_total", Decimal("0")) or 0),
+                "efectivo_real": float(getattr(turno, "efectivo_real", Decimal("0")) or 0) if getattr(turno, "efectivo_real", None) is not None else None,
+            },
+            "medios": medios_out,
+        }
+
+        if compute_expected:
+            out["expected_calc"] = {"esperado_total_calc": float(esperado_total_calc or 0)}
+
+        return JsonResponse(out)
+
+
+# =========================
+# Admin Page + APIs (las que pegaste)
+# =========================
 class TurnosCajaAdminPageView(LoginRequiredMixin, View):
     template_name = "turnos_caja_admin.html"
 
@@ -7130,7 +7147,6 @@ class TurnoCajaAdminDetailAPI(LoginRequiredMixin, View):
                 "fin_local": _iso_dt_local_input(turno.fin),
                 "saldo_apertura_efectivo": float(getattr(turno, "saldo_apertura_efectivo", Decimal("0")) or 0),
                 "efectivo_real": float(getattr(turno, "efectivo_real", Decimal("0")) or 0) if getattr(turno, "efectivo_real", None) is not None else None,
-
                 "esperado_total": float(getattr(turno, "esperado_total", Decimal("0")) or 0),
                 "ventas_total": float(getattr(turno, "ventas_total", Decimal("0")) or 0),
                 "ventas_efectivo": float(getattr(turno, "ventas_efectivo", Decimal("0")) or 0),
@@ -7227,7 +7243,6 @@ class TurnoCajaAdminUpdateAPI(LoginRequiredMixin, View):
         return JsonResponse({"success": True, "msg": "Turno actualizado y recalculado."})
 
 
-
 class TurnoCajaAdminDeleteAPI(LoginRequiredMixin, View):
     @transaction.atomic
     def post(self, request: HttpRequest, turno_id: int):
@@ -7237,7 +7252,6 @@ class TurnoCajaAdminDeleteAPI(LoginRequiredMixin, View):
         turno.delete()
 
         return JsonResponse({"success": True, "msg": f"Turno #{turno_id} eliminado."})
-
 
 
 

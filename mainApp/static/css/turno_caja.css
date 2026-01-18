@@ -276,16 +276,14 @@ h2 i{ color:var(--brand); margin-right:8px; }
   text-align:right;
 }
 
-.diff{ font-weight:900; }
-.neg{ color:#b91c1c !important; }
-.pos{ color:#166534 !important; }
-
 /* métricas */
 .tc-metrics{
   margin-top:12px;
   display:grid;
-  grid-template-columns: repeat(4, 1fr);
   gap:10px;
+}
+.tc-metrics-2{
+  grid-template-columns: repeat(2, 1fr);
 }
 .metric{
   background:#fff;
@@ -306,12 +304,11 @@ h2 i{ color:var(--brand); margin-right:8px; }
 
 /* responsive */
 @media (max-width: 900px){
-  .tc-metrics{ grid-template-columns: 1fr 1fr; }
+  .tc-metrics-2{ grid-template-columns: 1fr; }
 }
 @media (max-width: 768px){
   .tc-grid{ grid-template-columns: 1fr; }
   .tc-label{ display:none; }
   .tc-info{ grid-template-columns: 1fr; }
-  .tc-metrics{ grid-template-columns: 1fr; }
   .tc-table .num{ text-align:left; }
 }

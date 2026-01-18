@@ -127,6 +127,34 @@ $(function () {
   };
   const hasSucursal = () => /^\d+$/.test(String(sucursalID || ""));
 
+  (function bootstrapLockedSucursalAndPunto(){
+    const domSid = String($("#sucursal_id").val() || "").match(/\d+/)?.[0] || "";
+    if (!sucursalID && domSid) {
+      sucursalID = domSid;
+
+      // guarda para que todo el JS (snapshot, AC, etc.) funcione
+      try {
+        localStorage.setItem("sucursalID", sucursalID);
+        localStorage.setItem("sucursalName", $("#sucursal_autocomplete").val() || "");
+      } catch {}
+
+      // (opcional) log para confirmar
+      console.log("[BOOT] sucursalID tomado del DOM:", sucursalID);
+    }
+
+    const domPp = String($("#puntopago_id").val() || "").match(/\d+/)?.[0] || "";
+    const domPpName = $("#puntopago_autocomplete").val() || "";
+    if (domPp) {
+      try {
+        localStorage.setItem("puntopagoID", domPp);
+        localStorage.setItem("puntopagoName", domPpName);
+        localStorage.setItem("puntopagoSucursalID", sucursalID || domSid || "");
+      } catch {}
+
+      console.log("[BOOT] puntopago tomado del DOM:", domPp, domPpName);
+    }
+  })();
+
   /* ================== Estado venta ================== */
   const productos  = []; // ["12","99"...]
   const cantidades = []; // [ 1, -2, ... ]
