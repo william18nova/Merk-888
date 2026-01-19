@@ -207,7 +207,6 @@ $(function () {
     };
   }
 
-  // ✅ throttle para funciones async (devuelve Promise)
   function throttleAsync(fn, ms=60){
     let lastExec = 0;
     let timer = null;
@@ -270,45 +269,13 @@ $(function () {
     $("#cambio").text("");
     closeModal();
     lastAddedPid = null;
-  }
 
-  // ✅ LIMPIEZA COMPLETA POST-VENTA (SIN RECARGA)
-  function resetAfterSaleFast() {
-    // carrito + total + pagos + modal
-    clearCartAndTotals();
-
-    // cliente
-    try { $("#cliente_id").val(""); } catch {}
-    $inpCliente.val("");
-
-    // producto inputs + pid
-    $inpNombre.val("");
-    if ($inpId && $inpId.length) $inpId.val("");
-    $inpCode.val("");
-    $pid.val("");
-
-    // cantidad principal
-    if ($cantidad && $cantidad.length) $cantidad.val("1");
-
-    // filtro tabla
-    if ($buscarCart && $buscarCart.length) $buscarCart.val("");
-
-    // re-habilitar botones de agregar (si ya hay producto seleccionado, se habilitarán con setProductFields)
-    if ($cantidad && $cantidad.length) $cantidad.prop("disabled", true);
-    if ($agregar && $agregar.length)  $agregar.prop("disabled", true);
-
-    // cerrar autocompletes abiertos
-    try { $inpNombre.autocomplete("close"); } catch(_){}
-    try { $inpCode.autocomplete("close"); } catch(_){}
-    try { if ($inpId && $inpId.length) $inpId.autocomplete("close"); } catch(_){}
-
-    // foco rápido para siguiente venta (prioridad: barras)
+    // ✅ enfoque para seguir vendiendo sin recargar
     queueMicrotask(() => {
-      if ($inpCode && $inpCode.length && $inpCode.is(":visible")) {
-        $inpCode.focus(); $inpCode[0]?.select?.();
-      } else if ($inpNombre && $inpNombre.length) {
-        $inpNombre.focus(); $inpNombre[0]?.select?.();
-      }
+      try {
+        if ($inpCode && $inpCode.length && $inpCode.is(":visible")) { $inpCode.focus(); $inpCode[0]?.select?.(); }
+        else if ($inpNombre && $inpNombre.length) { $inpNombre.focus(); $inpNombre[0]?.select?.(); }
+      } catch {}
     });
   }
 
@@ -1676,7 +1643,6 @@ $(function () {
     removeRowByPid(pid);
   });
 
-  // ✅ Vaciar carrito (limpia pagos también)
   $btnVaciar.on("click", function(){
     if (!productos.length) return;
     if (!confirm("¿Vaciar todo el carrito?")) return;
@@ -2207,7 +2173,7 @@ $(function () {
 
     const isAltEnter = e.key === "Enter" && e.altKey && !e.ctrlKey && !e.metaKey;
     if (isAltEnter) {
-      e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
+      e.preventDefault(); e.stopImmediatePropagation();
       if ($("#myModal").is(":visible")) triggerConfirmPago();
       else $("#generar-venta").trigger("click");
     }
@@ -2353,35 +2319,40 @@ $(function () {
         if (raw === "") $("#monto-recibido").val(to2(totalNum));
       }
 
+      // ✅ cambio SOLO si efectivo y NO mixto y total > 0
       const cambio = (totalNum > 0 && ef && !esMixto)
         ? Math.max(0, recibidoEfectivo - totalNum)
         : 0;
 
-      // ✅ imprimir (sin bloquear la UI)
-      try {
-        let receiptText = (r.receipt_text || "Factura\n\n");
+      // ✅ Mensaje y opción de imprimir (OK imprime, Cancel no imprime)
+      const msgCambio = (totalNum > 0 && ef && !esMixto) ? `\nCambio: ${money(cambio)}` : "";
+      const doPrint = confirm(
+        `✅ Venta registrada\n\nTotal: ${money(totalNum)}${msgCambio}\n\n¿Imprimir factura?`
+      );
 
-        if (totalNum > 0 && ef && !esMixto) {
-          receiptText += `\nRecibido: ${money(recibidoEfectivo)}\nCambio:   ${money(cambio)}\n\n\n\n\n\n\n\n\n\n\n\n\n`;
-        } else {
-          receiptText += `\n\n\n\n\n\n\n\n\n\n\n\n\n`;
-        }
+      // ✅ preparar texto de recibo (solo si elige imprimir)
+      let receiptText = (r.receipt_text || "Factura\n\n");
+      if (doPrint && POS_AGENT_TOKEN) {
+        try {
+          if (totalNum > 0 && ef && !esMixto) {
+            receiptText += `\nRecibido: ${money(recibidoEfectivo)}\nCambio:   ${money(cambio)}\n\n\n\n\n\n\n\n\n\n\n\n\n`;
+          } else {
+            receiptText += `\n\n\n\n\n\n\n\n\n\n\n\n\n`;
+          }
 
-        const p1 = agentKickSafe({ timeout: 450 });
-        const p2 = agentPrintSafe(receiptText, { timeout: 850 });
-        await settleWithDeadline([p1, p2], 250);
-      } catch (_) {}
+          const p1 = agentKickSafe({ timeout: 450 });
+          const p2 = agentPrintSafe(receiptText, { timeout: 850 });
+          await settleWithDeadline([p1, p2], 250);
+        } catch (_) {}
+      }
 
-      // ✅ SIN RECARGAR: limpiar TODO para la siguiente venta
-      resetAfterSaleFast();
+      // ✅ limpiar UI sin recargar
+      clearCartAndTotals();
 
-      // ✅ permitir siguiente venta inmediatamente
+      // ✅ re-habilitar submit para la siguiente venta
       saleSubmitting = false;
       confirmSubmitting = false;
       if ($submitBtn.length) $submitBtn.prop("disabled", false);
-
-      const msgCambio = (totalNum > 0 && ef && !esMixto) ? `\nCambio: ${money(cambio)}` : "";
-      alert(`✅ Venta registrada\n\nTotal: ${money(totalNum)}${msgCambio}`);
     })
     .catch(() => {
       saleSubmitting = false;
