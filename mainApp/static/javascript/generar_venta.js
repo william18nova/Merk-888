@@ -132,13 +132,11 @@ $(function () {
     if (!sucursalID && domSid) {
       sucursalID = domSid;
 
-      // guarda para que todo el JS (snapshot, AC, etc.) funcione
       try {
         localStorage.setItem("sucursalID", sucursalID);
         localStorage.setItem("sucursalName", $("#sucursal_autocomplete").val() || "");
       } catch {}
 
-      // (opcional) log para confirmar
       console.log("[BOOT] sucursalID tomado del DOM:", sucursalID);
     }
 
@@ -246,7 +244,7 @@ $(function () {
 
   const enforceTotalIntegritySoft = throttle(enforceTotalIntegrity, 150);
 
-  /* ================== Modal open/close helpers (se usan en clear) ================== */
+  /* ================== Modal open/close helpers ================== */
   function openModal(){
     $modal.addClass("is-open").show();
     $("body").addClass("modal-open");
@@ -272,6 +270,46 @@ $(function () {
     $("#cambio").text("");
     closeModal();
     lastAddedPid = null;
+  }
+
+  // ✅ LIMPIEZA COMPLETA POST-VENTA (SIN RECARGA)
+  function resetAfterSaleFast() {
+    // carrito + total + pagos + modal
+    clearCartAndTotals();
+
+    // cliente
+    try { $("#cliente_id").val(""); } catch {}
+    $inpCliente.val("");
+
+    // producto inputs + pid
+    $inpNombre.val("");
+    if ($inpId && $inpId.length) $inpId.val("");
+    $inpCode.val("");
+    $pid.val("");
+
+    // cantidad principal
+    if ($cantidad && $cantidad.length) $cantidad.val("1");
+
+    // filtro tabla
+    if ($buscarCart && $buscarCart.length) $buscarCart.val("");
+
+    // re-habilitar botones de agregar (si ya hay producto seleccionado, se habilitarán con setProductFields)
+    if ($cantidad && $cantidad.length) $cantidad.prop("disabled", true);
+    if ($agregar && $agregar.length)  $agregar.prop("disabled", true);
+
+    // cerrar autocompletes abiertos
+    try { $inpNombre.autocomplete("close"); } catch(_){}
+    try { $inpCode.autocomplete("close"); } catch(_){}
+    try { if ($inpId && $inpId.length) $inpId.autocomplete("close"); } catch(_){}
+
+    // foco rápido para siguiente venta (prioridad: barras)
+    queueMicrotask(() => {
+      if ($inpCode && $inpCode.length && $inpCode.is(":visible")) {
+        $inpCode.focus(); $inpCode[0]?.select?.();
+      } else if ($inpNombre && $inpNombre.length) {
+        $inpNombre.focus(); $inpNombre[0]?.select?.();
+      }
+    });
   }
 
   window.addEventListener("pageshow", (e) => {
@@ -709,7 +747,6 @@ $(function () {
     const priceTxt    = hasPrice ? money(cachedPrice) : "—";
     const pendingCls  = hasPrice ? "" : "pending-price";
 
-    // ✅ allow qty negativo y 0 en input (0 lo trataremos como borrar)
     return (
       `<tr data-pid="${pid}" data-price="${hasPrice ? cachedPrice : 0}" data-qty="${qty}" class="${pendingCls}">
          <td>${onlyName(name)}</td>
@@ -751,7 +788,6 @@ $(function () {
       const prevQty = Number(cantidades[idx]) || 0;
       const newQty = prevQty + qty;
 
-      // ✅ si queda 0 => eliminar
       if (newQty === 0) {
         removeRowByPid(pid);
         return;
@@ -1520,7 +1556,6 @@ $(function () {
     const oldQty = Number($row.attr("data-qty")) || Number($row.find(".qty-input").val()) || 0;
     const wasCounted = !!$row.data("counted");
 
-    // ✅ 0 => eliminar fila
     if (newQty === 0) {
       removeRowByPid(pid);
       return;
@@ -1550,22 +1585,20 @@ $(function () {
   }
 
   function sanitizeRowQtyInput(el){
-    // ✅ permite '-' solo al inicio
     const raw = String(el.value || "");
     const cleaned = raw
       .replace(/[^\d-]/g, "")
-      .replace(/(?!^)-/g, ""); // elimina '-' no inicial
+      .replace(/(?!^)-/g, "");
     el.value = cleaned;
     return cleaned;
   }
 
-  // ✅ IMPORTANTE: aquí sí permitimos 0 para borrar fila (coherente con applyQtyInstant)
   function commitRowQtyInput(el){
     const raw = String(el.value || "").trim();
     const n = parseInt(raw, 10);
     if (!Number.isFinite(n)) { el.value = "1"; return 1; }
     el.value = String(n);
-    return n; // puede ser 0 o negativo
+    return n;
   }
 
   $tbody.on("input change", ".qty-input", function () {
@@ -1928,7 +1961,6 @@ $(function () {
   function buildPagosJSONOrError(){
     const total = safeNumber(runningTotal);
 
-    // ✅ si total <= 0 => NO exigir pagos (coincide con backend)
     if (total <= 0) return { pagos: [] };
 
     const medios = getCheckedMedios();
@@ -1993,14 +2025,13 @@ $(function () {
   }
 
   /* ================== ✅ MODAL INSTANT / o BYPASS si total <= 0 ================== */
-  let confirmSubmitting = false; // ✅ se resetea al abrir modal y en fallos de submit
+  let confirmSubmitting = false;
   $("#generar-venta").off("click").on("click", () => {
     if (!productos.length) { alert("Agregue productos."); return; }
     if (!hasSucursal() || !$("#puntopago_id").val()) { alert("Seleccione sucursal y punto de pago."); return; }
 
     enforceTotalIntegrity();
 
-    // ✅ total <= 0 => no pagos, submit directo (backend no exige pagos)
     if (safeNumber(runningTotal) <= 0) {
       $hidPagos.val("[]");
       $hidMedioPago.val("");
@@ -2026,10 +2057,9 @@ $(function () {
     if ($mixMode.length) $mixMode.prop("checked", false);
     $modal.attr("data-mixto","0");
 
-    // default: efectivo
     $modal.find(".pm-check[value='efectivo']").prop("checked", true);
 
-    confirmSubmitting = false; // ✅ reset aquí
+    confirmSubmitting = false;
     const $btnConfirm = $("#confirmar-pago");
     $modal.attr("data-loading-prices","0");
     $btnConfirm.prop("disabled", false);
@@ -2303,7 +2333,7 @@ $(function () {
     .then(async (r) => {
       if (!r || !r.success) {
         saleSubmitting = false;
-        confirmSubmitting = false; // ✅ permitir reintento
+        confirmSubmitting = false;
         if ($submitBtn.length) $submitBtn.prop("disabled", false);
         alert((r && r.error) || "Error");
         return;
@@ -2323,7 +2353,6 @@ $(function () {
         if (raw === "") $("#monto-recibido").val(to2(totalNum));
       }
 
-      // ✅ cambio SOLO si efectivo y NO mixto y total > 0
       const cambio = (totalNum > 0 && ef && !esMixto)
         ? Math.max(0, recibidoEfectivo - totalNum)
         : 0;
@@ -2334,8 +2363,7 @@ $(function () {
 
         if (totalNum > 0 && ef && !esMixto) {
           receiptText += `\nRecibido: ${money(recibidoEfectivo)}\nCambio:   ${money(cambio)}\n\n\n\n\n\n\n\n\n\n\n\n\n`;
-        }
-        else{
+        } else {
           receiptText += `\n\n\n\n\n\n\n\n\n\n\n\n\n`;
         }
 
@@ -2344,16 +2372,20 @@ $(function () {
         await settleWithDeadline([p1, p2], 250);
       } catch (_) {}
 
-      clearCartAndTotals();
+      // ✅ SIN RECARGAR: limpiar TODO para la siguiente venta
+      resetAfterSaleFast();
+
+      // ✅ permitir siguiente venta inmediatamente
+      saleSubmitting = false;
+      confirmSubmitting = false;
+      if ($submitBtn.length) $submitBtn.prop("disabled", false);
 
       const msgCambio = (totalNum > 0 && ef && !esMixto) ? `\nCambio: ${money(cambio)}` : "";
       alert(`✅ Venta registrada\n\nTotal: ${money(totalNum)}${msgCambio}`);
-
-      setTimeout(() => { location.replace(location.href); }, 90);
     })
     .catch(() => {
       saleSubmitting = false;
-      confirmSubmitting = false; // ✅ permitir reintento
+      confirmSubmitting = false;
       if ($submitBtn.length) $submitBtn.prop("disabled", false);
       alert("Error de red");
     });
@@ -2430,16 +2462,12 @@ $(function () {
 
   /* =======================================================================================
      ✅ ESCÁNER CÁMARA UNIVERSAL (BarcodeDetector + ZXing fallback) — iPhone/Safari OK
-     - BarcodeDetector: Chrome/Android + algunos navegadores
-     - ZXing fallback: iOS Safari, etc.
      ======================================================================================= */
   let camStream = null;
   let camRunning = false;
 
-  // BarcodeDetector
   let camDetector = null;
 
-  // ZXing fallback
   let zxingReader = null;
   let zxingLoaded = false;
 
@@ -2454,12 +2482,11 @@ $(function () {
   }
 
   function ensureCamUI() {
-    // Botón (si no existe en HTML, lo creamos al lado del input de código)
     if (!document.getElementById("btn-scan-cam")) {
       const btn = document.createElement("button");
       btn.type = "button";
       btn.id = "btn-scan-cam";
-      btn.className = "btn btn-chip"; // usa tus clases (CSS lo deja como iconito si quieres)
+      btn.className = "btn btn-chip";
       btn.innerHTML = "📷";
 
       const ref = document.getElementById("codigo_o_barras");
@@ -2467,7 +2494,6 @@ $(function () {
       else document.body.appendChild(btn);
     }
 
-    // Overlay + video (si no existe)
     if (!document.getElementById("cam-scan-overlay")) {
       const overlay = document.createElement("div");
       overlay.id = "cam-scan-overlay";
@@ -2502,7 +2528,7 @@ $(function () {
 
       const video = document.createElement("video");
       video.id = "cam-scan-video";
-      video.setAttribute("playsinline", "true"); // iOS
+      video.setAttribute("playsinline", "true");
       video.muted = true;
       video.autoplay = true;
       video.style.cssText = `
@@ -2621,7 +2647,6 @@ $(function () {
     const reader = await getZXingReader();
     if (!reader) return false;
 
-    // Loop suave: intenta decodeOnce; si falla, vuelve a intentar
     const loop = async () => {
       if (!camRunning) return;
       try {
@@ -2633,9 +2658,7 @@ $(function () {
           pushCodeIntoCodeInputAndAdd(text);
           return;
         }
-      } catch (_) {
-        // ZXing lanza error cuando no detecta; seguimos intentando
-      }
+      } catch (_) {}
       requestAnimationFrame(loop);
     };
 
@@ -2674,7 +2697,6 @@ $(function () {
     video.srcObject = camStream;
     try { await video.play(); } catch {}
 
-    // Preferimos BarcodeDetector, si no hay: ZXing
     const okBD = await startWithBarcodeDetector(video, hint);
     if (okBD) return;
 
@@ -2703,12 +2725,10 @@ $(function () {
     try { zxingReader?.reset?.(); } catch(_){}
   }
 
-  // bind botón
   $(document).off("click.scanCam").on("click.scanCam", "#btn-scan-cam", function(){
     startCameraScanner();
   });
 
-  // atajo: Alt + 7 abre cámara (si no estás en modal)
   $(document).on("keydown", function(e){
     if ($("#myModal").is(":visible")) return;
     if (!e.altKey || e.ctrlKey || e.metaKey) return;
