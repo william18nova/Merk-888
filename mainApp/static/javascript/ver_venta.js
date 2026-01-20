@@ -15,28 +15,6 @@
     return document.querySelector("input[name='csrfmiddlewaretoken']")?.value || "";
   }
 
-  async function postAction(actionValue) {
-    const csrf = getCSRFToken();
-    const fd = new FormData();
-    fd.append("csrfmiddlewaretoken", csrf);
-    fd.append("accion", actionValue);
-
-    const resp = await fetch(window.location.href, {
-      method: "POST",
-      headers: { "X-Requested-With": "XMLHttpRequest" },
-      body: fd
-    });
-
-    let data = null;
-    try { data = await resp.json(); } catch (e) { /* ignore */ }
-
-    if (!resp.ok) {
-      const msg = (data && (data.error || data.detail)) ? (data.error || data.detail) : "Error en servidor.";
-      throw new Error(msg);
-    }
-    return data || {};
-  }
-
   /* =========================
      DOM
      ========================= */
@@ -178,25 +156,41 @@
   });
 
   /* =========================
-     ✅ IMPRIMIR FACTURA
-     - Genera ticket desde el backend: accion=imprimir_factura (JSON {ok,text})
-     - Si existe POS_AGENT_PRINT_URL -> imprime por POS Agent
-     - Si no -> fallback print navegador
+     ✅ IMPRIMIR DIRECTO COMO GENERAR VENTA (POS AGENT)
+     Flujo:
+       1) POST a TicketTextoView (ticketTextoUrl) con venta_id -> receipt_text
+       2) POST al POS Agent -> imprime en la térmica
      ========================= */
 
-  async function getTicketTextFromBackend() {
-    const data = await postAction("imprimir_factura");
-    if (!data || !data.ok) throw new Error(data?.error || "No se pudo generar el texto de la factura.");
-    return String(data.text || "");
+  async function fetchTicketText(ventaId) {
+    const csrf = getCSRFToken();
+    const fd = new FormData();
+    fd.append("csrfmiddlewaretoken", csrf);
+    fd.append("venta_id", String(ventaId));
+
+    const r = await fetch(window.ticketTextoUrl, {
+      method: "POST",
+      headers: { "X-Requested-With": "XMLHttpRequest" },
+      body: fd
+    });
+
+    const data = await r.json().catch(() => ({}));
+
+    if (!r.ok || !data.success) {
+      throw new Error(data.error || "No se pudo generar el texto del ticket.");
+    }
+    return String(data.receipt_text || "");
   }
 
-  async function imprimirConPosAgent(text) {
-    const url = (window.POS_AGENT_PRINT_URL || "").trim();
-    if (!url) return false;
+  async function posAgentPrint(text) {
+    const base = (window.POS_AGENT_URL || "").trim().replace(/\/$/, "");
+    if (!base) return false;
 
-    // opcional (si tienes auth)
+    // ✅ Ajusta si tu POS Agent usa otra ruta
+    const PRINT_PATH = "/print";
+    const url = base + PRINT_PATH;
+
     const token = (window.POS_AGENT_TOKEN || "").trim();
-
     const headers = { "Content-Type": "application/json" };
     if (token) headers["Authorization"] = `Bearer ${token}`;
 
@@ -206,9 +200,7 @@
       body: JSON.stringify({ text })
     });
 
-    if (!r.ok) {
-      throw new Error("POS Agent no respondió correctamente al imprimir.");
-    }
+    if (!r.ok) throw new Error("POS Agent no respondió correctamente al imprimir.");
     return true;
   }
 
@@ -228,24 +220,30 @@
   btnPrint?.addEventListener("click", async (e) => {
     e.preventDefault();
 
+    const ventaId = btnPrint.getAttribute("data-venta-id");
+
     try {
       btnPrint.disabled = true;
 
-      const text = await getTicketTextFromBackend();
+      if (!ventaId) throw new Error("No encontré el ID de la venta.");
 
-      // 1) Intentar POS Agent
+      // 1) Texto desde Django
+      const text = await fetchTicketText(ventaId);
+
+      // 2) Intentar POS Agent (directo)
       try {
-        const ok = await imprimirConPosAgent(text);
+        const ok = await posAgentPrint(text);
         if (ok) return;
       } catch (err) {
         console.warn("POS Agent falló, usando fallback navegador:", err);
       }
 
-      // 2) Fallback navegador
+      // 3) Fallback navegador
       imprimirFallbackBrowser(text);
 
     } catch (err) {
       alert("⚠️ " + (err?.message || "Error al imprimir."));
+      console.error(err);
     } finally {
       btnPrint.disabled = false;
     }

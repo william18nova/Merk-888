@@ -193,13 +193,16 @@
 </div>
 
 <script>
-  // ✅ Total para validación mixto (tu JS lo usa)
+  // ✅ Total para validación mixto
   window.VENTA_TOTAL = "{{ venta.total|floatformat:2 }}";
 
-  // ✅ POS Agent: si está en blanco, el JS hace fallback a imprimir en navegador
-  // Ejemplo local: "http://127.0.0.1:5055/print"
-  window.POS_AGENT_PRINT_URL = "{{ POS_AGENT_PRINT_URL|default:'' }}";
-  window.POS_AGENT_TOKEN     = "{{ POS_AGENT_TOKEN|default:'' }}";
+  // ✅ URL para pedir el texto del ticket (TicketTextoView)
+  window.ticketTextoUrl = "{% url 'ticket_texto' %}";
+
+  // ✅ POS Agent base URL (NO incluyas /print aquí)
+  // Ejemplo: http://127.0.0.1:5055
+  window.POS_AGENT_URL   = "{{ POS_AGENT_URL|default:'' }}";
+  window.POS_AGENT_TOKEN = "{{ POS_AGENT_TOKEN|default:'' }}";
 </script>
 
 <script src="{% static 'javascript/ver_venta.js' %}"></script>
