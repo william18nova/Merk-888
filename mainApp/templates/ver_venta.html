@@ -1,18 +1,19 @@
 {% extends "base.html" %}
 {% load static %}
 
-{% block title %}Detalle Venta #{{ venta.ventaid }}{% endblock %}
+{% block title %}Detalle Venta #{{ venta.pk }}{% endblock %}
 
 {% block extra_head %}
   <link rel="stylesheet" href="{% static 'css/generar_venta.css' %}">
   <link rel="stylesheet" href="{% static 'css/ver_venta.css' %}">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"/>
 {% endblock %}
 
 {% block content %}
 <div class="venta-card">
   <h1 class="venta-card__title">
     <i class="fas fa-file-invoice-dollar me-2"></i>
-    Detalle de la Venta #{{ venta.ventaid }}
+    Detalle de la Venta #{{ venta.pk }}
   </h1>
 
   <form method="post" id="venta-form">
@@ -48,14 +49,17 @@
         <label>Cliente</label>
         <input readonly value="{% if venta.clienteid %}{{ venta.clienteid.nombre }} {{ venta.clienteid.apellido }}{% else %}N/A{% endif %}">
       </div>
+
       <div>
         <label>Empleado</label>
         <input readonly value="{{ venta.empleadoid.nombre }} {{ venta.empleadoid.apellido }}">
       </div>
+
       <div>
         <label>Sucursal</label>
         <input readonly value="{{ venta.sucursalid.nombre }}">
       </div>
+
       <div>
         <label>Punto de Pago</label>
         <input readonly value="{{ venta.puntopagoid.nombre }}">
@@ -166,6 +170,7 @@
 
     <div class="venta-footer">
       <h3>Total actual: <span>${{ venta.total|floatformat:2 }}</span></h3>
+
       <div class="btn-group">
         <button type="submit" class="btn-primary-alt" name="accion" value="guardar">
           <i class="fas fa-save me-1"></i> Guardar cambios / devolución
@@ -188,11 +193,14 @@
 </div>
 
 <script>
+  // ✅ Total para validación mixto (tu JS lo usa)
   window.VENTA_TOTAL = "{{ venta.total|floatformat:2 }}";
-  window.imprimirFacturaUrl = "{% url 'imprimir_factura' %}";
-  window.ticketTextoUrl     = "{% url 'ticket_texto' %}";
-  window.POS_AGENT_URL      = "{{ POS_AGENT_URL|default:'' }}";
-  window.POS_AGENT_TOKEN    = "{{ POS_AGENT_TOKEN|default:'' }}";
+
+  // ✅ POS Agent: si está en blanco, el JS hace fallback a imprimir en navegador
+  // Ejemplo local: "http://127.0.0.1:5055/print"
+  window.POS_AGENT_PRINT_URL = "{{ POS_AGENT_PRINT_URL|default:'' }}";
+  window.POS_AGENT_TOKEN     = "{{ POS_AGENT_TOKEN|default:'' }}";
 </script>
+
 <script src="{% static 'javascript/ver_venta.js' %}"></script>
 {% endblock %}

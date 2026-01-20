@@ -4479,6 +4479,109 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin, View):
         return s.quantize(Q2)
 
     # -------------------------
+    # ✅ NUEVO: construir texto de factura/ticket para imprimir
+    # -------------------------
+    @staticmethod
+    def _money(n) -> str:
+        try:
+            q = Decimal(n or 0)
+        except Exception:
+            q = Decimal("0")
+        return f"${int(q):,}".replace(",", ".")
+
+    @classmethod
+    def _build_ticket_text_from_venta(cls, venta) -> str:
+        """
+        Texto tipo ticket (80mm aprox). Ajusta encabezados a tu gusto.
+        """
+        WIDTH = 48
+
+        def line(txt=""):
+            t = str(txt or "")
+            return t[:WIDTH]
+
+        def lr(left, right):
+            left = str(left or "")
+            right = str(right or "")
+            space = max(1, WIDTH - len(left) - len(right))
+            return left + (" " * space) + right
+
+        ahora = timezone.localtime(venta.fechaventa) if getattr(venta, "fechaventa", None) else timezone.localtime()
+
+        # Detalles
+        detalles = (
+            DetalleVenta.objects
+            .filter(ventaid=venta)
+            .select_related("productoid")
+            .order_by("pk")   # ✅ siempre sirve aunque tu PK no se llame id
+        )
+
+        # Pagos
+        pagos = []
+        medio = (venta.mediopago or "").strip().lower()
+        total = (venta.total or Decimal("0.00")).quantize(Q2)
+
+        if medio == "mixto":
+            rows = (
+                PagoVenta.objects
+                .filter(ventaid=venta)
+                .values("medio_pago")
+                .annotate(total=Sum("monto"))
+            )
+            for r in rows:
+                mp = (r["medio_pago"] or "").strip().lower()
+                mt = (r["total"] or Decimal("0.00")).quantize(Q2)
+                if mt > 0:
+                    pagos.append((mp, mt))
+        else:
+            if total > 0 and medio:
+                pagos.append((medio, total))
+
+        # Cajero
+        cajero = ""
+        if getattr(venta, "empleadoid", None):
+            cajero = str(venta.empleadoid)
+        elif getattr(venta, "cajeroid", None):
+            cajero = str(venta.cajeroid)
+        else:
+            cajero = "—"
+
+        # Cliente
+        cliente = str(venta.clienteid) if getattr(venta, "clienteid", None) else "—"
+
+        out = []
+        out.append(line("MERK888"))
+        out.append(line("FACTURA / TICKET"))
+        out.append(line("-" * WIDTH))
+        out.append(line(f"Venta #{venta.pk}"))
+        out.append(line(f"Fecha: {ahora.strftime('%Y-%m-%d %H:%M')}"))
+        out.append(line(f"Cajero: {cajero}"))
+        out.append(line(f"Cliente: {cliente}"))
+        out.append(line("-" * WIDTH))
+        out.append(line("ITEM                         CANT   SUBT"))
+
+        for d in detalles:
+            nombre = (getattr(d.productoid, "nombre", "") or "Producto")[:28]
+            cant = int(d.cantidad or 0)
+            sub = (Decimal(cant) * (d.preciounitario or Decimal("0.00"))).quantize(Q2)
+            out.append(line(f"{nombre:<28} {cant:>4} {cls._money(sub):>7}"))
+
+        out.append(line("-" * WIDTH))
+        out.append(lr("TOTAL", cls._money(total)))
+        out.append(line("-" * WIDTH))
+
+        if pagos:
+            out.append(line("PAGOS:"))
+            for mp, mt in pagos:
+                out.append(lr(f"- {mp.upper()}", cls._money(mt)))
+
+        out.append(line("-" * WIDTH))
+        out.append(line("Gracias por su compra"))
+        out.append(line("\n\n"))  # feed
+
+        return "\n".join(out)
+
+    # -------------------------
     # Pagos mixtos: validar/guardar
     # -------------------------
     def _validar_pagos_mixtos(self, venta, pagos_formset):
@@ -4512,10 +4615,6 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin, View):
             PagoVenta.objects.bulk_create(nuevos)
 
     def _guardar_pago_unico(self, venta):
-        """
-        Si la venta NO es mixta, guardamos 1 solo pago en venta_pagos
-        (y borramos cualquier registro previo).
-        """
         PagoVenta.objects.filter(ventaid=venta).delete()
 
         medio = (venta.mediopago or "").strip().lower()
@@ -4524,130 +4623,9 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin, View):
         if total > 0 and medio:
             PagoVenta.objects.create(
                 ventaid=venta,
-                medio_pago=medio,   # ✅ ESTE ES EL CAMPO REAL EN DJANGO
+                medio_pago=medio,
                 monto=total
             )
-
-    # -------------------------
-    # Reintegro mixto: validar contra lo pagado actual
-    # -------------------------
-    def _pagado_actual_por_medio_locked(self, venta) -> dict:
-        out = {k: Decimal("0.00") for k, _ in MEDIOS_PAGO}
-        qs = PagoVenta.objects.select_for_update().filter(ventaid=venta)
-
-        for p in qs:
-            medio = (p.medio_pago or "").strip().lower()
-            if medio in out:
-                out[medio] += (p.monto or Decimal("0.00"))
-
-        for k in out:
-            out[k] = out[k].quantize(Q2)
-        return out
-
-    def _validar_reintegro_mixto(self, venta, reintegro_formset, total_reintegro: Decimal):
-        if total_reintegro <= 0:
-            return True, None, {}
-
-        if not reintegro_formset.is_valid():
-            return False, "Montos de reintegro inválidos.", {}
-
-        disponibles = self._pagado_actual_por_medio_locked(venta)
-
-        suma = Decimal("0.00")
-        reintegro_map = {}
-
-        for row in reintegro_formset.cleaned_data:
-            metodo = (row.get("medio_pago") or "").strip().lower()
-            monto = (row.get("monto") or Decimal("0.00")).quantize(Q2)
-
-            if monto < 0:
-                return False, "No puedes poner reintegros negativos.", {}
-
-            if monto > 0:
-                if metodo not in disponibles:
-                    return False, f"Método inválido: {metodo}", {}
-                if monto > disponibles[metodo]:
-                    return False, f"El reintegro en {metodo} supera lo disponible ({disponibles[metodo]}).", {}
-                reintegro_map[metodo] = monto
-
-            suma += monto
-
-        suma = suma.quantize(Q2)
-        if suma != total_reintegro:
-            return False, f"La suma del reintegro ({suma}) debe ser igual al total a reintegrar ({total_reintegro}).", {}
-
-        return True, None, reintegro_map
-
-    def _restar_reintegro_de_pagos(self, venta, reintegro_map: dict):
-        """
-        Resta en venta_pagos EXACTAMENTE lo que el usuario puso.
-        """
-        for metodo, monto_restar in reintegro_map.items():
-            restante = (monto_restar or Decimal("0.00")).quantize(Q2)
-            if restante <= 0:
-                continue
-
-            qs = (
-                PagoVenta.objects
-                .select_for_update()
-                .filter(ventaid=venta, medio_pago=metodo)  # ✅
-                .order_by("id")
-            )
-
-            for p in qs:
-                if restante <= 0:
-                    break
-                actual = (p.monto or Decimal("0.00")).quantize(Q2)
-
-                if actual <= restante:
-                    restante = (restante - actual).quantize(Q2)
-                    p.delete()
-                else:
-                    p.monto = (actual - restante).quantize(Q2)
-                    p.save(update_fields=["monto"])
-                    restante = Decimal("0.00")
-
-            if restante > 0:
-                raise ValueError(f"No hay suficiente saldo en {metodo} para restar {monto_restar}.")
-
-    
-
-    # -------------------------
-    # Cambio de medio (no-mixto -> no-mixto) mueve dinero en el turno
-    
-    # -------------------------
-    def _mover_turno_por_cambio_medio(self, venta, metodo_old: str, metodo_new: str, monto: Decimal):
-        metodo_old = (metodo_old or "").strip().lower()
-        metodo_new = (metodo_new or "").strip().lower()
-        monto = (monto or Decimal("0.00")).quantize(Q2)
-
-        if monto <= 0 or not metodo_old or not metodo_new or metodo_old == metodo_new:
-            return
-
-        turno = (
-            TurnoCaja.objects
-            .select_for_update()
-            .filter(puntopago_id=venta.puntopagoid_id, estado__in=["ABIERTO", "CIERRE"])
-            .order_by("-inicio")
-            .first()
-        )
-        if not turno:
-            return
-
-        # mueve esperado por medio
-        CambioDevolucion._upsert_turno_medio_delta(turno, metodo_old, -monto)
-        CambioDevolucion._upsert_turno_medio_delta(turno, metodo_new, +monto)
-
-        # mueve ventas_efectivo / ventas_no_efectivo
-        if metodo_old == "efectivo":
-            TurnoCaja.objects.filter(pk=turno.pk).update(ventas_efectivo=F("ventas_efectivo") - monto)
-        else:
-            TurnoCaja.objects.filter(pk=turno.pk).update(ventas_no_efectivo=F("ventas_no_efectivo") - monto)
-
-        if metodo_new == "efectivo":
-            TurnoCaja.objects.filter(pk=turno.pk).update(ventas_efectivo=F("ventas_efectivo") + monto)
-        else:
-            TurnoCaja.objects.filter(pk=turno.pk).update(ventas_no_efectivo=F("ventas_no_efectivo") + monto)
 
     # -------------------------
     # GET
@@ -4693,6 +4671,8 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin, View):
             "reintegro_formset": reintegro_formset,
             "es_mixto": self._venta_es_mixta(venta),
             "medios_pago": MEDIOS_PAGO,
+            # ✅ Para JS / imprimir
+            "venta_total": (venta.total or Decimal("0.00")).quantize(Q2),
         })
 
     # -------------------------
@@ -4701,9 +4681,20 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin, View):
     @transaction.atomic
     def post(self, request, venta_id):
         venta = Venta.objects.select_for_update().get(pk=venta_id)
-        detalles = list(DetalleVenta.objects.filter(ventaid=venta))
 
         accion = (request.POST.get("accion") or "").strip()
+
+        # ✅ 0) IMPRIMIR FACTURA (no toca devoluciones/pagos)
+        if accion == "imprimir_factura":
+            try:
+                text = self._build_ticket_text_from_venta(venta)
+                return JsonResponse({"ok": True, "text": text, "venta_id": venta.pk})
+            except Exception as e:
+                return JsonResponse({"ok": False, "error": str(e)}, status=400)
+
+        # ---- tu flujo normal abajo ----
+        detalles = list(DetalleVenta.objects.filter(ventaid=venta))
+
         nuevo_mediopago = (request.POST.get("mediopago") or "").strip().lower()
 
         dev_formset = DevolucionFormSet(request.POST, prefix="dev")
@@ -4717,7 +4708,6 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin, View):
             venta.mediopago = nuevo_mediopago
             venta.save(update_fields=["mediopago"])
 
-            # ✅ si ambos no-mixto: mover dinero en turno por el total actual
             if metodo_old != "mixto" and nuevo_mediopago != "mixto":
                 self._mover_turno_por_cambio_medio(venta, metodo_old, nuevo_mediopago, venta.total)
 
@@ -4753,7 +4743,6 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin, View):
             if not det:
                 continue
 
-            # ✅ NO permitir devolver más de lo vendido
             if cant > int(det.cantidad):
                 messages.error(request, f"⚠️ No puedes devolver {cant} porque solo se vendieron {det.cantidad}.")
                 return redirect(reverse_lazy("ver_venta", kwargs={"venta_id": venta_id}))
@@ -4761,41 +4750,29 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin, View):
             devoluciones.append({"detalle": det, "cantidad": cant})
 
         if not devoluciones:
-            # Solo guardó medio/pagos
             return redirect(reverse_lazy("visualizar_ventas"))
 
         total_reintegro = self._calcular_total_reintegro(detalles, dev_formset)
 
-        # 3) Devolver dinero + stock + turno + registrar cambio + total venta
         if self._venta_es_mixta(venta):
             ok, err, reintegro_map = self._validar_reintegro_mixto(venta, reintegro_formset, total_reintegro)
             if not ok:
                 messages.error(request, f"⚠️ {err}")
                 return redirect(reverse_lazy("ver_venta", kwargs={"venta_id": venta_id}))
 
-            # A) devolución completa
             CambioDevolucion.registrar_devolucion(venta, devoluciones, reintegro_map=reintegro_map)
-
-            # B) restar de venta_pagos según reintegro_map
             self._restar_reintegro_de_pagos(venta, reintegro_map)
 
         else:
-            # no mixto
             CambioDevolucion.registrar_devolucion(venta, devoluciones)
-
-            # sincronizar pago único con nuevo total
             venta.refresh_from_db()
             self._guardar_pago_unico(venta)
 
         messages.success(request, "✅ Devolución registrada correctamente.")
         return redirect(reverse_lazy("visualizar_ventas"))
-    
+
     @staticmethod
     def _get_field_esperado_name(obj) -> str:
-        """
-        Detecta el nombre real del campo esperado en TurnoCajaMedio
-        (por si en tu modelo se llama distinto).
-        """
         for name in ("esperado", "monto_esperado", "monto", "total", "valor"):
             if hasattr(obj, name):
                 return name

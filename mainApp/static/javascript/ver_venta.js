@@ -1,6 +1,9 @@
 (function () {
   "use strict";
 
+  /* =========================
+     Helpers
+     ========================= */
   function parseMoney(v) {
     const s = String(v ?? "").trim().replace(",", ".");
     const n = Number(s);
@@ -8,6 +11,35 @@
   }
   function to2(n) { return (Math.round(n * 100) / 100).toFixed(2); }
 
+  function getCSRFToken() {
+    return document.querySelector("input[name='csrfmiddlewaretoken']")?.value || "";
+  }
+
+  async function postAction(actionValue) {
+    const csrf = getCSRFToken();
+    const fd = new FormData();
+    fd.append("csrfmiddlewaretoken", csrf);
+    fd.append("accion", actionValue);
+
+    const resp = await fetch(window.location.href, {
+      method: "POST",
+      headers: { "X-Requested-With": "XMLHttpRequest" },
+      body: fd
+    });
+
+    let data = null;
+    try { data = await resp.json(); } catch (e) { /* ignore */ }
+
+    if (!resp.ok) {
+      const msg = (data && (data.error || data.detail)) ? (data.error || data.detail) : "Error en servidor.";
+      throw new Error(msg);
+    }
+    return data || {};
+  }
+
+  /* =========================
+     DOM
+     ========================= */
   const form = document.getElementById("venta-form");
   const selectMedio = document.getElementById("id_mediopago");
 
@@ -22,6 +54,11 @@
   const reintSumaEl = document.getElementById("reintegro-suma");
   const errReintEl = document.getElementById("mixto-error-reintegro");
 
+  const btnPrint = document.getElementById("btn-imprimir-factura");
+
+  /* =========================
+     Mixto UI
+     ========================= */
   function esMixto() {
     return ((selectMedio?.value || "").trim().toLowerCase() === "mixto");
   }
@@ -137,6 +174,80 @@
         alert(`⚠️ La suma de la devolución (${to2(sumaReint)}) debe ser igual al total a devolver (${to2(totalDev)}).`);
         return;
       }
+    }
+  });
+
+  /* =========================
+     ✅ IMPRIMIR FACTURA
+     - Genera ticket desde el backend: accion=imprimir_factura (JSON {ok,text})
+     - Si existe POS_AGENT_PRINT_URL -> imprime por POS Agent
+     - Si no -> fallback print navegador
+     ========================= */
+
+  async function getTicketTextFromBackend() {
+    const data = await postAction("imprimir_factura");
+    if (!data || !data.ok) throw new Error(data?.error || "No se pudo generar el texto de la factura.");
+    return String(data.text || "");
+  }
+
+  async function imprimirConPosAgent(text) {
+    const url = (window.POS_AGENT_PRINT_URL || "").trim();
+    if (!url) return false;
+
+    // opcional (si tienes auth)
+    const token = (window.POS_AGENT_TOKEN || "").trim();
+
+    const headers = { "Content-Type": "application/json" };
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+
+    const r = await fetch(url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ text })
+    });
+
+    if (!r.ok) {
+      throw new Error("POS Agent no respondió correctamente al imprimir.");
+    }
+    return true;
+  }
+
+  function imprimirFallbackBrowser(text) {
+    const w = window.open("", "_blank");
+    if (!w) {
+      alert("⚠️ El navegador bloqueó la ventana emergente para imprimir.");
+      return;
+    }
+    w.document.write("<pre style='font:12px/1.3 monospace;white-space:pre-wrap;margin:16px'></pre>");
+    w.document.querySelector("pre").textContent = text;
+    w.document.close();
+    w.focus();
+    w.print();
+  }
+
+  btnPrint?.addEventListener("click", async (e) => {
+    e.preventDefault();
+
+    try {
+      btnPrint.disabled = true;
+
+      const text = await getTicketTextFromBackend();
+
+      // 1) Intentar POS Agent
+      try {
+        const ok = await imprimirConPosAgent(text);
+        if (ok) return;
+      } catch (err) {
+        console.warn("POS Agent falló, usando fallback navegador:", err);
+      }
+
+      // 2) Fallback navegador
+      imprimirFallbackBrowser(text);
+
+    } catch (err) {
+      alert("⚠️ " + (err?.message || "Error al imprimir."));
+    } finally {
+      btnPrint.disabled = false;
     }
   });
 
