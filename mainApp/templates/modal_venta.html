@@ -30,7 +30,8 @@
           <input type="checkbox" class="pm-check" value="nequi">
           <span>Nequi</span>
         </label>
-        <input type="number" class="pm-amt" data-medio="nequi" min="0" step="100" placeholder="0" disabled>
+        <input type="number" class="pm-amt" data-medio="nequi" min="0" step="100"
+               inputmode="decimal" placeholder="0" autocomplete="off" disabled>
       </div>
 
       <!-- DAVIPLATA -->
@@ -39,7 +40,8 @@
           <input type="checkbox" class="pm-check" value="daviplata">
           <span>Daviplata</span>
         </label>
-        <input type="number" class="pm-amt" data-medio="daviplata" min="0" step="100" placeholder="0" disabled>
+        <input type="number" class="pm-amt" data-medio="daviplata" min="0" step="100"
+               inputmode="decimal" placeholder="0" autocomplete="off" disabled>
       </div>
 
       <!-- EFECTIVO -->
@@ -48,12 +50,14 @@
           <input type="checkbox" class="pm-check" value="efectivo">
           <span>Efectivo</span>
         </label>
-        <input type="number" class="pm-amt" data-medio="efectivo" min="0" step="100" placeholder="0" disabled>
+        <input type="number" class="pm-amt" data-medio="efectivo" min="0" step="100"
+               inputmode="decimal" placeholder="0" autocomplete="off" disabled>
       </div>
 
-      <div id="efectivo-options" style="display:none; margin:.6rem 0 1rem;">
+      <!-- Solo NO mixto -->
+      <div id="efectivo-options">
         <label for="monto-recibido">Monto recibido (solo efectivo)</label>
-        <input type="number" id="monto-recibido" min="0" step="100" placeholder="0">
+        <input type="number" id="monto-recibido" min="0" step="100" inputmode="decimal" placeholder="0" autocomplete="off">
         <p id="cambio" class="cambio-text"></p>
       </div>
 
@@ -63,7 +67,8 @@
           <input type="checkbox" class="pm-check" value="tarjeta">
           <span>Tarjeta</span>
         </label>
-        <input type="number" class="pm-amt" data-medio="tarjeta" min="0" step="100" placeholder="0" disabled>
+        <input type="number" class="pm-amt" data-medio="tarjeta" min="0" step="100"
+               inputmode="decimal" placeholder="0" autocomplete="off" disabled>
       </div>
 
       <!-- BANCO CAJA SOCIAL -->
@@ -72,7 +77,8 @@
           <input type="checkbox" class="pm-check" value="banco_caja_social">
           <span>Banco Caja Social</span>
         </label>
-        <input type="number" class="pm-amt" data-medio="banco_caja_social" min="0" step="100" placeholder="0" disabled>
+        <input type="number" class="pm-amt" data-medio="banco_caja_social" min="0" step="100"
+               inputmode="decimal" placeholder="0" autocomplete="off" disabled>
       </div>
 
       <!-- ✅ PAGO MIXTO (SIEMPRE ÚLTIMO) -->
@@ -89,8 +95,8 @@
     </div>
 
     <div style="margin-top:.8rem">
-      <div id="mix-error" style="display:none; color:#ff6b6b; font-weight:600; margin-bottom:.6rem;"></div>
-      <button id="confirmar-pago" class="btn-confirmar">CONFIRMAR PAGO</button>
+      <div id="mix-error"></div>
+      <button type="button" id="confirmar-pago" class="btn-confirmar">CONFIRMAR PAGO</button>
     </div>
   </div>
 </div>

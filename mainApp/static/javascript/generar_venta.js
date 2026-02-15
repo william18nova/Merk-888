@@ -45,6 +45,21 @@ $(function () {
   const $modal      = $("#myModal");
   const $modalTotal = $("#modal-total");
 
+  /* ================== Helpers modal state (NEW) ================== */
+  function isModalOpen() {
+    return !!($modal && $modal.length && $modal.is(":visible"));
+  }
+
+  // ✅ Bloquea confirmación por Enter cuando un escáner mete Enter al final
+  let modalConfirmBlockUntil = 0;
+  function blockModalConfirmFor(ms = 350) {
+    const until = Date.now() + (ms | 0);
+    if (until > modalConfirmBlockUntil) modalConfirmBlockUntil = until;
+  }
+  function isModalConfirmBlocked() {
+    return Date.now() < modalConfirmBlockUntil;
+  }
+
   /* ================== CSRF / Ajax ================== */
   function getCSRF() {
     const m = document.cookie.match(/csrftoken=([^;]+)/);
@@ -875,7 +890,11 @@ $(function () {
     $pid.val("");
     if ($cantidad && $cantidad.length) $cantidad.val("1");
 
-    queueMicrotask(() => { if ($inpCode.is(":visible")) { $inpCode.focus(); $inpCode[0]?.select?.(); } });
+    // ✅ NO robar foco si el modal está abierto
+    queueMicrotask(() => {
+      if (isModalOpen()) return;
+      if ($inpCode.is(":visible")) { $inpCode.focus(); $inpCode[0]?.select?.(); }
+    });
   }
 
   /* ================== Resolutores rápidos ================== */
@@ -909,7 +928,12 @@ $(function () {
     if ($pid.val()) {
       if ($cantidad && $cantidad.length) $cantidad.prop("disabled", false);
       if ($agregar && $agregar.length)  $agregar.prop("disabled", false);
-      queueMicrotask(()=>{ if ($cantidad && $cantidad.length && $cantidad.is(":visible")) { $cantidad.focus().select(); } });
+
+      // ✅ NO robar foco si el modal está abierto
+      queueMicrotask(()=> {
+        if (isModalOpen()) return;
+        if ($cantidad && $cantidad.length && $cantidad.is(":visible")) { $cantidad.focus().select(); }
+      });
     }
   }
 
@@ -1631,6 +1655,7 @@ $(function () {
 
       this.blur();
       queueMicrotask(() => {
+        if (isModalOpen()) return;
         if ($inpNombre.is(":visible")) { $inpNombre.focus(); $inpNombre[0]?.select?.(); }
         const v = $inpNombre.val() || "";
         if (v.length >= 1) { try { $inpNombre.autocomplete("search", v); } catch {} }
@@ -1662,6 +1687,7 @@ $(function () {
 
         this.blur();
         queueMicrotask(() => {
+          if (isModalOpen()) return;
           if ($inpNombre.is(":visible")) { $inpNombre.focus(); $inpNombre[0]?.select?.(); }
           const v = $inpNombre.val() || "";
           if (v.length >= 1) { try { $inpNombre.autocomplete("search", v); } catch {} }
@@ -2007,6 +2033,9 @@ $(function () {
 
   const confirmPagoGuard = { ts: 0 };
   function triggerConfirmPago(){
+    // ✅ si un escáner acaba de meter Enter, NO confirmar
+    if (isModalConfirmBlocked()) return;
+
     const t = Date.now();
     if (t - confirmPagoGuard.ts < 250) return;
     confirmPagoGuard.ts = t;
@@ -2064,6 +2093,9 @@ $(function () {
     $modal.attr("data-loading-prices","0");
     $btnConfirm.prop("disabled", false);
 
+    // ✅ quitar bloqueo viejo
+    modalConfirmBlockUntil = 0;
+
     applyModeRules();
     openModal();
 
@@ -2097,6 +2129,117 @@ $(function () {
   $(".close").on("click", closeModal);
   $(window).on("click", (e) => { if ($modal.length && e.target === $modal[0]) closeModal(); });
 
+  /* =======================================================================================
+     ✅ Scanner guard dentro del MODAL
+     - Detecta burst tipo escáner, consume teclas y BLOQUEA confirmación.
+     - ✅ IMPORTANTE: NO agrega al carrito ni toca inputs de la venta mientras el modal esté abierto.
+     ======================================================================================= */
+  (function scannerGuardInsideModal() {
+    const MIN_CHARS = 8;
+    const GAP_MS = 35;
+
+    let buf = "";
+    let first = 0;
+    let last = 0;
+    let scanning = false;
+
+    let idleTimer = null;
+    let finalizeTimer = null;
+
+    function reset() {
+      buf = "";
+      first = 0;
+      last = 0;
+      scanning = false;
+      if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; }
+      if (finalizeTimer) { clearTimeout(finalizeTimer); finalizeTimer = null; }
+    }
+
+    function markActivity() {
+      // más largo para cubrir Enter/Tab + un frame extra
+      blockModalConfirmFor(900);
+    }
+
+    function finalize(_code) {
+      // ✅ Modal = bloqueo total: no agregues productos
+      markActivity();
+      reset();
+    }
+
+    document.addEventListener("keydown", function (e) {
+      if (!isModalOpen()) { reset(); return; }
+
+      // Si el usuario usa atajos o teclas modificadoras, asumimos NO escáner
+      if (e.ctrlKey || e.altKey || e.metaKey) { reset(); return; }
+
+      const t = Date.now();
+
+      if (e.key === "Enter" || e.key === "Tab") {
+        if (buf || scanning) {
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          e.stopPropagation();
+
+          markActivity();
+
+          const fastEnough = buf && (t-first) < buf.length * (GAP_MS+5) && (t-last) < GAP_MS*3;
+          if (fastEnough && buf.length >= MIN_CHARS) finalize(buf);
+          else reset();
+
+          return;
+        }
+        reset();
+        return;
+      }
+
+      if (e.key && e.key.length === 1) {
+        // Construcción de buffer con timing
+        if (!buf) {
+          buf = e.key;
+          first = t;
+          last = t;
+          scanning = false;
+        } else {
+          if ((t - last) > GAP_MS) {
+            // corte: no era escáner continuo
+            buf = e.key;
+            first = t;
+            last = t;
+            scanning = false;
+          } else {
+            buf += e.key;
+            last = t;
+          }
+        }
+
+        // heurística: si va muy rápido, es escáner
+        if (buf.length >= 2 && (t - first) < buf.length * (GAP_MS + 8)) scanning = true;
+
+        if (scanning) {
+          // NO dejes que el escáner escriba dentro de inputs del modal
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          e.stopPropagation();
+          markActivity();
+        }
+
+        // timers
+        if (idleTimer) clearTimeout(idleTimer);
+        idleTimer = setTimeout(() => reset(), GAP_MS * 7);
+
+        if (finalizeTimer) clearTimeout(finalizeTimer);
+        if (scanning && buf.length >= MIN_CHARS) {
+          // por si el escáner NO manda Enter: finaliza al quedar inactivo un instante
+          finalizeTimer = setTimeout(() => finalize(buf), GAP_MS * 6);
+        }
+
+        return;
+      }
+
+      if (e.key !== "Shift") reset();
+    }, true);
+  })();
+
   $(document).on("keydown", function (e) {
     if (!$modal.is(":visible")) return;
 
@@ -2107,6 +2250,11 @@ $(function () {
     }
 
     if (e.key === "Enter" && !e.altKey && !e.ctrlKey && !e.metaKey) {
+      // ✅ Si un escáner acaba de mandar Enter, NO confirmar
+      if (isModalConfirmBlocked()) {
+        e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
+        return;
+      }
       e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
       triggerConfirmPago();
       return;
@@ -2163,6 +2311,11 @@ $(function () {
 
   $amountIn.on("keydown", function (e) {
     if (e.key === "Enter") {
+      // ✅ Si un escáner acaba de mandar Enter, NO confirmar
+      if (isModalConfirmBlocked()) {
+        e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
+        return;
+      }
       e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
       triggerConfirmPago();
     }
@@ -2172,6 +2325,12 @@ $(function () {
     if (!e.altKey || e.ctrlKey || e.metaKey) return;
 
     if ($("#myModal").is(":visible")) {
+      // ✅ bloqueo por escáner
+      if (isModalConfirmBlocked() && e.key === "Enter") {
+        e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
+        return;
+      }
+
       const d = getDigitFromAltEvent(e);
       if (d !== null) {
         e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
@@ -2191,6 +2350,11 @@ $(function () {
       }
 
       if ((e.originalEvent?.key === "Enter") || e.key === "Enter") {
+        // ✅ bloqueo por escáner
+        if (isModalConfirmBlocked()) {
+          e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
+          return;
+        }
         e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
         triggerConfirmPago();
         return;
@@ -2442,7 +2606,14 @@ $(function () {
     return ($cantidad && $cantidad.length && el === $cantidad[0]) || (el.classList && el.classList.contains("qty-input"));
   }
 
+  // ✅ BLOQUEO TOTAL: si el modal está abierto, NO se agrega al carrito, NO se escribe en inputs de venta
   function pushCodeIntoCodeInputAndAdd(code){
+    // ✅ si modal abierto: consumir y bloquear confirmación, pero NO hacer nada más
+    if (isModalOpen()) {
+      blockModalConfirmFor(900);
+      return;
+    }
+
     const clean = onlyDigits(code);
     if (!clean) return;
 
@@ -2667,6 +2838,12 @@ $(function () {
   }
 
   async function startCameraScanner() {
+    // ✅ si está el modal abierto, no hagas nada (evita conflictos de pago)
+    if (isModalOpen()) {
+      blockModalConfirmFor(900);
+      return;
+    }
+
     ensureCamUI();
 
     const $overlay = $("#cam-scan-overlay");
@@ -2791,6 +2968,9 @@ $(function () {
     }
 
     document.addEventListener("keydown", function (e) {
+      // ✅ si el modal está abierto, NO uses este detector (lo maneja el guard del modal)
+      if (isModalOpen()) { resetAll(); return; }
+
       if (e.ctrlKey || e.altKey || e.metaKey) { resetAll(); return; }
 
       const active = document.activeElement;
@@ -2865,6 +3045,9 @@ $(function () {
     function reset(){ buf=""; first=0; last=0; if(idleTimer){clearTimeout(idleTimer); idleTimer=null;} }
 
     document.addEventListener("keydown", function (e) {
+      // ✅ si el modal está abierto, NO uses este fallback (lo maneja el guard del modal)
+      if (isModalOpen()) { reset(); return; }
+
       if (isQtyElement(document.activeElement)) return;
       if (e.ctrlKey || e.altKey || e.metaKey) { reset(); return; }
       const t = Date.now();

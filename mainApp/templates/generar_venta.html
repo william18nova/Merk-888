@@ -30,7 +30,15 @@
       <!-- Cliente -->
       <div class="form-group">
         <label for="cliente_busqueda">Cliente</label>
-        <input type="text" id="cliente_busqueda" placeholder="Buscar por nombre o cédula" autocomplete="off">
+        <input
+          type="text"
+          id="cliente_busqueda"
+          placeholder="Buscar por nombre o cédula"
+          autocomplete="off"
+          autocapitalize="off"
+          autocorrect="off"
+          spellcheck="false"
+        >
         <input type="hidden" id="cliente_id" name="cliente_id">
       </div>
 
@@ -44,8 +52,9 @@
           required aria-required="true"
           autocomplete="off"
           value="{{ sucursal_nombre|default:'' }}"
-          readonly
+          readonly aria-readonly="true"
           data-locked="1"
+          tabindex="-1"
         >
         <input type="hidden" id="sucursal_id" name="sucursal" value="{{ form.initial.sucursal|default:'' }}">
       </div>
@@ -60,8 +69,9 @@
           required aria-required="true"
           autocomplete="off"
           value="{{ puntopago_nombre|default:'' }}"
-          readonly
+          readonly aria-readonly="true"
           data-locked="1"
+          tabindex="-1"
         >
         <input type="hidden" id="puntopago_id" name="puntopago" value="{{ form.initial.puntopago|default:'' }}">
       </div>
@@ -71,7 +81,15 @@
       <!-- Producto por nombre -->
       <div class="form-group">
         <label for="producto_busqueda_nombre">Producto</label>
-        <input type="text" id="producto_busqueda_nombre" placeholder="Buscar por nombre" autocomplete="off">
+        <input
+          type="text"
+          id="producto_busqueda_nombre"
+          placeholder="Buscar por nombre"
+          autocomplete="off"
+          autocapitalize="off"
+          autocorrect="off"
+          spellcheck="false"
+        >
       </div>
 
       <!-- Código / Barras -->
@@ -79,7 +97,16 @@
         <label for="codigo_o_barras">Código / Barras</label>
 
         <div class="row-inline">
-          <input type="text" id="codigo_o_barras" placeholder="Escribe o escanea…" autocomplete="off">
+          <input
+            type="text"
+            id="codigo_o_barras"
+            placeholder="Escribe o escanea…"
+            autocomplete="off"
+            inputmode="numeric"
+            autocapitalize="off"
+            autocorrect="off"
+            spellcheck="false"
+          >
 
           <button type="button" id="btn-scan-cam" class="btn btn-secondary btn-escanear">
             <i class="fa-solid fa-camera"></i> Escanear
@@ -89,7 +116,7 @@
         <small class="hint">Tip: Alt+7 abre la cámara. (Requiere HTTPS o localhost)</small>
       </div>
 
-      <!-- ✅ Autocomplete SOLO por ID (independiente) -->
+      <!-- Producto (ID) -->
       <div class="form-group">
         <label for="producto_busqueda_id">Producto (ID)</label>
         <div class="row-inline">
@@ -99,6 +126,9 @@
             placeholder="Buscar por ID (productoid)..."
             inputmode="numeric"
             autocomplete="off"
+            autocapitalize="off"
+            autocorrect="off"
+            spellcheck="false"
           >
         </div>
         <small class="hint">Atajos: Ctrl+1 nombre • Ctrl+2 código • Ctrl+4 qty</small>
@@ -110,6 +140,7 @@
       <input type="hidden" id="productos"  name="productos"  value="[]">
       <input type="hidden" id="cantidades" name="cantidades" value="[]">
 
+      <!-- pagos -->
       <input type="hidden" id="medio_pago" name="medio_pago" value="">
       <input type="hidden" id="pagos" name="pagos" value="">
       <input type="hidden" id="efectivo_recibido" name="efectivo_recibido" value="">
@@ -136,7 +167,15 @@
           <i class="fa-solid fa-receipt"></i> Generar Venta
         </button>
 
-        <input type="text" id="buscar-detalles" placeholder="Buscar en el carrito…" autocomplete="off">
+        <input
+          type="text"
+          id="buscar-detalles"
+          placeholder="Buscar en el carrito…"
+          autocomplete="off"
+          autocapitalize="off"
+          autocorrect="off"
+          spellcheck="false"
+        >
 
         <button type="button" class="btn btn-vaciar" id="vaciar-carrito">
           <i class="fas fa-trash-can"></i> Vaciar carrito
@@ -176,10 +215,6 @@
 
 <!-- endpoints -->
 <script>
-  // ✅ si tu JS aún intenta inicializar AC de sucursal/caja, no pasa nada
-  // porque los inputs están readonly y el backend ignora cualquier cambio.
-  window.sucursalAutocompleteUrl        = "{% url 'sucursal_autocomplete' %}";
-  window.puntopagoAutocompleteUrl       = "{% url 'puntopago_autocomplete' %}";
   window.clienteAutocompleteUrl         = "{% url 'cliente_autocomplete' %}";
   window.productoAutocompleteUrl        = "{% url 'producto_autocomplete' %}";
   window.productoAutocompleteCodigoUrl  = "{% url 'producto_autocomplete_codigo' %}";
@@ -188,7 +223,6 @@
 
   window.verificarProductoUrl           = "{% url 'verificar_producto' %}";
   window.buscarProductoPorCodigoUrl     = "{% url 'buscar_producto_por_codigo' %}";
-  window.productoSnapshotUrl            = "{% url 'producto_snapshot' %}";
 
   window.imprimirFacturaUrl             = "{% url 'imprimir_factura' %}";
   window.abrirCajaUrl                   = "{% url 'abrir_caja' %}";
