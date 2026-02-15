@@ -35,14 +35,16 @@
 
       <div>
         <label for="id_mediopago">Medio de Pago</label>
+        {% with mp=venta.mediopago|lower %}
         <select name="mediopago" id="id_mediopago">
-          <option value="efectivo" {% if venta.mediopago == "efectivo" %}selected{% endif %}>Efectivo</option>
-          <option value="nequi" {% if venta.mediopago == "nequi" %}selected{% endif %}>Nequi</option>
-          <option value="daviplata" {% if venta.mediopago == "daviplata" %}selected{% endif %}>Daviplata</option>
-          <option value="tarjeta" {% if venta.mediopago == "tarjeta" %}selected{% endif %}>Tarjeta</option>
-          <option value="banco_caja_social" {% if venta.mediopago == "banco_caja_social" %}selected{% endif %}>Banco Caja Social</option>
-          <option value="mixto" {% if venta.mediopago == "mixto" %}selected{% endif %}>Mixto</option>
+          <option value="efectivo" {% if mp == "efectivo" %}selected{% endif %}>Efectivo</option>
+          <option value="nequi" {% if mp == "nequi" %}selected{% endif %}>Nequi</option>
+          <option value="daviplata" {% if mp == "daviplata" %}selected{% endif %}>Daviplata</option>
+          <option value="tarjeta" {% if mp == "tarjeta" %}selected{% endif %}>Tarjeta</option>
+          <option value="banco_caja_social" {% if mp == "banco_caja_social" %}selected{% endif %}>Banco Caja Social</option>
+          <option value="mixto" {% if mp == "mixto" %}selected{% endif %}>Mixto</option>
         </select>
+        {% endwith %}
       </div>
 
       <div>
@@ -193,14 +195,9 @@
 </div>
 
 <script>
-  // ✅ Total para validación mixto
   window.VENTA_TOTAL = "{{ venta.total|floatformat:2 }}";
-
-  // ✅ URL para pedir el texto del ticket (TicketTextoView)
   window.ticketTextoUrl = "{% url 'ticket_texto' %}";
 
-  // ✅ POS Agent base URL (NO incluyas /print aquí)
-  // Ejemplo: http://127.0.0.1:5055
   window.POS_AGENT_URL   = "{{ POS_AGENT_URL|default:'' }}";
   window.POS_AGENT_TOKEN = "{{ POS_AGENT_TOKEN|default:'' }}";
 </script>

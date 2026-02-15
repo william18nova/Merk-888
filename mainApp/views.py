@@ -4429,6 +4429,25 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin, View):
     def _venta_es_mixta(self, venta) -> bool:
         return (venta.mediopago or "").strip().lower() == "mixto"
 
+    def _hay_devolucion_en_post(self, request) -> bool:
+        """
+        True si en el POST hay al menos un devolver > 0.
+        Si no hay devoluciones, NO obligamos a validar/ejecutar el flujo de devolución.
+        """
+        for k, v in request.POST.items():
+            if k.startswith("dev-") and k.endswith("-devolver"):
+                s = (v or "").strip()
+                if s == "":
+                    continue
+                try:
+                    if int(s) > 0:
+                        return True
+                except ValueError:
+                    # Si escribió algo raro, tratamos como "hay devolución"
+                    # para que el formset falle con mensaje.
+                    return True
+        return False
+
     def _build_pagos_initial(self, venta):
         """
         Precarga pagos actuales desde venta_pagos (PagoVenta.monto) agrupado por medio_pago.
@@ -4479,7 +4498,7 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin, View):
         return s.quantize(Q2)
 
     # -------------------------
-    # ✅ NUEVO: construir texto de factura/ticket para imprimir
+    # ✅ Ticket texto (impresión)
     # -------------------------
     @staticmethod
     def _money(n) -> str:
@@ -4491,9 +4510,6 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin, View):
 
     @classmethod
     def _build_ticket_text_from_venta(cls, venta) -> str:
-        """
-        Texto tipo ticket (80mm aprox). Ajusta encabezados a tu gusto.
-        """
         WIDTH = 48
 
         def line(txt=""):
@@ -4508,15 +4524,13 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin, View):
 
         ahora = timezone.localtime(venta.fechaventa) if getattr(venta, "fechaventa", None) else timezone.localtime()
 
-        # Detalles
         detalles = (
             DetalleVenta.objects
             .filter(ventaid=venta)
             .select_related("productoid")
-            .order_by("pk")   # ✅ siempre sirve aunque tu PK no se llame id
+            .order_by("pk")
         )
 
-        # Pagos
         pagos = []
         medio = (venta.mediopago or "").strip().lower()
         total = (venta.total or Decimal("0.00")).quantize(Q2)
@@ -4537,8 +4551,6 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin, View):
             if total > 0 and medio:
                 pagos.append((medio, total))
 
-        # Cajero
-        cajero = ""
         if getattr(venta, "empleadoid", None):
             cajero = str(venta.empleadoid)
         elif getattr(venta, "cajeroid", None):
@@ -4546,7 +4558,6 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin, View):
         else:
             cajero = "—"
 
-        # Cliente
         cliente = str(venta.clienteid) if getattr(venta, "clienteid", None) else "—"
 
         out = []
@@ -4577,7 +4588,7 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin, View):
 
         out.append(line("-" * WIDTH))
         out.append(line("Gracias por su compra"))
-        out.append(line("\n\n"))  # feed
+        out.append(line("\n\n"))
 
         return "\n".join(out)
 
@@ -4671,7 +4682,6 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin, View):
             "reintegro_formset": reintegro_formset,
             "es_mixto": self._venta_es_mixta(venta),
             "medios_pago": MEDIOS_PAGO,
-            # ✅ Para JS / imprimir
             "venta_total": (venta.total or Decimal("0.00")).quantize(Q2),
         })
 
@@ -4692,7 +4702,6 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin, View):
             except Exception as e:
                 return JsonResponse({"ok": False, "error": str(e)}, status=400)
 
-        # ---- tu flujo normal abajo ----
         detalles = list(DetalleVenta.objects.filter(ventaid=venta))
 
         nuevo_mediopago = (request.POST.get("mediopago") or "").strip().lower()
@@ -4703,13 +4712,19 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin, View):
 
         metodo_old = (venta.mediopago or "").strip().lower()
 
+        # ✅ clave: detectar si realmente hay devoluciones
+        hay_devolucion = self._hay_devolucion_en_post(request)
+
         # 0) Cambio de medio (si cambió)
         if nuevo_mediopago and nuevo_mediopago != metodo_old:
             venta.mediopago = nuevo_mediopago
             venta.save(update_fields=["mediopago"])
 
             if metodo_old != "mixto" and nuevo_mediopago != "mixto":
-                self._mover_turno_por_cambio_medio(venta, metodo_old, nuevo_mediopago, venta.total)
+                try:
+                    self._mover_turno_por_cambio_medio(venta, metodo_old, nuevo_mediopago, venta.total)
+                except Exception as e:
+                    messages.warning(request, f"⚠️ Medio actualizado, pero no se pudo ajustar el turno: {e}")
 
             messages.success(request, "✅ Medio de pago actualizado.")
 
@@ -4726,7 +4741,12 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin, View):
         if accion == "volver_lista":
             return redirect(reverse_lazy("visualizar_ventas"))
 
-        # 2) Validar devoluciones
+        # ✅ SI NO HAY DEVOLUCIÓN: terminamos aquí (así el cambio de medio sí “se guarda” sin obligarte a devolver)
+        if not hay_devolucion:
+            messages.success(request, "✅ Cambios guardados.")
+            return redirect(reverse_lazy("ver_venta", kwargs={"venta_id": venta_id}))
+
+        # 2) Validar devoluciones (solo si hay devolucion)
         if not dev_formset.is_valid():
             messages.error(request, "⚠️ Revisa las cantidades a devolver.")
             return redirect(reverse_lazy("ver_venta", kwargs={"venta_id": venta_id}))
@@ -4750,7 +4770,7 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin, View):
             devoluciones.append({"detalle": det, "cantidad": cant})
 
         if not devoluciones:
-            return redirect(reverse_lazy("visualizar_ventas"))
+            return redirect(reverse_lazy("ver_venta", kwargs={"venta_id": venta_id}))
 
         total_reintegro = self._calcular_total_reintegro(detalles, dev_formset)
 

@@ -122,7 +122,28 @@
     }
   }
 
-  selectMedio?.addEventListener("change", validateUI);
+  // ✅ Autofill al cambiar a mixto (para que puedas guardar el cambio sin que te bloquee suma=0)
+  let prevMixto = esMixto();
+
+  selectMedio?.addEventListener("change", () => {
+    const nowMixto = esMixto();
+
+    if (nowMixto && !prevMixto && bloquePagos) {
+      const totalVenta = parseMoney(window.VENTA_TOTAL || "0");
+      const inputs = bloquePagos.querySelectorAll("input[name$='-monto']");
+
+      let sum = 0;
+      inputs.forEach(i => sum += parseMoney(i.value));
+
+      // Si estaba todo en 0, poner el total en el primer input
+      if (sum < 0.009 && inputs.length) {
+        inputs.forEach((i, idx) => i.value = (idx === 0 ? to2(totalVenta) : "0.00"));
+      }
+    }
+
+    prevMixto = nowMixto;
+    validateUI();
+  });
 
   document.addEventListener("input", (e) => {
     const t = e.target;
@@ -156,12 +177,8 @@
   });
 
   /* =========================
-     ✅ IMPRIMIR DIRECTO COMO GENERAR VENTA (POS AGENT)
-     Flujo:
-       1) POST a TicketTextoView (ticketTextoUrl) con venta_id -> receipt_text
-       2) POST al POS Agent -> imprime en la térmica
+     ✅ IMPRIMIR DIRECTO (POS AGENT)
      ========================= */
-
   async function fetchTicketText(ventaId) {
     const csrf = getCSRFToken();
     const fd = new FormData();
@@ -186,7 +203,6 @@
     const base = (window.POS_AGENT_URL || "").trim().replace(/\/$/, "");
     if (!base) return false;
 
-    // ✅ Ajusta si tu POS Agent usa otra ruta
     const PRINT_PATH = "/print";
     const url = base + PRINT_PATH;
 
@@ -227,10 +243,8 @@
 
       if (!ventaId) throw new Error("No encontré el ID de la venta.");
 
-      // 1) Texto desde Django
       const text = await fetchTicketText(ventaId);
 
-      // 2) Intentar POS Agent (directo)
       try {
         const ok = await posAgentPrint(text);
         if (ok) return;
@@ -238,7 +252,6 @@
         console.warn("POS Agent falló, usando fallback navegador:", err);
       }
 
-      // 3) Fallback navegador
       imprimirFallbackBrowser(text);
 
     } catch (err) {
