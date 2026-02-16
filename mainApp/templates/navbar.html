@@ -64,12 +64,23 @@
   {% url 'agregar_pedido' as add_pedido_url %}
   {% url 'visualizar_pedidos' as list_pedido_url %}
 
-  {# NUEVOS #}
+  {# NUEVOS (ya los tenías) #}
   {% url 'roles_permisos' as roles_permisos_url %}
   {% url 'permiso_agregar' as add_perm_url %}
   {% url 'visualizar_permisos' as list_perm_url %}
   {% url 'ventas_diarias' as ventas_diarias_url %}
   {% url 'pedidos_pagados' as pedidos_pagados_url %}
+
+  {# ===== FALTABAN EN EL NAV (según tu urls.py) ===== #}
+  {% url 'visualizar_roles_permisos' as list_roles_permisos_url %}
+
+  {% url 'turno_caja' as turno_caja_url %}
+  {% url 'turnos_caja_dashboard' as turnos_caja_dashboard_url %}
+  {% url 'turnos_caja_admin' as turnos_caja_admin_url %}
+  {% url 'abrir_caja' as abrir_caja_url %}
+
+  {% url 'inventario_masivo' as inv_masivo_url %}
+  {% url 'visor_barcode' as visor_barcode_url %}
 
   <ul class="nv__links" id="nvLinks">
     <li>
@@ -107,11 +118,12 @@
     </li>
 
     {# ============= Inventarios ============= #}
-    <li class="nv__item has-dd {% if '/inventario' in request.path or '/inventarios' in request.path %}is-parent-active{% endif %}">
+    <li class="nv__item has-dd {% if '/inventario' in request.path or '/inventarios' in request.path or request.path == inv_masivo_url %}is-parent-active{% endif %}">
       <a href="{{ list_inv_url }}">Inventarios</a>
       <ul class="nv__dd">
         <li><a href="{{ add_inv_url }}">Agregar inventario</a></li>
         <li><a href="{{ list_inv_url }}">Visualizar inventarios</a></li>
+        <li><a href="{{ inv_masivo_url }}">Inventario masivo</a></li>
       </ul>
     </li>
 
@@ -226,10 +238,31 @@
       </ul>
     </li>
 
+    {# ============= Caja / Turnos de Caja (FALTABA) ============= #}
+    <li class="nv__item has-dd {% if '/turno_caja' in request.path or '/turnos_caja' in request.path or request.path == abrir_caja_url %}is-parent-active{% endif %}">
+      <a href="{{ turno_caja_url }}">Caja</a>
+      <ul class="nv__dd">
+        <li><a href="{{ turno_caja_url }}">Turno de caja</a></li>
+        <li><a href="{{ turnos_caja_dashboard_url }}">Dashboard turnos</a></li>
+        <li><a href="{{ turnos_caja_admin_url }}">Admin turnos</a></li>
+        <li><a href="{{ abrir_caja_url }}">Abrir caja (ventas)</a></li>
+      </ul>
+    </li>
+
+    {# ============= Roles ↔ Permisos (FALTABA “visualizar”) ============= #}
+    <li class="nv__item has-dd {% if '/roles_permisos' in request.path %}is-parent-active{% endif %}">
+      <a href="{{ roles_permisos_url }}">Roles ↔ Permisos</a>
+      <ul class="nv__dd">
+        <li><a href="{{ roles_permisos_url }}">Asignar roles ↔ permisos</a></li>
+        <li><a href="{{ list_roles_permisos_url }}">Visualizar relaciones</a></li>
+      </ul>
+    </li>
+
+    {# ============= Visor Barcode (FALTABA) ============= #}
     <li>
-      <a href="{{ roles_permisos_url }}"
-         class="{% if '/roles_permisos' in request.path %}is-active{% endif %}">
-        Roles ↔ Permisos
+      <a href="{{ visor_barcode_url }}"
+         class="{% if request.path == visor_barcode_url or '/visor' in request.path or request.path == '/v' %}is-active{% endif %}">
+        Visor Barcode
       </a>
     </li>
 
