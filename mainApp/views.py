@@ -71,7 +71,7 @@ from django.utils.decorators import method_decorator
 from django.utils.html import escape
 from django.db.models import Subquery
 from django.core.paginator import Paginator
-from django.db.models.functions import Lower, StrIndex, Trim, Coalesce
+from django.db.models.functions import Lower, StrIndex, Trim, Coalesce, TruncDate
 import os, io, textwrap, subprocess
 from django.views.decorators.http import require_POST
 from django.conf import settings
@@ -7727,11 +7727,11 @@ class ProductoBuscarBarrasVisorView( View):
             "pagination": {"more": page_obj.has_next()}
         })
 
+
+
+
 def _to_dt_bounds(date_ini, date_fin):
-    """
-    Convierte fechas (YYYY-MM-DD) a [start_dt, end_dt_exclusive)
-    sin usar __date (que rompe índices).
-    """
+    """Convierte fechas (YYYY-MM-DD) a [start_dt, end_dt_exclusive) aware."""
     tz = timezone.get_current_timezone()
     start = datetime.combine(date_ini, datetime.min.time())
     end_excl = datetime.combine(date_fin + timedelta(days=1), datetime.min.time())
@@ -7743,29 +7743,67 @@ def _to_dt_bounds(date_ini, date_fin):
     return start, end_excl
 
 
+def _pick_existing_field(model, candidates):
+    """Devuelve el primer campo existente en el model, de una lista de candidatos."""
+    for name in candidates:
+        try:
+            model._meta.get_field(name)
+            return name
+        except FieldDoesNotExist:
+            continue
+    return None
+
+
+def _get_qs_int(request, key):
+    v = (request.GET.get(key) or "").strip()
+    return int(v) if v.isdigit() else None
+
+
+# ----------------------------
+# Page view
+# ----------------------------
+class VentasProductoRangoView(LoginRequiredMixin, View):
+    template_name = "ventas_producto_rango.html"
+
+    def get(self, request, *args, **kwargs):
+        # OJO: NO uses .only("id") porque tu PK no se llama "id"
+        sucursales = Sucursal.objects.only("nombre").order_by("nombre")
+
+        return render(request, self.template_name, {
+            "sucursales": sucursales,
+        })
+
+
+# ----------------------------
+# DataTables server-side (por producto)
+# ----------------------------
 class VentasProductoRangoDataView(LoginRequiredMixin, View):
     """
     DataTables server-side:
-    - Agrega por producto en BD (GROUP BY)
-    - Pagina/ordena/busca sin reventar RAM
+    - agrega por producto en BD
+    - pagina/ordena/busca sin reventar RAM
+    - sucursal_id llega por querystring
     """
 
-    def get(self, request, sucursal_id, *args, **kwargs):
-        # === DataTables params ===
+    def get(self, request, *args, **kwargs):
+        # required
+        sucursal_id = _get_qs_int(request, "sucursal_id")
+        if not sucursal_id:
+            return JsonResponse({"error": "Debe enviar sucursal_id."}, status=400)
+
+        # DataTables params
         draw = int(request.GET.get("draw", 1))
         start = int(request.GET.get("start", 0))
         length = int(request.GET.get("length", 25))
         search = (request.GET.get("search[value]", "") or "").strip()
 
-        # orden (col index -> campo)
         order_col = request.GET.get("order[0][column]", "0")
         order_dir = request.GET.get("order[0][dir]", "asc")
 
-        # === Fechas ===
+        # Fechas
         ini_str = request.GET.get("fecha_ini")
         fin_str = request.GET.get("fecha_fin")
 
-        # defaults defensivos
         today = timezone.localdate()
         date_ini = parse_date(ini_str) if ini_str else (today - timedelta(days=30))
         date_fin = parse_date(fin_str) if fin_str else today
@@ -7775,36 +7813,44 @@ class VentasProductoRangoDataView(LoginRequiredMixin, View):
         if date_fin < date_ini:
             date_ini, date_fin = date_fin, date_ini
 
+        # Detecta nombre del campo fecha en Venta
+        venta_fecha = _pick_existing_field(Venta, ["fechaventa", "fecha", "fecha_venta", "created_at"])
+        if not venta_fecha:
+            return JsonResponse({"error": "No se encontró campo fecha en Venta (fechaventa/fecha/...)."}, status=500)
+
         start_dt, end_dt_excl = _to_dt_bounds(date_ini, date_fin)
 
-        # === Query base (lo más importante para velocidad) ===
-        # Filtra primero por sucursal + rango temporal desde el FK a Venta.
+        # Detecta subtotal / cantidad
+        dv_cant = _pick_existing_field(DetalleVenta, ["cantidad", "cant", "qty"]) or "cantidad"
+        dv_subt = _pick_existing_field(DetalleVenta, ["subtotal", "total", "importe"])
+
         base = (
             DetalleVenta.objects
             .filter(
                 ventaid__sucursalid_id=sucursal_id,
-                ventaid__fechaventa__gte=start_dt,     # AJUSTA si tu campo fecha se llama distinto
-                ventaid__fechaventa__lt=end_dt_excl,
+                **{
+                    f"ventaid__{venta_fecha}__gte": start_dt,
+                    f"ventaid__{venta_fecha}__lt": end_dt_excl,
+                }
             )
-            .values("productoid_id", "productoid__nombre")  # AJUSTA nombre del campo
+            .values("productoid_id", "productoid__nombre")
             .annotate(
-                unidades=Coalesce(Sum("cantidad"), 0),
-                total_ventas=Coalesce(Sum("subtotal"), 0),   # AJUSTA si es "total" o "valor"
-                num_lineas=Count("id"),
+                unidades=Sum(dv_cant),
+                total_ventas=Sum(dv_subt) if dv_subt else Sum(ExpressionWrapper(
+                    F(dv_cant) * F("preciounitario"),
+                    output_field=DecimalField(max_digits=18, decimal_places=2)
+                )),
                 num_ventas=Count("ventaid_id", distinct=True),
             )
         )
 
         records_total = base.count()
 
-        # búsqueda (solo sobre nombre de producto)
         if search:
             base = base.filter(productoid__nombre__icontains=search)
 
         records_filtered = base.count()
 
-        # === Ordenamiento seguro ===
-        # mapea la columna de DataTables a un campo calculado
         col_map = {
             "0": "productoid__nombre",
             "1": "unidades",
@@ -7815,22 +7861,15 @@ class VentasProductoRangoDataView(LoginRequiredMixin, View):
         if order_dir == "desc":
             order_field = "-" + order_field
 
-        base = base.order_by(order_field)
+        rows = list(base.order_by(order_field)[start:start + length])
 
-        # === Paginación (clave para rendimiento) ===
-        rows = list(base[start:start + length])
-
-        # DataTables espera "data" como lista de listas o dicts
-        data = [
-            {
-                "producto_id": r["productoid_id"],
-                "producto": r["productoid__nombre"],
-                "unidades": float(r["unidades"]),
-                "total_ventas": float(r["total_ventas"]),
-                "num_ventas": int(r["num_ventas"]),
-            }
-            for r in rows
-        ]
+        data = [{
+            "producto_id": r["productoid_id"],
+            "producto": r["productoid__nombre"],
+            "unidades": float(r["unidades"] or 0),
+            "total_ventas": float(r["total_ventas"] or 0),
+            "num_ventas": int(r["num_ventas"] or 0),
+        } for r in rows]
 
         return JsonResponse({
             "draw": draw,
@@ -7839,94 +7878,87 @@ class VentasProductoRangoDataView(LoginRequiredMixin, View):
             "data": data,
         })
 
-class VentasProductoRangoView(LoginRequiredMixin, View):
-    template_name = "ventas_producto_rango.html"
 
-    def get(self, request, *args, **kwargs):
-        sucursal_id = kwargs.get("sucursal_id")
-        sucursal = get_object_or_404(Sucursal, pk=sucursal_id)
-
-        context = {
-            "sucursal": sucursal,
-            "sucursal_id": sucursal_id,
-        }
-        return render(request, self.template_name, context)
-
-
+# ----------------------------
+# Stats (el que usa tu botón "Consultar ventas")
+# ----------------------------
 class ProductoVentasStatsAjaxView(LoginRequiredMixin, View):
     """
-    GET /ventas/producto/<sucursal_id>/stats/?productoid=123&desde=2026-02-01&hasta=2026-02-16
-    Retorna:
-      - ventas_distintas: cuántas ventas distintas incluyeron el producto
-      - unidades: suma de cantidades vendidas
-      - ingresos: suma(cantidad * preciounitario)
-      - daily: lista por día con ventas_distintas y unidades
+    GET /ventas/producto/stats/?sucursal_id=1&productoid=123&desde=2026-02-01&hasta=2026-02-16
     """
-    def get(self, request, sucursal_id):
+
+    def get(self, request, *args, **kwargs):
+        sucursal_id = _get_qs_int(request, "sucursal_id")
+        if not sucursal_id:
+            return JsonResponse({"success": False, "error": "Debe enviar sucursal_id."}, status=400)
+
         sucursal = get_object_or_404(Sucursal, pk=sucursal_id)
 
-        pid = (request.GET.get("productoid") or "").strip()
-        if not pid.isdigit():
+        pid = _get_qs_int(request, "productoid")
+        if not pid:
             return JsonResponse({"success": False, "error": "productoid inválido."}, status=400)
-        pid = int(pid)
 
         producto = get_object_or_404(
             Producto._base_manager.only("productoid", "nombre", "codigo_de_barras"),
             pk=pid
         )
 
-        # Fechas (ISO: YYYY-MM-DD)
         desde_s = (request.GET.get("desde") or "").strip()
         hasta_s = (request.GET.get("hasta") or "").strip()
-
         desde = parse_date(desde_s) if desde_s else None
         hasta = parse_date(hasta_s) if hasta_s else None
 
         if not desde or not hasta:
             return JsonResponse({"success": False, "error": "Debe enviar desde y hasta (YYYY-MM-DD)."}, status=400)
-
         if desde > hasta:
-            return JsonResponse({"success": False, "error": "Rango inválido: desde no puede ser mayor que hasta."}, status=400)
+            return JsonResponse({"success": False, "error": "Rango inválido: desde > hasta."}, status=400)
 
-        # Base: detalles del producto en ventas de esa sucursal y rango
+        # Detecta campo fecha de Venta
+        venta_fecha = _pick_existing_field(Venta, ["fechaventa", "fecha", "fecha_venta", "created_at"])
+        if not venta_fecha:
+            return JsonResponse({"success": False, "error": "No se encontró campo fecha en Venta."}, status=500)
+
+        start_dt, end_dt_excl = _to_dt_bounds(desde, hasta)
+
+        dv_cant = _pick_existing_field(DetalleVenta, ["cantidad", "cant", "qty"]) or "cantidad"
+        dv_price = _pick_existing_field(DetalleVenta, ["preciounitario", "precio_unitario", "precio"]) or "preciounitario"
+        dv_subt  = _pick_existing_field(DetalleVenta, ["subtotal", "total", "importe"])
+
         qs = (
             DetalleVenta.objects
-            .select_related("ventaid")
             .filter(
                 productoid_id=pid,
-                ventaid__sucursalid=sucursal,
-                ventaid__fecha__range=[desde, hasta],
+                ventaid__sucursalid_id=sucursal.pk,
+                **{
+                    f"ventaid__{venta_fecha}__gte": start_dt,
+                    f"ventaid__{venta_fecha}__lt": end_dt_excl,
+                }
             )
         )
 
-        # "Cuántas veces se vendió" = cuántas ventas DISTINTAS lo incluyeron
-        ventas_distintas = (
-            qs.values("ventaid_id")
-            .distinct()
-            .count()
-        )
+        ventas_distintas = qs.values("ventaid_id").distinct().count()
+        unidades = qs.aggregate(u=Sum(dv_cant))["u"] or 0
 
-        # Unidades totales
-        unidades = qs.aggregate(u=Sum("cantidad"))["u"] or 0
+        if dv_subt:
+            ingresos = qs.aggregate(x=Sum(dv_subt))["x"] or 0
+        else:
+            ingresos_expr = ExpressionWrapper(
+                F(dv_cant) * F(dv_price),
+                output_field=DecimalField(max_digits=18, decimal_places=2),
+            )
+            ingresos = qs.aggregate(x=Sum(ingresos_expr))["x"] or 0
 
-        # Ingresos totales (cantidad * preciounitario)
-        ingresos_expr = ExpressionWrapper(
-            F("cantidad") * F("preciounitario"),
-            output_field=DecimalField(max_digits=18, decimal_places=2),
-        )
-        ingresos = qs.aggregate(x=Sum(ingresos_expr))["x"] or 0
-
-        # Desglose diario
         daily = list(
-            qs.values("ventaid__fecha")
+            qs.annotate(dia=TruncDate(f"ventaid__{venta_fecha}"))
+              .values("dia")
               .annotate(
                   ventas=Count("ventaid_id", distinct=True),
-                  unidades=Sum("cantidad"),
+                  unidades=Sum(dv_cant),
               )
-              .order_by("ventaid__fecha")
+              .order_by("dia")
         )
         daily = [{
-            "fecha": str(d["ventaid__fecha"]),
+            "fecha": str(d["dia"]),
             "ventas": int(d["ventas"] or 0),
             "unidades": int(d["unidades"] or 0),
         } for d in daily]
@@ -7938,14 +7970,11 @@ class ProductoVentasStatsAjaxView(LoginRequiredMixin, View):
                 "nombre": producto.nombre,
                 "codigo_de_barras": getattr(producto, "codigo_de_barras", "") or "",
             },
-            "range": {
-                "desde": str(desde),
-                "hasta": str(hasta),
-            },
+            "range": {"desde": str(desde), "hasta": str(hasta)},
             "stats": {
                 "ventas_distintas": int(ventas_distintas),
                 "unidades": int(unidades),
-                "ingresos": str(ingresos),  # decimal -> string seguro
+                "ingresos": str(ingresos),
             },
             "daily": daily,
         })

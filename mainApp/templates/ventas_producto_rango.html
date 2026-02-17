@@ -7,10 +7,8 @@
 {% block extra_head %}
   <link rel="stylesheet"
         href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"/>
-
   <link rel="stylesheet"
         href="https://cdn.datatables.net/1.13.8/css/jquery.dataTables.min.css"/>
-
   <link rel="stylesheet"
         href="https://code.jquery.com/ui/1.13.3/themes/base/jquery-ui.css"/>
 
@@ -21,7 +19,22 @@
   <div class="container-inventario">
     <i class="fas fa-chart-line icon-inventario"></i>
     <h2>Ventas por producto</h2>
-    <div class="subtitle">Sucursal: <b>{{ sucursal.nombre }}</b></div>
+
+    {# ✅ selector de sucursal (sin id en URL) #}
+    <div class="form-group-precio">
+      <label for="id_sucursal">Sucursal <span class="required">*</span></label>
+      <select id="id_sucursal" class="form-control">
+        <option value="">— Selecciona sucursal —</option>
+        {% for s in sucursales %}
+          <option value="{{ s.pk }}">{{ s.nombre }}</option>
+        {% endfor %}
+      </select>
+      <div class="field-error" id="error-id_sucursal"></div>
+    </div>
+
+    <div class="subtitle">
+      Sucursal seleccionada: <b id="sucursalNombre">—</b>
+    </div>
 
     <div id="error-message" class="alert alert-error" style="display:none;"></div>
     <div id="success-message" class="alert alert-success" style="display:none;"></div>
@@ -146,22 +159,21 @@
     </div>
   </div>
 
-  {# ==================== JS LIBS (primero) ==================== #}
+  {# ==================== LIBS ==================== #}
   <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
-  <script src="https://code.jquery.com/ui/1.13.3/jquery-ui.min.js"></script>
   <script src="https://cdn.datatables.net/1.13.8/js/jquery.dataTables.min.js"></script>
+  <script src="https://code.jquery.com/ui/1.13.3/jquery-ui.min.js"></script>
 
-  {# ==================== ENDPOINTS (después de jQuery) ==================== #}
+  {# ==================== ENDPOINTS ==================== #}
   <script>
-    // ✅ endpoints existentes (los mismos del inventario)
+    // ✅ endpoints existentes (inventario)
     const productoNombreUrl = "{% url 'producto_inventario_buscar_nombre' %}";
     const productoBarrasUrl = "{% url 'producto_inventario_buscar_barras' %}";
     const productoIdUrl     = "{% url 'producto_inventario_buscar_id' %}";
 
-    // ✅ nuevo endpoint stats (incluye sucursal_id en la URL)
-    const statsUrl = "{% url 'producto_ventas_stats' sucursal_id=sucursal_id %}";
+    // ✅ stats SIN sucursal_id en el path (la sucursal se manda por querystring desde el JS)
+    const statsUrl = "{% url 'producto_ventas_stats' %}";
   </script>
 
-  {# ==================== TU JS (al final) ==================== #}
-  <script src="{% static 'javascript/ventas_producto_rango.js' %}"></script>
+  <script defer src="{% static 'javascript/ventas_producto_rango.js' %}"></script>
 {% endblock %}

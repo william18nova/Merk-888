@@ -323,14 +323,26 @@ urlpatterns = [
     path("visor/barcode/buscar/", views.ProductoBuscarBarrasVisorView.as_view(), name="visor_barcode_buscar"),
     path("visor/barcode/lookup/", views.ProductoLookupPorBarrasVisorView.as_view(), name="visor_barcode_lookup"),
 
-    path("ventas/producto/<int:sucursal_id>/stats/", views.ProductoVentasStatsAjaxView.as_view(), name="producto_ventas_stats"),
+
+
     path(
-     "reportes/<int:sucursal_id>/ventas-producto/",
-     views.VentasProductoRangoView.as_view(),
-     name="reporte_ventas_producto",
-     ),
-     path(
-        "api/reportes/<int:sucursal_id>/ventas-producto/",
+        "reportes/ventas-producto/",
+        views.VentasProductoRangoView.as_view(),
+        name="reporte_ventas_producto",
+    ),
+
+    # ✅ Endpoint stats (sin ID en la URL) -> sucursal_id via GET
+    # /ventas/producto/stats/?sucursal_id=1&productoid=123&desde=2026-02-01&hasta=2026-02-16
+    path(
+        "ventas/producto/stats/",
+        views.ProductoVentasStatsAjaxView.as_view(),
+        name="producto_ventas_stats",
+    ),
+
+    # ✅ DataTables server-side (sin ID en la URL) -> sucursal_id via GET
+    # /api/reportes/ventas-producto/?sucursal_id=1&fecha_ini=...&fecha_fin=...
+    path(
+        "api/reportes/ventas-producto/",
         views.VentasProductoRangoDataView.as_view(),
         name="ventas_producto_data",
     ),
