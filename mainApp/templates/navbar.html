@@ -1,3 +1,4 @@
+{# templates/includes/nav.html (o donde tengas tu navbar) #}
 {% load static %}
 
 <nav class="nv">
@@ -70,6 +71,9 @@
   {% url 'visualizar_permisos' as list_perm_url %}
   {% url 'ventas_diarias' as ventas_diarias_url %}
   {% url 'pedidos_pagados' as pedidos_pagados_url %}
+
+  {# ✅ NUEVO REPORTE (EN NAV) #}
+  {% url 'reporte_ventas_producto' as reporte_ventas_producto_url %}
 
   {# ===== FALTABAN EN EL NAV (según tu urls.py) ===== #}
   {% url 'visualizar_roles_permisos' as list_roles_permisos_url %}
@@ -218,13 +222,24 @@
     </li>
 
     {# ============= Ventas ============= #}
-    <li class="nv__item has-dd {% if '/venta' in request.path or '/ventas' in request.path or '/cambios' in request.path %}is-parent-active{% endif %}">
+    <li class="nv__item has-dd
+      {% if '/venta' in request.path or '/ventas' in request.path or '/cambios' in request.path or request.path == reporte_ventas_producto_url %}
+        is-parent-active
+      {% endif %}">
       <a href="{{ list_venta_url }}">Ventas</a>
       <ul class="nv__dd">
         <li><a href="{{ gen_venta_url }}">Generar venta</a></li>
         <li><a href="{{ list_venta_url }}">Visualizar ventas</a></li>
         <li><a href="{{ cambios_url }}">Cambios / Devoluciones</a></li>
         <li><a href="{{ ventas_diarias_url }}">Ventas diarias</a></li>
+
+        {# ✅ NUEVO REPORTE EN NAV #}
+        <li>
+          <a href="{{ reporte_ventas_producto_url }}"
+             class="{% if request.path == reporte_ventas_producto_url %}is-active{% endif %}">
+            Ventas por producto
+          </a>
+        </li>
       </ul>
     </li>
 
@@ -238,7 +253,7 @@
       </ul>
     </li>
 
-    {# ============= Caja / Turnos de Caja (FALTABA) ============= #}
+    {# ============= Caja / Turnos de Caja ============= #}
     <li class="nv__item has-dd {% if '/turno_caja' in request.path or '/turnos_caja' in request.path or request.path == abrir_caja_url %}is-parent-active{% endif %}">
       <a href="{{ turno_caja_url }}">Caja</a>
       <ul class="nv__dd">
@@ -249,7 +264,7 @@
       </ul>
     </li>
 
-    {# ============= Roles ↔ Permisos (FALTABA “visualizar”) ============= #}
+    {# ============= Roles ↔ Permisos ============= #}
     <li class="nv__item has-dd {% if '/roles_permisos' in request.path %}is-parent-active{% endif %}">
       <a href="{{ roles_permisos_url }}">Roles ↔ Permisos</a>
       <ul class="nv__dd">
@@ -258,7 +273,7 @@
       </ul>
     </li>
 
-    {# ============= Visor Barcode (FALTABA) ============= #}
+    {# ============= Visor Barcode ============= #}
     <li>
       <a href="{{ visor_barcode_url }}"
          class="{% if request.path == visor_barcode_url or '/visor' in request.path or request.path == '/v' %}is-active{% endif %}">
