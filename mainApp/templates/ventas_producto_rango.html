@@ -1,0 +1,167 @@
+{# templates/ventas_producto_rango.html #}
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Ventas por producto{% endblock %}
+
+{% block extra_head %}
+  <link rel="stylesheet"
+        href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"/>
+
+  <link rel="stylesheet"
+        href="https://cdn.datatables.net/1.13.8/css/jquery.dataTables.min.css"/>
+
+  <link rel="stylesheet"
+        href="https://code.jquery.com/ui/1.13.3/themes/base/jquery-ui.css"/>
+
+  <link rel="stylesheet" href="{% static 'css/ventas_producto_rango.css' %}">
+{% endblock %}
+
+{% block content %}
+  <div class="container-inventario">
+    <i class="fas fa-chart-line icon-inventario"></i>
+    <h2>Ventas por producto</h2>
+    <div class="subtitle">Sucursal: <b>{{ sucursal.nombre }}</b></div>
+
+    <div id="error-message" class="alert alert-error" style="display:none;"></div>
+    <div id="success-message" class="alert alert-success" style="display:none;"></div>
+
+    {# ==================== BUSCADOR PRODUCTO ==================== #}
+    <div class="form-group-precio">
+      <label>Buscar producto <span class="required">*</span></label>
+
+      <input type="text" id="producto_busqueda_nombre" class="form-control"
+             placeholder="Buscar por nombre…" autocomplete="off">
+
+      <div class="barcode-row">
+        <input type="text" id="producto_busqueda_barras" class="form-control"
+               placeholder="Buscar por código de barras…" autocomplete="off" inputmode="numeric">
+        <button type="button" id="btnScanBarcode" class="btn-scan" aria-label="Escanear código de barras">
+          <i class="fas fa-camera"></i>
+        </button>
+      </div>
+
+      <input type="text" id="producto_busqueda_id" class="form-control"
+             placeholder="Buscar por código (ID)…" autocomplete="off" inputmode="numeric">
+
+      <input type="hidden" id="id_productoid">
+      <div class="field-error" id="error-id_productoid"></div>
+    </div>
+
+    {# ==================== RANGO FECHAS ==================== #}
+    <div class="range-grid">
+      <div class="form-group-precio">
+        <label for="id_desde">Desde <span class="required">*</span></label>
+        <input type="text" id="id_desde" class="form-control" placeholder="YYYY-MM-DD" autocomplete="off">
+        <div class="field-error" id="error-id_desde"></div>
+      </div>
+
+      <div class="form-group-precio">
+        <label for="id_hasta">Hasta <span class="required">*</span></label>
+        <input type="text" id="id_hasta" class="form-control" placeholder="YYYY-MM-DD" autocomplete="off">
+        <div class="field-error" id="error-id_hasta"></div>
+      </div>
+    </div>
+
+    <div class="quick-row">
+      <button type="button" class="quick-btn" data-q="hoy">Hoy</button>
+      <button type="button" class="quick-btn" data-q="7">Últimos 7 días</button>
+      <button type="button" class="quick-btn" data-q="30">Últimos 30 días</button>
+    </div>
+
+    <button type="button" id="btnConsultar" class="btn-agregar-precio">
+      Consultar ventas
+    </button>
+
+    {# ==================== RESULTADOS ==================== #}
+    <div id="resultCard" class="result-card" style="display:none;">
+      <div class="result-head">
+        <div class="rh-title">
+          <i class="fas fa-box"></i>
+          <span id="r_nombre">Producto</span>
+        </div>
+        <div class="rh-meta">
+          <span class="pill">ID: <b id="r_id">-</b></span>
+          <span class="pill">Barras: <b id="r_bar">-</b></span>
+        </div>
+      </div>
+
+      <div class="kpi-grid">
+        <div class="kpi">
+          <div class="kpi-label">Veces vendido</div>
+          <div class="kpi-value" id="k_veces">0</div>
+          <div class="kpi-hint">(ventas distintas)</div>
+        </div>
+        <div class="kpi">
+          <div class="kpi-label">Unidades</div>
+          <div class="kpi-value" id="k_unidades">0</div>
+          <div class="kpi-hint">(suma cantidades)</div>
+        </div>
+        <div class="kpi">
+          <div class="kpi-label">Ingresos</div>
+          <div class="kpi-value" id="k_ingresos">0</div>
+          <div class="kpi-hint">(aprox.)</div>
+        </div>
+      </div>
+
+      <div class="range-show">
+        Rango: <b id="r_desde">-</b> → <b id="r_hasta">-</b>
+      </div>
+
+      <div class="table-wrap">
+        <table id="ventasDiaTable" class="display">
+          <thead>
+            <tr>
+              <th>Fecha</th>
+              <th>Veces (ventas)</th>
+              <th>Unidades</th>
+            </tr>
+          </thead>
+          <tbody id="ventasDiaBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  {# ==================== OVERLAY SCANNER ==================== #}
+  <div id="barcodeScannerOverlay" class="scanner-overlay" style="display:none;">
+    <div class="scanner-card">
+      <div class="scanner-head">
+        <div class="scanner-title">
+          <i class="fas fa-camera"></i> Escanear código de barras
+        </div>
+        <button type="button" id="btnCloseScanner" class="scanner-close" aria-label="Cerrar">✕</button>
+      </div>
+
+      <div class="scanner-viewport">
+        <video id="barcodeVideo" playsinline></video>
+        <div class="scanner-frame"></div>
+        <div class="scanner-hint">Alinea el código dentro del cuadro</div>
+      </div>
+
+      <div class="scanner-actions">
+        <button type="button" id="btnToggleTorch" class="scanner-btn" style="display:none;">Linterna</button>
+        <div id="scannerStatus" class="scanner-status">Iniciando…</div>
+      </div>
+    </div>
+  </div>
+
+  {# ==================== JS LIBS (primero) ==================== #}
+  <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+  <script src="https://code.jquery.com/ui/1.13.3/jquery-ui.min.js"></script>
+  <script src="https://cdn.datatables.net/1.13.8/js/jquery.dataTables.min.js"></script>
+
+  {# ==================== ENDPOINTS (después de jQuery) ==================== #}
+  <script>
+    // ✅ endpoints existentes (los mismos del inventario)
+    const productoNombreUrl = "{% url 'producto_inventario_buscar_nombre' %}";
+    const productoBarrasUrl = "{% url 'producto_inventario_buscar_barras' %}";
+    const productoIdUrl     = "{% url 'producto_inventario_buscar_id' %}";
+
+    // ✅ nuevo endpoint stats (incluye sucursal_id en la URL)
+    const statsUrl = "{% url 'producto_ventas_stats' sucursal_id=sucursal_id %}";
+  </script>
+
+  {# ==================== TU JS (al final) ==================== #}
+  <script src="{% static 'javascript/ventas_producto_rango.js' %}"></script>
+{% endblock %}

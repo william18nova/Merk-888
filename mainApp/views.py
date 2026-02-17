@@ -7726,3 +7726,226 @@ class ProductoBuscarBarrasVisorView( View):
             "results": results,
             "pagination": {"more": page_obj.has_next()}
         })
+
+def _to_dt_bounds(date_ini, date_fin):
+    """
+    Convierte fechas (YYYY-MM-DD) a [start_dt, end_dt_exclusive)
+    sin usar __date (que rompe índices).
+    """
+    tz = timezone.get_current_timezone()
+    start = datetime.combine(date_ini, datetime.min.time())
+    end_excl = datetime.combine(date_fin + timedelta(days=1), datetime.min.time())
+
+    if timezone.is_naive(start):
+        start = timezone.make_aware(start, tz)
+        end_excl = timezone.make_aware(end_excl, tz)
+
+    return start, end_excl
+
+
+class VentasProductoRangoDataView(LoginRequiredMixin, View):
+    """
+    DataTables server-side:
+    - Agrega por producto en BD (GROUP BY)
+    - Pagina/ordena/busca sin reventar RAM
+    """
+
+    def get(self, request, sucursal_id, *args, **kwargs):
+        # === DataTables params ===
+        draw = int(request.GET.get("draw", 1))
+        start = int(request.GET.get("start", 0))
+        length = int(request.GET.get("length", 25))
+        search = (request.GET.get("search[value]", "") or "").strip()
+
+        # orden (col index -> campo)
+        order_col = request.GET.get("order[0][column]", "0")
+        order_dir = request.GET.get("order[0][dir]", "asc")
+
+        # === Fechas ===
+        ini_str = request.GET.get("fecha_ini")
+        fin_str = request.GET.get("fecha_fin")
+
+        # defaults defensivos
+        today = timezone.localdate()
+        date_ini = parse_date(ini_str) if ini_str else (today - timedelta(days=30))
+        date_fin = parse_date(fin_str) if fin_str else today
+
+        if not date_ini or not date_fin:
+            return JsonResponse({"error": "Rango de fechas inválido."}, status=400)
+        if date_fin < date_ini:
+            date_ini, date_fin = date_fin, date_ini
+
+        start_dt, end_dt_excl = _to_dt_bounds(date_ini, date_fin)
+
+        # === Query base (lo más importante para velocidad) ===
+        # Filtra primero por sucursal + rango temporal desde el FK a Venta.
+        base = (
+            DetalleVenta.objects
+            .filter(
+                ventaid__sucursalid_id=sucursal_id,
+                ventaid__fechaventa__gte=start_dt,     # AJUSTA si tu campo fecha se llama distinto
+                ventaid__fechaventa__lt=end_dt_excl,
+            )
+            .values("productoid_id", "productoid__nombre")  # AJUSTA nombre del campo
+            .annotate(
+                unidades=Coalesce(Sum("cantidad"), 0),
+                total_ventas=Coalesce(Sum("subtotal"), 0),   # AJUSTA si es "total" o "valor"
+                num_lineas=Count("id"),
+                num_ventas=Count("ventaid_id", distinct=True),
+            )
+        )
+
+        records_total = base.count()
+
+        # búsqueda (solo sobre nombre de producto)
+        if search:
+            base = base.filter(productoid__nombre__icontains=search)
+
+        records_filtered = base.count()
+
+        # === Ordenamiento seguro ===
+        # mapea la columna de DataTables a un campo calculado
+        col_map = {
+            "0": "productoid__nombre",
+            "1": "unidades",
+            "2": "total_ventas",
+            "3": "num_ventas",
+        }
+        order_field = col_map.get(order_col, "total_ventas")
+        if order_dir == "desc":
+            order_field = "-" + order_field
+
+        base = base.order_by(order_field)
+
+        # === Paginación (clave para rendimiento) ===
+        rows = list(base[start:start + length])
+
+        # DataTables espera "data" como lista de listas o dicts
+        data = [
+            {
+                "producto_id": r["productoid_id"],
+                "producto": r["productoid__nombre"],
+                "unidades": float(r["unidades"]),
+                "total_ventas": float(r["total_ventas"]),
+                "num_ventas": int(r["num_ventas"]),
+            }
+            for r in rows
+        ]
+
+        return JsonResponse({
+            "draw": draw,
+            "recordsTotal": records_total,
+            "recordsFiltered": records_filtered,
+            "data": data,
+        })
+
+class VentasProductoRangoView(LoginRequiredMixin, View):
+    template_name = "ventas_producto_rango.html"
+
+    def get(self, request, *args, **kwargs):
+        sucursal_id = kwargs.get("sucursal_id")
+        sucursal = get_object_or_404(Sucursal, pk=sucursal_id)
+
+        context = {
+            "sucursal": sucursal,
+            "sucursal_id": sucursal_id,
+        }
+        return render(request, self.template_name, context)
+
+
+class ProductoVentasStatsAjaxView(LoginRequiredMixin, View):
+    """
+    GET /ventas/producto/<sucursal_id>/stats/?productoid=123&desde=2026-02-01&hasta=2026-02-16
+    Retorna:
+      - ventas_distintas: cuántas ventas distintas incluyeron el producto
+      - unidades: suma de cantidades vendidas
+      - ingresos: suma(cantidad * preciounitario)
+      - daily: lista por día con ventas_distintas y unidades
+    """
+    def get(self, request, sucursal_id):
+        sucursal = get_object_or_404(Sucursal, pk=sucursal_id)
+
+        pid = (request.GET.get("productoid") or "").strip()
+        if not pid.isdigit():
+            return JsonResponse({"success": False, "error": "productoid inválido."}, status=400)
+        pid = int(pid)
+
+        producto = get_object_or_404(
+            Producto._base_manager.only("productoid", "nombre", "codigo_de_barras"),
+            pk=pid
+        )
+
+        # Fechas (ISO: YYYY-MM-DD)
+        desde_s = (request.GET.get("desde") or "").strip()
+        hasta_s = (request.GET.get("hasta") or "").strip()
+
+        desde = parse_date(desde_s) if desde_s else None
+        hasta = parse_date(hasta_s) if hasta_s else None
+
+        if not desde or not hasta:
+            return JsonResponse({"success": False, "error": "Debe enviar desde y hasta (YYYY-MM-DD)."}, status=400)
+
+        if desde > hasta:
+            return JsonResponse({"success": False, "error": "Rango inválido: desde no puede ser mayor que hasta."}, status=400)
+
+        # Base: detalles del producto en ventas de esa sucursal y rango
+        qs = (
+            DetalleVenta.objects
+            .select_related("ventaid")
+            .filter(
+                productoid_id=pid,
+                ventaid__sucursalid=sucursal,
+                ventaid__fecha__range=[desde, hasta],
+            )
+        )
+
+        # "Cuántas veces se vendió" = cuántas ventas DISTINTAS lo incluyeron
+        ventas_distintas = (
+            qs.values("ventaid_id")
+            .distinct()
+            .count()
+        )
+
+        # Unidades totales
+        unidades = qs.aggregate(u=Sum("cantidad"))["u"] or 0
+
+        # Ingresos totales (cantidad * preciounitario)
+        ingresos_expr = ExpressionWrapper(
+            F("cantidad") * F("preciounitario"),
+            output_field=DecimalField(max_digits=18, decimal_places=2),
+        )
+        ingresos = qs.aggregate(x=Sum(ingresos_expr))["x"] or 0
+
+        # Desglose diario
+        daily = list(
+            qs.values("ventaid__fecha")
+              .annotate(
+                  ventas=Count("ventaid_id", distinct=True),
+                  unidades=Sum("cantidad"),
+              )
+              .order_by("ventaid__fecha")
+        )
+        daily = [{
+            "fecha": str(d["ventaid__fecha"]),
+            "ventas": int(d["ventas"] or 0),
+            "unidades": int(d["unidades"] or 0),
+        } for d in daily]
+
+        return JsonResponse({
+            "success": True,
+            "product": {
+                "id": producto.productoid,
+                "nombre": producto.nombre,
+                "codigo_de_barras": getattr(producto, "codigo_de_barras", "") or "",
+            },
+            "range": {
+                "desde": str(desde),
+                "hasta": str(hasta),
+            },
+            "stats": {
+                "ventas_distintas": int(ventas_distintas),
+                "unidades": int(unidades),
+                "ingresos": str(ingresos),  # decimal -> string seguro
+            },
+            "daily": daily,
+        })

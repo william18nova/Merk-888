@@ -322,4 +322,16 @@ urlpatterns = [
     path("v", views.VisorProductoBarcodeView.as_view(), name="visor_barcode"),
     path("visor/barcode/buscar/", views.ProductoBuscarBarrasVisorView.as_view(), name="visor_barcode_buscar"),
     path("visor/barcode/lookup/", views.ProductoLookupPorBarrasVisorView.as_view(), name="visor_barcode_lookup"),
+
+    path("ventas/producto/<int:sucursal_id>/stats/", views.ProductoVentasStatsAjaxView.as_view(), name="producto_ventas_stats"),
+    path(
+     "reportes/<int:sucursal_id>/ventas-producto/",
+     views.VentasProductoRangoView.as_view(),
+     name="reporte_ventas_producto",
+     ),
+     path(
+        "api/reportes/<int:sucursal_id>/ventas-producto/",
+        views.VentasProductoRangoDataView.as_view(),
+        name="ventas_producto_data",
+    ),
 ]
