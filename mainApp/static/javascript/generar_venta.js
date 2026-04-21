@@ -3,7 +3,7 @@ $(function () {
   "use strict";
   const $ = window.jQuery;
 
-  console.log("⚡ generar_venta.js — AC ultra + snapshot L1 + live price + ✅ allow qty negativo (devolución) + modal MIXTO + POS Agent + submit ultrarrápido + scanner qty-guard + ✅ cámara universal (BarcodeDetector + ZXing fallback) + 🔒 anti-duplicado central");
+  console.log("⚡ generar_venta.js — AC ultra + snapshot L1 + live price + ✅ allow qty negativo (devolución) + modal MIXTO + POS Agent + submit ultrarrápido + scanner qty-guard + ✅ cámara universal (BarcodeDetector + ZXing fallback)");
 
   /* ================== URLs inyectadas ================== */
   const SUCURSAL_URL    = window.sucursalAutocompleteUrl;
@@ -131,14 +131,6 @@ $(function () {
     const isPureDigits = digits.length > 0 && digits.length === compact.length;
     const isBarcodeLike = isPureDigits && digits.length >= 6;
     return { raw, digits, hasLetters, isPureDigits, isBarcodeLike };
-  }
-
-  function isProductInputElement(el){
-    if (!el) return false;
-    if ($inpCode && $inpCode.length && el === $inpCode[0]) return true;
-    if ($inpNombre && $inpNombre.length && el === $inpNombre[0]) return true;
-    if ($inpId && $inpId.length && el === $inpId[0]) return true;
-    return false;
   }
 
   /* ================== Estado persistido ================== */
@@ -854,99 +846,25 @@ $(function () {
     }
   }
 
-  /* ================== Agregado con “burst last-only” + anti-duplicado central ================== */
-  const addTxnGate = {
-    pids: new Map(),
-    barcodes: new Map(),
-    ttlMs: 280,
-  };
-
-  function gateKeyBarcode(v){
-    const d = onlyDigits(v);
-    return d || String(v || "").trim();
-  }
-
-  function gateIsFree(map, key, ts){
-    if (!key) return true;
-    const until = Number(map.get(String(key)) || 0);
-    return !(until > ts);
-  }
-
-  function gateCommit(map, key, ttl, ts){
-    if (!key) return;
-    const k = String(key);
-    const until = ts + ttl;
-    map.set(k, until);
-
-    setTimeout(() => {
-      const curr = Number(map.get(k) || 0);
-      if (curr <= Date.now()) map.delete(k);
-    }, ttl + 40);
-  }
-
-  function takeAddTxnGate({ pid = "", barcode = "", ttl = addTxnGate.ttlMs } = {}){
-    const ts = Date.now();
-    const pidKey = pid ? String(pid) : "";
-    const bcKey  = gateKeyBarcode(barcode);
-
-    if (!gateIsFree(addTxnGate.pids, pidKey, ts)) return false;
-    if (!gateIsFree(addTxnGate.barcodes, bcKey, ts)) return false;
-
-    gateCommit(addTxnGate.pids, pidKey, ttl, ts);
-    gateCommit(addTxnGate.barcodes, bcKey, ttl, ts);
-    return true;
-  }
-
-  function addResolvedProductUnique(pid, qty = 1, { barcode = "", origin = "" } = {}){
-    const key = String(pid || "");
-    const nQty = Number(qty) || 0;
-    if (!key || nQty === 0) return false;
-
-    if (!takeAddTxnGate({ pid: key, barcode, ttl: addTxnGate.ttlMs })) {
-      console.debug("[DEDUPE] bloqueado", { origin, pid: key, barcode: gateKeyBarcode(barcode) });
-      return false;
-    }
-
-    addToCart(pid, nQty);
-    return true;
-  }
-
+  /* ================== Agregado con “burst last-only” ================== */
   const lastAddGuard = { pid: null, ts: 0 };
-  function addToCartGuarded(pid, qty = 1, meta = {}) {
+  function addToCartGuarded(pid, qty = 1) {
     const ts = now();
-    if (String(lastAddGuard.pid) === String(pid) && (ts - lastAddGuard.ts) < 180) return false;
+    if (String(lastAddGuard.pid) === String(pid) && (ts - lastAddGuard.ts) < 250) return;
     lastAddGuard.pid = String(pid);
     lastAddGuard.ts  = ts;
-    return addResolvedProductUnique(pid, qty, meta);
+    addToCart(pid, qty);
   }
-
-  const burstAdd = { timer: null, last: null, windowMs: 40 };
-  function addToCartLastOnly(pid, qty = 1, meta = {}) {
+  const burstAdd = { timer: null, last: null, windowMs: 60 };
+  function addToCartLastOnly(pid, qty = 1) {
     if (!pid || qty === 0) return;
-    burstAdd.last = {
-      pid: String(pid),
-      qty: Number(qty) || 1,
-      meta: { ...(meta || {}) }
-    };
+    burstAdd.last = { pid: String(pid), qty: Number(qty) || 1 };
     if (burstAdd.timer) clearTimeout(burstAdd.timer);
     burstAdd.timer = setTimeout(() => {
       burstAdd.timer = null;
-      const { pid: p, qty: q, meta: m } = burstAdd.last || {};
-      addToCartGuarded(p, q, m || {});
+      const { pid: p, qty: q } = burstAdd.last || {};
+      addToCartGuarded(p, q);
     }, burstAdd.windowMs);
-  }
-
-  function submitBarcodeInputOnce(rawCode, { origin = "barcode-input" } = {}){
-    const code = gateKeyBarcode(rawCode);
-    if (!code) return Promise.resolve(false);
-
-    return resolveByBarcode(code)
-      .then((pid) => {
-        if (!pid) return false;
-        bumpPick(pid);
-        return addResolvedProductUnique(pid, 1, { barcode: code, origin });
-      })
-      .catch(() => false);
   }
 
   function addToCart(pid, qty = 1) {
@@ -1045,6 +963,44 @@ $(function () {
 
   function createAC({ $inp, sourceFn, onSelect, openIfEmpty=false, enableInstantSearch=true, minChars=1 }) {
     attachAltEnterBypass($inp[0]);
+
+    function commitActiveAutocompleteItem(evt){
+      const inst = $inp.autocomplete("instance");
+      if (!inst) return false;
+
+      const $menu = inst.menu && inst.menu.element ? inst.menu.element : $();
+      const menuVisible = !!($menu.length && $menu.is(":visible"));
+      if (!menuVisible) return false;
+
+      const active = inst.menu && inst.menu.active && inst.menu.active.length
+        ? inst.menu.active
+        : $menu.find(".ui-state-active, .ui-menu-item-wrapper.ui-state-active").first().closest("li");
+
+      if (!active || !active.length) return false;
+
+      let item = null;
+      try { item = active.data("ui-autocomplete-item"); } catch (_) {}
+      if (!item) {
+        const wrapper = active.find(".ui-menu-item-wrapper").first();
+        try { item = wrapper.data("ui-autocomplete-item"); } catch (_) {}
+      }
+      if (!item) return false;
+
+      evt.preventDefault();
+      evt.stopPropagation();
+      evt.stopImmediatePropagation();
+
+      try { $inp.autocomplete("close"); } catch (_) {}
+      onSelect?.(item);
+      return true;
+    }
+
+    $inp.on("keydown.autocompleteEnterFix", function(e){
+      if (e.key !== "Enter" || e.altKey || e.ctrlKey || e.metaKey) return;
+      if ($inp.data("skipAcSelectOnce")) return;
+      commitActiveAutocompleteItem(e);
+    });
+
     $inp.autocomplete({
       minLength: minChars,
       delay: 0,
@@ -1186,37 +1142,17 @@ $(function () {
   function maybeAutoPickBarcode(term, items){
     const info = classifyQuery(term);
     if (!info.isBarcodeLike || !hasSucursal() || !Array.isArray(items) || items.length !== 1) return;
-
     const ts = Date.now();
     if (ts - autoPickGuardTS < 250) return;
     autoPickGuardTS = ts;
 
     const item = items[0];
-    updateCache(item.id, {
-      nombre:item.name,
-      barcode:item.barcode,
-      precio_unitario:item.price,
-      cantidad_disponible:item.stock
-    });
-
-    setProductFields({
-      nombre:item.name,
-      pid:item.id,
-      barcode:item.barcode || item.label
-    });
-
+    updateCache(item.id, { nombre:item.name, barcode:item.barcode, precio_unitario:item.price, cantidad_disponible:item.stock });
+    setProductFields({ nombre:item.name, pid:item.id, barcode:item.barcode || item.label });
     bumpPick(item.id);
-
     try { $inpCode.autocomplete("close"); } catch {}
     try { $inpNombre.autocomplete("close"); } catch {}
-
-    // IMPORTANTE:
-    // aquí NO se agrega al carrito.
-    // Solo dejamos el producto resuelto/seleccionado.
-    // El agregado real lo hace una sola ruta:
-    // - Enter en input código
-    // - selección explícita del autocomplete
-    // - detector global fuera del input
+    addToCartLastOnly(item.id, 1);
   }
 
   function toACItems(raw, {labelMode="name"} = {}) {
@@ -1351,10 +1287,7 @@ $(function () {
       updateCache(item.id, { nombre:item.name, barcode:item.barcode, precio_unitario:item.price, cantidad_disponible:item.stock });
       setProductFields({ nombre:item.name, pid:item.id, barcode:item.barcode || item.label });
       bumpPick(item.id);
-      addResolvedProductUnique(item.id, 1, {
-        barcode: item.barcode || "",
-        origin: "name-select"
-      });
+      addToCartLastOnly(item.id, 1);
     }
   });
   applyPriceTemplate($inpNombre, { mode: "name" });
@@ -1365,25 +1298,10 @@ $(function () {
     openIfEmpty: false,
     sourceFn: sourceSmartFactory({ cacheLRU: termCacheCode, labelMode: "code" }),
     onSelect: (item) => {
-      updateCache(item.id, {
-        nombre:item.name,
-        barcode:item.barcode,
-        precio_unitario:item.price,
-        cantidad_disponible:item.stock
-      });
-
-      setProductFields({
-        nombre:item.name,
-        pid:item.id,
-        barcode:item.barcode || item.label
-      });
-
+      updateCache(item.id, { nombre:item.name, barcode:item.barcode, precio_unitario:item.price, cantidad_disponible:item.stock });
+      setProductFields({ nombre:item.name, pid:item.id, barcode:item.barcode || item.label });
       bumpPick(item.id);
-
-      addResolvedProductUnique(item.id, 1, {
-        barcode: item.barcode || item.label,
-        origin: "code-select"
-      });
+      addToCartLastOnly(item.id, 1);
     }
   });
   applyPriceTemplate($inpCode, { mode: "code" });
@@ -1399,10 +1317,7 @@ $(function () {
         updateCache(item.id, { nombre:item.name, barcode:item.barcode, precio_unitario:item.price, cantidad_disponible:item.stock });
         setProductFields({ nombre:item.name, pid:item.id, barcode:item.barcode });
         bumpPick(item.id);
-        addResolvedProductUnique(item.id, 1, {
-          barcode: item.barcode || "",
-          origin: "id-select"
-        });
+        addToCartLastOnly(item.id, 1);
       }
     });
     applyPriceTemplate($inpId, { mode: "id" });
@@ -1660,24 +1575,6 @@ $(function () {
     } else { try { $inpCode.autocomplete("close"); } catch {} }
   });
 
-  $inpCode.on("keydown.barcodeCommit", function(e){
-    if (e.key !== "Enter" || e.altKey || e.ctrlKey || e.metaKey) return;
-    if (isModalOpen()) return;
-
-    const code = gateKeyBarcode(this.value);
-    if (!code) return;
-
-    e.preventDefault();
-    e.stopPropagation();
-    e.stopImmediatePropagation();
-
-    try { $inpCode.autocomplete("close"); } catch (_){}
-    try { $inpNombre.autocomplete("close"); } catch (_){}
-    try { if ($inpId && $inpId.length) $inpId.autocomplete("close"); } catch (_){}
-
-    submitBarcodeInputOnce(code, { origin: "code-enter" });
-  });
-
   /* ================== Cantidad principal (#cantidad): (si existe) ================== */
   function normalizeQtyOnCommit(el){
     const raw = String(el.value || "").trim();
@@ -1811,7 +1708,7 @@ $(function () {
       const qty = clampQtyAnySign($cantidad.val());
       $cantidad.val(String(qty));
       if (!pid || qty === 0) return;
-      addToCartLastOnly(pid, qty, { origin: "manual-add" });
+      addToCartLastOnly(pid, qty);
     });
   }
 
@@ -1824,7 +1721,7 @@ $(function () {
         const pid = $pid.val();
         if (!pid || qty === 0) return;
 
-        addToCartLastOnly(pid, qty, { origin: "qty-enter" });
+        addToCartLastOnly(pid, qty);
 
         this.blur();
         queueMicrotask(() => {
@@ -2749,12 +2646,13 @@ $(function () {
 
   // ✅ BLOQUEO TOTAL: si el modal está abierto, NO se agrega al carrito, NO se escribe en inputs de venta
   function pushCodeIntoCodeInputAndAdd(code){
+    // ✅ si modal abierto: consumir y bloquear confirmación, pero NO hacer nada más
     if (isModalOpen()) {
       blockModalConfirmFor(900);
       return;
     }
 
-    const clean = gateKeyBarcode(code);
+    const clean = onlyDigits(code);
     if (!clean) return;
 
     $inpCode.val(clean);
@@ -2768,8 +2666,7 @@ $(function () {
     });
 
     if (!hasSucursal()) return;
-
-    submitBarcodeInputOnce(clean, { origin: "scanner-global" });
+    resolveByBarcode(clean).then(pid => { if (pid) addToCartLastOnly(pid, 1); });
   }
 
   /* =======================================================================================
@@ -3061,7 +2958,7 @@ $(function () {
       const committed = normalizeQtyOnCommit($cantidad[0]);
       const qty = clampQtyAnySign(committed);
       const pid = $pid.val();
-      if (pid && $agregar && $agregar.length && !$agregar.prop("disabled")) addToCartLastOnly(pid, qty, { origin: "qty-scan-commit" });
+      if (pid && $agregar && $agregar.length && !$agregar.prop("disabled")) addToCartLastOnly(pid, qty);
       return;
     }
     if (originEl && originEl.classList && originEl.classList.contains("qty-input")) {
@@ -3116,15 +3013,7 @@ $(function () {
 
       const active = document.activeElement;
       const inQty = isQtyElement(active);
-      const inProductInput = isProductInputElement(active);
       const t = Date.now();
-
-      // Si el foco ya está en nombre/código/id, dejamos que ese input maneje el escaneo.
-      // Así evitamos dobles rutas (input + detector global).
-      if (inProductInput && !inQty) {
-        resetAll();
-        return;
-      }
 
       if (e.key === "Enter" || e.key === "Tab") {
         const fastEnough = buf && (t-first) < buf.length * (GAP_MS+5) && (t-last) < GAP_MS*3;
@@ -3197,10 +3086,7 @@ $(function () {
       // ✅ si el modal está abierto, NO uses este fallback (lo maneja el guard del modal)
       if (isModalOpen()) { reset(); return; }
 
-      const active = document.activeElement;
-      if (isQtyElement(active)) return;
-      if (isProductInputElement(active)) { reset(); return; }
-
+      if (isQtyElement(document.activeElement)) return;
       if (e.ctrlKey || e.altKey || e.metaKey) { reset(); return; }
       const t = Date.now();
 
