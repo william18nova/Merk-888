@@ -27,6 +27,9 @@ $(function () {
   const $inpId      = $("#producto_busqueda_id"); // ✅ input independiente ID
   const $inpCode    = $("#codigo_o_barras");
   const $pid        = $("#producto_id");
+  const $bolsaSelect = $("#bolsa-producto");
+  const $btnAgregarBolsa = $("#btn-agregar-bolsa");
+  const $promoInfo  = $("#promo-bolsas-info");
 
   // (si no existen, no rompen)
   const $cantidad   = $("#cantidad");
@@ -174,6 +177,10 @@ $(function () {
   let runningTotal = 0;
   let lastAddedPid = null;
 
+  const PROMO_BAG_21 = "21";
+  const PROMO_BAG_8001 = "8001";
+  const PROMO_BLOCK_COP = 11000;
+
   const defer = (fn) => (window.requestIdleCallback ? requestIdleCallback(fn, { timeout: 150 }) : setTimeout(fn, 0));
   function syncHiddenFields() {
     defer(() => {
@@ -196,21 +203,123 @@ $(function () {
     setTotal((Number(runningTotal) || 0) + (Number(delta) || 0));
   }
 
-  function computeDOMTotal() {
-    let sum = 0;
+  function computeBagPromoBreakdown(rows){
+    const rowByPid = new Map(rows.map(r => [String(r.pid || ""), r]));
+    const bag21 = rowByPid.get(PROMO_BAG_21);
+    const bag8001 = rowByPid.get(PROMO_BAG_8001);
+
+    const price21 = Math.max(0, safeNumber(bag21?.price));
+    const price8001 = Math.max(0, safeNumber(bag8001?.price));
+
+    let remaining21 = Math.max(0, Math.trunc(safeNumber(bag21?.qty)));
+    let remaining8001 = Math.max(0, Math.trunc(safeNumber(bag8001?.qty)));
+
+    const baseTotal = rows.reduce((sum, r) => {
+      const pid = String(r.pid || "");
+      if (pid === PROMO_BAG_21 || pid === PROMO_BAG_8001) return sum;
+      const qty = Math.trunc(safeNumber(r.qty));
+      const price = safeNumber(r.price);
+      if (qty <= 0 || price <= 0) return sum;
+      return sum + (qty * price);
+    }, 0);
+
+    const blocksGranted = Math.max(0, Math.floor(baseTotal / PROMO_BLOCK_COP));
+    let blocks = blocksGranted;
+    let free21 = 0;
+    let free8001 = 0;
+
+    while (blocks > 0 && (remaining21 > 0 || remaining8001 > 0)) {
+      const value21 = (remaining21 > 0 && price21 > 0) ? (Math.min(2, remaining21) * price21) : -1;
+      const value8001 = (remaining8001 > 0 && price8001 > 0) ? price8001 : -1;
+      if (value21 <= 0 && value8001 <= 0) break;
+      if (value8001 > value21) {
+        free8001 += 1;
+        remaining8001 -= 1;
+      } else {
+        const take21 = Math.min(2, remaining21);
+        free21 += take21;
+        remaining21 -= take21;
+      }
+      blocks -= 1;
+    }
+
+    return {
+      baseTotal,
+      blocksGranted,
+      free21,
+      free8001,
+      discount: (free21 * price21) + (free8001 * price8001),
+    };
+  }
+
+  function applyPromoUiAndComputeTotal({ updateUI = true } = {}) {
+    const rows = [];
     $tbody.find("tr").each(function(){
       const $r = $(this);
-      const counted = !!$r.data("counted");
-      const price = Number($r.data("price")) || 0;
-      const qty   = Number($r.attr("data-qty")) || Number($r.find(".qty-input").val()) || 0;
-      if (counted && price > 0 && qty !== 0) sum += price * qty;
+      const pid = String($r.data("pid") || "");
+      const qtyRaw = $r.attr("data-qty") || $r.find(".qty-input").val() || "0";
+      const qty = parseInt(String(qtyRaw).trim(), 10);
+      const price = safeNumber($r.data("price"));
+      rows.push({ $r, pid, qty: Number.isFinite(qty) ? qty : 0, price });
     });
-    return sum;
+
+    const promo = computeBagPromoBreakdown(rows);
+    let total = 0;
+
+    for (const row of rows) {
+      const qty = Math.trunc(safeNumber(row.qty));
+      const price = safeNumber(row.price);
+      let freeQty = 0;
+      let subtotal = 0;
+
+      if (price > 0) {
+        if (row.pid === PROMO_BAG_21 && qty > 0) {
+          freeQty = Math.min(qty, promo.free21);
+          subtotal = (qty - freeQty) * price;
+        } else if (row.pid === PROMO_BAG_8001 && qty > 0) {
+          freeQty = Math.min(qty, promo.free8001);
+          subtotal = (qty - freeQty) * price;
+        } else {
+          subtotal = qty * price;
+        }
+      }
+
+      total += subtotal;
+
+      if (updateUI) {
+        row.$r.attr("data-free-qty", freeQty);
+        row.$r.find(".promo-bolsa-badge").remove();
+        row.$r.removeClass("promo-free-line promo-partial-line");
+        row.$r.find(".subtotal-cell").text(price > 0 ? money(subtotal) : "…");
+
+        if ((row.pid === PROMO_BAG_21 || row.pid === PROMO_BAG_8001) && freeQty > 0) {
+          const isAllFree = qty > 0 && freeQty >= qty;
+          const badgeText = isAllFree ? "Gratis" : `Gratis: ${freeQty}`;
+          row.$r.children("td").first().append(` <small class="promo-bolsa-badge">${badgeText}</small>`);
+          row.$r.addClass(isAllFree ? "promo-free-line" : "promo-partial-line");
+        }
+      }
+    }
+
+    if (updateUI && $promoInfo.length) {
+      const chunks = [];
+      if (promo.blocksGranted > 0) chunks.push(`Bloques disponibles: ${promo.blocksGranted}`);
+      if (promo.free21 > 0) chunks.push(`Bolsa cuero de vaca gratis: ${promo.free21}`);
+      if (promo.free8001 > 0) chunks.push(`Bolsa grande gratis: ${promo.free8001}`);
+      if (promo.discount > 0) chunks.push(`Descuento aplicado: ${money(promo.discount)}`);
+      $promoInfo.text(chunks.length ? chunks.join(" • ") : "Promo bolsas: por cada $11.000 en productos distintos a bolsas, llevas hasta 2 bolsas 21 o 1 bolsa 8001 gratis.");
+    }
+
+    return total;
+  }
+
+  function computeDOMTotal() {
+    return applyPromoUiAndComputeTotal({ updateUI: false });
   }
   function enforceTotalIntegrity() {
-    const dom = computeDOMTotal();
+    const dom = applyPromoUiAndComputeTotal({ updateUI: true });
     if (!Number.isFinite(dom)) return;
-    if (Math.abs(dom - (runningTotal||0)) > 0.0001) setTotal(dom);
+    setTotal(dom);
   }
 
   function throttle(fn, ms=60){
@@ -493,6 +602,29 @@ $(function () {
     if (!force && loadCatalogFromLocalStorage(sid)) return catalogBySucursal.get(sid) || [];
     try { return await fetchCatalogSnapshot(sid); }
     catch { return catalogBySucursal.get(sid) || []; }
+  }
+
+  async function ensureProductCachedById(pid) {
+    const key = String(pid || "").trim();
+    if (!key || !hasSucursal()) return null;
+
+    const rec = productCache.get(key);
+    if (rec && rec.nombre) return { id: key, name: rec.nombre, barcode: rec.barcode || "", price: rec.price || 0, stock: rec.stock };
+
+    const items = await ensureCatalog(sucursalID, { force: true });
+    const found = (items || []).find(p => String(p.id) === key);
+    if (found) {
+      const hydrated = updateCache(key, { nombre: found.name, barcode: found.barcode, precio_unitario: found.price, cantidad_disponible: found.stock });
+      return { id: key, name: hydrated.nombre || found.name || `Producto ${key}`, barcode: hydrated.barcode || found.barcode || "", price: hydrated.price || found.price || 0, stock: hydrated.stock ?? found.stock };
+    }
+
+    const r = await $.post(VERIFICAR_URL, { producto_id: key, cantidad: 1, sucursal_id: sucursalID, _ts: Date.now() }).catch(() => null);
+    if (r && r.exists) {
+      const hydrated = updateCache(key, r);
+      return { id: key, name: hydrated.nombre || r.nombre || `Producto ${key}`, barcode: hydrated.barcode || r.codigo_de_barras || "", price: hydrated.price || r.precio_unitario || 0, stock: hydrated.stock ?? r.cantidad_disponible };
+    }
+
+    return null;
   }
 
   /* ================== Ranking local (LRU + scoring) ================== */
@@ -1071,7 +1203,9 @@ $(function () {
 .ui-autocomplete .ac-price{opacity:.85}
 .pending-price .price-cell{opacity:.6}
 .pending-price .subtotal-cell{opacity:.6}
-#myModal[data-loading-prices="1"] #confirmar-pago{opacity:.7;pointer-events:none}`;
+#myModal[data-loading-prices="1"] #confirmar-pago{opacity:.7;pointer-events:none}
+.promo-bolsa-badge{display:inline-block;margin-left:.4rem;padding:.1rem .45rem;border-radius:999px;background:rgba(77,166,255,.12);font-size:.75rem;font-weight:700;color:#153060}
+.promo-free-line .subtotal-cell,.promo-partial-line .subtotal-cell{font-weight:700}`;
     const id = "ac-price-style";
     if (!document.getElementById(id)) {
       const tag = document.createElement("style");
@@ -1739,6 +1873,25 @@ $(function () {
     const pid = String($row.data("pid") || "");
     removeRowByPid(pid);
   });
+
+  if ($btnAgregarBolsa.length && $bolsaSelect.length) {
+    $btnAgregarBolsa.off("click.bolsasPromo").on("click.bolsasPromo", async function () {
+      const pid = String($bolsaSelect.val() || "").trim();
+      if (!pid) return;
+      if (!hasSucursal()) {
+        alert("No hay sucursal activa para esta venta.");
+        return;
+      }
+      const prod = await ensureProductCachedById(pid);
+      if (!prod) {
+        alert(`No se pudo cargar el producto ID ${pid} para esta sucursal. Verifica que exista en inventario.`);
+        return;
+      }
+      setProductFields({ nombre: prod.name, pid, barcode: prod.barcode || "" });
+      addToCartLastOnly(pid, 1);
+      queueMicrotask(() => enforceTotalIntegrity());
+    });
+  }
 
   // ✅ Vaciar carrito (limpia pagos también)
   $btnVaciar.on("click", function(){

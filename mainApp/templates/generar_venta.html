@@ -137,6 +137,20 @@
       <!-- ocultos que el JS llena -->
       <input type="hidden" id="producto_id">
 
+      <div class="form-group">
+        <label for="bolsa-producto">Bolsas</label>
+        <div class="row-inline">
+          <select id="bolsa-producto" class="form-control">
+            <option value="21">Bolsa grande</option>
+            <option value="8001">Bolsa cuero de vaca</option>
+          </select>
+          <button type="button" id="btn-agregar-bolsa" class="btn btn-secondary">
+            <i class="fa-solid fa-bag-shopping"></i> Agregar bolsa
+          </button>
+        </div>
+        <small id="promo-bolsas-info" class="hint">Promo bolsas: por cada $11.000 en productos distintos a bolsas, llevas hasta 2 bolsas 21 o 1 bolsa 8001 gratis.</small>
+      </div>
+
       <input type="hidden" id="productos"  name="productos"  value="[]">
       <input type="hidden" id="cantidades" name="cantidades" value="[]">
 
