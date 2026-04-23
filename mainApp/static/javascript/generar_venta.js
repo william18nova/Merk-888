@@ -1104,18 +1104,30 @@ $(function () {
       const menuVisible = !!($menu.length && $menu.is(":visible"));
       if (!menuVisible) return false;
 
-      const active = inst.menu && inst.menu.active && inst.menu.active.length
+      let $active = inst.menu && inst.menu.active && inst.menu.active.length
         ? inst.menu.active
-        : $menu.find(".ui-state-active, .ui-menu-item-wrapper.ui-state-active").first().closest("li");
+        : $menu.find(".ui-state-active, .ui-menu-item-wrapper.ui-state-active").first();
 
-      if (!active || !active.length) return false;
+      if (!$active || !$active.length) return false;
+
+      const $activeLi = $active.is("li") ? $active : $active.closest("li");
+      const $activeWrapper = $active.hasClass("ui-menu-item-wrapper")
+        ? $active
+        : $active.find(".ui-menu-item-wrapper").first();
 
       let item = null;
-      try { item = active.data("ui-autocomplete-item"); } catch (_) {}
+
+      try { item = $activeLi.data("ui-autocomplete-item"); } catch (_) {}
       if (!item) {
-        const wrapper = active.find(".ui-menu-item-wrapper").first();
-        try { item = wrapper.data("ui-autocomplete-item"); } catch (_) {}
+        try { item = $activeWrapper.data("ui-autocomplete-item"); } catch (_) {}
       }
+
+      // respaldo: toma el primer item visible si por alguna razón no quedó activo
+      if (!item) {
+        const $firstLi = $menu.find("li").has(".ui-menu-item-wrapper").first();
+        try { item = $firstLi.data("ui-autocomplete-item"); } catch (_) {}
+      }
+
       if (!item) return false;
 
       evt.preventDefault();
