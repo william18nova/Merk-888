@@ -1288,11 +1288,25 @@ $(function () {
   function maybeAutoPickBarcode(term, items){
     const info = classifyQuery(term);
     if (!info.isBarcodeLike || !hasSucursal() || !Array.isArray(items) || items.length !== 1) return;
+
+    // ✅ FIX escaneo: solo auto-agregar si el CÓDIGO DE BARRAS del candidato coincide
+    //    EXACTAMENTE con los dígitos escaneados. Esto evita que un match parcial
+    //    (substring/prefijo) o una coincidencia accidental con un ID de producto
+    //    agregue el producto equivocado al carrito.
+    //    Si no es match exacto, dejamos que el menú de sugerencias se muestre y
+    //    que `resolveByBarcode` (match exacto en cache/servidor) resuelva el agregado.
+    const item = items[0];
+    const itemDigits = onlyDigits(String(item.barcode || ""));
+    const labelDigits = onlyDigits(String(item.label || ""));
+    const exactBarcode =
+      (itemDigits && itemDigits === info.digits) ||
+      (labelDigits && labelDigits === info.digits);
+    if (!exactBarcode) return;
+
     const ts = Date.now();
     if (ts - autoPickGuardTS < 250) return;
     autoPickGuardTS = ts;
 
-    const item = items[0];
     updateCache(item.id, { nombre:item.name, barcode:item.barcode, precio_unitario:item.price, cantidad_disponible:item.stock });
     setProductFields({ nombre:item.name, pid:item.id, barcode:item.barcode || item.label });
     bumpPick(item.id);
