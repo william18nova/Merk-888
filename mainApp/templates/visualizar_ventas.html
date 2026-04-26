@@ -24,6 +24,26 @@
     <input id="buscador-ventas" class="search-input" type="text" placeholder="Buscar…">
   </div>
 
+  {# ——— Filtro por producto (id, nombre o código de barras) ——— #}
+  <div class="search-wrapper" style="margin-top:8px; position:relative;">
+    <i class="fas fa-box"></i>
+    <input id="filtro-producto"
+           class="search-input"
+           type="text"
+           autocomplete="off"
+           placeholder="Filtrar por producto (id, nombre o código)…">
+    <button id="filtro-producto-clear"
+            type="button"
+            title="Quitar filtro"
+            style="display:none; margin-left:6px; padding:4px 10px; cursor:pointer;">
+      ✕
+    </button>
+    <span id="filtro-producto-chip"
+          style="display:none; margin-left:8px; padding:3px 10px; border-radius:12px;
+                 background:#e0f2fe; color:#075985; font-size:12px;"></span>
+    <input type="hidden" id="filtro-producto-id" value="">
+  </div>
+
   {# ——— Tabla de ventas ——— #}
   <div class="table-wrap">
     <table id="ventasTable" class="display">
@@ -50,7 +70,9 @@
 {# ——— CDNs ——— #}
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
 <link rel="stylesheet" href="https://cdn.datatables.net/1.11.5/css/jquery.dataTables.min.css">
+<link rel="stylesheet" href="https://code.jquery.com/ui/1.13.2/themes/base/jquery-ui.css">
 <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+<script src="https://code.jquery.com/ui/1.13.2/jquery-ui.min.js"></script>
 <script src="https://cdn.datatables.net/1.11.5/js/jquery.dataTables.min.js"></script>
 
 {# ——— Estilos base (igual a listar_pedidos.css) ——— #}
@@ -60,8 +82,9 @@
 
 {# URL base para navegar al ver_venta/id y URL de datos para DataTables #}
 <script>
-  const verVentaUrl   = "{% url 'ver_venta' 0 %}";
-  const ventasDataUrl = "{% url 'ventas_datatable' %}";
+  const verVentaUrl              = "{% url 'ver_venta' 0 %}";
+  const ventasDataUrl            = "{% url 'ventas_datatable' %}";
+  const productoAutocompleteUrl  = "{% url 'producto_autocomplete_global' %}";
 </script>
 
 {# ——— Lógica JS ——— #}

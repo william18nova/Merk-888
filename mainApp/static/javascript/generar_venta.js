@@ -2845,7 +2845,15 @@ $(function () {
     });
 
     if (!hasSucursal()) return;
-    resolveByBarcode(clean).then(pid => { if (pid) addToCartLastOnly(pid, 1); });
+    resolveByBarcode(clean).then(pid => {
+      if (!pid) return;
+      // ✅ Anti-doble-add: si maybeAutoPickBarcode (vía autocomplete local) ya agregó
+      // este mismo pid hace menos de 1200ms, NO duplicar al volver del resolve por red.
+      // 1200ms es mayor al guard de addToCartGuarded (250ms) para cubrir redes lentas,
+      // pero menor a la separación natural entre dos escaneos manuales del mismo producto.
+      if (String(lastAddGuard.pid) === String(pid) && (Date.now() - lastAddGuard.ts) < 1200) return;
+      addToCartLastOnly(pid, 1);
+    });
   }
 
   /* =======================================================================================

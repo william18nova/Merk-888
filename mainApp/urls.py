@@ -194,6 +194,7 @@ urlpatterns = [
     path("producto_por_codigo/",      views.BuscarProductoPorCodigoView.as_view(), name="buscar_producto_por_codigo"),
     path('autocomplete/producto-codigo/',  views.ProductoCodigoAutocompleteView.as_view(),  name='producto_autocomplete_codigo'),
     path('autocomplete/producto-barras/',  views.ProductoBarrasAutocompleteView.as_view(),  name='producto_autocomplete_barras'),
+    path('autocomplete/producto-global/',  views.ProductoAutocompleteGlobalView.as_view(),  name='producto_autocomplete_global'),
 
     path('visualizar_ventas/', views.VentaListView.as_view(), name='visualizar_ventas'),
     path("ventas/data/", views.VentaDataTableView.as_view(), name="ventas_datatable"),

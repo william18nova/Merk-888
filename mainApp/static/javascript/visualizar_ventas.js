@@ -21,10 +21,24 @@ $(function () {
       .replace(/\b\w/g, c => c.toUpperCase());
   }
 
+  // ✅ Estado del filtro por producto (id seleccionado o término libre)
+  const productoFiltro = { id: "", term: "" };
+
   const table = $("#ventasTable").DataTable({
     processing : true,
     serverSide : true,
-    ajax       : { url: ventasDataUrl, type: "GET" },
+    ajax       : {
+      url: ventasDataUrl,
+      type: "GET",
+      data: function (d) {
+        // Pasar filtro de producto al backend en cada request
+        if (productoFiltro.id) {
+          d.producto_id = productoFiltro.id;
+        } else if (productoFiltro.term) {
+          d.producto_term = productoFiltro.term;
+        }
+      }
+    },
 
     columns: [
       { data: "ventaid" },
@@ -82,4 +96,103 @@ $(function () {
     const id = $(this).data("id");
     if (id) window.location.href = verVentaUrl.replace("0", id);
   });
+
+  /* =========================
+     ✅ Filtro por producto
+     ========================= */
+  const $inpProd  = $("#filtro-producto");
+  const $hidProd  = $("#filtro-producto-id");
+  const $clearBtn = $("#filtro-producto-clear");
+  const $chip     = $("#filtro-producto-chip");
+
+  function applyProductoChip(text) {
+    if (text) {
+      $chip.text(text).show();
+      $clearBtn.show();
+    } else {
+      $chip.text("").hide();
+      $clearBtn.hide();
+    }
+  }
+
+  function setProductoFiltroById(id, label) {
+    productoFiltro.id = String(id || "");
+    productoFiltro.term = "";
+    $hidProd.val(productoFiltro.id);
+    applyProductoChip(label ? `Producto: ${label}` : `Producto #${id}`);
+    table.ajax.reload();
+  }
+
+  function setProductoFiltroByTerm(term) {
+    productoFiltro.id = "";
+    productoFiltro.term = String(term || "").trim();
+    $hidProd.val("");
+    applyProductoChip(productoFiltro.term ? `Producto: "${productoFiltro.term}"` : "");
+    table.ajax.reload();
+  }
+
+  function clearProductoFiltro() {
+    productoFiltro.id = "";
+    productoFiltro.term = "";
+    $hidProd.val("");
+    $inpProd.val("");
+    applyProductoChip("");
+    table.ajax.reload();
+  }
+
+  if (typeof productoAutocompleteUrl === "string" && productoAutocompleteUrl) {
+    $inpProd.autocomplete({
+      minLength: 1,
+      delay: 180,
+      source: function (request, response) {
+        $.ajax({
+          url: productoAutocompleteUrl,
+          dataType: "json",
+          data: { term: request.term, limit: 15 },
+          success: function (data) {
+            const items = (data.results || []).map(p => {
+              const code = p.barcode ? ` · ${p.barcode}` : "";
+              return {
+                label: `#${p.id} — ${p.text}${code}`,
+                value: p.text,
+                id: p.id,
+                name: p.text,
+                barcode: p.barcode || ""
+              };
+            });
+            response(items);
+          },
+          error: function () { response([]); }
+        });
+      },
+      select: function (event, ui) {
+        event.preventDefault();
+        $inpProd.val(ui.item.name);
+        setProductoFiltroById(ui.item.id, ui.item.name);
+        return false;
+      },
+      focus: function (event) { event.preventDefault(); }
+    });
+  }
+
+  // Enter en el input: si no se eligió del menú, filtrar por término libre
+  $inpProd.on("keydown", function (e) {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      const v = ($inpProd.val() || "").trim();
+      if (!v) { clearProductoFiltro(); return; }
+      // si el id ya estaba fijado y el texto coincide, no hacer nada
+      if (productoFiltro.id && v === ($chip.text().replace(/^Producto:\s*/, ""))) return;
+      setProductoFiltroByTerm(v);
+    }
+  });
+
+  // Si el usuario borra todo el input manualmente, limpiar filtro
+  $inpProd.on("input", function () {
+    if (!($inpProd.val() || "").trim() && (productoFiltro.id || productoFiltro.term)) {
+      clearProductoFiltro();
+    }
+  });
+
+  $clearBtn.on("click", clearProductoFiltro);
 });

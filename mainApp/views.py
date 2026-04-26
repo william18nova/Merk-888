@@ -3416,12 +3416,17 @@ class GenerarVentaView(LoginRequiredMixin, View):
         cajero_nombre = (venta_data or {}).get("cajero_nombre", "") or "—"
         refund_total  = Decimal((venta_data or {}).get("refund_total", 0) or 0)
         cambio        = Decimal((venta_data or {}).get("cambio", 0) or 0)
+        venta_id      = (venta_data or {}).get("venta_id", "")
 
         head = [
             line("NOVA POS"),
             line("MERK2888"),
             line("NIT: 28.565.875 - 4"),
             line("FACTURA"),
+        ]
+        if venta_id not in (None, ""):
+            head.append(line(f"Factura #{venta_id}"))
+        head += [
             lr("Fecha:", ahora.strftime("%Y-%m-%d %H:%M")),
             lr("Sucursal:", (venta_data or {}).get("sucursal_nombre", "")),
             lr("Cajero:", cajero_nombre),
@@ -3577,6 +3582,7 @@ class GenerarVentaView(LoginRequiredMixin, View):
                     "cajero_nombre": cajero_nombre,
                     "refund_total": refund_total,
                     "cambio": cambio,
+                    "venta_id": venta.pk,
                 },
                 detalles, total, pagos
             )
@@ -4049,6 +4055,47 @@ class ProductoAutocompleteView(PaginatedAutocompleteMixin):
 
         return JsonResponse({"results": results, "has_more": has_more})
 
+class ProductoAutocompleteGlobalView(LoginRequiredMixin, View):
+    """
+    Autocomplete de productos SIN restricción de sucursal.
+    Busca por id (exacto/prefijo), nombre (icontains) o código de barras (icontains).
+    Usado por el filtro de producto en visualizar_ventas.
+    """
+    per_page = 15
+
+    def get(self, request, *args, **kwargs):
+        term  = (request.GET.get("term", "") or "").strip()
+        try:
+            limit = int(request.GET.get("limit") or self.per_page)
+        except ValueError:
+            limit = self.per_page
+        limit = max(1, min(limit, 50))
+
+        qs = Producto.objects.all()
+
+        if term:
+            cond = Q(nombre__icontains=term) | Q(codigo_de_barras__icontains=term)
+            if term.isdigit():
+                cond = cond | Q(productoid=int(term))
+            qs = qs.filter(cond)
+
+        rows = list(qs.values(
+            "productoid", "nombre", "codigo_de_barras", "precio"
+        ).order_by("nombre")[:limit + 1])
+
+        has_more = len(rows) > limit
+        rows = rows[:limit]
+
+        results = [{
+            "id": r["productoid"],
+            "text": r["nombre"] or "",
+            "barcode": r["codigo_de_barras"] or "",
+            "precio": float(r["precio"] or 0),
+        } for r in rows]
+
+        return JsonResponse({"results": results, "has_more": has_more})
+
+
 class ClienteAutocompleteView(PaginatedAutocompleteMixin):
     """
     Cliente por nombre / apellido / documento.
@@ -4421,12 +4468,30 @@ class VentaDataTableView(LoginRequiredMixin, View):
         length = int(request.GET.get("length", "25"))
         search_value = request.GET.get("search[value]", "").strip()
 
+        # ✅ Filtro por producto (id, nombre o código de barras).
+        # Acepta:
+        #   - producto_id: ID exacto (preferente, más rápido)
+        #   - producto_term: texto libre (busca por nombre o codigo_de_barras)
+        producto_id   = (request.GET.get("producto_id", "") or "").strip()
+        producto_term = (request.GET.get("producto_term", "") or "").strip()
+
         base_qs = Venta.objects.select_related(
             "clienteid", "empleadoid", "sucursalid", "puntopagoid"
         )
 
         records_total = base_qs.count()
         qs = base_qs
+
+        if producto_id.isdigit():
+            qs = qs.filter(detalleventa__productoid_id=int(producto_id)).distinct()
+        elif producto_term:
+            prod_q = (
+                Q(detalleventa__productoid__nombre__icontains=producto_term) |
+                Q(detalleventa__productoid__codigo_de_barras__icontains=producto_term)
+            )
+            if producto_term.isdigit():
+                prod_q = prod_q | Q(detalleventa__productoid_id=int(producto_term))
+            qs = qs.filter(prod_q).distinct()
 
         if search_value:
             tokens = search_value.split()
@@ -8079,3 +8144,5 @@ class ProductoVentasStatsAjaxView(LoginRequiredMixin, View):
             },
             "daily": daily,
         })
+
+print("dsfsdfsdfsfsd")
