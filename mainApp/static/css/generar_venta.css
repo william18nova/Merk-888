@@ -831,3 +831,30 @@ body::before{
   background:rgba(34,197,94,.16);
   border-color:rgba(34,197,94,.28);
 }
+
+.bag-quick-actions{
+  width:100%;
+  max-width:520px;
+  margin:0 auto 10px;
+  display:grid;
+  grid-template-columns:repeat(2, minmax(0, 1fr));
+  gap:10px;
+}
+.bag-quick-actions .btn{
+  min-height:42px;
+  padding:10px 12px;
+  text-transform:none;
+  letter-spacing:0;
+  font-size:14px;
+  white-space:normal;
+}
+.right-title .promo-bolsas-status{
+  max-width:620px;
+  margin:0 auto 12px;
+}
+
+@media (max-width: 640px){
+  .bag-quick-actions{
+    grid-template-columns:1fr;
+  }
+}

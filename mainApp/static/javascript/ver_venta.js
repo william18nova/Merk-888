@@ -176,9 +176,65 @@
     }
   });
 
-  /* =========================
-     ✅ IMPRIMIR DIRECTO (POS AGENT)
-     ========================= */
+  /* =========================================================================
+     ✅ IMPRIMIR — MISMO MÉTODO que generar_venta.js
+     - Header X-Pos-Agent-Token (no Authorization: Bearer)
+     - kick + print en paralelo
+     - keepalive + AbortController con timeouts
+     - Padding de 13 saltos al final del ticket (paper feed)
+     - settleWithDeadline(250ms) para no bloquear la UI
+     ========================================================================= */
+  const POS_AGENT_URL   = (window.POS_AGENT_URL || "http://127.0.0.1:8787").replace(/\/+$/,'');
+  const POS_AGENT_TOKEN = (window.POS_AGENT_TOKEN || "").trim();
+
+  async function agentPrintSafe(text, { timeout = 700 } = {}) {
+    if (!POS_AGENT_TOKEN) return;
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), timeout);
+    try {
+      await fetch(POS_AGENT_URL + "/print", {
+        method: "POST",
+        keepalive: true,
+        headers: { "Content-Type": "application/json", "X-Pos-Agent-Token": POS_AGENT_TOKEN },
+        body: JSON.stringify({ text }),
+        signal: ctrl.signal
+      });
+    } catch (_) {}
+    finally { clearTimeout(t); }
+  }
+
+  async function agentKickSafe({ timeout = 450 } = {}) {
+    if (!POS_AGENT_TOKEN) return;
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), timeout);
+    try {
+      await fetch(POS_AGENT_URL + "/kick", {
+        method: "POST",
+        keepalive: true,
+        headers: { "X-Pos-Agent-Token": POS_AGENT_TOKEN },
+        signal: ctrl.signal
+      });
+    } catch (_) {}
+    finally { clearTimeout(t); }
+  }
+
+  function settleWithDeadline(proms, maxWaitMs = 250) {
+    return Promise.race([
+      Promise.allSettled(proms),
+      new Promise(res => setTimeout(res, maxWaitMs))
+    ]);
+  }
+
+  // Warmup del agente al cargar la página (igual que generar_venta)
+  (function agentWarmup(){
+    if (!POS_AGENT_TOKEN) return;
+    fetch(POS_AGENT_URL + "/ping", {
+      method: "GET",
+      keepalive: true,
+      headers: { "X-Pos-Agent-Token": POS_AGENT_TOKEN }
+    }).catch(()=>{});
+  })();
+
   async function fetchTicketText(ventaId) {
     const csrf = getCSRFToken();
     const fd = new FormData();
@@ -192,45 +248,10 @@
     });
 
     const data = await r.json().catch(() => ({}));
-
     if (!r.ok || !data.success) {
       throw new Error(data.error || "No se pudo generar el texto del ticket.");
     }
     return String(data.receipt_text || "");
-  }
-
-  async function posAgentPrint(text) {
-    const base = (window.POS_AGENT_URL || "").trim().replace(/\/$/, "");
-    if (!base) return false;
-
-    const PRINT_PATH = "/print";
-    const url = base + PRINT_PATH;
-
-    const token = (window.POS_AGENT_TOKEN || "").trim();
-    const headers = { "Content-Type": "application/json" };
-    if (token) headers["Authorization"] = `Bearer ${token}`;
-
-    const r = await fetch(url, {
-      method: "POST",
-      headers,
-      body: JSON.stringify({ text })
-    });
-
-    if (!r.ok) throw new Error("POS Agent no respondió correctamente al imprimir.");
-    return true;
-  }
-
-  function imprimirFallbackBrowser(text) {
-    const w = window.open("", "_blank");
-    if (!w) {
-      alert("⚠️ El navegador bloqueó la ventana emergente para imprimir.");
-      return;
-    }
-    w.document.write("<pre style='font:12px/1.3 monospace;white-space:pre-wrap;margin:16px'></pre>");
-    w.document.querySelector("pre").textContent = text;
-    w.document.close();
-    w.focus();
-    w.print();
   }
 
   btnPrint?.addEventListener("click", async (e) => {
@@ -238,21 +259,25 @@
 
     const ventaId = btnPrint.getAttribute("data-venta-id");
 
+    if (!POS_AGENT_TOKEN) {
+      alert("⚠️ POS Agent no configurado (token vacío). Configura POS_AGENT_TOKEN para imprimir.");
+      return;
+    }
+
     try {
       btnPrint.disabled = true;
-
       if (!ventaId) throw new Error("No encontré el ID de la venta.");
 
-      const text = await fetchTicketText(ventaId);
+      // 1) Pedir el texto del ticket al servidor
+      const baseText = await fetchTicketText(ventaId);
 
-      try {
-        const ok = await posAgentPrint(text);
-        if (ok) return;
-      } catch (err) {
-        console.warn("POS Agent falló, usando fallback navegador:", err);
-      }
+      // 2) Agregar padding al final (idéntico a generar_venta)
+      const receiptText = (baseText || "Factura\n\n") + `\n\n\n\n\n\n\n\n\n\n\n\n\n`;
 
-      imprimirFallbackBrowser(text);
+      // 3) Kick + print en paralelo, con deadline (idéntico a generar_venta)
+      const p1 = agentKickSafe({ timeout: 450 });
+      const p2 = agentPrintSafe(receiptText, { timeout: 850 });
+      await settleWithDeadline([p1, p2], 250);
 
     } catch (err) {
       alert("⚠️ " + (err?.message || "Error al imprimir."));

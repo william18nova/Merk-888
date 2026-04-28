@@ -186,6 +186,34 @@ select.vd-input option{
   border-color: rgba(255,140,150,.65);
 }
 
+/* ✅ Ítem "Todos los puntos de pago" dentro del autocomplete */
+.ac-opt-special{
+  background: linear-gradient(180deg, #eaf3ff, #dbeafe);
+  color:#0b1220;
+  font-weight:700;
+  border-bottom:1px solid #c7dbf3;
+  padding:12px 14px;
+  position:sticky;
+  top:0;
+  z-index:2;
+}
+.ac-opt-special:hover{
+  background: linear-gradient(180deg, #d3e6ff, #b9d4ff);
+}
+.ac-opt-special small{
+  font-weight:500;
+}
+
+/* ✅ hint para "fecha hasta" y otros campos opcionales */
+.vd-hint{
+  display:block;
+  margin-top:6px;
+  font-size:12px;
+  color:var(--text-muted);
+  opacity:.85;
+  line-height:1.35;
+}
+
 /* responsive */
 @media (max-width:768px){
   .vd-grid{ grid-template-columns: 1fr; }

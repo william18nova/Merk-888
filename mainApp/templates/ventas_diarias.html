@@ -37,11 +37,19 @@
         <div id="pp_box" class="ac-box"></div>
       </div>
 
-      <!-- Fecha -->
-      <label class="vd-label">Fecha</label>
+      <!-- Fecha desde -->
+      <label class="vd-label">Fecha desde</label>
       <div class="vd-field">
         <i class="fa-solid fa-calendar-day"></i>
         <input id="fecha" class="vd-input" type="date" value="{{ fecha_hoy }}">
+      </div>
+
+      <!-- Fecha hasta (opcional, suma rango de varios días) -->
+      <label class="vd-label">Fecha hasta</label>
+      <div class="vd-field">
+        <i class="fa-solid fa-calendar-days"></i>
+        <input id="fecha_hasta" class="vd-input" type="date" value="">
+        <small class="vd-hint">Vacío = solo "Fecha desde". Llénalo para sumar todos los días del rango.</small>
       </div>
 
       <!-- Hora desde -->

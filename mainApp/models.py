@@ -385,7 +385,38 @@ class RolPermiso(models.Model):
 
     def __str__(self):
         return f"{self.rol} ↔ {self.permiso}"
-    
+
+
+class UsuarioPermiso(models.Model):
+    id = models.BigAutoField(primary_key=True, db_column="id")
+    usuario = models.ForeignKey(
+        Usuario,
+        on_delete=models.CASCADE,
+        db_column="usuarioid",
+        related_name="permisos_directos",
+    )
+    permiso = models.ForeignKey(
+        Permiso,
+        on_delete=models.CASCADE,
+        db_column="permisoid",
+        related_name="usuarios_permisos",
+    )
+    permitido = models.BooleanField(default=True)
+
+    class Meta:
+        db_table = "usuariospermisos"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["usuario", "permiso"],
+                name="ux_usuariospermisos_usuario_perm",
+            )
+        ]
+
+    def __str__(self):
+        estado = "permitido" if self.permitido else "bloqueado"
+        return f"{self.usuario} - {self.permiso} ({estado})"
+
+
 class TurnoCaja(models.Model):
     ESTADOS = (
         ("ABIERTO", "ABIERTO"),

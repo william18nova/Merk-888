@@ -113,7 +113,7 @@
           </button>
         </div>
 
-        <small class="hint">Tip: Alt+7 abre la cámara. (Requiere HTTPS o localhost)</small>
+        <small class="hint">Tip: Alt+7 abre la cámara. En iPhone usa Safari con HTTPS.</small>
       </div>
 
       <!-- Producto (ID) -->
@@ -137,20 +137,6 @@
       <!-- ocultos que el JS llena -->
       <input type="hidden" id="producto_id">
 
-      <div class="form-group">
-        <label for="bolsa-producto">Bolsas</label>
-        <div class="row-inline">
-          <select id="bolsa-producto" class="form-control">
-            <option value="21">Bolsa grande</option>
-            <option value="8001">Bolsa cuero de vaca</option>
-          </select>
-          <button type="button" id="btn-agregar-bolsa" class="btn btn-secondary">
-            <i class="fa-solid fa-bag-shopping"></i> Agregar bolsa
-          </button>
-        </div>
-        <small id="promo-bolsas-info" class="hint">Promo bolsas: por cada $11.000 en productos distintos a bolsas, llevas hasta 2 bolsas 21 o 1 bolsa 8001 gratis.</small>
-      </div>
-
       <input type="hidden" id="productos"  name="productos"  value="[]">
       <input type="hidden" id="cantidades" name="cantidades" value="[]">
 
@@ -166,6 +152,17 @@
     <header class="right-header">
       <div class="right-title">
         <h2>Detalles de la Venta</h2>
+        <div class="bag-quick-actions" aria-label="Agregar bolsas">
+          <button type="button" class="btn btn-secondary btn-agregar-bolsa" data-bolsa-id="21">
+            <i class="fa-solid fa-bag-shopping"></i> Bolsa grande
+          </button>
+          <button type="button" class="btn btn-secondary btn-agregar-bolsa" data-bolsa-id="8001">
+            <i class="fa-solid fa-bag-shopping"></i> Bolsa de cuero de vaca
+          </button>
+        </div>
+        <small id="promo-bolsas-info" class="hint promo-bolsas-status">
+          Promo bolsas: por cada $11.000 en productos distintos a bolsas, llevas hasta 2 bolsas grandes o 1 bolsa de cuero de vaca gratis.
+        </small>
         <h3 class="total-line">
           Total: <span id="total" class="total-color">{{ total|default:"$ 0" }}</span>
         </h3>

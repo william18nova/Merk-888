@@ -244,6 +244,8 @@ urlpatterns = [
 
      path("autocomplete/permiso_para_rol/", views.PermisoParaRolAutocomplete.as_view(),
          name="permiso_para_rol_autocomplete"),
+     path("usuarios_permisos/", views.UsuarioPermisoAssignView.as_view(),
+         name="usuarios_permisos"),
      # eliminar relación ya existente en visualizar:
      path("roles_permisos/eliminar/<int:rp_id>/", views.eliminar_rol_permiso_view,
          name="eliminar_rol_permiso"),

@@ -1,7 +1,7 @@
 from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib.auth.decorators import login_required
 from django.contrib import messages
-from .models import Usuario, Sucursal, Categoria, Producto, Inventario, Proveedor, PreciosProveedor, PuntosPago, Rol, Empleado, HorariosNegocio, HorarioCaja, Cliente, Venta, DetalleVenta, PedidoProveedor, DetallePedidoProveedor, CambioDevolucion, Permiso, RolPermiso, PagoVenta, TurnoCaja, TurnoCajaMedio
+from .models import Usuario, Sucursal, Categoria, Producto, Inventario, Proveedor, PreciosProveedor, PuntosPago, Rol, Empleado, HorariosNegocio, HorarioCaja, Cliente, Venta, DetalleVenta, PedidoProveedor, DetallePedidoProveedor, CambioDevolucion, Permiso, RolPermiso, UsuarioPermiso, PagoVenta, TurnoCaja, TurnoCajaMedio
 from django.db.models import Count, Sum, Exists, OuterRef, Q, F, ExpressionWrapper, DecimalField, Value, IntegerField, Case, When
 from django.http import JsonResponse, HttpResponseBadRequest, HttpResponseForbidden, HttpRequest
 from django.contrib.auth import authenticate, login as auth_login
@@ -78,6 +78,7 @@ from django.conf import settings
 from datetime import timedelta
 import pytz
 from typing import List, Dict, Any
+from .permissions import clear_permission_cache, permission_catalog, sync_permission_catalog
 
 
 CO_TZ = ZoneInfo("America/Bogota")
@@ -5376,7 +5377,13 @@ class PuntoPagoPorSucursalAutocomplete(PaginatedAutocompleteMixin):
             qs = qs.filter(sucursalid_id=sid)
         return qs.order_by(self.text_field)
 
-class PermisoCreateView(LoginRequiredMixin, CreateView):
+class SyncPermissionCatalogMixin:
+    def dispatch(self, request, *args, **kwargs):
+        sync_permission_catalog()
+        return super().dispatch(request, *args, **kwargs)
+
+
+class PermisoCreateView(SyncPermissionCatalogMixin, LoginRequiredMixin, CreateView):
     model = Permiso
     form_class = PermisoForm
     template_name = "permiso_form.html"
@@ -5391,7 +5398,7 @@ class PermisoCreateView(LoginRequiredMixin, CreateView):
         messages.error(self.request, "Por favor corrige los errores.")
         return super().form_invalid(form)
 
-class PermisoListView(LoginRequiredMixin, ListView):
+class PermisoListView(SyncPermissionCatalogMixin, LoginRequiredMixin, ListView):
     """
     Muestra la tabla de permisos con DataTable.
     """
@@ -5399,7 +5406,7 @@ class PermisoListView(LoginRequiredMixin, ListView):
     model               = Permiso
     context_object_name = "permisos"
 
-class PermisoUpdateAJAXView(LoginRequiredMixin, UpdateView):
+class PermisoUpdateAJAXView(SyncPermissionCatalogMixin, LoginRequiredMixin, UpdateView):
     """
     ▸ Edita un permiso vía AJAX, manteniendo misma UX que ‘Editar Rol’.
     """
@@ -5441,7 +5448,7 @@ def eliminar_permiso(request, pk):
         messages.success(request, f"Permiso «{nombre}» eliminado correctamente.")
     return redirect("visualizar_permisos")
 
-class RolPermisoAssignView(LoginRequiredMixin, View):
+class RolPermisoAssignView(SyncPermissionCatalogMixin, LoginRequiredMixin, View):
     """
     Página + endpoint AJAX para asociar 1..n permisos a un rol.
     Espera:
@@ -5543,7 +5550,7 @@ class RolAutocomplete(LoginRequiredMixin, View):
         return JsonResponse({"results": results, "has_more": has_more})
 
 
-class PermisoAutocomplete(LoginRequiredMixin, View):
+class PermisoAutocomplete(SyncPermissionCatalogMixin, LoginRequiredMixin, View):
     """
     Devuelve permisos excluyendo IDs ya listados (?excluded=1,2,3).
     Respuesta {results:[{id,text}], has_more}
@@ -5568,7 +5575,7 @@ class PermisoAutocomplete(LoginRequiredMixin, View):
         results = [{"id": p.pk, "text": p.nombre} for p in rows]
         return JsonResponse({"results": results, "has_more": end < total})
 
-class VisualizarRolesPermisosView(LoginRequiredMixin, View):
+class VisualizarRolesPermisosView(SyncPermissionCatalogMixin, LoginRequiredMixin, View):
     """
     GET  -> página base sin tabla (hasta que el usuario elija un rol)
     POST -> recibe rol (id) y muestra sus permisos en tabla
@@ -5620,7 +5627,7 @@ def eliminar_rol_permiso_view(request, rp_id):
     )
 
 
-class RolConPermisosAutocomplete(LoginRequiredMixin, View):
+class RolConPermisosAutocomplete(SyncPermissionCatalogMixin, LoginRequiredMixin, View):
     """
     Respuesta: {results:[{id,text}], has_more:bool}
     GET: term, page
@@ -5647,7 +5654,7 @@ class RolConPermisosAutocomplete(LoginRequiredMixin, View):
         results = [{"id": r.pk, "text": r.nombre} for r in rows]
         return JsonResponse({"results": results, "has_more": end < total})
 
-class RolesPermisosEditView(LoginRequiredMixin, View):
+class RolesPermisosEditView(SyncPermissionCatalogMixin, LoginRequiredMixin, View):
     """
     Editar permisos de un rol con 'buffer':
       • GET  -> muestra permisos actuales
@@ -5741,7 +5748,7 @@ class RolesPermisosEditView(LoginRequiredMixin, View):
         })
 
 
-class PermisoParaRolAutocomplete(LoginRequiredMixin, View):
+class PermisoParaRolAutocomplete(SyncPermissionCatalogMixin, LoginRequiredMixin, View):
     """
     Autocomplete de permisos EXCLUYENDO:
       • los que ya tiene el rol en BD (salvo los marcados en 'pending_remove')
@@ -5787,6 +5794,91 @@ class PermisoParaRolAutocomplete(LoginRequiredMixin, View):
 
         data = [{"id": p.pk, "text": p.nombre} for p in rows]
         return JsonResponse({"results": data, "has_more": start + self.PAGE < total})
+
+
+class UsuarioPermisoAssignView(SyncPermissionCatalogMixin, LoginRequiredMixin, View):
+    template_name = "usuarios_permisos.html"
+
+    def _selected_user(self, request):
+        raw_id = (request.POST.get("usuario") or request.GET.get("usuario") or "").strip()
+        if not raw_id.isdigit():
+            return None
+        return Usuario.objects.select_related("rolid").filter(pk=int(raw_id)).first()
+
+    def _context(self, request, selected_user=None):
+        usuarios = Usuario.objects.select_related("rolid").order_by("nombreusuario")
+        permisos = list(Permiso.objects.order_by("nombre"))
+        selected_user = selected_user or self._selected_user(request)
+
+        direct_by_perm = {}
+        role_perm_ids = set()
+        if selected_user:
+            direct_by_perm = {
+                row.permiso_id: row.permitido
+                for row in UsuarioPermiso.objects.filter(usuario=selected_user)
+            }
+            role_id = getattr(selected_user, "rolid_id", None)
+            if role_id:
+                role_perm_ids = set(
+                    RolPermiso.objects
+                    .filter(rol_id=role_id)
+                    .values_list("permiso_id", flat=True)
+                )
+
+        permission_rows = []
+        for permiso in permisos:
+            estado = "heredar"
+            if permiso.pk in direct_by_perm:
+                estado = "permitir" if direct_by_perm[permiso.pk] else "bloquear"
+            permission_rows.append({
+                "permiso": permiso,
+                "estado": estado,
+                "role_has": permiso.pk in role_perm_ids,
+            })
+
+        return {
+            "usuarios": usuarios,
+            "selected_user": selected_user,
+            "permission_rows": permission_rows,
+            "catalog_count": len(permission_catalog()),
+        }
+
+    def get(self, request):
+        return render(request, self.template_name, self._context(request))
+
+    @transaction.atomic
+    def post(self, request):
+        selected_user = self._selected_user(request)
+        if not selected_user:
+            messages.error(request, "Seleccione un usuario valido.")
+            return render(request, self.template_name, self._context(request), status=400)
+
+        permisos = Permiso.objects.only("pk")
+        valid_ids = {str(permiso.pk) for permiso in permisos}
+        UsuarioPermiso.objects.filter(usuario=selected_user).delete()
+
+        nuevos = []
+        for key, value in request.POST.items():
+            if not key.startswith("permiso_"):
+                continue
+            permiso_id = key.split("_", 1)[1]
+            if permiso_id not in valid_ids or value not in {"permitir", "bloquear"}:
+                continue
+            nuevos.append(UsuarioPermiso(
+                usuario=selected_user,
+                permiso_id=int(permiso_id),
+                permitido=value == "permitir",
+            ))
+
+        if nuevos:
+            UsuarioPermiso.objects.bulk_create(nuevos, ignore_conflicts=True)
+
+        clear_permission_cache(selected_user)
+        messages.success(
+            request,
+            f"Permisos directos actualizados para {selected_user.nombreusuario}.",
+        )
+        return redirect(f"{reverse('usuarios_permisos')}?usuario={selected_user.pk}")
 
 PAGE_SIZE = 20
 
@@ -5852,8 +5944,9 @@ class VentasDiariasStatsView(LoginRequiredMixin, View):
 
     def get(self, request):
         sid  = request.GET.get("sucursal_id")
-        pid  = request.GET.get("puntopago_id")
-        f    = request.GET.get("fecha")
+        pid  = request.GET.get("puntopago_id")          # numérico o "ALL"
+        f    = request.GET.get("fecha")                  # fecha desde
+        f_to = request.GET.get("fecha_hasta")            # ✅ nuevo: opcional, define rango
         modo = (request.GET.get("modo") or "TOTAL").upper().strip()
 
         # nuevas horas
@@ -5864,18 +5957,44 @@ class VentasDiariasStatsView(LoginRequiredMixin, View):
             return JsonResponse({"success": False, "error": "Parámetros incompletos."}, status=400)
 
         suc = get_object_or_404(Sucursal, pk=sid)
-        pp  = get_object_or_404(PuntosPago, pk=pid, sucursalid=suc)
 
-        # fecha yyyy-mm-dd
+        # ✅ Punto de pago: 'ALL' suma todos los puntos de la sucursal
+        is_all_pp = (str(pid).strip().upper() == "ALL")
+        pp = None
+        if not is_all_pp:
+            pp = get_object_or_404(PuntosPago, pk=pid, sucursalid=suc)
+
+        # fecha desde yyyy-mm-dd
         try:
-            fecha = datetime.fromisoformat(f).date()
+            fecha_desde = datetime.fromisoformat(f).date()
         except Exception:
             return JsonResponse({"success": False, "error": "Fecha inválida."}, status=400)
 
-        # Base: ventas del punto de pago en esa fecha (como ya lo tenías)
-        ventas_qs = Venta.objects.filter(puntopagoid=pp, sucursalid=suc, fecha=fecha)
+        # ✅ fecha hasta (opcional). Si no llega, equivale a la misma fecha (un solo día).
+        fecha_hasta = fecha_desde
+        if f_to:
+            try:
+                fecha_hasta = datetime.fromisoformat(f_to).date()
+            except Exception:
+                return JsonResponse({"success": False, "error": "Fecha hasta inválida."}, status=400)
+            if fecha_hasta < fecha_desde:
+                return JsonResponse({"success": False, "error": "fecha_hasta no puede ser menor que fecha."}, status=400)
+            # Cota dura para evitar consultas demasiado amplias.
+            if (fecha_hasta - fecha_desde).days > 366:
+                return JsonResponse({"success": False, "error": "Rango de fechas demasiado amplio (máx. 366 días)."}, status=400)
 
-        # --------- aplicar intervalo de horas (CERRADO) ----------
+        # Base: ventas de la sucursal (y, si aplica, del punto de pago)
+        ventas_qs = Venta.objects.filter(sucursalid=suc)
+        if pp is not None:
+            ventas_qs = ventas_qs.filter(puntopagoid=pp)
+
+        # Filtro por fecha (un día o rango cerrado)
+        if fecha_desde == fecha_hasta:
+            ventas_qs = ventas_qs.filter(fecha=fecha_desde)
+        else:
+            ventas_qs = ventas_qs.filter(fecha__range=(fecha_desde, fecha_hasta))
+
+        # --------- aplicar intervalo de horas (CERRADO, por día) ----------
         t_from = self._parse_time(h_desde)
         t_to   = self._parse_time(h_hasta)
 
@@ -5899,15 +6018,21 @@ class VentasDiariasStatsView(LoginRequiredMixin, View):
             ])
 
             if dt_field:
-                tz = timezone.get_current_timezone()
-                dt_from = timezone.make_aware(datetime.combine(fecha, t_from), tz)
-                dt_to   = timezone.make_aware(datetime.combine(fecha, t_to), tz)
-
-                # intervalo cerrado: >= y <=
-                ventas_qs = ventas_qs.filter(**{
-                    f"{dt_field}__gte": dt_from,
-                    f"{dt_field}__lte": dt_to,
-                })
+                if fecha_desde == fecha_hasta:
+                    # Un solo día: usamos rango de DateTime aware (comportamiento anterior)
+                    tz = timezone.get_current_timezone()
+                    dt_from = timezone.make_aware(datetime.combine(fecha_desde, t_from), tz)
+                    dt_to   = timezone.make_aware(datetime.combine(fecha_desde, t_to), tz)
+                    ventas_qs = ventas_qs.filter(**{
+                        f"{dt_field}__gte": dt_from,
+                        f"{dt_field}__lte": dt_to,
+                    })
+                else:
+                    # Rango: el filtro por hora aplica a cada día del rango.
+                    ventas_qs = ventas_qs.filter(**{
+                        f"{dt_field}__time__gte": t_from,
+                        f"{dt_field}__time__lte": t_to,
+                    })
 
             elif tm_field:
                 ventas_qs = ventas_qs.filter(**{
@@ -6161,15 +6286,106 @@ def _to_decimal(v, default=Decimal("0")) -> Decimal:
     try:
         if v is None or str(v).strip() == "":
             return default
-        return Decimal(str(v)).quantize(Decimal("0.01"))
+        s = str(v).strip().replace(" ", "")
+        if "," in s and "." in s:
+            s = s.replace(".", "").replace(",", ".")
+        elif "," in s:
+            s = s.replace(",", ".")
+        elif "." in s and s.rsplit(".", 1)[-1].isdigit() and len(s.rsplit(".", 1)[-1]) == 3:
+            s = s.replace(".", "")
+        return Decimal(s).quantize(Decimal("0.01"))
     except (InvalidOperation, ValueError, TypeError):
         return default
 
 def _normalize_metodo(s: str) -> str:
     s = (s or "").strip().lower()
     s = " ".join(s.split())
-    s = s.replace(" ", "_")
-    return s
+    s = s.replace("-", " ").replace("_", " ")
+    aliases = {
+        "ef": "efectivo",
+        "cash": "efectivo",
+        "efectivo": "efectivo",
+        "nequi": "nequi",
+        "davi": "daviplata",
+        "davi plata": "daviplata",
+        "daviplata": "daviplata",
+        "tarjeta": "tarjeta",
+        "card": "tarjeta",
+        "tc": "tarjeta",
+        "credito": "tarjeta",
+        "debito": "tarjeta",
+        "tarjeta credito": "tarjeta",
+        "tarjeta debito": "tarjeta",
+        "banco caja social": "banco_caja_social",
+        "caja social": "banco_caja_social",
+        "bcs": "banco_caja_social",
+    }
+    return aliases.get(s, s.replace(" ", "_"))
+
+def _turno_label_usuario(usuario) -> str:
+    return getattr(usuario, "nombreusuario", None) or str(getattr(usuario, "pk", "") or usuario)
+
+def _can_operate_cajero(user, cajero) -> bool:
+    return _require_admin(user) or getattr(user, "pk", None) == getattr(cajero, "pk", None)
+
+def _can_operate_turno(user, turno) -> bool:
+    return _require_admin(user) or getattr(user, "pk", None) == getattr(turno, "cajero_id", None)
+
+def _turno_identity_payload(turno):
+    return {
+        "id": turno.id,
+        "estado": turno.estado,
+        "inicio": _iso_dt(turno.inicio),
+        "cierre_iniciado": _iso_dt(turno.cierre_iniciado),
+        "base": float(turno.saldo_apertura_efectivo or 0),
+        "puntopago": {
+            "id": turno.puntopago_id,
+            "nombre": getattr(turno.puntopago, "nombre", str(turno.puntopago_id)),
+        },
+        "cajero": {
+            "id": turno.cajero_id,
+            "nombreusuario": _turno_label_usuario(turno.cajero),
+        },
+    }
+
+def _medios_payload(turno):
+    medios = []
+    for m in TurnoCajaMedio.objects.filter(turno=turno).order_by("metodo"):
+        metodo = _normalize_metodo(m.metodo)
+        medios.append({
+            "metodo": metodo,
+            "label": DISPLAY_METODO.get(metodo, metodo.replace("_", " ").title()),
+            "esperado": float(m.esperado or 0),
+            "contado": float(m.contado) if m.contado is not None else None,
+            "diferencia": float(m.diferencia or 0),
+        })
+    return medios
+
+def _sync_turno_medios_esperados(turno, expected: dict[str, Decimal], reset_contados=False):
+    existing = {
+        _normalize_metodo(metodo): metodo
+        for metodo in TurnoCajaMedio.objects.filter(turno=turno).values_list("metodo", flat=True)
+    }
+    all_methods = list(dict.fromkeys(DEFAULT_METODOS + list(expected.keys()) + list(existing.keys())))
+
+    for metodo in all_methods:
+        metodo = _normalize_metodo(metodo)
+        medio, created = TurnoCajaMedio.objects.get_or_create(
+            turno=turno,
+            metodo=metodo,
+            defaults={"esperado": Decimal("0.00"), "contado": None, "diferencia": Decimal("0.00")},
+        )
+        medio.esperado = (expected.get(metodo, Decimal("0.00")) or Decimal("0.00")).quantize(Decimal("0.01"))
+        if reset_contados or created:
+            medio.contado = None
+            medio.diferencia = Decimal("0.00")
+        elif medio.contado is not None:
+            medio.diferencia = ((medio.contado or Decimal("0.00")) - medio.esperado).quantize(Decimal("0.01"))
+        else:
+            medio.diferencia = Decimal("0.00")
+        medio.save(update_fields=["esperado", "contado", "diferencia"])
+
+    return all_methods
 
 def _password_ok(usuario: Usuario, raw_password: str) -> bool:
     raw_password = raw_password or ""
@@ -6228,7 +6444,7 @@ def _sum_pagos_por_metodo(puntopago_id: int, start_naive, end_naive) -> dict[str
 
 def _sum_ventas_por_mediopago_fallback(puntopago_id: int, start_naive, end_naive) -> dict[str, Decimal]:
     """
-    Fallback: ventas.mediopago + ventas.total (NO soporta mixtas).
+    Fallback: ventas.mediopago + ventas.total para ventas sin filas en venta_pagos.
     """
     sql = """
         SELECT lower(trim(v.mediopago)) as metodo, COALESCE(SUM(v.total),0) as total
@@ -6236,6 +6452,11 @@ def _sum_ventas_por_mediopago_fallback(puntopago_id: int, start_naive, end_naive
         WHERE v.puntopagoid = %s
           AND (v.fecha + v.hora) >= %s
           AND (v.fecha + v.hora) <= %s
+          AND NOT EXISTS (
+              SELECT 1
+              FROM venta_pagos vp
+              WHERE vp.ventaid = v.ventaid
+          )
         GROUP BY lower(trim(v.mediopago))
     """
     out: dict[str, Decimal] = {}
@@ -6257,8 +6478,9 @@ def _expected_por_metodo(turno: TurnoCaja) -> tuple[dict[str, Decimal], Decimal,
     start_naive, end_naive = _range_local_naive(turno, turno.cierre_iniciado)
 
     expected = _sum_pagos_por_metodo(turno.puntopago_id, start_naive, end_naive)
-    if not expected:
-        expected = _sum_ventas_por_mediopago_fallback(turno.puntopago_id, start_naive, end_naive)
+    fallback = _sum_ventas_por_mediopago_fallback(turno.puntopago_id, start_naive, end_naive)
+    for metodo, total in fallback.items():
+        expected[metodo] = expected.get(metodo, Decimal("0.00")) + total
 
     # aseguro llaves default
     for m in DEFAULT_METODOS:
@@ -6282,7 +6504,7 @@ class TurnoCajaPageView(LoginRequiredMixin, TemplateView):
 
         # ✅ Ajusta a tu lógica real:
         # Opción A: por grupos
-        hide_bd = self.request.user.groups.filter(name__in=["Cajero", "Auxiliar"]).exists()
+        hide_bd = _hide_bd_cols_for_user(self.request.user)
 
         # Opción B: si tienes un campo rol (ej: user.rol)
         # hide_bd = getattr(self.request.user, "rol", "") in ["Cajero", "Auxiliar"]
@@ -6318,6 +6540,8 @@ class CajeroAutocomplete(LoginRequiredMixin, View):
         page = int(request.GET.get("page") or 1)
 
         qs = Usuario.objects.all().order_by("nombreusuario")
+        if not _require_admin(request.user):
+            qs = qs.filter(pk=request.user.pk)
         if term:
             qs = qs.filter(nombreusuario__icontains=term)
 
@@ -6333,28 +6557,49 @@ class CajeroAutocomplete(LoginRequiredMixin, View):
 class TurnoCajaIniciarApi(LoginRequiredMixin, View):
     @transaction.atomic
     def post(self, request: HttpRequest):
-        puntopago_id = request.POST.get("puntopago_id")
-        cajero_id    = request.POST.get("cajero_id")
+        puntopago_id = (request.POST.get("puntopago_id") or "").strip()
+        cajero_id    = (request.POST.get("cajero_id") or "").strip()
         password     = request.POST.get("password", "")
-        base_str     = request.POST.get("saldo_apertura_efectivo", "0")
+        base_str     = (request.POST.get("saldo_apertura_efectivo", "0") or "0").strip()
 
-        if not (puntopago_id and cajero_id):
+        if not (puntopago_id.isdigit() and cajero_id.isdigit()):
             return JsonResponse({"success": False, "error": "Datos incompletos."}, status=400)
 
-        pp = get_object_or_404(PuntosPago, pk=int(puntopago_id))
+        pp = get_object_or_404(PuntosPago.objects.select_for_update(), pk=int(puntopago_id))
         cajero = get_object_or_404(Usuario, pk=int(cajero_id))
+
+        if not _can_operate_cajero(request.user, cajero):
+            return JsonResponse({"success": False, "error": "No puedes iniciar turno para otro cajero."}, status=403)
 
         if not _password_ok(cajero, password):
             return JsonResponse({"success": False, "error": "Usuario o contraseña inválidos."}, status=401)
 
-        # Evita dos turnos abiertos por punto de pago
-        if TurnoCaja.objects.filter(puntopago=pp, estado__in=["ABIERTO", "CIERRE"]).exists():
+        # Evita dos turnos abiertos por punto de pago.
+        turno_existente = (
+            TurnoCaja.objects
+            .select_for_update()
+            .select_related("puntopago", "cajero")
+            .filter(puntopago=pp, estado__in=["ABIERTO", "CIERRE"])
+            .order_by("-inicio")
+            .first()
+        )
+        if turno_existente:
             return JsonResponse(
-                {"success": False, "error": "Ya existe un turno ABIERTO/CIERRE en este punto de pago."},
+                {
+                    "success": False,
+                    "error": (
+                        "Ya existe un turno ABIERTO/CIERRE en este punto de pago "
+                        f"para {_turno_label_usuario(turno_existente.cajero)}."
+                    ),
+                    "turno_id": turno_existente.pk,
+                    "estado": turno_existente.estado,
+                },
                 status=409
             )
 
         base = _to_decimal(base_str, Decimal("0.00"))
+        if base < 0:
+            base = Decimal("0.00")
         turno = TurnoCaja.objects.create(
             puntopago=pp,
             cajero=cajero,
@@ -6382,18 +6627,35 @@ class TurnoCajaIniciarCierreApi(LoginRequiredMixin, View):
         turno_id = request.POST.get("turno_id")
         if not turno_id:
             return JsonResponse({"success": False, "error": "Falta turno_id."}, status=400)
+        if not str(turno_id).isdigit():
+            return JsonResponse({"success": False, "error": "turno_id invÃ¡lido."}, status=400)
 
-        turno = get_object_or_404(TurnoCaja, pk=int(turno_id))
+        turno = get_object_or_404(
+            TurnoCaja.objects.select_for_update().select_related("puntopago", "cajero"),
+            pk=int(turno_id),
+        )
 
-        if turno.estado != "ABIERTO":
+        if not _can_operate_turno(request.user, turno):
+            return JsonResponse({"success": False, "error": "No puedes operar un turno de otro cajero."}, status=403)
+
+        if turno.estado == "CERRADO":
+            return JsonResponse({"success": False, "error": "El turno ya esta CERRADO."}, status=409)
             return JsonResponse(
                 {"success": False, "error": f"El turno no está ABIERTO (estado={turno.estado})."},
                 status=409
             )
 
-        turno.cierre_iniciado = _now_co()
-        turno.estado = "CIERRE"
-        turno.save(update_fields=["cierre_iniciado", "estado"])
+        reset_contados = False
+        if turno.estado == "ABIERTO":
+            turno.cierre_iniciado = _now_co()
+            turno.estado = "CIERRE"
+            turno.save(update_fields=["cierre_iniciado", "estado"])
+            reset_contados = True
+        elif turno.estado != "CIERRE":
+            return JsonResponse(
+                {"success": False, "error": f"Estado de turno invalido ({turno.estado})."},
+                status=409
+            )
 
         expected, esperado_total, esperado_efectivo, esperado_no_efectivo = _expected_por_metodo(turno)
 
@@ -6407,25 +6669,7 @@ class TurnoCajaIniciarCierreApi(LoginRequiredMixin, View):
             "esperado_total"
         ])
 
-        all_methods = list(dict.fromkeys(DEFAULT_METODOS + list(expected.keys())))
-        for metodo in all_methods:
-            TurnoCajaMedio.objects.update_or_create(
-                turno=turno,
-                metodo=metodo,
-                defaults={
-                    "esperado": expected.get(metodo, Decimal("0.00")),
-                    "contado": None,
-                    "diferencia": Decimal("0.00"),
-                }
-            )
-
-        medios_payload = []
-        for metodo in all_methods:
-            medios_payload.append({
-                "metodo": metodo,
-                "label": DISPLAY_METODO.get(metodo, metodo.replace("_", " ").title()),
-                "esperado": float(expected.get(metodo, Decimal("0.00"))),
-            })
+        _sync_turno_medios_esperados(turno, expected, reset_contados=reset_contados)
 
         return JsonResponse({
             "success": True,
@@ -6436,7 +6680,9 @@ class TurnoCajaIniciarCierreApi(LoginRequiredMixin, View):
             "esperado_total": float(esperado_total),
             "esperado_efectivo": float(esperado_efectivo),
             "esperado_no_efectivo": float(esperado_no_efectivo),
-            "medios": medios_payload,
+            "puntopago": {"id": turno.puntopago_id, "nombre": getattr(turno.puntopago, "nombre", str(turno.puntopago_id))},
+            "cajero": {"id": turno.cajero_id, "nombreusuario": _turno_label_usuario(turno.cajero)},
+            "medios": _medios_payload(turno),
 
             # ✅ CLAVE
             "hide_bd_cols": _hide_bd_cols_for_user(request.user),
@@ -6449,8 +6695,16 @@ class TurnoCajaCerrarApi(LoginRequiredMixin, View):
         turno_id = request.POST.get("turno_id")
         if not turno_id:
             return JsonResponse({"success": False, "error": "Falta turno_id."}, status=400)
+        if not str(turno_id).isdigit():
+            return JsonResponse({"success": False, "error": "turno_id invÃ¡lido."}, status=400)
 
-        turno = get_object_or_404(TurnoCaja, pk=int(turno_id))
+        turno = get_object_or_404(
+            TurnoCaja.objects.select_for_update().select_related("puntopago", "cajero"),
+            pk=int(turno_id),
+        )
+
+        if not _can_operate_turno(request.user, turno):
+            return JsonResponse({"success": False, "error": "No puedes cerrar un turno de otro cajero."}, status=403)
 
         if turno.estado != "CIERRE":
             return JsonResponse(
@@ -6472,7 +6726,13 @@ class TurnoCajaCerrarApi(LoginRequiredMixin, View):
         except Exception:
             return JsonResponse({"success": False, "error": "medios_json inválido."}, status=400)
 
-        medios_db = {m.metodo: m for m in turno.medios.all()}
+        if not isinstance(medios_in, list):
+            return JsonResponse({"success": False, "error": "medios_json debe ser una lista."}, status=400)
+
+        expected, esperado_total, esperado_efectivo, esperado_no_efectivo = _expected_por_metodo(turno)
+        _sync_turno_medios_esperados(turno, expected, reset_contados=False)
+
+        medios_db = {_normalize_metodo(m.metodo): m for m in turno.medios.select_for_update().all()}
 
         if "efectivo" not in medios_db:
             medios_db["efectivo"] = TurnoCajaMedio.objects.create(
@@ -6481,6 +6741,8 @@ class TurnoCajaCerrarApi(LoginRequiredMixin, View):
 
         contados: dict[str, Decimal] = {}
         for item in medios_in:
+            if not isinstance(item, dict):
+                continue
             metodo = _normalize_metodo(item.get("metodo"))
             if not metodo or metodo == "efectivo":
                 continue
@@ -6501,6 +6763,8 @@ class TurnoCajaCerrarApi(LoginRequiredMixin, View):
         sum_contado = Decimal("0.00")
         sum_esperado = Decimal("0.00")
         esperado_efectivo = Decimal("0.00")
+        contado_efectivo = Decimal("0.00")
+        contado_no_efectivo = Decimal("0.00")
 
         deuda_total = Decimal("0.00")  # NEGATIVA o 0
 
@@ -6524,6 +6788,10 @@ class TurnoCajaCerrarApi(LoginRequiredMixin, View):
 
             sum_contado += contado
             sum_esperado += esperado
+            if metodo == "efectivo":
+                contado_efectivo += contado
+            else:
+                contado_no_efectivo += contado
 
             if diff < 0:
                 deuda_total += diff  # diff negativo
@@ -6542,6 +6810,8 @@ class TurnoCajaCerrarApi(LoginRequiredMixin, View):
         turno.esperado_total = sum_esperado
         turno.real_total = real_total
         turno.ventas_total = sum_contado
+        turno.ventas_efectivo = contado_efectivo
+        turno.ventas_no_efectivo = contado_no_efectivo
         turno.diferencia_total = diferencia_total
         turno.deuda_total = deuda_total
 
@@ -6549,7 +6819,7 @@ class TurnoCajaCerrarApi(LoginRequiredMixin, View):
             "fin", "estado",
             "efectivo_real", "diferencia_efectivo",
             "esperado_total", "real_total",
-            "ventas_total",
+            "ventas_total", "ventas_efectivo", "ventas_no_efectivo",
             "diferencia_total", "deuda_total",
         ])
 
@@ -6697,7 +6967,7 @@ def _role_name(user) -> str:
     - user.perfil.rol, etc.
     - grupos de Django (si aplicara)
     """
-    for key in ("rol", "role", "perfil", "cargo"):
+    for key in ("rol", "rolid", "role", "perfil", "cargo"):
         obj = getattr(user, key, None)
         if not obj:
             continue
@@ -6728,7 +6998,12 @@ def _role_name(user) -> str:
 
 def _hide_bd_cols_for_user(user) -> bool:
     # ✅ Cajero y Auxiliar NO deben ver columnas BD
-    return user.groups.filter(name__in=["Cajero", "Auxiliar"]).exists()
+    try:
+        if user.groups.filter(name__in=["Cajero", "Auxiliar"]).exists():
+            return True
+    except Exception:
+        pass
+    return _role_name(user).strip().lower() in {"cajero", "auxiliar"}
 
 
 # =========================
@@ -6739,7 +7014,13 @@ def _to_dec(v, default=Decimal("0.00")):
         s = str(v).strip()
         if s == "":
             return default
-        s = s.replace(".", "").replace(",", ".")  # soporta 1.234,56
+        s = s.replace(" ", "")
+        if "," in s and "." in s:
+            s = s.replace(".", "").replace(",", ".")
+        elif "," in s:
+            s = s.replace(",", ".")
+        elif "." in s and s.rsplit(".", 1)[-1].isdigit() and len(s.rsplit(".", 1)[-1]) == 3:
+            s = s.replace(".", "")
         return Decimal(s).quantize(Decimal("0.01"))
     except Exception:
         return default
@@ -6759,7 +7040,9 @@ def _iso_dt_local_input(dt):
 
 
 def _require_admin(user):
-    return bool(getattr(user, "is_staff", False) or getattr(user, "is_superuser", False))
+    if bool(getattr(user, "is_staff", False) or getattr(user, "is_superuser", False)):
+        return True
+    return _role_name(user).strip().lower() in {"admin", "administrador", "supervisor"}
 
 
 def _recalc_turno_from_medios(turno):
@@ -7092,19 +7375,58 @@ class TurnoCajaRecuperarOIniciarView(LoginRequiredMixin, View):
         if base < 0:
             base = Decimal("0.00")
 
-        pp = get_object_or_404(PuntosPago, pk=int(puntopago_id))
+        pp = get_object_or_404(PuntosPago.objects.select_for_update(), pk=int(puntopago_id))
         cajero = get_object_or_404(Usuario, pk=int(usuario_id))
 
-        if not hasattr(cajero, "check_password") or not cajero.check_password(password):
+        if not _can_operate_cajero(request.user, cajero):
+            return JsonResponse({"success": False, "error": "No puedes iniciar o retomar turno para otro cajero."}, status=403)
+
+        if not _password_ok(cajero, password):
             return JsonResponse({"success": False, "error": "Contraseña incorrecta."}, status=403)
 
         turno = (TurnoCaja.objects
                  .select_for_update()
+                 .select_related("puntopago", "cajero")
                  .filter(puntopago=pp, estado__in=["ABIERTO", "CIERRE"])
                  .order_by("-inicio")
                  .first())
 
         if turno:
+            if turno.cajero_id != cajero.pk:
+                return JsonResponse({
+                    "success": False,
+                    "error": (
+                        "Este punto de pago ya tiene un turno activo "
+                        f"para {_turno_label_usuario(turno.cajero)}."
+                    ),
+                    "turno_id": turno.pk,
+                    "estado": turno.estado,
+                }, status=409)
+
+            if turno.estado == "CIERRE":
+                expected, esperado_total, esperado_efectivo, esperado_no_efectivo = _expected_por_metodo(turno)
+                _sync_turno_medios_esperados(turno, expected, reset_contados=False)
+                turno.esperado_total = esperado_total
+                turno.ventas_total = esperado_total
+                turno.ventas_efectivo = esperado_efectivo
+                turno.ventas_no_efectivo = esperado_no_efectivo
+                turno.save(update_fields=["esperado_total", "ventas_total", "ventas_efectivo", "ventas_no_efectivo"])
+                return JsonResponse({
+                    "success": True,
+                    "msg": "Turno retomado.",
+                    "modo": "RETOMADO",
+                    "turno_id": turno.pk,
+                    "estado": turno.estado,
+                    "inicio": _iso_dt(turno.inicio),
+                    "cierre_iniciado": _iso_dt(turno.cierre_iniciado) if turno.cierre_iniciado else None,
+                    "base": float(turno.saldo_apertura_efectivo or 0),
+                    "puntopago": {"id": turno.puntopago_id, "nombre": getattr(turno.puntopago, "nombre", str(turno.puntopago_id))},
+                    "cajero": {"id": turno.cajero_id, "nombreusuario": _turno_label_usuario(turno.cajero)},
+                    "esperado_total": float(esperado_total),
+                    "medios": _medios_payload(turno),
+                    "hide_bd_cols": _hide_bd_cols_for_user(request.user),
+                })
+
             return JsonResponse({
                 "success": True,
                 "msg": "Turno retomado.",
@@ -7287,11 +7609,15 @@ class TurnosCajaAdminPageView(LoginRequiredMixin, View):
     template_name = "turnos_caja_admin.html"
 
     def get(self, request: HttpRequest):
+        if not _require_admin(request.user):
+            return HttpResponseForbidden("No tienes permiso para administrar turnos de caja.")
         return render(request, self.template_name, {})
 
 
 class TurnoCajaAdminDetailAPI(LoginRequiredMixin, View):
     def get(self, request: HttpRequest, turno_id: int):
+        if not _require_admin(request.user):
+            return JsonResponse({"success": False, "error": "No tienes permiso para administrar turnos."}, status=403)
         turno = get_object_or_404(TurnoCaja.objects.select_related("puntopago", "cajero"), pk=turno_id)
         medios = list(TurnoCajaMedio.objects.filter(turno=turno).order_by("metodo"))
 
@@ -7334,6 +7660,8 @@ class TurnoCajaAdminDetailAPI(LoginRequiredMixin, View):
 class TurnoCajaAdminUpdateAPI(LoginRequiredMixin, View):
     @transaction.atomic
     def post(self, request: HttpRequest, turno_id: int):
+        if not _require_admin(request.user):
+            return JsonResponse({"success": False, "error": "No tienes permiso para administrar turnos."}, status=403)
         turno = get_object_or_404(TurnoCaja.objects.select_for_update(), pk=turno_id)
 
         try:
@@ -7409,6 +7737,8 @@ class TurnoCajaAdminUpdateAPI(LoginRequiredMixin, View):
 class TurnoCajaAdminDeleteAPI(LoginRequiredMixin, View):
     @transaction.atomic
     def post(self, request: HttpRequest, turno_id: int):
+        if not _require_admin(request.user):
+            return JsonResponse({"success": False, "error": "No tienes permiso para administrar turnos."}, status=403)
         turno = get_object_or_404(TurnoCaja.objects.select_for_update(), pk=turno_id)
 
         TurnoCajaMedio.objects.filter(turno=turno).delete()
@@ -8145,4 +8475,3 @@ class ProductoVentasStatsAjaxView(LoginRequiredMixin, View):
             "daily": daily,
         })
 
-print("dsfsdfsdfsfsd")

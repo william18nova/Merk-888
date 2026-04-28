@@ -27,8 +27,7 @@ $(function () {
   const $inpId      = $("#producto_busqueda_id"); // ✅ input independiente ID
   const $inpCode    = $("#codigo_o_barras");
   const $pid        = $("#producto_id");
-  const $bolsaSelect = $("#bolsa-producto");
-  const $btnAgregarBolsa = $("#btn-agregar-bolsa");
+  const $btnAgregarBolsa = $(".btn-agregar-bolsa");
   const $promoInfo  = $("#promo-bolsas-info");
 
   // (si no existen, no rompen)
@@ -304,10 +303,10 @@ $(function () {
     if (updateUI && $promoInfo.length) {
       const chunks = [];
       if (promo.blocksGranted > 0) chunks.push(`Bloques disponibles: ${promo.blocksGranted}`);
-      if (promo.free21 > 0) chunks.push(`Bolsa cuero de vaca gratis: ${promo.free21}`);
-      if (promo.free8001 > 0) chunks.push(`Bolsa grande gratis: ${promo.free8001}`);
+      if (promo.free21 > 0) chunks.push(`Bolsa grande gratis: ${promo.free21}`);
+      if (promo.free8001 > 0) chunks.push(`Bolsa de cuero de vaca gratis: ${promo.free8001}`);
       if (promo.discount > 0) chunks.push(`Descuento aplicado: ${money(promo.discount)}`);
-      $promoInfo.text(chunks.length ? chunks.join(" • ") : "Promo bolsas: por cada $11.000 en productos distintos a bolsas, llevas hasta 2 bolsas 21 o 1 bolsa 8001 gratis.");
+      $promoInfo.text(chunks.length ? chunks.join(" • ") : "Promo bolsas: por cada $11.000 en productos distintos a bolsas, llevas hasta 2 bolsas grandes o 1 bolsa de cuero de vaca gratis.");
     }
 
     return total;
@@ -1900,22 +1899,28 @@ $(function () {
     removeRowByPid(pid);
   });
 
-  if ($btnAgregarBolsa.length && $bolsaSelect.length) {
+  if ($btnAgregarBolsa.length) {
     $btnAgregarBolsa.off("click.bolsasPromo").on("click.bolsasPromo", async function () {
-      const pid = String($bolsaSelect.val() || "").trim();
+      const $btn = $(this);
+      const pid = String($btn.data("bolsa-id") || "").trim();
       if (!pid) return;
       if (!hasSucursal()) {
         alert("No hay sucursal activa para esta venta.");
         return;
       }
-      const prod = await ensureProductCachedById(pid);
-      if (!prod) {
-        alert(`No se pudo cargar el producto ID ${pid} para esta sucursal. Verifica que exista en inventario.`);
-        return;
+      $btn.prop("disabled", true).attr("aria-disabled", "true");
+      try {
+        const prod = await ensureProductCachedById(pid);
+        if (!prod) {
+          alert(`No se pudo cargar el producto ID ${pid} para esta sucursal. Verifica que exista en inventario.`);
+          return;
+        }
+        setProductFields({ nombre: prod.name, pid, barcode: prod.barcode || "" });
+        addToCartLastOnly(pid, 1);
+        queueMicrotask(() => enforceTotalIntegrity());
+      } finally {
+        $btn.prop("disabled", false).removeAttr("aria-disabled");
       }
-      setProductFields({ nombre: prod.name, pid, barcode: prod.barcode || "" });
-      addToCartLastOnly(pid, 1);
-      queueMicrotask(() => enforceTotalIntegrity());
     });
   }
 
@@ -2866,6 +2871,7 @@ $(function () {
 
   let zxingReader = null;
   let zxingLoaded = false;
+  let camFallbackTimer = 0;
 
   function isSecureContextForCamera() {
     const h = location.hostname;
@@ -2875,6 +2881,46 @@ $(function () {
 
   function hasGetUserMedia() {
     return !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+  }
+
+  function isIOSLike() {
+    const ua = navigator.userAgent || "";
+    return /iPad|iPhone|iPod/i.test(ua) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  }
+
+  function barcodeTextFromResult(result) {
+    if (!result) return "";
+    if (typeof result.getText === "function") return String(result.getText() || "").trim();
+    return String(result.text || result.rawValue || "").trim();
+  }
+
+  function waitForVideoReady(video) {
+    if (!video) return Promise.resolve();
+    if (video.readyState >= 2 && video.videoWidth > 0) return Promise.resolve();
+
+    return new Promise((resolve) => {
+      let done = false;
+      const finish = () => {
+        if (done) return;
+        done = true;
+        video.removeEventListener("loadedmetadata", finish);
+        video.removeEventListener("canplay", finish);
+        resolve();
+      };
+
+      video.addEventListener("loadedmetadata", finish, { once: true });
+      video.addEventListener("canplay", finish, { once: true });
+      setTimeout(finish, 900);
+    });
+  }
+
+  function acceptCameraCode(raw, hint) {
+    const text = String(raw || "").trim();
+    if (!text || !camRunning) return false;
+    if (hint) hint.textContent = "Detectado: " + text;
+    stopCameraScanner();
+    pushCodeIntoCodeInputAndAdd(text);
+    return true;
   }
 
   function ensureCamUI() {
@@ -2925,6 +2971,10 @@ $(function () {
       const video = document.createElement("video");
       video.id = "cam-scan-video";
       video.setAttribute("playsinline", "true");
+      video.setAttribute("webkit-playsinline", "true");
+      video.setAttribute("muted", "true");
+      video.setAttribute("autoplay", "true");
+      video.setAttribute("x-webkit-airplay", "deny");
       video.muted = true;
       video.autoplay = true;
       video.style.cssText = `
@@ -2955,8 +3005,9 @@ $(function () {
 
     try {
       const formats = await window.BarcodeDetector.getSupportedFormats?.();
-      const wanted = ["ean_13","ean_8","code_128","code_39","upc_a","upc_e","qr_code"];
+      const wanted = ["ean_13","ean_8","code_128","code_39","upc_a","upc_e","itf","codabar","qr_code"];
       const use = Array.isArray(formats) && formats.length ? formats.filter(f => wanted.includes(f)) : wanted;
+      if (!use.length) return null;
       camDetector = new window.BarcodeDetector({ formats: use });
       return camDetector;
     } catch {
@@ -2970,7 +3021,34 @@ $(function () {
 
     return new Promise((resolve) => {
       const existing = document.getElementById("zxing-cdn");
-      if (existing) { zxingLoaded = true; resolve(true); return; }
+      if (window.ZXing?.BrowserMultiFormatReader) {
+        zxingLoaded = true;
+        resolve(true);
+        return;
+      }
+
+      if (existing) {
+        let settled = false;
+        const finish = (ok) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timeout);
+          zxingLoaded = !!ok;
+          resolve(zxingLoaded);
+        };
+        const timeout = setTimeout(() => {
+          finish(!!window.ZXing?.BrowserMultiFormatReader);
+        }, 5000);
+
+        existing.addEventListener("load", () => {
+          finish(!!window.ZXing?.BrowserMultiFormatReader);
+        }, { once: true });
+
+        existing.addEventListener("error", () => {
+          finish(false);
+        }, { once: true });
+        return;
+      }
 
       const s = document.createElement("script");
       s.id = "zxing-cdn";
@@ -3001,18 +3079,42 @@ $(function () {
   }
 
   async function openCameraStream() {
-    camStream = await navigator.mediaDevices.getUserMedia({
-      audio: false,
-      video: {
-        facingMode: { ideal: "environment" },
-        width: { ideal: 1280 },
-        height: { ideal: 720 }
+    const attempts = [
+      {
+        audio: false,
+        video: {
+          facingMode: { ideal: "environment" },
+          width: { ideal: 1920 },
+          height: { ideal: 1080 },
+        },
+      },
+      {
+        audio: false,
+        video: {
+          facingMode: "environment",
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+        },
+      },
+      { audio: false, video: true },
+    ];
+
+    let lastError = null;
+    for (const constraints of attempts) {
+      try {
+        camStream = await navigator.mediaDevices.getUserMedia(constraints);
+        return camStream;
+      } catch (err) {
+        lastError = err;
       }
-    });
-    return camStream;
+    }
+
+    throw lastError || new Error("No se pudo abrir la camara.");
   }
 
   async function startWithBarcodeDetector(video, hint) {
+    if (isIOSLike()) return false;
+
     const detector = await getBarcodeDetector();
     if (!detector) return false;
 
@@ -3023,12 +3125,7 @@ $(function () {
         const codes = await detector.detect(video);
         if (codes && codes.length) {
           const raw = (codes[0].rawValue || "").trim();
-          if (raw) {
-            if (hint) hint.textContent = "✅ Detectado: " + raw;
-            stopCameraScanner();
-            pushCodeIntoCodeInputAndAdd(raw);
-            return;
-          }
+          if (acceptCameraCode(raw, hint)) return;
         }
       } catch (_){}
 
@@ -3043,17 +3140,24 @@ $(function () {
     const reader = await getZXingReader();
     if (!reader) return false;
 
+    if (typeof reader.decodeFromVideoElementContinuously === "function") {
+      try {
+        if (hint) hint.textContent = "Apunta al codigo de barras. En iPhone puede tardar unos segundos...";
+        await Promise.resolve(reader.decodeFromVideoElementContinuously(video, (result) => {
+          if (!camRunning || !result) return;
+          acceptCameraCode(barcodeTextFromResult(result), hint);
+        }));
+        return true;
+      } catch (err) {
+        console.warn("[CAM] ZXing continuous error:", err);
+      }
+    }
+
     const loop = async () => {
       if (!camRunning) return;
       try {
         const result = await reader.decodeOnceFromVideoElement(video);
-        const text = (result && result.getText && result.getText()) ? result.getText() : "";
-        if (text) {
-          if (hint) hint.textContent = "✅ Detectado: " + text;
-          stopCameraScanner();
-          pushCodeIntoCodeInputAndAdd(text);
-          return;
-        }
+        if (acceptCameraCode(barcodeTextFromResult(result), hint)) return;
       } catch (_) {}
       requestAnimationFrame(loop);
     };
@@ -3084,23 +3188,37 @@ $(function () {
       return;
     }
 
+    camRunning = true;
+    $overlay.css("display", "flex");
+    if (hint) hint.textContent = "Solicitando permiso de cámara...";
+
     try {
       await openCameraStream();
     } catch (err) {
       console.warn("[CAM] getUserMedia error:", err);
-      alert("No se pudo abrir la cámara. Revisa permisos del navegador.");
+      stopCameraScanner();
+      alert("No se pudo abrir la cámara. En iPhone usa Safari/HTTPS y permite el acceso a Cámara.");
       return;
     }
 
-    camRunning = true;
-    $overlay.css("display", "flex");
-    if (hint) hint.textContent = "Apunta al código de barras…";
-
     video.srcObject = camStream;
-    try { await video.play(); } catch {}
+    try { await video.play(); } catch (err) { console.warn("[CAM] video.play error:", err); }
+    await waitForVideoReady(video);
+    if (hint) hint.textContent = "Apunta al codigo de barras...";
+
+    if (isIOSLike()) {
+      const okIOS = await startWithZXing(video, hint);
+      if (okIOS) return;
+    }
 
     const okBD = await startWithBarcodeDetector(video, hint);
-    if (okBD) return;
+    if (okBD) {
+      camFallbackTimer = setTimeout(() => {
+        if (!camRunning) return;
+        startWithZXing(video, hint).catch((err) => console.warn("[CAM] ZXing fallback error:", err));
+      }, 1400);
+      return;
+    }
 
     const okZX = await startWithZXing(video, hint);
     if (okZX) return;
@@ -3112,11 +3230,19 @@ $(function () {
   function stopCameraScanner() {
     camRunning = false;
 
+    if (camFallbackTimer) {
+      clearTimeout(camFallbackTimer);
+      camFallbackTimer = 0;
+    }
+
     $("#cam-scan-overlay").hide();
 
     try {
       const video = document.getElementById("cam-scan-video");
-      if (video) video.srcObject = null;
+      if (video) {
+        try { video.pause(); } catch (_){}
+        video.srcObject = null;
+      }
     } catch (_){}
 
     if (camStream) {

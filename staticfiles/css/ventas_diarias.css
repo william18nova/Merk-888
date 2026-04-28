@@ -65,6 +65,23 @@ h2 i{ color:var(--brand); margin-right:8px; }
 .ac-opt{ padding:10px 12px; cursor:pointer; }
 .ac-opt:hover{ background:#eaf3ff; }
 
+/* ✅ Ítem "Todos los puntos de pago" */
+.ac-opt-special{
+  background: linear-gradient(180deg, #eaf3ff, #dbeafe);
+  color:#0b1220; font-weight:700;
+  border-bottom:1px solid #c7dbf3;
+  padding:12px 14px;
+  position:sticky; top:0; z-index:2;
+}
+.ac-opt-special:hover{ background: linear-gradient(180deg, #d3e6ff, #b9d4ff); }
+.ac-opt-special small{ font-weight:500; }
+
+/* ✅ hint para "fecha hasta" */
+.vd-hint{
+  display:block; margin-top:6px; font-size:12px;
+  color:var(--text-muted); opacity:.85; line-height:1.35;
+}
+
 /* métricas */
 .vd-metrics{ display:grid; grid-template-columns: 1fr 1fr; gap:12px; }
 .metric{

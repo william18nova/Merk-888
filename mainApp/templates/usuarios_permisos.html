@@ -1,0 +1,251 @@
+{% extends "base.html" %}
+
+{% block title %}Permisos por usuario{% endblock %}
+
+{% block extra_head %}
+<style>
+  .perms-page {
+    max-width: 1180px;
+    margin: 28px auto;
+    padding: 0 16px;
+  }
+
+  .perms-header {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 18px;
+  }
+
+  .perms-header h1 {
+    margin: 0;
+    font-size: 26px;
+  }
+
+  .perms-panel {
+    background: #fff;
+    border: 1px solid #d8dee8;
+    border-radius: 8px;
+    padding: 18px;
+    box-shadow: 0 8px 28px rgba(25, 38, 64, 0.08);
+  }
+
+  .perms-user-form {
+    display: grid;
+    grid-template-columns: minmax(220px, 420px) auto;
+    gap: 12px;
+    align-items: end;
+    margin-bottom: 18px;
+  }
+
+  .perms-field label {
+    display: block;
+    font-weight: 700;
+    margin-bottom: 6px;
+  }
+
+  .perms-field select {
+    width: 100%;
+    min-height: 40px;
+    border: 1px solid #b8c2d2;
+    border-radius: 6px;
+    padding: 8px 10px;
+  }
+
+  .perms-actions {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+
+  .btn-primary,
+  .btn-secondary {
+    border: 0;
+    border-radius: 6px;
+    min-height: 40px;
+    padding: 9px 14px;
+    font-weight: 700;
+    cursor: pointer;
+    text-decoration: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .btn-primary {
+    background: #165dff;
+    color: #fff;
+  }
+
+  .btn-secondary {
+    background: #eef2f7;
+    color: #24324a;
+  }
+
+  .perms-table-wrap {
+    overflow-x: auto;
+  }
+
+  .perms-table {
+    width: 100%;
+    border-collapse: collapse;
+    min-width: 760px;
+  }
+
+  .perms-table th,
+  .perms-table td {
+    border-bottom: 1px solid #e3e8f0;
+    padding: 11px 10px;
+    text-align: left;
+    vertical-align: middle;
+  }
+
+  .perms-table th {
+    color: #3b4961;
+    font-size: 13px;
+    text-transform: uppercase;
+  }
+
+  .perms-table select {
+    min-width: 150px;
+    border: 1px solid #b8c2d2;
+    border-radius: 6px;
+    padding: 7px 8px;
+  }
+
+  .badge {
+    display: inline-flex;
+    border-radius: 999px;
+    padding: 4px 9px;
+    font-size: 12px;
+    font-weight: 700;
+  }
+
+  .badge-on {
+    background: #e8f7ee;
+    color: #146c36;
+  }
+
+  .badge-off {
+    background: #f2f4f7;
+    color: #5b6677;
+  }
+
+  .messages {
+    margin: 0 0 14px;
+    padding: 0;
+    list-style: none;
+  }
+
+  .messages li {
+    border-radius: 6px;
+    padding: 10px 12px;
+    background: #eef6ff;
+    color: #143b66;
+    margin-bottom: 8px;
+  }
+
+  @media (max-width: 760px) {
+    .perms-header,
+    .perms-user-form {
+      display: block;
+    }
+
+    .perms-actions {
+      margin-top: 10px;
+    }
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<section class="perms-page">
+  <div class="perms-header">
+    <div>
+      <h1>Permisos por usuario</h1>
+      {% if selected_user %}
+        <p>Usuario: <strong>{{ selected_user.nombreusuario }}</strong>{% if selected_user.rolid %} · Rol: <strong>{{ selected_user.rolid.nombre }}</strong>{% endif %}</p>
+      {% else %}
+        <p>Seleccione un usuario para ajustar permisos directos.</p>
+      {% endif %}
+    </div>
+    <a class="btn-secondary" href="{% url 'visualizar_permisos' %}">Ver permisos</a>
+  </div>
+
+  {% if messages %}
+    <ul class="messages">
+      {% for message in messages %}
+        <li>{{ message }}</li>
+      {% endfor %}
+    </ul>
+  {% endif %}
+
+  <div class="perms-panel">
+    <form class="perms-user-form" method="get" action="{% url 'usuarios_permisos' %}">
+      <div class="perms-field">
+        <label for="usuario-selector">Usuario</label>
+        <select id="usuario-selector" name="usuario" required>
+          <option value="">Seleccione un usuario</option>
+          {% for usuario in usuarios %}
+            <option value="{{ usuario.pk }}" {% if selected_user and selected_user.pk == usuario.pk %}selected{% endif %}>
+              {{ usuario.nombreusuario }}{% if usuario.rolid %} - {{ usuario.rolid.nombre }}{% endif %}
+            </option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="perms-actions">
+        <button type="submit" class="btn-primary">Cargar permisos</button>
+      </div>
+    </form>
+
+    {% if selected_user %}
+      <form method="post" action="{% url 'usuarios_permisos' %}">
+        {% csrf_token %}
+        <input type="hidden" name="usuario" value="{{ selected_user.pk }}">
+
+        <div class="perms-table-wrap">
+          <table class="perms-table">
+            <thead>
+              <tr>
+                <th>Permiso</th>
+                <th>Descripcion</th>
+                <th>Por rol</th>
+                <th>Permiso directo</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in permission_rows %}
+                <tr>
+                  <td>{{ row.permiso.nombre }}</td>
+                  <td>{{ row.permiso.descripcion|default:"Sin descripcion" }}</td>
+                  <td>
+                    {% if row.role_has %}
+                      <span class="badge badge-on">Incluido</span>
+                    {% else %}
+                      <span class="badge badge-off">No incluido</span>
+                    {% endif %}
+                  </td>
+                  <td>
+                    <select name="permiso_{{ row.permiso.pk }}">
+                      <option value="heredar" {% if row.estado == "heredar" %}selected{% endif %}>Heredar del rol</option>
+                      <option value="permitir" {% if row.estado == "permitir" %}selected{% endif %}>Permitir</option>
+                      <option value="bloquear" {% if row.estado == "bloquear" %}selected{% endif %}>Bloquear</option>
+                    </select>
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+
+        <div class="perms-actions" style="margin-top: 16px;">
+          <button type="submit" class="btn-primary">Guardar permisos</button>
+          <a class="btn-secondary" href="{% url 'usuarios_permisos' %}?usuario={{ selected_user.pk }}">Cancelar cambios</a>
+        </div>
+      </form>
+    {% endif %}
+  </div>
+</section>
+{% endblock %}

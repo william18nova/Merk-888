@@ -197,9 +197,13 @@
 <script>
   window.VENTA_TOTAL = "{{ venta.total|floatformat:2 }}";
   window.ticketTextoUrl = "{% url 'ticket_texto' %}";
+</script>
 
-  window.POS_AGENT_URL   = "{{ POS_AGENT_URL|default:'' }}";
-  window.POS_AGENT_TOKEN = "{{ POS_AGENT_TOKEN|default:'' }}";
+<!-- POS Agent (mismo método que generar_venta) -->
+<script>
+  window.POS_AGENT_URL   = "{{ POS_AGENT_URL|default:'http://127.0.0.1:8787'|escapejs }}".trim();
+  window.POS_AGENT_TOKEN = "{{ POS_AGENT_TOKEN|default:''|escapejs }}".trim();
+  if (!/^https?:\/\//.test(window.POS_AGENT_URL)) window.POS_AGENT_URL = "http://127.0.0.1:8787";
 </script>
 
 <script src="{% static 'javascript/ver_venta.js' %}"></script>

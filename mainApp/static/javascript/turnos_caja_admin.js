@@ -97,6 +97,7 @@
     let ventasTotal = 0;
     let esperadoEf = 0;
     let contadoEf = 0;
+    let deudaTotal = 0;
 
     for (const m of MEDIOS) {
       const esp = num(m.esperado);
@@ -110,10 +111,10 @@
         esperadoEf = esp;
         contadoEf = con;
       }
+      if (m.diferencia < 0) deudaTotal += m.diferencia;
     }
 
     const diffTotal = ventasTotal - esperadoTotal;
-    const deudaTotal = Math.max(0, esperadoTotal - ventasTotal);
 
     mEsperado.textContent = money2(esperadoTotal);
     mVentas.textContent = money2(ventasTotal);
@@ -123,7 +124,7 @@
     mNoEf.textContent = money2(ventasTotal - contadoEf);
 
     mDiff.className = "v " + numClass(diffTotal);
-    mDeuda.className = "v " + (deudaTotal > 0 ? "neg" : "");
+    mDeuda.className = "v " + (deudaTotal < 0 ? "neg" : "");
 
     // pintar diffs por fila
     for (const m of MEDIOS) {
