@@ -24,6 +24,20 @@
     return Number.isFinite(n) ? n : 0;
   };
 
+  const DENOMS = [
+    { key: "b100000", value: 100000, label: "Billete $100.000" },
+    { key: "b50000", value: 50000, label: "Billete $50.000" },
+    { key: "b20000", value: 20000, label: "Billete $20.000" },
+    { key: "b10000", value: 10000, label: "Billete $10.000" },
+    { key: "b5000", value: 5000, label: "Billete $5.000" },
+    { key: "b2000", value: 2000, label: "Billete $2.000" },
+    { key: "m1000", value: 1000, label: "Moneda $1.000" },
+    { key: "m500", value: 500, label: "Moneda $500" },
+    { key: "m200", value: 200, label: "Moneda $200" },
+    { key: "m100", value: 100, label: "Moneda $100" },
+    { key: "m50", value: 50, label: "Moneda $50" },
+  ];
+
   const safeFromIso = (s) => {
     if (!s) return null;
     try {
@@ -379,8 +393,15 @@
   const estadoBadge2 = $("#estadoBadge2");
 
   const efectivoEntregadoInp = $("#efectivo_entregado");
+  const facturasPagadasInp = $("#facturas_pagadas");
   const mediosBody = $("#mediosBody");
   const mVentas = $("#mVentas");
+  const closeCashStep = $("#closeCashStep");
+  const closeMediaStep = $("#closeMediaStep");
+  const closeDenomInputs = $("#closeDenomInputs");
+  const closeCashTotal = $("#closeCashTotal");
+  const btnCashNext = $("#btnCashNext");
+  const btnBackCash = $("#btnBackCash");
 
   if (typeof PP_AC_URL !== "undefined" && ppInp && ppHid && ppBox)
     setupAutocomplete(ppInp, ppHid, ppBox, PP_AC_URL);
@@ -403,12 +424,89 @@
      PERSISTENCIA del contado (sobrevive a F5 mientras estés en CIERRE)
      ============================================================ */
   const lsKey = (turnoId) => `tc_contados_${turnoId}`;
+  const retiroDenomsKey = (turnoId) => `tc_retiro_denoms_${turnoId}`;
+
+  function intCount(v) {
+    const n = Math.floor(num(v));
+    return n > 0 ? n : 0;
+  }
+
+  function buildCloseDenomInputs() {
+    if (!closeDenomInputs || closeDenomInputs.dataset.ready === "1") return;
+    closeDenomInputs.innerHTML = DENOMS.map((d) => `
+      <div class="tc-denom-item">
+        <label for="close_${escapeHtml(d.key)}">
+          <span>${escapeHtml(d.label)}</span>
+          <strong>${money2(d.value)}</strong>
+        </label>
+        <input id="close_${escapeHtml(d.key)}"
+               class="no-spin"
+               type="number"
+               min="0"
+               step="1"
+               inputmode="numeric"
+               data-close-denom="${escapeHtml(d.key)}"
+               value="0">
+      </div>
+    `).join("");
+    closeDenomInputs.dataset.ready = "1";
+  }
+
+  function readCloseDenomCounts() {
+    const counts = {};
+    DENOMS.forEach((d) => {
+      counts[d.key] = intCount(closeDenomInputs?.querySelector(`[data-close-denom='${d.key}']`)?.value || 0);
+    });
+    return counts;
+  }
+
+  function setCloseDenomCounts(counts) {
+    if (!counts || typeof counts !== "object") return;
+    buildCloseDenomInputs();
+    DENOMS.forEach((d) => {
+      const input = closeDenomInputs?.querySelector(`[data-close-denom='${d.key}']`);
+      if (input) input.value = String(intCount(counts[d.key] || 0));
+    });
+    refreshCloseCashTotal();
+  }
+
+  function closeCashTotalValue(counts = readCloseDenomCounts()) {
+    return DENOMS.reduce((acc, d) => acc + (counts[d.key] || 0) * d.value, 0);
+  }
+
+  function refreshCloseCashTotal() {
+    const counts = readCloseDenomCounts();
+    const total = closeCashTotalValue(counts);
+    if (closeCashTotal) closeCashTotal.textContent = money2(total);
+    if (efectivoEntregadoInp) efectivoEntregadoInp.value = total.toFixed(2);
+    scheduleRecalc();
+    return total;
+  }
+
+  function showCloseSubstep(which) {
+    if (closeCashStep) closeCashStep.style.display = which === "cash" ? "block" : "none";
+    if (closeMediaStep) closeMediaStep.style.display = which === "media" ? "block" : "none";
+  }
+
+  function persistRetiroDenoms(turnoId) {
+    if (!turnoId) return;
+    try {
+      const counts = readCloseDenomCounts();
+      sessionStorage.setItem(retiroDenomsKey(turnoId), JSON.stringify({
+        counts,
+        total: closeCashTotalValue(counts),
+        ts: Date.now(),
+      }));
+    } catch {}
+  }
 
   function persistContados() {
     if (!TURNO_ID) return;
     try {
       const payload = {
         efectivo_entregado: efectivoEntregadoInp?.value || "",
+        facturas_pagadas: facturasPagadasInp?.value || "",
+        denominaciones: readCloseDenomCounts(),
         contados: { ...CONTADOS },
         ts: Date.now(),
       };
@@ -430,6 +528,12 @@
       }
       if (efectivoEntregadoInp && payload.efectivo_entregado) {
         efectivoEntregadoInp.value = payload.efectivo_entregado;
+      }
+      if (facturasPagadasInp && payload.facturas_pagadas) {
+        facturasPagadasInp.value = payload.facturas_pagadas;
+      }
+      if (payload.denominaciones && typeof payload.denominaciones === "object") {
+        setCloseDenomCounts(payload.denominaciones);
       }
       if (payload.contados && typeof payload.contados === "object") {
         for (const [k, v] of Object.entries(payload.contados)) {
@@ -530,13 +634,16 @@
     if (!efectivoEntregadoInp) return;
     const efectivoEntregado = num(efectivoEntregadoInp.value);
     const efectivoContado = Math.max(0, efectivoEntregado - BASE);
+    const facturasPagadas = Math.max(0, num(facturasPagadasInp?.value || 0));
+    const efectivoParaCuadre = efectivoContado + facturasPagadas;
 
     let sumContado = 0;
-    CONTADOS["efectivo"] = efectivoContado;
+    CONTADOS["efectivo"] = efectivoParaCuadre;
+    CONTADOS["facturas_pagadas"] = facturasPagadas;
 
     for (const m of MEDIOS) {
       const metodo = m.metodo;
-      const contado = metodo === "efectivo" ? efectivoContado : num(CONTADOS[metodo] || 0);
+      const contado = metodo === "efectivo" ? efectivoParaCuadre : num(CONTADOS[metodo] || 0);
       sumContado += contado;
 
       if (metodo === "efectivo") {
@@ -567,7 +674,7 @@
       if (m.metodo === "efectivo") {
         tdC.innerHTML = `
           <span class="readonly" data-contado="${escapeHtml(m.metodo)}">${money2(0)}</span>
-          <div class="hint">Efectivo contado = (entregado − base)</div>
+          <div class="hint">Efectivo contado + facturas pagadas</div>
         `;
       } else {
         tdC.innerHTML = `
@@ -605,6 +712,20 @@
         const v = num(efectivoEntregadoInp.value);
         if (efectivoEntregadoInp.value !== "" && Number.isFinite(v)) {
           efectivoEntregadoInp.value = v.toFixed(2);
+        }
+      };
+    }
+
+    if (facturasPagadasInp) {
+      facturasPagadasInp.oninput = () => {
+        let v = num(facturasPagadasInp.value);
+        if (v < 0) { facturasPagadasInp.value = "0"; }
+        scheduleRecalc();
+      };
+      facturasPagadasInp.onblur = () => {
+        const v = num(facturasPagadasInp.value);
+        if (facturasPagadasInp.value !== "" && Number.isFinite(v)) {
+          facturasPagadasInp.value = v.toFixed(2);
         }
       };
     }
@@ -675,8 +796,11 @@
 
       // limpiar valores anteriores en memoria (no en localStorage — se restaura abajo)
       if (efectivoEntregadoInp) efectivoEntregadoInp.value = "";
+      if (facturasPagadasInp) facturasPagadasInp.value = "";
       for (const k of Object.keys(CONTADOS)) delete CONTADOS[k];
 
+      buildCloseDenomInputs();
+      showCloseSubstep("cash");
       buildTable();
       MEDIOS.forEach((m) => {
         if (m.metodo === "efectivo" || m.contado === null || typeof m.contado === "undefined") return;
@@ -685,6 +809,7 @@
         if (inp) inp.value = num(m.contado).toFixed(2);
       });
       restoreContados();   // ✅ recupera lo que el cajero ya había contado
+      refreshCloseCashTotal();
       scheduleRecalc();
       showSection("close");
       return;
@@ -778,13 +903,15 @@
     if (inflightAction) return;
     if (!TURNO_ID) { warn("No hay turno en cierre."); return; }
 
-    const efectivoEntregado = num(efectivoEntregadoInp?.value);
+    const efectivoEntregado = refreshCloseCashTotal();
     if (efectivoEntregado < 0) { err("El efectivo entregado no puede ser negativo."); return; }
+    const facturasPagadas = num(facturasPagadasInp?.value);
+    if (facturasPagadas < 0) { err("Facturas pagadas no puede ser negativo."); return; }
 
     const goAhead = await confirmModal({
       title: "Cerrar turno",
-      msg: `Vas a cerrar el turno con efectivo entregado de ${money2(efectivoEntregado)}. Esta acción no se puede deshacer.`,
-      okText: "Sí, cerrar turno",
+      msg: `Vas a cerrar el turno con efectivo contado de ${money2(efectivoEntregado)} y facturas pagadas por ${money2(facturasPagadas)}. Esta accion no se puede deshacer.`,
+      okText: "Si, continuar",
       danger: true,
     });
     if (!goAhead) return;
@@ -802,20 +929,32 @@
       const data = await postForm(API_CERRAR, {
         turno_id: TURNO_ID,
         efectivo_entregado: String(efectivoEntregado),
+        facturas_pagadas: String(facturasPagadas),
         medios_json: JSON.stringify(mediosOut),
       });
 
       if (!data.success) { err(data.error || "Error al cerrar el turno."); return; }
+
+      if (data.retiro_url) {
+        const oldId = data.turno_id || TURNO_ID;
+        const deuda = Math.abs(Number(data.deuda_total ?? 0));
+        persistRetiroDenoms(oldId);
+        clearContados(oldId);
+        if (deuda > 0) warn(`Deuda del turno: ${money2(deuda)}`, 1200);
+        else ok("Deuda del turno: $0", 1200);
+        setTimeout(() => window.location.assign(data.retiro_url), 900);
+        return;
+      }
 
       ok(data.msg || "Turno cerrado.");
 
       // mostrar resumen no-bloqueante
       const ventas = Number(data.ventas_total ?? 0);
       const deuda  = Number(data.deuda_total ?? 0);
-      const dif    = Number(data.diferencia_total ?? 0);
+      const facturas = Number(data.facturas_pagadas ?? 0);
       const filas = [
         ["Ventas (según usuario)", money2(ventas)],
-        ["Diferencia total", money2(dif)],
+        ["Facturas pagadas", money2(facturas)],
         ["Faltante", money2(Math.abs(deuda))],
       ].map(([k, v]) => `<div class="sum-row"><span>${k}</span><b>${v}</b></div>`).join("");
       summaryModal(`<div class="sum-grid">${filas}</div>`);
@@ -841,6 +980,7 @@
       if (passInp) passInp.value = "";
       if (baseInp) baseInp.value = "";
       if (efectivoEntregadoInp) efectivoEntregadoInp.value = "";
+      if (facturasPagadasInp) facturasPagadasInp.value = "";
       if (mediosBody) mediosBody.innerHTML = "";
       if (mVentas) mVentas.textContent = "—";
       if (infoDuracion) infoDuracion.textContent = "—";
@@ -856,6 +996,33 @@
   /* ============================================================
      Wiring
      ============================================================ */
+  closeDenomInputs?.addEventListener("input", (event) => {
+    const target = event.target;
+    if (!target || !target.matches("input[data-close-denom]")) return;
+    if (num(target.value) < 0) target.value = "0";
+    refreshCloseCashTotal();
+    persistContados();
+  });
+
+  closeDenomInputs?.addEventListener("blur", (event) => {
+    const target = event.target;
+    if (!target || !target.matches("input[data-close-denom]")) return;
+    target.value = String(intCount(target.value));
+    refreshCloseCashTotal();
+    persistContados();
+  }, true);
+
+  btnCashNext?.addEventListener("click", () => {
+    refreshCloseCashTotal();
+    showCloseSubstep("media");
+    facturasPagadasInp?.focus();
+  });
+
+  btnBackCash?.addEventListener("click", () => {
+    showCloseSubstep("cash");
+    closeDenomInputs?.querySelector("input[data-close-denom]")?.focus();
+  });
+
   formStart?.addEventListener("submit", actionIniciar);
   btnIniCierre?.addEventListener("click", actionIniciarCierre);
   btnCerrar?.addEventListener("click", actionCerrar);
@@ -864,6 +1031,9 @@
      Init
      ============================================================ */
   showSection("start");
+  buildCloseDenomInputs();
+  showCloseSubstep("cash");
+  refreshCloseCashTotal();
   refreshStartValidity();
 
   // auto-foco al primer campo

@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Retiro de caja{% endblock %}
+
+{% block extra_head %}
+  <link rel="stylesheet"
+        href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"/>
+  <link rel="stylesheet" href="{% static 'css/turno_caja_retiro.css' %}?v=3">
+{% endblock %}
+
+{% block content %}
+  <div class="cr-wrap">
+    <section class="cr-shell">
+      <header class="cr-head">
+        <div>
+          <h2>Retiro de caja</h2>
+          <p>Turno #{{ turno.id }}</p>
+        </div>
+        <a class="cr-btn cr-btn-ghost" href="{% url 'turno_caja' %}">
+          <i class="fa-solid fa-arrow-left" aria-hidden="true"></i>
+          Volver
+        </a>
+      </header>
+
+      <div class="cr-info">
+        <div><span>Punto de pago</span><b>{{ retiro_data.puntopago }}</b></div>
+        <div><span>Cajero</span><b>{{ retiro_data.cajero }}</b></div>
+        <div><span>Inicio</span><b>{{ retiro_data.inicio }}</b></div>
+        <div><span>Fin</span><b>{{ retiro_data.fin }}</b></div>
+      </div>
+
+      <div class="cr-layout">
+        <form id="retiroForm" class="cr-panel" autocomplete="off">
+          <label class="cr-label" for="base_final">Base que queda en caja</label>
+          <input id="base_final"
+                 class="cr-input"
+                 type="number"
+                 min="0"
+                 step="50"
+                 inputmode="numeric"
+                 placeholder="0">
+
+          <div class="cr-denoms" id="denomInputs"></div>
+        </form>
+
+        <aside class="cr-panel cr-summary">
+          <div class="cr-metric">
+            <span>Total contado</span>
+            <b id="totalContado">$0</b>
+          </div>
+          <div class="cr-metric">
+            <span>Base final</span>
+            <b id="baseFinal">$0</b>
+          </div>
+          <div class="cr-metric">
+            <span>Retiro sugerido</span>
+            <b id="retiroSugerido">$0</b>
+          </div>
+          <div class="cr-metric">
+            <span>Queda en caja</span>
+            <b id="quedaCaja">$0</b>
+          </div>
+          <div id="planNote" class="cr-note"></div>
+
+          <div class="cr-actions">
+            <button type="button" class="cr-btn cr-btn-primary" id="btnPrint">
+              <i class="fa-solid fa-print" aria-hidden="true"></i>
+              Finalizar
+            </button>
+          </div>
+        </aside>
+      </div>
+
+      <section class="cr-table-panel">
+        <table class="cr-table">
+          <thead>
+            <tr>
+              <th>Denominacion</th>
+              <th class="num">Hay</th>
+              <th class="num">Sacar</th>
+              <th class="num">Quedan</th>
+              <th class="num">Valor retiro</th>
+            </tr>
+          </thead>
+          <tbody id="retiroRows"></tbody>
+        </table>
+      </section>
+
+      <section class="cr-ticket">
+        <h3>Factura de cierre</h3>
+        <pre id="ticketPreview"></pre>
+      </section>
+    </section>
+  </div>
+
+  {{ retiro_data|json_script:"retiro-data" }}
+{% endblock %}
+
+{% block scripts %}
+  <script>
+    window.POS_AGENT_URL = "{{ POS_AGENT_URL|default:'http://127.0.0.1:8787'|escapejs }}".trim();
+    window.POS_AGENT_TOKEN = "{{ POS_AGENT_TOKEN|default:''|escapejs }}".trim();
+    window.TURNO_CAJA_URL = "{% url 'turno_caja' %}";
+    if (!/^https?:\/\//.test(window.POS_AGENT_URL)) window.POS_AGENT_URL = "http://127.0.0.1:8787";
+  </script>
+  <script defer src="{% static 'javascript/turno_caja_retiro.js' %}?v=6"></script>
+{% endblock %}

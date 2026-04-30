@@ -7,7 +7,7 @@
 {% block extra_head %}
   <link rel="stylesheet"
         href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"/>
-  <link rel="stylesheet" href="{% static 'css/turno_caja.css' %}?v=9">
+  <link rel="stylesheet" href="{% static 'css/turno_caja.css' %}?v=10">
 {% endblock %}
 
 {% block content %}
@@ -159,11 +159,56 @@
           <div class="info-row"><span>Cierre iniciado:</span> <b id="infoCierre">—</b></div>
         </div>
 
+        <div id="closeCashStep" class="tc-close-step">
+          <div class="tc-close-subtitle">
+            <i class="fa-solid fa-money-bills" aria-hidden="true"></i>
+            Conteo de efectivo por denominacion
+          </div>
+          <div class="tc-denom-grid" id="closeDenomInputs"></div>
+
+          <div class="tc-metrics tc-metrics-2">
+            <div class="metric">
+              <div class="metric-label">Total efectivo contado</div>
+              <div id="closeCashTotal" class="metric-value">$0</div>
+            </div>
+          </div>
+
+          <div class="tc-actions">
+            <button id="btnCashNext"
+                    class="btn btn-primary"
+                    type="button"
+                    title="Continuar a medios de pago">
+              <span class="btn-label">
+                <i class="fa-solid fa-arrow-right" aria-hidden="true"></i> Continuar
+              </span>
+            </button>
+          </div>
+        </div>
+
+        <div id="closeMediaStep" class="tc-close-step" style="display:none;">
+          <div class="tc-close-subtitle">
+            <i class="fa-solid fa-credit-card" aria-hidden="true"></i>
+            Ventas por medio de pago
+          </div>
+
         <form id="formClose" class="tc-grid tc-grid-compact" autocomplete="off" novalidate>
-          <label class="tc-label" for="efectivo_entregado">Efectivo entregado (TOTAL caja)</label>
+          <label class="tc-label" for="efectivo_entregado">Efectivo contado</label>
           <div class="tc-field">
             <i class="fa-solid fa-money-bill-wave" aria-hidden="true"></i>
             <input id="efectivo_entregado"
+                   class="tc-input no-spin"
+                   type="number"
+                   step="0.01"
+                   min="0"
+                   inputmode="decimal"
+                   placeholder="0.00"
+                   readonly>
+          </div>
+
+          <label class="tc-label" for="facturas_pagadas">Facturas pagadas</label>
+          <div class="tc-field">
+            <i class="fa-solid fa-file-invoice-dollar" aria-hidden="true"></i>
+            <input id="facturas_pagadas"
                    class="tc-input no-spin"
                    type="number"
                    step="0.01"
@@ -192,16 +237,23 @@
           </div>
         </div>
 
-        <div class="tc-actions">
+        <div class="tc-actions tc-actions-between">
+          <button id="btnBackCash"
+                  class="btn btn-ghost"
+                  type="button"
+                  title="Volver al conteo de efectivo">
+            <i class="fa-solid fa-arrow-left" aria-hidden="true"></i> Volver
+          </button>
           <button id="btnCerrar"
                   class="btn btn-primary"
                   type="button"
                   title="Cierra el turno y guarda el cuadre">
             <span class="btn-label">
-              <i class="fa-solid fa-check" aria-hidden="true"></i> Cerrar turno
+              <i class="fa-solid fa-arrow-right" aria-hidden="true"></i> Continuar
             </span>
             <span class="btn-spin" aria-hidden="true"></span>
           </button>
+        </div>
         </div>
       </section>
     </div>
@@ -243,5 +295,5 @@
     const API_CERRAR     = "{% url 'turno_caja_cerrar' %}";
   </script>
 
-  <script defer src="{% static 'javascript/turno_caja.js' %}?v=10"></script>
+  <script defer src="{% static 'javascript/turno_caja.js' %}?v=12"></script>
 {% endblock %}

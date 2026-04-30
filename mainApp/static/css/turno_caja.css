@@ -156,6 +156,79 @@ h2 i{ color:var(--brand); margin-right:8px; }
 .btn:disabled{ opacity:.65; cursor:not-allowed; }
 .btn-primary{ background:linear-gradient(135deg,var(--brand),var(--brand-2)); color:#071529; }
 .btn-warn{ background:linear-gradient(135deg,#f59e0b,#fbbf24); color:#2a1a00; }
+.btn-ghost{
+  background:rgba(255,255,255,.10);
+  color:var(--text);
+  border:1px solid rgba(255,255,255,.22);
+}
+.btn-ghost:hover{ background:rgba(255,255,255,.16); }
+
+.tc-input[readonly]{
+  background:rgba(255,255,255,.07);
+  color:#eaf3ff;
+  cursor:not-allowed;
+}
+
+.tc-actions-between{
+  justify-content:space-between;
+  gap:12px;
+  flex-wrap:wrap;
+}
+
+.tc-close-step{ margin-top:12px; }
+.tc-close-subtitle{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  color:#f8fbff;
+  font-weight:900;
+  margin:14px 0 10px;
+}
+.tc-close-subtitle i{ color:#bfdbfe; }
+
+.tc-denom-grid{
+  display:grid;
+  grid-template-columns:repeat(4, minmax(0, 1fr));
+  gap:10px;
+}
+.tc-denom-item{
+  background:#fff;
+  color:#0b1220;
+  border:1px solid #dbeafe;
+  border-radius:12px;
+  padding:12px;
+  box-shadow:0 8px 18px rgba(0,0,0,.12);
+}
+.tc-denom-item label{
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  gap:8px;
+  color:#183b78;
+  font-size:12px;
+  font-weight:900;
+  margin-bottom:8px;
+}
+.tc-denom-item strong{
+  color:#0f172a;
+  white-space:nowrap;
+}
+.tc-denom-item input{
+  width:100%;
+  height:40px;
+  border-radius:10px;
+  border:1px solid #cfe0ff;
+  background:#f8fbff;
+  color:#0b1220;
+  font-weight:900;
+  text-align:right;
+  padding:0 10px;
+  outline:none;
+}
+.tc-denom-item input:focus{
+  border-color:#6aa8ff;
+  box-shadow:0 0 0 3px rgba(106,168,255,.25);
+}
 
 .tc-info{
   display:grid;
@@ -305,10 +378,14 @@ h2 i{ color:var(--brand); margin-right:8px; }
 /* responsive */
 @media (max-width: 900px){
   .tc-metrics-2{ grid-template-columns: 1fr; }
+  .tc-denom-grid{ grid-template-columns:repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 768px){
   .tc-grid{ grid-template-columns: 1fr; }
   .tc-label{ display:none; }
   .tc-info{ grid-template-columns: 1fr; }
   .tc-table .num{ text-align:left; }
+  .tc-denom-grid{ grid-template-columns:1fr; }
+  .tc-actions-between{ justify-content:stretch; }
+  .tc-actions-between .btn{ width:100%; justify-content:center; }
 }

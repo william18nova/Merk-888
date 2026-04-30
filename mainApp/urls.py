@@ -292,6 +292,8 @@ urlpatterns = [
          name="turno_caja_iniciar_cierre"),
     path("turno_caja/api/cerrar/", views.TurnoCajaCerrarApi.as_view(),
          name="turno_caja_cerrar"),
+    path("turno_caja/retiro/<int:turno_id>/", views.TurnoCajaRetiroView.as_view(),
+         name="turno_caja_retiro"),
      
      path("turnos_caja_dashboard/", views.TurnosCajaDashboardView.as_view(), name="turnos_caja_dashboard"),
 

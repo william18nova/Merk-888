@@ -6279,6 +6279,8 @@ DISPLAY_METODO = {
     "banco_caja_social": "Banco Caja Social",
 }
 
+FACTURAS_PAGADAS_METODO = "facturas_pagadas"
+
 def _now_co():
     return timezone.now().astimezone(CO_TZ)
 
@@ -6352,6 +6354,8 @@ def _medios_payload(turno):
     medios = []
     for m in TurnoCajaMedio.objects.filter(turno=turno).order_by("metodo"):
         metodo = _normalize_metodo(m.metodo)
+        if metodo == FACTURAS_PAGADAS_METODO:
+            continue
         medios.append({
             "metodo": metodo,
             "label": DISPLAY_METODO.get(metodo, metodo.replace("_", " ").title()),
@@ -6362,19 +6366,38 @@ def _medios_payload(turno):
     return medios
 
 def _sync_turno_medios_esperados(turno, expected: dict[str, Decimal], reset_contados=False):
-    existing = {
-        _normalize_metodo(metodo): metodo
-        for metodo in TurnoCajaMedio.objects.filter(turno=turno).values_list("metodo", flat=True)
+    existing_objs = {
+        _normalize_metodo(m.metodo): m
+        for m in TurnoCajaMedio.objects.filter(turno=turno)
     }
+    existing = {metodo: obj.metodo for metodo, obj in existing_objs.items()}
     all_methods = list(dict.fromkeys(DEFAULT_METODOS + list(expected.keys()) + list(existing.keys())))
 
-    for metodo in all_methods:
-        metodo = _normalize_metodo(metodo)
-        medio, created = TurnoCajaMedio.objects.get_or_create(
+    missing = [
+        TurnoCajaMedio(
             turno=turno,
             metodo=metodo,
-            defaults={"esperado": Decimal("0.00"), "contado": None, "diferencia": Decimal("0.00")},
+            esperado=Decimal("0.00"),
+            contado=None,
+            diferencia=Decimal("0.00"),
         )
+        for metodo in all_methods
+        if metodo not in existing_objs
+    ]
+    if missing:
+        TurnoCajaMedio.objects.bulk_create(missing, ignore_conflicts=True, batch_size=100)
+        existing_objs = {
+            _normalize_metodo(m.metodo): m
+            for m in TurnoCajaMedio.objects.filter(turno=turno)
+        }
+
+    to_update = []
+    for metodo in all_methods:
+        metodo = _normalize_metodo(metodo)
+        medio = existing_objs.get(metodo)
+        if medio is None:
+            continue
+        created = metodo not in existing
         medio.esperado = (expected.get(metodo, Decimal("0.00")) or Decimal("0.00")).quantize(Decimal("0.01"))
         if reset_contados or created:
             medio.contado = None
@@ -6383,7 +6406,14 @@ def _sync_turno_medios_esperados(turno, expected: dict[str, Decimal], reset_cont
             medio.diferencia = ((medio.contado or Decimal("0.00")) - medio.esperado).quantize(Decimal("0.01"))
         else:
             medio.diferencia = Decimal("0.00")
-        medio.save(update_fields=["esperado", "contado", "diferencia"])
+        to_update.append(medio)
+
+    if to_update:
+        TurnoCajaMedio.objects.bulk_update(
+            to_update,
+            ["esperado", "contado", "diferencia"],
+            batch_size=100,
+        )
 
     return all_methods
 
@@ -6716,8 +6746,15 @@ class TurnoCajaCerrarApi(LoginRequiredMixin, View):
         if efectivo_entregado < 0:
             return JsonResponse({"success": False, "error": "Efectivo entregado no puede ser negativo."}, status=400)
 
+        facturas_pagadas = _to_decimal(request.POST.get("facturas_pagadas"), Decimal("0.00"))
+        if facturas_pagadas < 0:
+            return JsonResponse({"success": False, "error": "Facturas pagadas no puede ser negativo."}, status=400)
+
         base = turno.saldo_apertura_efectivo or Decimal("0.00")
         efectivo_contado = (efectivo_entregado - base).quantize(Decimal("0.01"))
+        if efectivo_contado < 0:
+            efectivo_contado = Decimal("0.00")
+        efectivo_para_cuadre = (efectivo_contado + facturas_pagadas).quantize(Decimal("0.01"))
 
         import json
         medios_json = request.POST.get("medios_json", "[]")
@@ -6753,12 +6790,22 @@ class TurnoCajaCerrarApi(LoginRequiredMixin, View):
 
             contados[metodo] = contado
 
-            if metodo not in medios_db:
-                medios_db[metodo] = TurnoCajaMedio.objects.create(
-                    turno=turno, metodo=metodo, esperado=Decimal("0.00")
-                )
+        missing_methods = [
+            metodo for metodo in contados
+            if metodo not in medios_db and metodo not in {"efectivo", FACTURAS_PAGADAS_METODO}
+        ]
+        if missing_methods:
+            TurnoCajaMedio.objects.bulk_create(
+                [
+                    TurnoCajaMedio(turno=turno, metodo=metodo, esperado=Decimal("0.00"))
+                    for metodo in missing_methods
+                ],
+                ignore_conflicts=True,
+                batch_size=50,
+            )
+            medios_db = {_normalize_metodo(m.metodo): m for m in turno.medios.select_for_update().all()}
 
-        contados["efectivo"] = efectivo_contado
+        contados["efectivo"] = efectivo_para_cuadre
 
         sum_contado = Decimal("0.00")
         sum_esperado = Decimal("0.00")
@@ -6767,8 +6814,12 @@ class TurnoCajaCerrarApi(LoginRequiredMixin, View):
         contado_no_efectivo = Decimal("0.00")
 
         deuda_total = Decimal("0.00")  # NEGATIVA o 0
+        medios_to_update = []
 
         for metodo, medio_obj in medios_db.items():
+            if metodo == FACTURAS_PAGADAS_METODO:
+                continue
+
             esperado = medio_obj.esperado or Decimal("0.00")
             contado = contados.get(metodo)
 
@@ -6776,7 +6827,7 @@ class TurnoCajaCerrarApi(LoginRequiredMixin, View):
                 contado = Decimal("0.00")
 
             if metodo == "efectivo":
-                contado = efectivo_contado
+                contado = efectivo_para_cuadre
                 esperado_efectivo = esperado
 
             contado = (contado or Decimal("0.00")).quantize(Decimal("0.01"))
@@ -6784,7 +6835,7 @@ class TurnoCajaCerrarApi(LoginRequiredMixin, View):
 
             medio_obj.contado = contado
             medio_obj.diferencia = diff
-            medio_obj.save(update_fields=["contado", "diferencia"])
+            medios_to_update.append(medio_obj)
 
             sum_contado += contado
             sum_esperado += esperado
@@ -6796,16 +6847,37 @@ class TurnoCajaCerrarApi(LoginRequiredMixin, View):
             if diff < 0:
                 deuda_total += diff  # diff negativo
 
+        if medios_to_update:
+            TurnoCajaMedio.objects.bulk_update(
+                medios_to_update,
+                ["contado", "diferencia"],
+                batch_size=100,
+            )
+
         diferencia_total = (sum_contado - sum_esperado).quantize(Decimal("0.01"))
         deuda_total = deuda_total.quantize(Decimal("0.01"))
 
-        real_total = (efectivo_entregado + (sum_contado - efectivo_contado)).quantize(Decimal("0.01"))
+        facturas_medio, _ = TurnoCajaMedio.objects.get_or_create(
+            turno=turno,
+            metodo=FACTURAS_PAGADAS_METODO,
+            defaults={
+                "esperado": Decimal("0.00"),
+                "contado": Decimal("0.00"),
+                "diferencia": Decimal("0.00"),
+            },
+        )
+        facturas_medio.esperado = Decimal("0.00")
+        facturas_medio.contado = facturas_pagadas
+        facturas_medio.diferencia = Decimal("0.00")
+        facturas_medio.save(update_fields=["esperado", "contado", "diferencia"])
+
+        real_total = (efectivo_entregado + (sum_contado - efectivo_para_cuadre)).quantize(Decimal("0.01"))
 
         turno.fin = _now_co()
         turno.estado = "CERRADO"
 
         turno.efectivo_real = efectivo_entregado
-        turno.diferencia_efectivo = (efectivo_contado - esperado_efectivo).quantize(Decimal("0.01"))
+        turno.diferencia_efectivo = (efectivo_para_cuadre - esperado_efectivo).quantize(Decimal("0.01"))
 
         turno.esperado_total = sum_esperado
         turno.real_total = real_total
@@ -6834,6 +6906,8 @@ class TurnoCajaCerrarApi(LoginRequiredMixin, View):
             "esperado_total": float(turno.esperado_total),
             "diferencia_total": float(turno.diferencia_total),
             "deuda_total": float(turno.deuda_total),
+            "facturas_pagadas": float(facturas_pagadas),
+            "retiro_url": reverse("turno_caja_retiro", kwargs={"turno_id": turno.id}),
             "msg": msg,
 
             # ✅ CLAVE (para mantener el ocultamiento en frontend)
@@ -6843,6 +6917,60 @@ class TurnoCajaCerrarApi(LoginRequiredMixin, View):
 
 
 
+
+
+class TurnoCajaRetiroView(LoginRequiredMixin, View):
+    template_name = "turno_caja_retiro.html"
+
+    def get(self, request: HttpRequest, turno_id: int):
+        turno = get_object_or_404(
+            TurnoCaja.objects.select_related("puntopago", "cajero"),
+            pk=turno_id,
+        )
+
+        if not _can_operate_turno(request.user, turno):
+            return HttpResponseForbidden("No puedes revisar el cierre de otro cajero.")
+
+        if turno.estado != "CERRADO":
+            messages.warning(request, "El retiro de denominaciones solo aplica despues de cerrar el turno.")
+            return redirect("turno_caja")
+
+        medios = []
+        facturas_pagadas = Decimal("0.00")
+        for medio in TurnoCajaMedio.objects.filter(turno=turno).order_by("metodo"):
+            metodo = _normalize_metodo(medio.metodo)
+            contado = (medio.contado or Decimal("0.00")).quantize(Decimal("0.01"))
+            if metodo == FACTURAS_PAGADAS_METODO:
+                facturas_pagadas = contado
+                continue
+            medios.append({
+                "metodo": metodo,
+                "label": DISPLAY_METODO.get(metodo, metodo.replace("_", " ").title()),
+                "contado": float(contado),
+                "vendido": float(contado),
+            })
+
+        retiro_data = {
+            "turno_id": turno.id,
+            "puntopago": getattr(turno.puntopago, "nombre", str(turno.puntopago_id)),
+            "cajero": _turno_label_usuario(turno.cajero),
+            "inicio": _iso_dt(turno.inicio),
+            "cierre_iniciado": _iso_dt(turno.cierre_iniciado),
+            "fin": _iso_dt(turno.fin),
+            "base_apertura": float(turno.saldo_apertura_efectivo or 0),
+            "efectivo_real": float(turno.efectivo_real or 0),
+            "facturas_pagadas": float(facturas_pagadas),
+            "ventas_total": float(turno.ventas_total or 0),
+            "ventas_total_vendido": float(turno.ventas_total or 0),
+            "ventas_efectivo": float(turno.ventas_efectivo or 0),
+            "ventas_no_efectivo": float(turno.ventas_no_efectivo or 0),
+            "medios": medios,
+        }
+
+        return render(request, self.template_name, {
+            "turno": turno,
+            "retiro_data": retiro_data,
+        })
 
 
 # =========================
@@ -7062,13 +7190,19 @@ def _recalc_turno_from_medios(turno):
     deuda_total = Decimal("0.00")  # ✅ suma SOLO negativos
 
     for m in medios:
+        metodo_norm = _normalize_metodo(m.metodo)
+        if metodo_norm == FACTURAS_PAGADAS_METODO:
+            m.diferencia = Decimal("0.00")
+            m.save(update_fields=["diferencia"])
+            continue
+
         esp = (m.esperado or Decimal("0.00")).quantize(Decimal("0.01"))
         con = (m.contado or Decimal("0.00")).quantize(Decimal("0.01")) if m.contado is not None else Decimal("0.00")
 
         esperado_total += esp
         ventas_total += con
 
-        if (m.metodo or "").strip().lower() == "efectivo":
+        if metodo_norm == "efectivo":
             esperado_ef = esp
             contado_ef = con
 
