@@ -36,6 +36,8 @@
     { key: "m200", value: 200, label: "Moneda $200" },
     { key: "m100", value: 100, label: "Moneda $100" },
     { key: "m50", value: 50, label: "Moneda $50" },
+    { key: "pack_monedas", value: 10000, label: "Paquete monedas" },
+    { key: "pack_m50", value: 2000, label: "Paquete monedas de 50" },
   ];
 
   const safeFromIso = (s) => {
@@ -940,9 +942,8 @@
         const deuda = Math.abs(Number(data.deuda_total ?? 0));
         persistRetiroDenoms(oldId);
         clearContados(oldId);
-        if (deuda > 0) warn(`Deuda del turno: ${money2(deuda)}`, 1200);
-        else ok("Deuda del turno: $0", 1200);
-        setTimeout(() => window.location.assign(data.retiro_url), 900);
+        window.alert(deuda > 0 ? `Deuda del turno: ${money2(deuda)}` : "Deuda del turno: $0");
+        setTimeout(() => window.location.assign(data.retiro_url), 150);
         return;
       }
 

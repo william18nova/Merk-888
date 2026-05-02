@@ -14,13 +14,15 @@
     { key: "b50000", value: 50000, label: "Billete $50.000", unit: "billete", reserve: 1 },
     { key: "b20000", value: 20000, label: "Billete $20.000", unit: "billete", reserve: 4 },
     { key: "b10000", value: 10000, label: "Billete $10.000", unit: "billete", reserve: 5 },
-    { key: "b5000", value: 5000, label: "Billete $5.000", unit: "billete" },
-    { key: "b2000", value: 2000, label: "Billete $2.000", unit: "billete" },
-    { key: "m1000", value: 1000, label: "Moneda $1.000", unit: "moneda" },
-    { key: "m500", value: 500, label: "Moneda $500", unit: "moneda" },
-    { key: "m200", value: 200, label: "Moneda $200", unit: "moneda" },
-    { key: "m100", value: 100, label: "Moneda $100", unit: "moneda" },
-    { key: "m50", value: 50, label: "Moneda $50", unit: "moneda" },
+    { key: "b5000", value: 5000, label: "Billete $5.000", unit: "billete", reserve: 1 },
+    { key: "b2000", value: 2000, label: "Billete $2.000", unit: "billete", reserve: 1 },
+    { key: "m1000", value: 1000, label: "Moneda $1.000", unit: "moneda", reserve: 1 },
+    { key: "m500", value: 500, label: "Moneda $500", unit: "moneda", reserve: 1 },
+    { key: "m200", value: 200, label: "Moneda $200", unit: "moneda", reserve: 1 },
+    { key: "m100", value: 100, label: "Moneda $100", unit: "moneda", reserve: 1 },
+    { key: "m50", value: 50, label: "Moneda $50", unit: "moneda", reserve: 1 },
+    { key: "pack_monedas", value: 10000, label: "Paquete monedas", unit: "paquete", locked: true },
+    { key: "pack_m50", value: 2000, label: "Paquete monedas de 50", unit: "paquete", locked: true },
   ];
 
   const $ = (sel, root = document) => root.querySelector(sel);
@@ -120,9 +122,21 @@
   function reserveCounts(counts) {
     const reserved = {};
     DENOMS.forEach((d) => {
-      reserved[d.key] = Math.min(counts[d.key] || 0, d.reserve || 0);
+      if (d.locked) {
+        reserved[d.key] = counts[d.key] || 0;
+      } else {
+        reserved[d.key] = Math.min(counts[d.key] || 0, d.reserve || 0);
+      }
     });
     return reserved;
+  }
+
+  function withdrawableCounts(counts) {
+    const out = {};
+    DENOMS.forEach((d) => {
+      out[d.key] = d.locked ? 0 : (counts[d.key] || 0);
+    });
+    return out;
   }
 
   function subtractCounts(a, b) {
@@ -212,15 +226,9 @@
 
   function choosePlan(counts, target) {
     const reserved = reserveCounts(counts);
-    const availableWithReserve = subtractCounts(counts, reserved);
+    const availableWithReserve = withdrawableCounts(subtractCounts(counts, reserved));
     const protectedPlan = solveWithdrawal(availableWithReserve, target);
-    const fullPlan = solveWithdrawal(counts, target);
-
-    if (protectedPlan.exact || fullPlan.amount <= protectedPlan.amount) {
-      return { ...protectedPlan, relaxedReserve: false, reserved };
-    }
-
-    return { ...fullPlan, relaxedReserve: true, reserved };
+    return { ...protectedPlan, relaxedReserve: false, reserved };
   }
 
   function buildInputs() {
@@ -263,10 +271,7 @@
     if (total < base) {
       note = "El efectivo contado es menor que la base indicada.";
     } else if (remaining > base) {
-      note = `Quedan ${money(remaining - base)} por encima de la base por denominaciones disponibles.`;
-    }
-    if (plan.relaxedReserve) {
-      note = note ? `${note} Se uso parte del margen de cambio.` : "Se uso parte del margen de cambio.";
+      note = `Quedan ${money(remaining - base)} por encima de la base porque se conservan paquetes y denominaciones para devueltas.`;
     }
     if (planNoteEl) planNoteEl.textContent = note;
 
@@ -303,6 +308,18 @@
     return lines.length ? lines : [line("No se recomienda retirar efectivo.")];
   }
 
+  function lockedLines(plan) {
+    const lines = [];
+    const availableCounts = plan?.availableCounts || {};
+    DENOMS.forEach((d) => {
+      if (!d.locked) return;
+      const count = availableCounts[d.key] || 0;
+      if (!count) return;
+      lines.push(lr(`  ${d.label}: ${count} x ${plainMoney(d.value)}`, plainMoney(count * d.value)));
+    });
+    return lines;
+  }
+
   function buildTicket(plan) {
     plan = plan || currentPlan || { removeCounts: emptyCounts(), amount: 0, total: 0, base: 0, remaining: 0 };
     const out = [];
@@ -328,6 +345,12 @@
     out.push("-".repeat(48));
     out.push(line("Denominaciones a sacar:"));
     out.push(...retiroLines(plan));
+    const paquetes = lockedLines(plan);
+    if (paquetes.length) {
+      out.push("-".repeat(48));
+      out.push(line("Paquetes que quedan en caja:"));
+      out.push(...paquetes);
+    }
     out.push("");
     out.push("");
     return out.join("\n");
