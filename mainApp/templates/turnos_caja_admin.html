@@ -131,9 +131,11 @@
             <i class="fa-solid fa-floppy-disk"></i> Guardar cambios
           </button>
 
-          <button id="btnDelete" class="btn btn-danger" type="button">
-            <i class="fa-solid fa-trash"></i> Eliminar turno
-          </button>
+          {% if can_delete_turnos %}
+            <button id="btnDelete" class="btn btn-danger" type="button">
+              <i class="fa-solid fa-trash"></i> Eliminar turno
+            </button>
+          {% endif %}
         </div>
 
         <div class="warn">
@@ -151,5 +153,5 @@
   const API_DELETE = (id) => "{% url 'api_admin_turno_delete' 999999 %}".replace("999999", String(id));
 </script>
 
-<script defer src="{% static 'javascript/turnos_caja_admin.js' %}?v=2"></script>
+<script defer src="{% static 'javascript/turnos_caja_admin.js' %}?v=3"></script>
 {% endblock %}

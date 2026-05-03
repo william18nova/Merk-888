@@ -226,11 +226,14 @@
 
 <!-- endpoints -->
 <script>
+  window.sucursalAutocompleteUrl        = "{% url 'sucursal_autocomplete' %}";
+  window.puntopagoAutocompleteUrl       = "{% url 'puntopago_autocomplete' %}";
   window.clienteAutocompleteUrl         = "{% url 'cliente_autocomplete' %}";
   window.productoAutocompleteUrl        = "{% url 'producto_autocomplete' %}";
   window.productoAutocompleteCodigoUrl  = "{% url 'producto_autocomplete_codigo' %}";
   window.productoAutocompleteBarrasUrl  = "{% url 'producto_autocomplete_barras' %}";
   window.productoAutocompleteIdUrl      = "{% url 'producto_autocomplete_id' %}";
+  window.productoSnapshotUrl            = "{% url 'producto_snapshot' %}";
 
   window.verificarProductoUrl           = "{% url 'verificar_producto' %}";
   window.buscarProductoPorCodigoUrl     = "{% url 'buscar_producto_por_codigo' %}";

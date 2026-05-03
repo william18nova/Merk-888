@@ -2,7 +2,7 @@ from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib.auth.decorators import login_required
 from django.contrib import messages
 from .models import Usuario, Sucursal, Categoria, Producto, Inventario, Proveedor, PreciosProveedor, PuntosPago, Rol, Empleado, HorariosNegocio, HorarioCaja, Cliente, Venta, DetalleVenta, PedidoProveedor, DetallePedidoProveedor, CambioDevolucion, Permiso, RolPermiso, UsuarioPermiso, PagoVenta, TurnoCaja, TurnoCajaMedio
-from django.db.models import Count, Sum, Exists, OuterRef, Q, F, ExpressionWrapper, DecimalField, Value, IntegerField, Case, When
+from django.db.models import Count, Sum, Exists, OuterRef, Q, F, ExpressionWrapper, DecimalField, Value, IntegerField, Case, When, CharField
 from django.http import JsonResponse, HttpResponseBadRequest, HttpResponseForbidden, HttpRequest
 from django.contrib.auth import authenticate, login as auth_login
 import json
@@ -71,14 +71,14 @@ from django.utils.decorators import method_decorator
 from django.utils.html import escape
 from django.db.models import Subquery
 from django.core.paginator import Paginator
-from django.db.models.functions import Lower, StrIndex, Trim, Coalesce, TruncDate
+from django.db.models.functions import Lower, StrIndex, Trim, Coalesce, TruncDate, Cast
 import os, io, textwrap, subprocess
 from django.views.decorators.http import require_POST
 from django.conf import settings
 from datetime import timedelta
 import pytz
 from typing import List, Dict, Any
-from .permissions import clear_permission_cache, permission_catalog, sync_permission_catalog
+from .permissions import clear_permission_cache, permission_catalog, sync_permission_catalog, user_can_access_url_name
 
 
 CO_TZ = ZoneInfo("America/Bogota")
@@ -4042,6 +4042,7 @@ class ProductoAutocompleteView(PaginatedAutocompleteMixin):
             "cantidad",
             "productoid__nombre",
             "productoid__precio",
+            "productoid__codigo_de_barras",
         ).order_by("productoid__nombre")[:limit+1])
 
         has_more = len(rows) > limit
@@ -4050,6 +4051,7 @@ class ProductoAutocompleteView(PaginatedAutocompleteMixin):
         results = [{
             "id": r["productoid_id"],
             "text": r["productoid__nombre"],
+            "barcode": r["productoid__codigo_de_barras"] or "",
             "precio": float(r["productoid__precio"] or 0),
             "stock": int(r["cantidad"] or 0),
         } for r in rows]
@@ -4194,20 +4196,32 @@ class BuscarProductoPorCodigoView(LoginRequiredMixin, View):
 
         sid = int(sucursal_id)
 
-        row = (Inventario.objects
-               .filter(sucursalid=sid, productoid__codigo_de_barras=codigo)
-               .select_related("productoid")
-               .values(
-                    "productoid_id",
-                    "cantidad",
-                    "productoid__nombre",
-                    "productoid__codigo_de_barras",
-                    "productoid__precio",
-               )
-               .first())
+        rows = list(
+            Inventario.objects
+            .filter(sucursalid=sid, productoid__codigo_de_barras=codigo)
+            .select_related("productoid")
+            .values(
+                "productoid_id",
+                "cantidad",
+                "productoid__nombre",
+                "productoid__codigo_de_barras",
+                "productoid__precio",
+            )
+            .order_by("productoid_id", "inventarioid")
+        )
 
-        if not row:
+        if not rows:
             return JsonResponse({"exists": False})
+
+        product_ids = {row["productoid_id"] for row in rows}
+        if len(product_ids) > 1:
+            return JsonResponse({
+                "exists": False,
+                "ambiguous": True,
+                "error": f'El código de barras "{codigo}" está asignado a más de un producto en esta sucursal.',
+            })
+
+        row = rows[0]
 
         return JsonResponse({
             "exists": True,
@@ -4251,6 +4265,7 @@ class ProductoCodigoAutocompleteView(LoginRequiredMixin, View):
         results = [{
             "id": p.productoid,
             "text": p.nombre,
+            "barcode": p.codigo_de_barras or "",
             "precio": float(p.precio or 0),
             "stock": int(inv_map.get(p.productoid, 0)),
         } for p in qs]
@@ -4262,6 +4277,7 @@ class ProductoBarrasAutocompleteView(LoginRequiredMixin, View):
     def get(self, request, *args, **kwargs):
         term = (request.GET.get("term","") or "").strip()
         sid  = (request.GET.get("sucursal_id") or "").strip()
+        exact = request.GET.get("exact") == "1"
         if not sid.isdigit():
             return JsonResponse({"results": [], "has_more": False})
 
@@ -4269,7 +4285,10 @@ class ProductoBarrasAutocompleteView(LoginRequiredMixin, View):
             inventario__sucursalid=sid, inventario__cantidad__gt=0
         ).distinct()
         if term:
-            qs = qs.filter(Q(codigo_de_barras__icontains=term) | Q(nombre__icontains=term))
+            if exact:
+                qs = qs.filter(codigo_de_barras=term)
+            else:
+                qs = qs.filter(Q(codigo_de_barras__icontains=term) | Q(nombre__icontains=term))
 
         total = qs.count()
         qs = qs.order_by("nombre")[:self.per_page]
@@ -7173,6 +7192,14 @@ def _require_admin(user):
     return _role_name(user).strip().lower() in {"admin", "administrador", "supervisor"}
 
 
+def _can_admin_turnos(user):
+    return _require_admin(user) or user_can_access_url_name(user, "api_admin_turno_delete")
+
+
+def _can_edit_turnos(user):
+    return _can_admin_turnos(user) or user_can_access_url_name(user, "turnos_caja_admin")
+
+
 def _recalc_turno_from_medios(turno):
     """
     ✅ REGLA AJUSTADA:
@@ -7743,15 +7770,17 @@ class TurnosCajaAdminPageView(LoginRequiredMixin, View):
     template_name = "turnos_caja_admin.html"
 
     def get(self, request: HttpRequest):
-        if not _require_admin(request.user):
-            return HttpResponseForbidden("No tienes permiso para administrar turnos de caja.")
-        return render(request, self.template_name, {})
+        if not _can_edit_turnos(request.user):
+            return HttpResponseForbidden("No tienes permiso para editar turnos de caja.")
+        return render(request, self.template_name, {
+            "can_delete_turnos": _can_admin_turnos(request.user),
+        })
 
 
 class TurnoCajaAdminDetailAPI(LoginRequiredMixin, View):
     def get(self, request: HttpRequest, turno_id: int):
-        if not _require_admin(request.user):
-            return JsonResponse({"success": False, "error": "No tienes permiso para administrar turnos."}, status=403)
+        if not _can_edit_turnos(request.user):
+            return JsonResponse({"success": False, "error": "No tienes permiso para editar turnos."}, status=403)
         turno = get_object_or_404(TurnoCaja.objects.select_related("puntopago", "cajero"), pk=turno_id)
         medios = list(TurnoCajaMedio.objects.filter(turno=turno).order_by("metodo"))
 
@@ -7794,8 +7823,8 @@ class TurnoCajaAdminDetailAPI(LoginRequiredMixin, View):
 class TurnoCajaAdminUpdateAPI(LoginRequiredMixin, View):
     @transaction.atomic
     def post(self, request: HttpRequest, turno_id: int):
-        if not _require_admin(request.user):
-            return JsonResponse({"success": False, "error": "No tienes permiso para administrar turnos."}, status=403)
+        if not _can_edit_turnos(request.user):
+            return JsonResponse({"success": False, "error": "No tienes permiso para editar turnos."}, status=403)
         turno = get_object_or_404(TurnoCaja.objects.select_for_update(), pk=turno_id)
 
         try:
@@ -7871,8 +7900,8 @@ class TurnoCajaAdminUpdateAPI(LoginRequiredMixin, View):
 class TurnoCajaAdminDeleteAPI(LoginRequiredMixin, View):
     @transaction.atomic
     def post(self, request: HttpRequest, turno_id: int):
-        if not _require_admin(request.user):
-            return JsonResponse({"success": False, "error": "No tienes permiso para administrar turnos."}, status=403)
+        if not _can_admin_turnos(request.user):
+            return JsonResponse({"success": False, "error": "No tienes permiso para eliminar turnos."}, status=403)
         turno = get_object_or_404(TurnoCaja.objects.select_for_update(), pk=turno_id)
 
         TurnoCajaMedio.objects.filter(turno=turno).delete()

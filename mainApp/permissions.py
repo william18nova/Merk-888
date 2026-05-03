@@ -405,6 +405,17 @@ PERMISSION_DEFINITIONS = [
         "aliases": ["turnos_caja_admin", "admin turnos"],
     },
     {
+        "code": "caja_turnos_editar",
+        "label": "Editar turnos de caja",
+        "description": "Permite cargar y editar turnos de caja desde el panel administrativo, sin eliminar turnos.",
+        "aliases": [
+            "editar turnos de caja",
+            "editar_turnos_caja",
+            "api_admin_turno_detail",
+            "api_admin_turno_update",
+        ],
+    },
+    {
         "code": "seguridad_permisos",
         "label": "Administrar permisos",
         "description": "Permite crear permisos y asignarlos a roles o usuarios.",
@@ -420,6 +431,11 @@ PERMISSION_DEFINITIONS = [
 
 
 PERMISSION_BY_CODE = {item["code"]: item for item in PERMISSION_DEFINITIONS}
+
+
+PERMISSION_IMPLICATIONS = {
+    "caja_turnos_editar": ["caja_admin"],
+}
 
 
 ROUTE_PERMISSIONS = {
@@ -509,9 +525,9 @@ ROUTE_PERMISSIONS = {
     "turnos_caja_dashboard": "caja_dashboard",
     "api_turnos_caja_list": "caja_dashboard",
     "api_turno_caja_detail": "caja_dashboard",
-    "turnos_caja_admin": "caja_admin",
-    "api_admin_turno_detail": "caja_admin",
-    "api_admin_turno_update": "caja_admin",
+    "turnos_caja_admin": "caja_turnos_editar",
+    "api_admin_turno_detail": "caja_turnos_editar",
+    "api_admin_turno_update": "caja_turnos_editar",
     "api_admin_turno_delete": "caja_admin",
     "permiso_agregar": "seguridad_permisos",
     "visualizar_permisos": "seguridad_permisos",
@@ -814,7 +830,18 @@ def user_has_permission(user, code: Optional[str]) -> bool:
         return False
     if state["allow"] & wanted:
         return True
-    return bool(state["role"] & wanted)
+    if state["role"] & wanted:
+        return True
+
+    for parent_code in PERMISSION_IMPLICATIONS.get(code, []):
+        parent_wanted = _permission_keys_for_definition(parent_code)
+        parent_wanted.add(normalize_permission_key(parent_code))
+        if state["deny"] & parent_wanted:
+            continue
+        if (state["allow"] & parent_wanted) or (state["role"] & parent_wanted):
+            return True
+
+    return False
 
 
 def route_permission_for_url_name(url_name: Optional[str]) -> Optional[str]:

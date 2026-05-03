@@ -271,7 +271,7 @@
     }
   });
 
-  btnDelete.addEventListener("click", async () => {
+  btnDelete?.addEventListener("click", async () => {
     if (!TURNO?.id) return;
 
     const ok = confirm(
