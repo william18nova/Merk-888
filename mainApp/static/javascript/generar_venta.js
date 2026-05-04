@@ -536,6 +536,28 @@ $(function () {
     }
     return false;
   }
+
+  function focusProductAutocompleteLikeAlt1({ search = false } = {}) {
+    if (!$inpNombre || !$inpNombre.length || !$inpNombre.is(":visible")) return false;
+    $inpNombre.focus();
+    $inpNombre[0]?.select?.();
+
+    if (search) {
+      const v = $inpNombre.val() || "";
+      if (v.length >= 1) {
+        try { $inpNombre.autocomplete("search", v); } catch (_){}
+      }
+    }
+    return true;
+  }
+
+  function queueFocusProductAutocompleteLikeAlt1(options = {}) {
+    queueMicrotask(() => {
+      if (isModalOpen()) return;
+      focusProductAutocompleteLikeAlt1(options);
+    });
+  }
+
   function refreshLastAddedPidAfterRemoval(removedPid){
     const rp = String(removedPid || "");
     if (rp && String(lastAddedPid || "") === rp) lastAddedPid = null;
@@ -1161,6 +1183,74 @@ $(function () {
   const FAST_BARCODE_LOCAL = window.FAST_BARCODE_LOCAL !== false;
   const FAST_SCANNER_BURST_MS = Math.max(0, Number(window.FAST_SCANNER_BURST_MS ?? 0));
 
+  // Algunos lectores llegan en modo "Alt/NumLock" antes de mandar los digitos.
+  // Para la venta eso es ruido del hardware, pero no debe romper los atajos Alt+1/2.
+  const SCANNER_ALT_PREFIX_MS = Math.max(80, Number(window.SCANNER_ALT_PREFIX_MS ?? 220));
+  const SCANNER_ALT_NUMLOCK_MS = Math.max(180, Number(window.SCANNER_ALT_NUMLOCK_MS ?? 900));
+  const SCANNER_MIN_CHARS = Math.max(1, Number(window.SCANNER_MIN_CHARS ?? 8));
+  const SCANNER_ALT_NUMLOCK_MIN_CHARS = Math.max(1, Number(window.SCANNER_ALT_NUMLOCK_MIN_CHARS ?? 3));
+  let scannerAltPrefixUntil = 0;
+  let scannerAltNumLockUntil = 0;
+
+  function scannerAltNumLockActive(ts = now()) {
+    return Number(scannerAltNumLockUntil || 0) > ts;
+  }
+
+  function scannerRequiredChars(altNumLockScan = false) {
+    return altNumLockScan ? Math.min(SCANNER_MIN_CHARS, SCANNER_ALT_NUMLOCK_MIN_CHARS) : SCANNER_MIN_CHARS;
+  }
+
+  function noteScannerModifierNoise(e) {
+    const oe = e.originalEvent || e;
+    const k = String(oe.key || "");
+    const c = String(oe.code || "");
+    const ts = now();
+
+    if (k === "Alt" || c === "AltLeft" || c === "AltRight") {
+      scannerAltPrefixUntil = ts + SCANNER_ALT_PREFIX_MS;
+      return "alt";
+    }
+
+    const isNumLockNoise = k === "NumLock" || c === "NumLock" || c === "Pause";
+    if (isNumLockNoise) {
+      const fromAltScanner = !!oe.altKey || Number(scannerAltPrefixUntil || 0) > ts || scannerAltNumLockActive(ts);
+      if (fromAltScanner) {
+        scannerAltNumLockUntil = ts + SCANNER_ALT_NUMLOCK_MS;
+        return "scanner-numlock";
+      }
+      return "numlock";
+    }
+
+    return "";
+  }
+
+  function scannerDigitFromEvent(e, ctx = {}) {
+    const oe = e.originalEvent || e;
+    const k = String(oe.key || "");
+    if (!/^\d$/.test(k)) return "";
+    if (oe.ctrlKey || oe.metaKey) return "";
+    if (!oe.altKey) return k;
+    if (ctx.scanning || ctx.hasBuffer || scannerAltNumLockActive()) return k;
+    return "";
+  }
+
+  function scannerTerminatorFromEvent(e, ctx = {}) {
+    const oe = e.originalEvent || e;
+    if (oe.key !== "Enter" && oe.key !== "Tab") return false;
+    if (oe.ctrlKey || oe.metaKey) return false;
+    if (!oe.altKey) return true;
+    return !!(ctx.scanning || ctx.hasBuffer || scannerAltNumLockActive());
+  }
+
+  function shouldResetScannerForShortcutModifier(e, ctx = {}) {
+    const oe = e.originalEvent || e;
+    if (oe.ctrlKey || oe.metaKey) return true;
+    if (!oe.altKey) return false;
+    if (scannerDigitFromEvent(e, ctx)) return false;
+    if (scannerTerminatorFromEvent(e, ctx)) return false;
+    return true;
+  }
+
   // ✅ OPTIMIZACIÓN CIERRE DE VENTA / FACTURA:
   // - Se mantiene el alert con total/cambio, pero se lanza DESPUÉS de iniciar el envío a impresión.
   // - FAST_PRINT_FIRE_AND_FORGET=true manda /print sin await, sin AbortController y sin bloquear caja.
@@ -1467,11 +1557,8 @@ $(function () {
     $pid.val("");
     if ($cantidad && $cantidad.length) $cantidad.val("1");
 
-    // ✅ NO robar foco si el modal está abierto
-    queueMicrotask(() => {
-      if (isModalOpen()) return;
-      if ($inpCode.is(":visible")) { $inpCode.focus(); $inpCode[0]?.select?.(); }
-    });
+    // Volver al autocomplete de producto (Alt+1) cuando el carrito ya recibio el item.
+    queueFocusProductAutocompleteLikeAlt1();
   }
 
   /* ================== Resolutores rápidos ================== */
@@ -2742,12 +2829,7 @@ $(function () {
       scheduleVerifyRowPrice($row, 0);
 
       this.blur();
-      queueMicrotask(() => {
-        if (isModalOpen()) return;
-        if ($inpNombre.is(":visible")) { $inpNombre.focus(); $inpNombre[0]?.select?.(); }
-        const v = $inpNombre.val() || "";
-        if (v.length >= 1) { try { $inpNombre.autocomplete("search", v); } catch {} }
-      });
+      queueFocusProductAutocompleteLikeAlt1({ search: true });
     }
   });
 
@@ -2774,12 +2856,7 @@ $(function () {
         addToCartLastOnly(pid, qty);
 
         this.blur();
-        queueMicrotask(() => {
-          if (isModalOpen()) return;
-          if ($inpNombre.is(":visible")) { $inpNombre.focus(); $inpNombre[0]?.select?.(); }
-          const v = $inpNombre.val() || "";
-          if (v.length >= 1) { try { $inpNombre.autocomplete("search", v); } catch {} }
-        });
+        queueFocusProductAutocompleteLikeAlt1({ search: true });
       }
     });
   }
@@ -3252,13 +3329,13 @@ $(function () {
      - ✅ IMPORTANTE: NO agrega al carrito ni toca inputs de la venta mientras el modal esté abierto.
      ======================================================================================= */
   (function scannerGuardInsideModal() {
-    const MIN_CHARS = 8;
     const GAP_MS = 35;
 
     let buf = "";
     let first = 0;
     let last = 0;
     let scanning = false;
+    let altNumLockScan = false;
 
     let idleTimer = null;
     let finalizeTimer = null;
@@ -3268,6 +3345,7 @@ $(function () {
       first = 0;
       last = 0;
       scanning = false;
+      altNumLockScan = false;
       if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; }
       if (finalizeTimer) { clearTimeout(finalizeTimer); finalizeTimer = null; }
     }
@@ -3287,11 +3365,25 @@ $(function () {
       if (!isModalOpen()) { reset(); return; }
 
       // Si el usuario usa atajos o teclas modificadoras, asumimos NO escáner
-      if (e.ctrlKey || e.altKey || e.metaKey) { reset(); return; }
+      const modifierNoise = noteScannerModifierNoise(e);
+      if (modifierNoise) {
+        if (modifierNoise === "scanner-numlock" || scanning || buf) {
+          if (modifierNoise === "scanner-numlock" && (scanning || buf)) altNumLockScan = true;
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          e.stopPropagation();
+          markActivity();
+        }
+        if (modifierNoise === "numlock") reset();
+        return;
+      }
+
+      // Excepcion: lectores que vienen precedidos por Alt/NumLock.
+      if (shouldResetScannerForShortcutModifier(e, { scanning, hasBuffer: !!buf })) { reset(); return; }
 
       const t = Date.now();
 
-      if (e.key === "Enter" || e.key === "Tab") {
+      if (scannerTerminatorFromEvent(e, { scanning, hasBuffer: !!buf })) {
         if (buf || scanning) {
           e.preventDefault();
           e.stopImmediatePropagation();
@@ -3300,7 +3392,7 @@ $(function () {
           markActivity();
 
           const fastEnough = buf && (t-first) < buf.length * (GAP_MS+5) && (t-last) < GAP_MS*3;
-          if (fastEnough && buf.length >= MIN_CHARS) finalize(buf);
+          if (fastEnough && buf.length >= scannerRequiredChars(altNumLockScan)) finalize(buf);
           else reset();
 
           return;
@@ -3309,22 +3401,25 @@ $(function () {
         return;
       }
 
-      if (e.key && e.key.length === 1) {
+      const scannerDigit = scannerDigitFromEvent(e, { scanning, hasBuffer: !!buf });
+      if (scannerDigit) {
+        const altScannerDigit = !!(e.altKey && scannerAltNumLockActive());
+        if (scannerAltNumLockActive(t)) altNumLockScan = true;
         // Construcción de buffer con timing
         if (!buf) {
-          buf = e.key;
+          buf = scannerDigit;
           first = t;
           last = t;
           scanning = false;
         } else {
           if ((t - last) > GAP_MS) {
             // corte: no era escáner continuo
-            buf = e.key;
+            buf = scannerDigit;
             first = t;
             last = t;
             scanning = false;
           } else {
-            buf += e.key;
+            buf += scannerDigit;
             last = t;
           }
         }
@@ -3332,7 +3427,7 @@ $(function () {
         // heurística: si va muy rápido, es escáner
         if (buf.length >= 2 && (t - first) < buf.length * (GAP_MS + 8)) scanning = true;
 
-        if (scanning) {
+        if (scanning || altScannerDigit) {
           // NO dejes que el escáner escriba dentro de inputs del modal
           e.preventDefault();
           e.stopImmediatePropagation();
@@ -3345,7 +3440,7 @@ $(function () {
         idleTimer = setTimeout(() => reset(), GAP_MS * 7);
 
         if (finalizeTimer) clearTimeout(finalizeTimer);
-        if (scanning && buf.length >= MIN_CHARS) {
+        if (scanning && buf.length >= scannerRequiredChars(altNumLockScan)) {
           // por si el escáner NO manda Enter: finaliza al quedar inactivo un instante
           finalizeTimer = setTimeout(() => finalize(buf), GAP_MS * 6);
         }
@@ -3848,7 +3943,7 @@ Total: ${money(totalNum)}${msgCambio}`;
     const focusAndSelect = ($el) => { if ($el && $el.length) { $el.focus(); $el[0]?.select?.(); } };
     switch (e.key) {
       case "0": e.preventDefault(); focusAndSelect($inpCliente); break;
-      case "1": e.preventDefault(); focusAndSelect($inpNombre); break;
+      case "1": e.preventDefault(); focusProductAutocompleteLikeAlt1(); break;
       case "2": e.preventDefault(); focusAndSelect($inpCode); break;
       case "3": e.preventDefault(); focusAndSelect($buscarCart); break;
       case "4": e.preventDefault(); focusQtySmart(); break;
@@ -3866,7 +3961,7 @@ Total: ${money(totalNum)}${msgCambio}`;
       e.preventDefault(); e.stopPropagation();
       switch (k) {
         case "0": focusAndSelect($inpCliente); break;
-        case "1": focusAndSelect($inpNombre); break;
+        case "1": focusProductAutocompleteLikeAlt1(); break;
         case "2": focusAndSelect($inpCode); break;
         case "3": focusAndSelect($buscarCart); break;
         case "4": focusQtySmart(); break;
@@ -4416,7 +4511,6 @@ Total: ${money(totalNum)}${msgCambio}`;
   }
 
   (function scannerDetectorWithQtyGuard() {
-    const MIN_CHARS = 8;
     const GAP_MS = 35;
 
     let buf = "";
@@ -4426,6 +4520,7 @@ Total: ${money(totalNum)}${msgCambio}`;
     let finalizeTimer = null;
 
     let scanning = false;
+    let altNumLockScan = false;
     let originEl = null;
     let originStartValue = "";
 
@@ -4459,6 +4554,7 @@ Total: ${money(totalNum)}${msgCambio}`;
       first = 0;
       last = 0;
       scanning = false;
+      altNumLockScan = false;
       originEl = null;
       originStartValue = "";
       if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; }
@@ -4487,7 +4583,7 @@ Total: ${money(totalNum)}${msgCambio}`;
       if (finalizeTimer) clearTimeout(finalizeTimer);
       // Algunos escáneres no mandan Enter/Tab. Finalizamos rápido al terminar la ráfaga.
       finalizeTimer = setTimeout(() => {
-        if (scanning && buf.length >= MIN_CHARS) finalize(buf);
+        if (scanning && buf.length >= scannerRequiredChars(altNumLockScan)) finalize(buf);
         else resetAll();
       }, GAP_MS * 4);
     }
@@ -4496,15 +4592,22 @@ Total: ${money(totalNum)}${msgCambio}`;
       // ✅ si el modal está abierto, NO uses este detector (lo maneja el guard del modal)
       if (isModalOpen()) { resetAll(); return; }
 
-      if (e.ctrlKey || e.altKey || e.metaKey) { resetAll(); return; }
+      const modifierNoise = noteScannerModifierNoise(e);
+      if (modifierNoise) {
+        if (modifierNoise === "scanner-numlock" && (scanning || buf)) altNumLockScan = true;
+        if (modifierNoise === "numlock") resetAll();
+        return;
+      }
+
+      if (shouldResetScannerForShortcutModifier(e, { scanning, hasBuffer: !!buf })) { resetAll(); return; }
 
       const active = document.activeElement;
       const inQty = isQtyElement(active);
       const t = Date.now();
 
-      if (e.key === "Enter" || e.key === "Tab") {
+      if (scannerTerminatorFromEvent(e, { scanning, hasBuffer: !!buf })) {
         const fastEnough = buf && (t-first) < buf.length * (GAP_MS+5) && (t-last) < GAP_MS*3;
-        if (fastEnough && buf.length >= MIN_CHARS) {
+        if (fastEnough && buf.length >= scannerRequiredChars(altNumLockScan)) {
           e.preventDefault();
           e.stopImmediatePropagation();
           finalize(buf);
@@ -4514,8 +4617,10 @@ Total: ${money(totalNum)}${msgCambio}`;
         return;
       }
 
-      if (e.key && e.key.length === 1) {
-        const char = e.key;
+      const char = scannerDigitFromEvent(e, { scanning, hasBuffer: !!buf });
+      if (char) {
+        const altScannerDigit = !!(e.altKey && scannerAltNumLockActive());
+        if (scannerAltNumLockActive(t)) altNumLockScan = true;
         const isDigit = /^\d$/.test(char);
 
         // El lector de códigos de barras en caja debe redirigir principalmente dígitos.
@@ -4553,17 +4658,17 @@ Total: ${money(totalNum)}${msgCambio}`;
           focusCodeInputWith(buf, { search: false });
         }
 
-        if (scanning) {
+        if (scanning || altScannerDigit) {
           e.preventDefault();
           e.stopImmediatePropagation();
           focusCodeInputWith(buf, { search: false });
-          scheduleAutoFinalize();
+          if (scanning) scheduleAutoFinalize();
         }
 
         if (idleTimer) clearTimeout(idleTimer);
         idleTimer = setTimeout(() => resetAll(), GAP_MS * 8);
 
-        if (scanning && buf.length >= MIN_CHARS && inQty) {
+        if (scanning && buf.length >= scannerRequiredChars(altNumLockScan) && inQty) {
           e.preventDefault();
           e.stopImmediatePropagation();
           finalize(buf);
@@ -4578,22 +4683,30 @@ Total: ${money(totalNum)}${msgCambio}`;
   })();
 
   (function globalScannerFallback() {
-    const MIN_CHARS = 8, GAP_MS = 35;
-    let buf="", first=0, last=0, idleTimer=null;
+    const GAP_MS = 35;
+    let buf="", first=0, last=0, idleTimer=null, altNumLockScan=false;
 
-    function reset(){ buf=""; first=0; last=0; if(idleTimer){clearTimeout(idleTimer); idleTimer=null;} }
+    function reset(){ buf=""; first=0; last=0; altNumLockScan=false; if(idleTimer){clearTimeout(idleTimer); idleTimer=null;} }
 
     document.addEventListener("keydown", function (e) {
       // ✅ si el modal está abierto, NO uses este fallback (lo maneja el guard del modal)
       if (isModalOpen()) { reset(); return; }
 
       if (isQtyElement(document.activeElement)) return;
-      if (e.ctrlKey || e.altKey || e.metaKey) { reset(); return; }
+
+      const modifierNoise = noteScannerModifierNoise(e);
+      if (modifierNoise) {
+        if (modifierNoise === "scanner-numlock" && buf) altNumLockScan = true;
+        if (modifierNoise === "numlock") reset();
+        return;
+      }
+
+      if (shouldResetScannerForShortcutModifier(e, { hasBuffer: !!buf })) { reset(); return; }
       const t = Date.now();
 
-      if (e.key === "Enter" || e.key === "Tab") {
+      if (scannerTerminatorFromEvent(e, { hasBuffer: !!buf })) {
         const fastEnough = buf && (t-first) < buf.length * (GAP_MS+5) && (t-last) < GAP_MS*3;
-        if (fastEnough && buf.length >= MIN_CHARS) {
+        if (fastEnough && buf.length >= scannerRequiredChars(altNumLockScan)) {
           e.preventDefault(); e.stopImmediatePropagation();
           const code = buf; reset();
           pushCodeIntoCodeInputAndAdd(code);
@@ -4602,10 +4715,13 @@ Total: ${money(totalNum)}${msgCambio}`;
         reset(); return;
       }
 
-      if (e.key && e.key.length === 1) {
+      const scannerDigit = scannerDigitFromEvent(e, { hasBuffer: !!buf });
+      if (scannerDigit || (e.key && e.key.length === 1 && !e.altKey && !e.ctrlKey && !e.metaKey)) {
+        if (scannerAltNumLockActive(t)) altNumLockScan = true;
+        const char = scannerDigit || e.key;
         if (buf && (t-last) > GAP_MS) { buf = ""; first = t; }
         if (!buf) first = t;
-        buf += e.key; last = t;
+        buf += char; last = t;
         if (idleTimer) clearTimeout(idleTimer);
         idleTimer = setTimeout(reset, GAP_MS*5);
       } else {
