@@ -85,6 +85,20 @@ $(function () {
   const onlyDigits = (s) => String(s||"").replace(/\D+/g, "");
   const norm = (s)=> (s||"").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").trim();
 
+  if (window.Promise && !Promise.prototype.finally) {
+    Promise.prototype.finally = function (onFinally) {
+      const P = this.constructor || Promise;
+      return this.then(
+        (value) => P.resolve(typeof onFinally === "function" ? onFinally() : onFinally).then(() => value),
+        (reason) => P.resolve(typeof onFinally === "function" ? onFinally() : onFinally).then(() => { throw reason; })
+      );
+    };
+  }
+
+  function asNativePromise(value) {
+    return Promise.resolve(value);
+  }
+
   const normalizeUnits = (s) => {
     let x = norm(s);
     x = x.replace(/\bx\s*(\d+)\b/g, "x$1");
@@ -970,7 +984,7 @@ $(function () {
 
   /* ================== Precio en vivo ================== */
   function ensureLivePrice(pid) {
-    return $.post(VERIFICAR_URL, { producto_id: pid, cantidad: 1, sucursal_id: sucursalID, _ts: Date.now() })
+    return asNativePromise($.post(VERIFICAR_URL, { producto_id: pid, cantidad: 1, sucursal_id: sucursalID, _ts: Date.now() }))
       .then((r) => {
         if (!r || !r.exists) return null;
         const rec = updateCache(pid, r);
@@ -1490,7 +1504,7 @@ $(function () {
 
     // 3) Consultar servidor con validación estricta de la respuesta
     const params = { codigo_de_barras: cleanCode, sucursal_id: sucursalID, _ts: Date.now() };
-    return $.getJSON(POR_COD_URL, params)
+    return asNativePromise($.getJSON(POR_COD_URL, params))
       .then((r) => {
         if (r && r.ambiguous) {
           flashScanError(r.error || ("Codigo de barras duplicado en inventario: " + cleanCode));
