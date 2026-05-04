@@ -181,11 +181,13 @@ $(function () {
   const PROMO_BLOCK_COP = 11000;
 
   const defer = (fn) => (window.requestIdleCallback ? requestIdleCallback(fn, { timeout: 150 }) : setTimeout(fn, 0));
+  function syncHiddenFieldsNow() {
+    // ✅ Para cerrar venta rápido y seguro: antes del submit no esperamos al idle callback.
+    $("#productos").val(JSON.stringify(productos));
+    $("#cantidades").val(JSON.stringify(cantidades));
+  }
   function syncHiddenFields() {
-    defer(() => {
-      $("#productos").val(JSON.stringify(productos));
-      $("#cantidades").val(JSON.stringify(cantidades));
-    });
+    defer(syncHiddenFieldsNow);
   }
 
   function setTotal(v) {
@@ -377,6 +379,47 @@ $(function () {
     $("body").removeClass("modal-open");
   }
 
+  function showFastSaleToast(message, ms = 1400) {
+    // ✅ Reemplaza el alert de éxito cuando se busca máxima velocidad en caja.
+    // No bloquea el foco ni detiene el siguiente escaneo.
+    try {
+      let el = document.getElementById("venta-fast-toast");
+      if (!el) {
+        el = document.createElement("div");
+        el.id = "venta-fast-toast";
+        el.style.cssText = [
+          "position:fixed",
+          "right:18px",
+          "bottom:18px",
+          "z-index:99999",
+          "max-width:340px",
+          "padding:12px 14px",
+          "border-radius:14px",
+          "background:#153060",
+          "color:#fff",
+          "font:600 14px/1.35 system-ui,-apple-system,Segoe UI,Arial",
+          "box-shadow:0 10px 30px rgba(0,0,0,.25)",
+          "opacity:0",
+          "transform:translateY(10px)",
+          "transition:opacity .16s ease, transform .16s ease",
+          "pointer-events:none",
+          "white-space:pre-line"
+        ].join(";");
+        document.body.appendChild(el);
+      }
+      el.textContent = message || "Venta registrada";
+      clearTimeout(el._hideTimer);
+      requestAnimationFrame(() => {
+        el.style.opacity = "1";
+        el.style.transform = "translateY(0)";
+      });
+      el._hideTimer = setTimeout(() => {
+        el.style.opacity = "0";
+        el.style.transform = "translateY(10px)";
+      }, Math.max(400, ms | 0));
+    } catch (_) {}
+  }
+
   function clearCartAndTotals() {
     productos.length = 0;
     cantidades.length = 0;
@@ -534,6 +577,65 @@ $(function () {
     const codeKey = onlyDigits(code);
     const set = codeKey ? barcodePidSets.get(codeKey) : null;
     return !!(set && set.size > 1);
+  }
+
+  // ✅ Fast-path seguro para escáner:
+  // usa SOLO coincidencia exacta y única de código de barras ya cargada en snapshot/cache.
+  // Si no hay certeza local, retorna null y se mantiene el camino original por servidor.
+  function getLocalExactBarcodeProduct(code) {
+    if (!FAST_BARCODE_LOCAL || !hasSucursal()) return null;
+
+    const clean = onlyDigits(code);
+    if (!clean) return null;
+    if (isBarcodeLocallyAmbiguous(clean)) return null;
+
+    const idx = preIndex.get(sucursalID);
+    if (idx && Array.isArray(idx.codes)) {
+      let found = null;
+
+      for (const c of idx.codes) {
+        if (!c || c.nbarcode !== clean) continue;
+
+        const ref = idx.map.get(String(c.id));
+        if (!ref) continue;
+
+        if (found && String(found.id) !== String(ref.id)) return null;
+
+        found = {
+          id: ref.id,
+          name: ref.name || c.label || `Producto ${ref.id}`,
+          barcode: ref.barcode || clean,
+          price: ref.price ?? c.price,
+          stock: ref.stock ?? c.stock,
+        };
+      }
+
+      if (found) {
+        updateCache(found.id, {
+          nombre: found.name,
+          barcode: found.barcode,
+          precio_unitario: found.price,
+          cantidad_disponible: found.stock,
+        });
+        return found;
+      }
+    }
+
+    const cachedPid = barcodeIndex.get(clean);
+    const cached = cachedPid ? productCache.get(String(cachedPid)) : null;
+    const cachedBarcode = onlyDigits(String(cached?.barcode || ""));
+
+    if (cachedPid && cached && cachedBarcode === clean) {
+      return {
+        id: String(cachedPid),
+        name: cached.nombre || `Producto ${cachedPid}`,
+        barcode: cached.barcode || clean,
+        price: cached.price || 0,
+        stock: cached.stock,
+      };
+    }
+
+    return null;
   }
 
   function updateCache(pid, data = {}) {
@@ -1029,6 +1131,27 @@ $(function () {
   const AUTO_ADD_BARCODE_LOCK_MS = 4500;
   const BARCODE_RESOLVE_BLOCKED = "__BARCODE_RESOLVE_BLOCKED__";
 
+  // ✅ OPTIMIZACIÓN SCANNER:
+  // - FAST_BARCODE_LOCAL=true usa el snapshot/cache local cuando el código de barras es exacto y único.
+  // - FAST_SCANNER_BURST_MS=0 elimina la espera artificial antes de pintar el producto en carrito.
+  // Puedes desactivar el fast-path desde el template con: window.FAST_BARCODE_LOCAL = false;
+  const FAST_BARCODE_LOCAL = window.FAST_BARCODE_LOCAL !== false;
+  const FAST_SCANNER_BURST_MS = Math.max(0, Number(window.FAST_SCANNER_BURST_MS ?? 0));
+
+  // ✅ OPTIMIZACIÓN CIERRE DE VENTA / FACTURA:
+  // - Se mantiene el alert con total/cambio, pero se lanza DESPUÉS de iniciar el envío a impresión.
+  // - FAST_PRINT_FIRE_AND_FORGET=true manda /print sin await, sin AbortController y sin bloquear caja.
+  // - FAST_PRINT_KICK_AFTER_MS controla cuánto esperar antes de abrir cajón; 0 = paralelo inmediato.
+  // Puedes ajustar desde el template si algún día necesitas otro comportamiento:
+  //   window.FAST_PRINT_FIRE_AND_FORGET = true;
+  //   window.FAST_PRINT_KICK_AFTER_MS = 0;
+  //   window.FAST_SALE_SUCCESS_ALERT = true;
+  const FAST_SALE_PRINT_WAIT_MS = Math.max(0, Number(window.FAST_SALE_PRINT_WAIT_MS ?? 0));
+  const FAST_SALE_SUCCESS_ALERT = window.FAST_SALE_SUCCESS_ALERT !== false;
+  const FAST_PRINT_FIRE_AND_FORGET = window.FAST_PRINT_FIRE_AND_FORGET !== false;
+  const FAST_PRINT_KICK_AFTER_MS = Math.max(0, Number(window.FAST_PRINT_KICK_AFTER_MS ?? 0));
+  const FAST_SUBMIT_VERIFY_PENDING_PRICES = window.FAST_SUBMIT_VERIFY_PENDING_PRICES === true;
+
   // ✅ Recency tracking para evitar autopick fantasma cuando la red llega tarde
   //    o cuando el usuario re-enfoca un input con texto viejo. Solo se actualiza
   //    en eventos de tipeo real (no en focus).
@@ -1255,11 +1378,22 @@ $(function () {
     lastAddGuard.ts  = ts;
     addToCart(pid, qty);
   }
-  const burstAdd = { timer: null, last: null, windowMs: 60 };
+  const burstAdd = { timer: null, last: null, windowMs: FAST_SCANNER_BURST_MS };
   function addToCartLastOnly(pid, qty = 1) {
     if (!pid || qty === 0) return;
-    burstAdd.last = { pid: String(pid), qty: Number(qty) || 1 };
-    if (burstAdd.timer) clearTimeout(burstAdd.timer);
+
+    const payload = { pid: String(pid), qty: Number(qty) || 1 };
+    burstAdd.last = payload;
+
+    if (burstAdd.timer) { clearTimeout(burstAdd.timer); burstAdd.timer = null; }
+
+    // ✅ Antes siempre esperaba 60 ms. Ahora, por defecto, agrega en el mismo ciclo.
+    // El lastAddGuard sigue evitando doble agregado accidental del mismo pid.
+    if ((Number(burstAdd.windowMs) || 0) <= 0) {
+      addToCartGuarded(payload.pid, payload.qty);
+      return;
+    }
+
     burstAdd.timer = setTimeout(() => {
       burstAdd.timer = null;
       const { pid: p, qty: q } = burstAdd.last || {};
@@ -1313,12 +1447,25 @@ $(function () {
     const cleanCode = onlyDigits(String(code));
     if (!cleanCode) return Promise.resolve(null);
 
-    // 1) Cache hit con verificación de consistencia
+    // 1) Fast-path local: si el snapshot/cache ya tiene un match exacto y único,
+    //    no esperamos la red para pintar el producto en el carrito.
+    const localFast = getLocalExactBarcodeProduct(cleanCode);
+    if (localFast) {
+      setProductFields({
+        nombre: localFast.name,
+        pid: localFast.id,
+        barcode: localFast.barcode || cleanCode,
+        focusQty: false,
+      });
+      return Promise.resolve(localFast.id);
+    }
+
+    // 2) Si la cache local está ambigua o no tiene certeza, se conserva el camino original por servidor.
     if (isBarcodeLocallyAmbiguous(cleanCode)) {
       console.warn("[BARCODE GUARD] Codigo de barras ambiguo en cache local; se exige validacion del servidor", cleanCode);
     }
 
-    // 2) Consultar servidor con validación estricta de la respuesta
+    // 3) Consultar servidor con validación estricta de la respuesta
     const params = { codigo_de_barras: cleanCode, sucursal_id: sucursalID, _ts: Date.now() };
     return $.getJSON(POR_COD_URL, params)
       .then((r) => {
@@ -1340,7 +1487,7 @@ $(function () {
           return null;
         }
         updateCache(p.id, { nombre:p.nombre, barcode:p.codigo_de_barras, precio_unitario:p.precio, cantidad_disponible:p.stock });
-        setProductFields({ nombre: p.nombre, pid: p.id, barcode: p.codigo_de_barras });
+        setProductFields({ nombre: p.nombre, pid: p.id, barcode: p.codigo_de_barras, focusQty: false });
         return p.id;
       })
       .catch(() => null);
@@ -2993,7 +3140,7 @@ $(function () {
     if (safeNumber(runningTotal) <= 0) {
       $hidPagos.val("[]");
       $hidMedioPago.val("");
-      queueMicrotask(() => $("#venta-form").trigger("submit"));
+      $("#venta-form").trigger("submit");
       return;
     }
 
@@ -3328,10 +3475,48 @@ $(function () {
     $hidMedioPago.val(medioCompat);
 
     closeModal();
-    queueMicrotask(() => $("#venta-form").trigger("submit"));
+    $("#venta-form").trigger("submit");
   });
 
   /* ================== POS Agent helpers ================== */
+  const POS_AGENT_HEADERS_JSON = POS_AGENT_TOKEN
+    ? { "Content-Type": "application/json", "X-Pos-Agent-Token": POS_AGENT_TOKEN }
+    : null;
+  const POS_AGENT_HEADERS_TOKEN = POS_AGENT_TOKEN
+    ? { "X-Pos-Agent-Token": POS_AGENT_TOKEN }
+    : null;
+
+  function fireAndForgetFetch(url, options) {
+    try {
+      const p = fetch(url, options);
+      if (p && typeof p.catch === "function") p.catch(() => {});
+      return p;
+    } catch (_) {
+      return Promise.resolve();
+    }
+  }
+
+  // ✅ Versión más rápida: inicia el POST /print y devuelve inmediatamente.
+  // No usa await ni AbortController, para no cancelar impresiones lentas ni meter esperas.
+  function agentPrintFast(text) {
+    if (!POS_AGENT_TOKEN) return Promise.resolve();
+    return fireAndForgetFetch(POS_AGENT_URL + "/print", {
+      method: "POST",
+      keepalive: true,
+      headers: POS_AGENT_HEADERS_JSON,
+      body: JSON.stringify({ text })
+    });
+  }
+
+  function agentKickFast() {
+    if (!POS_AGENT_TOKEN) return Promise.resolve();
+    return fireAndForgetFetch(POS_AGENT_URL + "/kick", {
+      method: "POST",
+      keepalive: true,
+      headers: POS_AGENT_HEADERS_TOKEN
+    });
+  }
+
   async function agentPrintSafe(text, { timeout = 700 } = {}) {
     if (!POS_AGENT_TOKEN) return;
     const ctrl = new AbortController();
@@ -3340,7 +3525,7 @@ $(function () {
       await fetch(POS_AGENT_URL + "/print", {
         method: "POST",
         keepalive: true,
-        headers: { "Content-Type": "application/json", "X-Pos-Agent-Token": POS_AGENT_TOKEN },
+        headers: POS_AGENT_HEADERS_JSON,
         body: JSON.stringify({ text }),
         signal: ctrl.signal
       });
@@ -3356,7 +3541,7 @@ $(function () {
       await fetch(POS_AGENT_URL + "/kick", {
         method: "POST",
         keepalive: true,
-        headers: { "X-Pos-Agent-Token": POS_AGENT_TOKEN },
+        headers: POS_AGENT_HEADERS_TOKEN,
         signal: ctrl.signal
       });
     } catch (_) {}
@@ -3365,11 +3550,11 @@ $(function () {
 
   (function agentWarmup(){
     if (!POS_AGENT_TOKEN) return;
-    fetch(POS_AGENT_URL + "/ping", {
+    fireAndForgetFetch(POS_AGENT_URL + "/ping", {
       method: "GET",
       keepalive: true,
-      headers: { "X-Pos-Agent-Token": POS_AGENT_TOKEN }
-    }).catch(()=>{});
+      headers: POS_AGENT_HEADERS_TOKEN
+    });
   })();
 
   function settleWithDeadline(proms, maxWaitMs=250){
@@ -3398,12 +3583,17 @@ $(function () {
     if (saleSubmitting) return;
     saleSubmitting = true;
 
-    const $bad = $tbody.find("tr").filter((_, tr) => {
-      const p = Number($(tr).data("price"));
-      const counted = $(tr).data("counted");
-      return !counted || !Number.isFinite(p) || p <= 0;
-    });
-    if ($bad.length) for (const tr of $bad.toArray()) scheduleVerifyRowPrice($(tr), 0);
+    if (FAST_SUBMIT_VERIFY_PENDING_PRICES) {
+      const $bad = $tbody.find("tr").filter((_, tr) => {
+        const p = Number($(tr).data("price"));
+        const counted = $(tr).data("counted");
+        return !counted || !Number.isFinite(p) || p <= 0;
+      });
+      if ($bad.length) for (const tr of $bad.toArray()) scheduleVerifyRowPrice($(tr), 0);
+    }
+
+    // ✅ Asegura productos/cantidades actualizados sin esperar requestIdleCallback.
+    syncHiddenFieldsNow();
 
     const form = this;
     const fd = new FormData(form);
@@ -3450,22 +3640,39 @@ $(function () {
         ? Math.max(0, recibidoEfectivo - totalNum)
         : 0;
 
-      // ✅ imprimir (sin bloquear la UI)
-      try {
-        let receiptText = (r.receipt_text || "Factura\n\n");
+      let receiptText = (r.receipt_text || "Factura\n\n");
 
-        if (totalNum > 0 && ef && !esMixto) {
-          receiptText += `\nRecibido: ${money(recibidoEfectivo)}\nCambio:   ${money(cambio)}\n\n\n\n\n\n\n\n\n\n\n\n\n`;
-        } else {
-          receiptText += `\n\n\n\n\n\n\n\n\n\n\n\n\n`;
-        }
+      if (totalNum > 0 && ef && !esMixto) {
+        receiptText += `\nRecibido: ${money(recibidoEfectivo)}\nCambio:   ${money(cambio)}\n\n\n\n\n\n\n\n\n\n\n\n\n`;
+      } else {
+        receiptText += `\n\n\n\n\n\n\n\n\n\n\n\n\n`;
+      }
 
-        const p1 = agentKickSafe({ timeout: 450 });
-        const p2 = agentPrintSafe(receiptText, { timeout: 850 });
-        await settleWithDeadline([p1, p2], 250);
-      } catch (_) {}
+      // ✅ Mandar factura a impresión lo más rápido posible.
+      // Primero /print; el cajón se dispara en paralelo o justo después, para no competir con la factura.
+      let printJobs = [];
+      if (FAST_PRINT_FIRE_AND_FORGET) {
+        const printJob = agentPrintFast(receiptText);
+        printJobs.push(printJob);
 
-      // ✅ SIN RECARGAR: limpiar TODO para la siguiente venta
+        const kickJob = FAST_PRINT_KICK_AFTER_MS > 0
+          ? new Promise((resolve) => setTimeout(() => resolve(agentKickFast()), FAST_PRINT_KICK_AFTER_MS))
+          : agentKickFast();
+        printJobs.push(kickJob);
+      } else {
+        printJobs = [
+          agentPrintSafe(receiptText, { timeout: 650 }),
+          agentKickSafe({ timeout: 300 })
+        ];
+      }
+
+      if (FAST_SALE_PRINT_WAIT_MS > 0) {
+        try { await settleWithDeadline(printJobs, FAST_SALE_PRINT_WAIT_MS); } catch (_) {}
+      } else {
+        Promise.allSettled(printJobs).catch(() => {});
+      }
+
+      // ✅ SIN RECARGAR: limpiar TODO para la siguiente venta inmediatamente.
       resetAfterSaleFast();
 
       // ✅ permitir siguiente venta inmediatamente
@@ -3474,7 +3681,11 @@ $(function () {
       if ($submitBtn.length) $submitBtn.prop("disabled", false);
 
       const msgCambio = (totalNum > 0 && ef && !esMixto) ? `\nCambio: ${money(cambio)}` : "";
-      alert(`✅ Venta registrada\n\nTotal: ${money(totalNum)}${msgCambio}`);
+      const okMsg = `✅ Venta registrada\nTotal: ${money(totalNum)}${msgCambio}`;
+
+      // ✅ Conserva el alert, pero deja respirar al event loop para que el POST /print arranque primero.
+      if (FAST_SALE_SUCCESS_ALERT) setTimeout(() => alert(okMsg), 0);
+      else showFastSaleToast(okMsg);
     })
     .catch(() => {
       saleSubmitting = false;
@@ -3568,6 +3779,34 @@ $(function () {
     });
 
     if (!hasSucursal()) return;
+
+    // ✅ Camino ultrarrápido: si el código está en el snapshot/cache local como match exacto y único,
+    //    se agrega inmediatamente. Si no hay certeza local, sigue el flujo original con servidor.
+    const localFast = getLocalExactBarcodeProduct(clean);
+    if (localFast) {
+      setProductFields({
+        nombre: localFast.name,
+        pid: localFast.id,
+        barcode: localFast.barcode || clean,
+        focusQty: false,
+      });
+
+      if (!wasRecentlyAutoAddedByBarcode(clean, localFast.id)) {
+        suppressBarcodeAutocompleteAdd(clean, 900);
+        if (addAutoProductToCartOnce(localFast.id, 1, {
+          source: "scanner-local-fast",
+          term: clean,
+          barcode: clean,
+          pidTtlMs: 900,
+          termTtlMs: 900,
+          barcodeTtlMs: 900,
+        })) {
+          rememberBarcodeAutoAdd(clean, localFast.id);
+        }
+      }
+      return;
+    }
+
     const resolveSeq = beginBarcodeResolve(clean);
     resolveByBarcode(clean).then(pid => {
       if (pid === BARCODE_RESOLVE_BLOCKED) return;
@@ -4038,10 +4277,36 @@ $(function () {
     let first = 0;
     let last = 0;
     let idleTimer = null;
+    let finalizeTimer = null;
 
     let scanning = false;
     let originEl = null;
     let originStartValue = "";
+
+    function isCodeInput(el) {
+      return !!($inpCode && $inpCode.length && el === $inpCode[0]);
+    }
+
+    function restoreOriginIfNeeded() {
+      if (!originEl || isCodeInput(originEl)) return;
+      try {
+        if (typeof originEl.value === "string") originEl.value = originStartValue;
+      } catch (_) {}
+    }
+
+    function focusCodeInputWith(value, { search = false } = {}) {
+      const clean = onlyDigits(value);
+      if (!clean || !$inpCode || !$inpCode.length || !$inpCode.is(":visible")) return;
+
+      try { if (document.activeElement !== $inpCode[0]) $inpCode.focus(); } catch (_) {}
+      try { $inpCode.val(clean); } catch (_) {}
+      try { $inpCode[0]?.setSelectionRange?.(clean.length, clean.length); } catch (_) {}
+
+      // Mientras entra la ráfaga solo llenamos el input. Al finalizar sí se resuelve/agrega.
+      if (search) {
+        try { $inpCode.autocomplete("search", clean); } catch (_) {}
+      }
+    }
 
     function resetAll(){
       buf = "";
@@ -4051,19 +4316,34 @@ $(function () {
       originEl = null;
       originStartValue = "";
       if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; }
+      if (finalizeTimer) { clearTimeout(finalizeTimer); finalizeTimer = null; }
     }
 
     function finalize(code){
-      const c = String(code || "");
+      const c = onlyDigits(code || "");
+      if (!c) { resetAll(); return; }
+
       const wasQty = isQtyElement(originEl);
 
       if (wasQty) {
-        try { if (originEl) originEl.value = originStartValue; } catch (_){}
+        restoreOriginIfNeeded();
         commitCurrentQtyLikeEnterIfNeeded(originEl);
+      } else {
+        restoreOriginIfNeeded();
       }
 
+      focusCodeInputWith(c, { search: false });
       pushCodeIntoCodeInputAndAdd(c);
       resetAll();
+    }
+
+    function scheduleAutoFinalize(){
+      if (finalizeTimer) clearTimeout(finalizeTimer);
+      // Algunos escáneres no mandan Enter/Tab. Finalizamos rápido al terminar la ráfaga.
+      finalizeTimer = setTimeout(() => {
+        if (scanning && buf.length >= MIN_CHARS) finalize(buf);
+        else resetAll();
+      }, GAP_MS * 4);
     }
 
     document.addEventListener("keydown", function (e) {
@@ -4089,41 +4369,55 @@ $(function () {
       }
 
       if (e.key && e.key.length === 1) {
-        if (originEl && active !== originEl) resetAll();
+        const char = e.key;
+        const isDigit = /^\d$/.test(char);
+
+        // El lector de códigos de barras en caja debe redirigir principalmente dígitos.
+        // Si llega texto/letras, se deja que los autocompletes manuales trabajen normal.
+        if (!isDigit) { resetAll(); return; }
+
+        if (originEl && active !== originEl && !scanning) resetAll();
 
         if (!buf) {
           originEl = active;
           originStartValue = (active && typeof active.value === "string") ? active.value : "";
           first = t;
           last = t;
-          buf = e.key;
+          buf = char;
         } else {
           if ((t - last) > GAP_MS) {
             resetAll();
             originEl = active;
             originStartValue = (active && typeof active.value === "string") ? active.value : "";
-            first = t; last = t;
-            buf = e.key;
+            first = t;
+            last = t;
+            buf = char;
           } else {
-            buf += e.key;
+            buf += char;
             last = t;
           }
         }
 
-        if (!scanning && inQty && buf.length >= 2) {
+        // ✅ Restauración del comportamiento perdido:
+        // Apenas detectamos una ráfaga de escáner, movemos el foco al autocomplete de código
+        // y lo vamos llenando aunque el foco original estuviera en cliente, nombre, cantidad, tabla, etc.
+        if (!scanning && buf.length >= 2 && (last - first) <= GAP_MS + 8) {
           scanning = true;
-          try { if (active && typeof active.value === "string") active.value = originStartValue; } catch (_){}
+          restoreOriginIfNeeded();
+          focusCodeInputWith(buf, { search: false });
         }
 
-        if (scanning && inQty) {
+        if (scanning) {
           e.preventDefault();
           e.stopImmediatePropagation();
+          focusCodeInputWith(buf, { search: false });
+          scheduleAutoFinalize();
         }
 
         if (idleTimer) clearTimeout(idleTimer);
-        idleTimer = setTimeout(() => resetAll(), GAP_MS * 6);
+        idleTimer = setTimeout(() => resetAll(), GAP_MS * 8);
 
-        if (inQty && scanning && buf.length >= MIN_CHARS) {
+        if (scanning && buf.length >= MIN_CHARS && inQty) {
           e.preventDefault();
           e.stopImmediatePropagation();
           finalize(buf);
