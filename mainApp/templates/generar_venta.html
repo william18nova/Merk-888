@@ -249,5 +249,5 @@
   if (!/^https?:\/\//.test(window.POS_AGENT_URL)) window.POS_AGENT_URL = "http://127.0.0.1:8787";
 </script>
 
-<script src="{% static 'javascript/generar_venta.js' %}"></script>
+<script src="{% static 'javascript/generar_venta.js' %}?v={% now 'U' %}"></script>
 {% endblock %}
