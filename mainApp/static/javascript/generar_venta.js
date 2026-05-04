@@ -1129,6 +1129,15 @@ $(function () {
   const AUTO_ADD_PID_LOCK_MS = 1200;
   const AUTO_ADD_TERM_LOCK_MS = 4500;
   const AUTO_ADD_BARCODE_LOCK_MS = 4500;
+
+  // ✅ Permite escanear dos veces el MISMO producto sin esperar casi nada.
+  // Antes el mismo barcode podía quedar bloqueado ~900 ms o más para evitar dobles agregados
+  // fantasma. Ahora el bloqueo largo se conserva para autocompletes, pero el escáner físico
+  // usa una ventana corta que solo bloquea duplicados del mismo disparo.
+  const LAST_ADD_GUARD_MS = Math.max(40, Number(window.LAST_ADD_GUARD_MS ?? 120));
+  const SCANNER_REPEAT_LOCK_MS = Math.max(70, Number(window.SCANNER_REPEAT_LOCK_MS ?? 140));
+  const SCANNER_SUPPRESS_AC_MS = Math.max(SCANNER_REPEAT_LOCK_MS, Number(window.SCANNER_SUPPRESS_AC_MS ?? 240));
+
   const BARCODE_RESOLVE_BLOCKED = "__BARCODE_RESOLVE_BLOCKED__";
 
   // ✅ OPTIMIZACIÓN SCANNER:
@@ -1141,16 +1150,29 @@ $(function () {
   // ✅ OPTIMIZACIÓN CIERRE DE VENTA / FACTURA:
   // - Se mantiene el alert con total/cambio, pero se lanza DESPUÉS de iniciar el envío a impresión.
   // - FAST_PRINT_FIRE_AND_FORGET=true manda /print sin await, sin AbortController y sin bloquear caja.
-  // - FAST_PRINT_KICK_AFTER_MS controla cuánto esperar antes de abrir cajón; 0 = paralelo inmediato.
+  // - FAST_PRINT_KICK_AFTER_MS=0: el cajón abre al mismo momento en que inicia /print.
+  // - FAST_ALERT_BEFORE_RESET muestra el alert apenas arranca la impresión; limpia al cerrar el alert.
   // Puedes ajustar desde el template si algún día necesitas otro comportamiento:
   //   window.FAST_PRINT_FIRE_AND_FORGET = true;
   //   window.FAST_PRINT_KICK_AFTER_MS = 0;
   //   window.FAST_SALE_SUCCESS_ALERT = true;
+  //   window.FAST_ALERT_BEFORE_RESET = true;
   const FAST_SALE_PRINT_WAIT_MS = Math.max(0, Number(window.FAST_SALE_PRINT_WAIT_MS ?? 0));
   const FAST_SALE_SUCCESS_ALERT = window.FAST_SALE_SUCCESS_ALERT !== false;
   const FAST_PRINT_FIRE_AND_FORGET = window.FAST_PRINT_FIRE_AND_FORGET !== false;
   const FAST_PRINT_KICK_AFTER_MS = Math.max(0, Number(window.FAST_PRINT_KICK_AFTER_MS ?? 0));
+  const FAST_ALERT_BEFORE_RESET = window.FAST_ALERT_BEFORE_RESET !== false;
   const FAST_SUBMIT_VERIFY_PENDING_PRICES = window.FAST_SUBMIT_VERIFY_PENDING_PRICES === true;
+
+  // ✅ ULTRA POS AGENT:
+  // Evita headers personalizados y JSON tradicional para reducir preflight CORS.
+  // Modo seguro por defecto: detecta /ping-fast; si existe, usa /print-fast y /kick-fast.
+  // Para forzarlo desde el template: window.FAST_POS_ULTRA_FORCE = true;
+  const FAST_POS_ULTRA_ENABLED = window.FAST_POS_ULTRA_ENABLED !== false;
+  const FAST_POS_ULTRA_FORCE = window.FAST_POS_ULTRA_FORCE === true;
+  const FAST_POS_PRINT_ENDPOINT = window.FAST_POS_PRINT_ENDPOINT || "/print-fast";
+  const FAST_POS_KICK_ENDPOINT  = window.FAST_POS_KICK_ENDPOINT  || "/kick-fast";
+  const FAST_POS_PING_ENDPOINT  = window.FAST_POS_PING_ENDPOINT  || "/ping-fast";
 
   // ✅ Recency tracking para evitar autopick fantasma cuando la red llega tarde
   //    o cuando el usuario re-enfoca un input con texto viejo. Solo se actualiza
@@ -1373,7 +1395,8 @@ $(function () {
 
   function addToCartGuarded(pid, qty = 1) {
     const ts = now();
-    if (String(lastAddGuard.pid) === String(pid) && (ts - lastAddGuard.ts) < 250) return;
+    // ✅ Solo bloquea duplicados del MISMO disparo; permite repetir escaneo rápido del mismo producto.
+    if (String(lastAddGuard.pid) === String(pid) && (ts - lastAddGuard.ts) < LAST_ADD_GUARD_MS) return;
     lastAddGuard.pid = String(pid);
     lastAddGuard.ts  = ts;
     addToCart(pid, qty);
@@ -3175,6 +3198,10 @@ $(function () {
     applyModeRules();
     openModal();
 
+    // ✅ Calienta el POS Agent mientras el cajero digita/valida el efectivo.
+    // Así, al confirmar pago, /print sale con menos latencia.
+    agentPingFast();
+
     queueMicrotask(() => {
       if (!isMixtoUI() && $amountIn.is(":visible")) { $amountIn.focus(); $amountIn[0]?.select?.(); }
     });
@@ -3474,8 +3501,9 @@ $(function () {
     const medioCompat = (pagos.length >= 2) ? "mixto" : (pagos[0]?.medio_pago || "");
     $hidMedioPago.val(medioCompat);
 
-    closeModal();
+    // ✅ Primero dispara el submit para que el POST de venta arranque antes de cualquier trabajo visual.
     $("#venta-form").trigger("submit");
+    queueMicrotask(closeModal);
   });
 
   /* ================== POS Agent helpers ================== */
@@ -3496,6 +3524,76 @@ $(function () {
     }
   }
 
+  let posAgentUltraReady = !!FAST_POS_ULTRA_FORCE;
+  let posAgentUltraDetecting = false;
+
+  function buildUltraPayload(payloadObj = {}) {
+    return JSON.stringify({
+      token: POS_AGENT_TOKEN,
+      ...payloadObj
+    });
+  }
+
+  // ✅ Envío más liviano para POS Agent compatible con /print-fast y /kick-fast.
+  // Usa text/plain y token en body para evitar el header X-Pos-Agent-Token, que puede causar preflight OPTIONS.
+  function agentPostUltra(path, payloadObj = {}) {
+    if (!POS_AGENT_TOKEN || !FAST_POS_ULTRA_ENABLED) return false;
+
+    const url = POS_AGENT_URL + path;
+    const payload = buildUltraPayload(payloadObj);
+
+    try {
+      if (navigator.sendBeacon) {
+        const blob = new Blob([payload], { type: "text/plain;charset=UTF-8" });
+        if (navigator.sendBeacon(url, blob)) return true;
+      }
+    } catch (_) {}
+
+    try {
+      const xhr = new XMLHttpRequest();
+      xhr.open("POST", url, true);
+      xhr.setRequestHeader("Content-Type", "text/plain;charset=UTF-8");
+      xhr.send(payload);
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function agentPrintUltra(text) {
+    return agentPostUltra(FAST_POS_PRINT_ENDPOINT, { text: text || "" });
+  }
+
+  function agentKickUltra() {
+    return agentPostUltra(FAST_POS_KICK_ENDPOINT, {});
+  }
+
+  function agentDetectUltraFast() {
+    if (!POS_AGENT_TOKEN || !FAST_POS_ULTRA_ENABLED || FAST_POS_ULTRA_FORCE || posAgentUltraDetecting || posAgentUltraReady) return;
+    posAgentUltraDetecting = true;
+
+    try {
+      fetch(POS_AGENT_URL + FAST_POS_PING_ENDPOINT, {
+        method: "POST",
+        keepalive: true,
+        headers: { "Content-Type": "text/plain;charset=UTF-8" },
+        body: buildUltraPayload({ ping: true })
+      })
+        .then(r => {
+          posAgentUltraReady = !!(r && (r.ok || r.status === 204));
+        })
+        .catch(() => {
+          posAgentUltraReady = false;
+        })
+        .finally(() => {
+          posAgentUltraDetecting = false;
+        });
+    } catch (_) {
+      posAgentUltraDetecting = false;
+      posAgentUltraReady = false;
+    }
+  }
+
   // ✅ Versión más rápida: inicia el POST /print y devuelve inmediatamente.
   // No usa await ni AbortController, para no cancelar impresiones lentas ni meter esperas.
   function agentPrintFast(text) {
@@ -3512,6 +3610,19 @@ $(function () {
     if (!POS_AGENT_TOKEN) return Promise.resolve();
     return fireAndForgetFetch(POS_AGENT_URL + "/kick", {
       method: "POST",
+      keepalive: true,
+      headers: POS_AGENT_HEADERS_TOKEN
+    });
+  }
+
+  function agentPingFast() {
+    if (!POS_AGENT_TOKEN) return Promise.resolve();
+
+    // ✅ Detecta en segundo plano si el POS Agent soporta modo ultra sin headers personalizados.
+    agentDetectUltraFast();
+
+    return fireAndForgetFetch(POS_AGENT_URL + "/ping", {
+      method: "GET",
       keepalive: true,
       headers: POS_AGENT_HEADERS_TOKEN
     });
@@ -3549,12 +3660,7 @@ $(function () {
   }
 
   (function agentWarmup(){
-    if (!POS_AGENT_TOKEN) return;
-    fireAndForgetFetch(POS_AGENT_URL + "/ping", {
-      method: "GET",
-      keepalive: true,
-      headers: POS_AGENT_HEADERS_TOKEN
-    });
+    agentPingFast();
   })();
 
   function settleWithDeadline(proms, maxWaitMs=250){
@@ -3648,17 +3754,23 @@ $(function () {
         receiptText += `\n\n\n\n\n\n\n\n\n\n\n\n\n`;
       }
 
-      // ✅ Mandar factura a impresión lo más rápido posible.
-      // Primero /print; el cajón se dispara en paralelo o justo después, para no competir con la factura.
+      // ✅ Mandar factura y abrir cajón al MISMO MOMENTO.
+      // En modo ultra usa /print-fast y /kick-fast con text/plain + sendBeacon/XHR, sin Promises ni headers personalizados.
       let printJobs = [];
       if (FAST_PRINT_FIRE_AND_FORGET) {
-        const printJob = agentPrintFast(receiptText);
-        printJobs.push(printJob);
+        const useUltra = FAST_POS_ULTRA_ENABLED && (FAST_POS_ULTRA_FORCE || posAgentUltraReady);
 
-        const kickJob = FAST_PRINT_KICK_AFTER_MS > 0
-          ? new Promise((resolve) => setTimeout(() => resolve(agentKickFast()), FAST_PRINT_KICK_AFTER_MS))
-          : agentKickFast();
-        printJobs.push(kickJob);
+        if (useUltra) {
+          agentPrintUltra(receiptText);
+          agentKickUltra();
+        } else {
+          const printJob = agentPrintFast(receiptText);
+          const kickJob = agentKickFast();
+          printJobs.push(printJob, kickJob);
+
+          // ✅ Si aún no se detectó el modo ultra, deja la detección corriendo para la próxima venta.
+          agentDetectUltraFast();
+        }
       } else {
         printJobs = [
           agentPrintSafe(receiptText, { timeout: 650 }),
@@ -3666,26 +3778,46 @@ $(function () {
         ];
       }
 
-      if (FAST_SALE_PRINT_WAIT_MS > 0) {
-        try { await settleWithDeadline(printJobs, FAST_SALE_PRINT_WAIT_MS); } catch (_) {}
-      } else {
-        Promise.allSettled(printJobs).catch(() => {});
+      if (printJobs.length) {
+        if (FAST_SALE_PRINT_WAIT_MS > 0) {
+          try { await settleWithDeadline(printJobs, FAST_SALE_PRINT_WAIT_MS); } catch (_) {}
+        } else {
+          Promise.allSettled(printJobs).catch(() => {});
+        }
       }
 
-      // ✅ SIN RECARGAR: limpiar TODO para la siguiente venta inmediatamente.
-      resetAfterSaleFast();
+      const msgCambio = (totalNum > 0 && ef && !esMixto) ? `
+Cambio: ${money(cambio)}` : "";
+      const okMsg = `✅ Venta registrada
+Total: ${money(totalNum)}${msgCambio}`;
 
-      // ✅ permitir siguiente venta inmediatamente
-      saleSubmitting = false;
-      confirmSubmitting = false;
-      if ($submitBtn.length) $submitBtn.prop("disabled", false);
+      const finishSaleUi = () => {
+        // ✅ SIN RECARGAR: limpiar TODO para la siguiente venta.
+        resetAfterSaleFast();
+        saleSubmitting = false;
+        confirmSubmitting = false;
+        if ($submitBtn.length) $submitBtn.prop("disabled", false);
+      };
 
-      const msgCambio = (totalNum > 0 && ef && !esMixto) ? `\nCambio: ${money(cambio)}` : "";
-      const okMsg = `✅ Venta registrada\nTotal: ${money(totalNum)}${msgCambio}`;
-
-      // ✅ Conserva el alert, pero deja respirar al event loop para que el POST /print arranque primero.
-      if (FAST_SALE_SUCCESS_ALERT) setTimeout(() => alert(okMsg), 0);
-      else showFastSaleToast(okMsg);
+      // ✅ Máxima velocidad percibida:
+      // 1) /print ya fue iniciado arriba.
+      // 2) Se muestra el alert con cambio en el primer tick libre.
+      // 3) La limpieza se hace al cerrar el alert, porque mientras el alert está abierto no se puede vender.
+      if (FAST_SALE_SUCCESS_ALERT && FAST_ALERT_BEFORE_RESET) {
+        saleSubmitting = false;
+        confirmSubmitting = false;
+        if ($submitBtn.length) $submitBtn.prop("disabled", false);
+        setTimeout(() => {
+          try { alert(okMsg); }
+          finally { finishSaleUi(); }
+        }, 0);
+      } else if (FAST_SALE_SUCCESS_ALERT) {
+        finishSaleUi();
+        setTimeout(() => alert(okMsg), 0);
+      } else {
+        finishSaleUi();
+        showFastSaleToast(okMsg);
+      }
     })
     .catch(() => {
       saleSubmitting = false;
@@ -3791,15 +3923,15 @@ $(function () {
         focusQty: false,
       });
 
-      if (!wasRecentlyAutoAddedByBarcode(clean, localFast.id)) {
-        suppressBarcodeAutocompleteAdd(clean, 900);
+      if (!wasRecentlyAutoAddedByBarcode(clean, localFast.id, SCANNER_REPEAT_LOCK_MS)) {
+        suppressBarcodeAutocompleteAdd(clean, SCANNER_SUPPRESS_AC_MS);
         if (addAutoProductToCartOnce(localFast.id, 1, {
           source: "scanner-local-fast",
           term: clean,
           barcode: clean,
-          pidTtlMs: 900,
-          termTtlMs: 900,
-          barcodeTtlMs: 900,
+          pidTtlMs: SCANNER_REPEAT_LOCK_MS,
+          termTtlMs: SCANNER_REPEAT_LOCK_MS,
+          barcodeTtlMs: SCANNER_REPEAT_LOCK_MS,
         })) {
           rememberBarcodeAutoAdd(clean, localFast.id);
         }
@@ -3831,15 +3963,15 @@ $(function () {
         return;
       }
 
-      if (wasRecentlyAutoAddedByBarcode(clean, pid)) return;
-      suppressBarcodeAutocompleteAdd(clean, 900);
+      if (wasRecentlyAutoAddedByBarcode(clean, pid, SCANNER_REPEAT_LOCK_MS)) return;
+      suppressBarcodeAutocompleteAdd(clean, SCANNER_SUPPRESS_AC_MS);
       if (addAutoProductToCartOnce(pid, 1, {
         source: "scanner",
         term: clean,
         barcode: clean,
-        pidTtlMs: 900,
-        termTtlMs: 900,
-        barcodeTtlMs: 900,
+        pidTtlMs: SCANNER_REPEAT_LOCK_MS,
+        termTtlMs: SCANNER_REPEAT_LOCK_MS,
+        barcodeTtlMs: SCANNER_REPEAT_LOCK_MS,
       })) {
         rememberBarcodeAutoAdd(clean, pid);
       }
