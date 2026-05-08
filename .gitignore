@@ -1,1 +1,48 @@
 .claude/
+
+# Python caches
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+venv/
+.venv/
+env/
+ENV/
+
+# Local Django/runtime files
+db.sqlite3
+*.sqlite3
+*.sqlite3-journal
+debug.log
+*.log
+local_settings.py
+
+# Environment variables and secrets
+.env
+.env.*
+!.env.example
+
+# Uploaded/generated assets that should live outside git
+media/
+staticfiles/
+collected_static/
+
+# Local inventory-photo agent output
+inventario_agent_debug/
+debug_gemini_inicio.png
+debug_*.png
+*_debug.png
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.swp
+
+# Editor/OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

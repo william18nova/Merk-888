@@ -6,6 +6,8 @@ def pos_agent(request):
     return {
         "POS_AGENT_URL": getattr(settings, "POS_AGENT_URL", "http://127.0.0.1:8787"),
         "POS_AGENT_TOKEN": getattr(settings, "POS_AGENT_TOKEN", ""),
+        "INVENTARIO_AGENT_URL": getattr(settings, "INVENTARIO_AGENT_URL", "http://127.0.0.1:8788"),
+        "INVENTARIO_AGENT_TOKEN": getattr(settings, "INVENTARIO_AGENT_TOKEN", ""),
     }
 
 

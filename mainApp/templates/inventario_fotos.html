@@ -1,0 +1,287 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Inventario desde fotos{% endblock %}
+
+{% block extra_head %}
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"/>
+  <link rel="stylesheet" href="https://code.jquery.com/ui/1.13.3/themes/base/jquery-ui.css"/>
+  <link rel="stylesheet" href="{% static 'css/inventario_fotos.css' %}">
+{% endblock %}
+
+{% block content %}
+<div class="invf-page">
+  <div class="invf-flow" aria-label="Flujo de inventario desde fotos">
+    <div class="invf-flow__step is-active" id="invfStepUpload">
+      <span>1</span>
+      <strong>Fotos</strong>
+    </div>
+    <div class="invf-flow__step" id="invfStepProcess">
+      <span>2</span>
+      <strong>Procesar</strong>
+    </div>
+    <div class="invf-flow__step" id="invfStepReview">
+      <span>3</span>
+      <strong>Revisar</strong>
+    </div>
+    <div class="invf-flow__step" id="invfStepConfirm">
+      <span>4</span>
+      <strong>Guardar</strong>
+    </div>
+  </div>
+
+  <div class="invf-shell">
+    <section class="invf-panel invf-panel--left">
+      <div class="invf-head">
+        <i class="fas fa-camera-retro"></i>
+        <div>
+          <h1>Inventario desde fotos</h1>
+          <p>Sube las fotos, el navegador las envia al agente local del PC y luego confirma el ingreso al inventario.</p>
+        </div>
+      </div>
+
+      <div id="invfAlert" class="invf-alert" style="display:none;"></div>
+
+      <div id="draftNotice" class="invf-draft" style="display:none;">
+        <div>
+          <strong>Borrador disponible</strong>
+          <span id="draftNoticeText">Hay una revision anterior sin guardar.</span>
+        </div>
+        <div class="invf-draft__actions">
+          <button type="button" id="btnRestoreDraft" class="invf-btn invf-btn--ghost invf-btn--tiny">Restaurar</button>
+          <button type="button" id="btnDiscardDraft" class="invf-btn invf-btn--ghost invf-btn--tiny">Descartar</button>
+        </div>
+      </div>
+
+      <div id="agentStatus" class="invf-agent-status invf-agent-status--unknown">
+        <strong>Procesador de fotos:</strong> <span id="agentStatusText">Verificando conexion con este PC...</span>
+      </div>
+
+      <div class="invf-mobile-panel" id="mobilePanel">
+        <div class="invf-mobile-panel__head">
+          <div>
+            <strong>Usar celular como camara</strong>
+            <span>Escanea el QR y envia fotos directo a este PC.</span>
+          </div>
+          <button type="button" id="btnMobileSession" class="invf-btn invf-btn--ghost invf-btn--mobile">
+            <i class="fas fa-qrcode"></i> Conectar celular
+          </button>
+        </div>
+        <div class="invf-mobile-panel__body" id="mobileQrBox" style="display:none;">
+          <div class="invf-mobile-qr">
+            <img id="mobileQrImage" alt="QR para conectar celular">
+          </div>
+          <div class="invf-mobile-copy">
+            <input id="mobileUploadUrl" type="text" readonly>
+            <button type="button" id="btnCopyMobileUrl" class="invf-btn invf-btn--ghost invf-btn--copy">
+              Copiar
+            </button>
+          </div>
+          <small id="mobileStatusText" class="invf-mobile-status">Esperando fotos del celular...</small>
+          <div id="mobileFilesList" class="invf-mobile-files"></div>
+        </div>
+      </div>
+
+      <form id="inventarioFotosForm" method="post" enctype="multipart/form-data">
+        {% csrf_token %}
+
+        <div class="invf-field">
+          <label for="id_sucursal_autocomplete">Sucursal <span>*</span></label>
+          {{ form.sucursal_autocomplete }}
+          {{ form.sucursal }}
+          <small id="errorSucursal" class="invf-error"></small>
+        </div>
+
+        <div class="invf-field">
+          <label for="id_fotos">Fotos <span>*</span></label>
+          <label class="invf-dropzone" for="id_fotos">
+            <input id="id_fotos" name="fotos" type="file" accept="image/*" multiple>
+            <div>
+              <i class="fas fa-images"></i>
+              <strong>Haz clic para adjuntar</strong>
+              <span>o arrastra aqui las fotos del pedido/factura</span>
+            </div>
+          </label>
+          <small id="errorFotos" class="invf-error"></small>
+        </div>
+
+        <div id="previewGrid" class="invf-preview-grid"></div>
+
+        <div class="invf-actions">
+          <button type="button" id="btnProcesar" class="invf-btn invf-btn--primary">
+            <i class="fas fa-play"></i> Procesar fotos
+          </button>
+          <button type="button" id="btnLimpiar" class="invf-btn invf-btn--ghost">
+            <i class="fas fa-eraser"></i> Limpiar
+          </button>
+        </div>
+      </form>
+    </section>
+
+    <section class="invf-panel invf-panel--right">
+      <div class="invf-result-head">
+        <div>
+          <h2>Revision de inventario</h2>
+          <p>Revisa productos, cantidades y precios antes de actualizar el inventario.</p>
+          <small class="invf-result-tip">Puedes corregir una fila buscando por codigo de barras o por nombre del producto.</small>
+        </div>
+        <button type="button" id="btnConfirmar" class="invf-btn invf-btn--success" disabled>
+          <i class="fas fa-check"></i> Aceptar y sumar al inventario
+        </button>
+      </div>
+
+      <div class="invf-provider-info" id="providerInfo" style="display:none;"></div>
+
+      <div class="invf-review-summary" id="reviewSummary">
+        <div class="invf-summary-card">
+          <small>Productos</small>
+          <strong id="summaryProducts">0</strong>
+        </div>
+        <div class="invf-summary-card">
+          <small>Unidades</small>
+          <strong id="summaryUnits">0</strong>
+        </div>
+        <div class="invf-summary-card invf-summary-card--ok">
+          <small>Listos</small>
+          <strong id="summaryReady">0</strong>
+        </div>
+        <div class="invf-summary-card invf-summary-card--warn">
+          <small>Pendientes</small>
+          <strong id="summaryPending">0</strong>
+        </div>
+      </div>
+
+      <div class="invf-table-tools">
+        <div class="invf-filter-group" aria-label="Filtrar resultados">
+          <button type="button" class="invf-filter is-active" data-result-filter="all">Todos</button>
+          <button type="button" class="invf-filter" data-result-filter="pending">Pendientes</button>
+          <button type="button" class="invf-filter" data-result-filter="corrected">Corregidos</button>
+          <button type="button" class="invf-filter" data-result-filter="added">Agregados</button>
+          <button type="button" class="invf-filter" data-result-filter="ok">Encontrados</button>
+        </div>
+        <span id="reviewHint" class="invf-review-hint">Procesa fotos para ver los resultados.</span>
+      </div>
+
+      <div class="invf-scan-add">
+        <div class="invf-scan-title">
+          <i class="fas fa-barcode"></i>
+          <strong>Agregar producto</strong>
+        </div>
+        <div class="invf-scan-controls">
+          <input id="scanAddBarcode" class="invf-scan-input" type="text" placeholder="Codigo o nombre del producto" autocomplete="off">
+          <input id="scanAddQty" class="invf-scan-qty" type="number" min="1" value="1" aria-label="Cantidad">
+          <button type="button" id="btnScanAdd" class="invf-btn invf-btn--primary invf-btn--scan">
+            <i class="fas fa-plus"></i> Agregar
+          </button>
+        </div>
+      </div>
+
+      <div class="invf-loading" id="invfLoading" style="display:none;">
+        <div class="invf-spinner"></div>
+        <span>Analizando fotos en este PC...</span>
+      </div>
+
+      <div class="invf-table-wrap">
+        <table class="invf-table" id="resultadoTable">
+          <thead>
+            <tr>
+              <th>Producto</th>
+              <th>Buscar / reemplazar</th>
+              <th>Cantidad</th>
+              <th>Precio unitario c/IVA</th>
+              <th>Estado</th>
+            </tr>
+          </thead>
+          <tbody id="resultadoBody">
+            <tr class="invf-empty-row">
+              <td colspan="5">Todavia no hay resultados.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <details class="invf-raw-box">
+        <summary>Revision tecnica</summary>
+        <pre id="rawResponse">Sin respuesta todavia.</pre>
+      </details>
+    </section>
+  </div>
+</div>
+
+<div class="invf-modal" id="photoPreviewModal" aria-hidden="true">
+  <div class="invf-modal__backdrop" data-photo-preview-close></div>
+  <div class="invf-photo-preview" role="dialog" aria-modal="true" aria-label="Vista previa de foto">
+    <button type="button" class="invf-modal__close invf-photo-preview__close" data-photo-preview-close aria-label="Cerrar">&times;</button>
+    <img id="photoPreviewImage" alt="Vista previa de foto">
+    <strong id="photoPreviewTitle"></strong>
+  </div>
+</div>
+
+<div class="invf-modal" id="confirmSummaryModal" aria-hidden="true">
+  <div class="invf-modal__backdrop" data-confirm-summary-close></div>
+  <div class="invf-modal__dialog" role="dialog" aria-modal="true" aria-labelledby="confirmSummaryTitle">
+    <div class="invf-modal__head">
+      <div>
+        <h3 id="confirmSummaryTitle">Confirmar ingreso</h3>
+        <p>Revisa el resumen final antes de sumar al inventario.</p>
+      </div>
+      <button type="button" class="invf-modal__close" data-confirm-summary-close aria-label="Cerrar">&times;</button>
+    </div>
+    <div class="invf-modal__body">
+      <div id="confirmSummaryContent" class="invf-confirm-summary"></div>
+    </div>
+    <div class="invf-modal__actions">
+      <button type="button" class="invf-btn invf-btn--ghost" data-confirm-summary-close>Cancelar</button>
+      <button type="button" id="btnConfirmSummarySave" class="invf-btn invf-btn--success">Guardar inventario</button>
+    </div>
+  </div>
+</div>
+
+<div class="invf-modal" id="providerModal" aria-hidden="true">
+  <div class="invf-modal__backdrop" data-provider-modal-close></div>
+  <div class="invf-modal__dialog" role="dialog" aria-modal="true" aria-labelledby="providerModalTitle">
+    <div class="invf-modal__head">
+      <div>
+        <h3 id="providerModalTitle">Agregar proveedor</h3>
+        <p>Confirma los datos del proveedor para guardar precios por producto.</p>
+      </div>
+      <button type="button" class="invf-modal__close" data-provider-modal-close aria-label="Cerrar">&times;</button>
+    </div>
+    <div class="invf-modal__body">
+      <label>Nombre del proveedor <span>*</span></label>
+      <input id="providerNameInput" type="text" autocomplete="off">
+      <label>Empresa</label>
+      <input id="providerCompanyInput" type="text" autocomplete="off">
+      <label>Telefono</label>
+      <input id="providerPhoneInput" type="text" autocomplete="off">
+      <label>Email</label>
+      <input id="providerEmailInput" type="email" autocomplete="off">
+      <label>Direccion</label>
+      <textarea id="providerAddressInput" rows="2"></textarea>
+      <small id="providerModalError" class="invf-modal__error"></small>
+    </div>
+    <div class="invf-modal__actions">
+      <button type="button" class="invf-btn invf-btn--ghost" data-provider-modal-close>Cancelar</button>
+      <button type="button" id="btnProviderSave" class="invf-btn invf-btn--success">Guardar proveedor y continuar</button>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+  <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+  <script src="https://code.jquery.com/ui/1.13.3/jquery-ui.min.js"></script>
+  <script>
+    window.INVF = {
+      sucursalAutocompleteUrl: "{% url 'sucursal_autocomplete_simple' %}",
+      catalogoUrl: "{% url 'inventario_fotos_catalogo' %}",
+      providerLookupUrl: "{% url 'inventario_fotos_proveedor_lookup' %}",
+      procesarUrl: "{% url 'inventario_fotos_procesar' %}",
+      confirmarUrl: "{% url 'inventario_fotos_confirmar' %}",
+      barcodeSearchUrl: "{% url 'producto_inventario_buscar_barras' %}",
+      agentUrl: "{{ INVENTARIO_AGENT_URL|default:'http://127.0.0.1:8788'|escapejs }}",
+      agentToken: "{{ INVENTARIO_AGENT_TOKEN|default:''|escapejs }}"
+    };
+  </script>
+  <script defer src="{% static 'javascript/inventario_fotos.js' %}"></script>
+{% endblock %}

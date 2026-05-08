@@ -2354,3 +2354,162 @@ class RolPermisoEditForm(forms.Form):
         if not cd.get("rol"):
             self.add_error("rol", "Rol inválido.")
         return cd
+
+
+class MultipleFileInput(forms.ClearableFileInput):
+    allow_multiple_selected = True
+
+
+class MultipleFileField(forms.FileField):
+    def __init__(self, *args, **kwargs):
+        kwargs.setdefault("widget", MultipleFileInput(attrs={
+            "class": "form-control",
+            "multiple": True,
+            "accept": "image/*",
+        }))
+        super().__init__(*args, **kwargs)
+
+    def clean(self, data, initial=None):
+        single = super().clean
+        if isinstance(data, (list, tuple)):
+            return [single(item, initial) for item in data]
+        return [single(data, initial)] if data else []
+
+
+class InventarioFotosForm(forms.Form):
+    sucursal_autocomplete = forms.CharField(
+        required=False,
+        widget=forms.TextInput(attrs={
+            "class": "form-control",
+            "placeholder": "Buscar sucursal...",
+            "autocomplete": "off",
+        })
+    )
+    sucursal = forms.ModelChoiceField(
+        queryset=Sucursal.objects.order_by("nombre"),
+        widget=forms.HiddenInput(),
+        required=True,
+    )
+    fotos = MultipleFileField(required=True)
+
+    class Meta:
+        fields = ("sucursal", "fotos")
+
+    def clean_fotos(self):
+        fotos = self.cleaned_data.get("fotos") or []
+        permitidas = {"image/png", "image/jpeg", "image/jpg", "image/webp", "image/bmp", "image/gif"}
+        if not fotos:
+            raise forms.ValidationError("Debes adjuntar al menos una foto.")
+        for foto in fotos:
+            if getattr(foto, "content_type", "") not in permitidas:
+                raise forms.ValidationError(f"Archivo no permitido: {getattr(foto, 'name', 'desconocido')}")
+        return fotos
+
+    def clean(self):
+        cleaned = super().clean()
+        if not cleaned.get("sucursal"):
+            self.add_error("sucursal_autocomplete", "Selecciona una sucursal valida.")
+        return cleaned
+
+
+class InventarioFotosConfirmarForm(forms.Form):
+    sucursal_id = forms.IntegerField(widget=forms.HiddenInput(), required=True)
+    items_json = forms.CharField(widget=forms.HiddenInput(), required=True)
+    proveedor_json = forms.CharField(widget=forms.HiddenInput(), required=False)
+
+    def clean_sucursal_id(self):
+        sid = self.cleaned_data["sucursal_id"]
+        if not Sucursal.objects.filter(pk=sid).exists():
+            raise forms.ValidationError("Sucursal invalida.")
+        return sid
+
+    def clean_items_json(self):
+        raw = (self.cleaned_data.get("items_json") or "").strip()
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError:
+            raise forms.ValidationError("Formato JSON invalido.")
+
+        if not isinstance(data, list) or not data:
+            raise forms.ValidationError("No hay productos para procesar.")
+
+        def as_bool(value):
+            if isinstance(value, bool):
+                return value
+            return str(value or "").strip().lower() in {"1", "true", "si", "sí", "yes"}
+
+        normalizados = []
+        for idx, item in enumerate(data, start=1):
+            nombre = str((item or {}).get("producto") or (item or {}).get("nombre") or "").strip()
+            codigo = str((item or {}).get("codigo_de_barras") or "").strip()
+            precio_unitario = str((item or {}).get("precio_unitario") or "").strip()
+            precio_unitario_visible = str((item or {}).get("precio_unitario_visible") or "").strip()
+            precio_unitario_sin_iva = str((item or {}).get("precio_unitario_sin_iva") or "").strip()
+            iva_porcentaje = str((item or {}).get("iva_porcentaje") or (item or {}).get("iva") or "").strip()
+            precio_incluye_iva = as_bool((item or {}).get("precio_incluye_iva"))
+            precio_iva_calculado = as_bool((item or {}).get("precio_iva_calculado"))
+            productoid_raw = (item or {}).get("productoid")
+            try:
+                productoid = int(productoid_raw) if str(productoid_raw).strip() else None
+            except (TypeError, ValueError):
+                raise forms.ValidationError(f"Producto invalido en la fila {idx}.")
+
+            try:
+                cantidad = int((item or {}).get("cantidad", 0))
+            except (TypeError, ValueError):
+                raise forms.ValidationError(f"Cantidad invalida en la fila {idx}.")
+
+            if not nombre and not productoid:
+                raise forms.ValidationError(f"Producto vacio en la fila {idx}.")
+            if cantidad <= 0:
+                raise forms.ValidationError(f"La cantidad del producto '{nombre or productoid}' debe ser mayor a 0.")
+
+            normalizados.append({
+                "productoid": productoid,
+                "producto": nombre,
+                "cantidad": cantidad,
+                "codigo_de_barras": codigo,
+                "precio_unitario": precio_unitario,
+                "precio_unitario_visible": precio_unitario_visible,
+                "precio_unitario_sin_iva": precio_unitario_sin_iva,
+                "iva_porcentaje": iva_porcentaje,
+                "precio_incluye_iva": precio_incluye_iva,
+                "precio_iva_calculado": precio_iva_calculado,
+            })
+
+        return normalizados
+
+    def clean_proveedor_json(self):
+        raw = (self.cleaned_data.get("proveedor_json") or "").strip()
+        if not raw:
+            return {}
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError:
+            raise forms.ValidationError("Formato JSON de proveedor invalido.")
+        if not isinstance(data, dict):
+            raise forms.ValidationError("Proveedor invalido.")
+
+        def as_bool(value):
+            if isinstance(value, bool):
+                return value
+            return str(value or "").strip().lower() in {"1", "true", "si", "sí", "yes"}
+
+        proveedorid_raw = data.get("proveedorid")
+        try:
+            proveedorid = int(proveedorid_raw) if str(proveedorid_raw or "").strip() else None
+        except (TypeError, ValueError):
+            raise forms.ValidationError("Proveedor invalido.")
+
+        return {
+            "proveedorid": proveedorid,
+            "nombre": str(data.get("nombre") or data.get("proveedor") or "").strip(),
+            "empresa": str(data.get("empresa") or "").strip(),
+            "telefono": str(data.get("telefono") or "").strip(),
+            "email": str(data.get("email") or "").strip(),
+            "direccion": str(data.get("direccion") or "").strip(),
+            "nit": str(data.get("nit") or "").strip(),
+            "factura": str(data.get("factura") or "").strip(),
+            "fecha": str(data.get("fecha") or "").strip(),
+            "create_if_missing": as_bool(data.get("create_if_missing")),
+        }

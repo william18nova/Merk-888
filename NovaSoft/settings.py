@@ -112,13 +112,22 @@ CONTENT_SECURITY_POLICY = {
         "default-src": ("'self'",),
         "script-src": ("'self'", "https:", "'unsafe-inline'"),
         "style-src":  ("'self'", "https:", "'unsafe-inline'"),
-        "img-src":    ("'self'", "https:", "data:"),
+        "img-src":    (
+            "'self'",
+            "https:",
+            "data:",
+            "blob:",
+            "http://127.0.0.1:8788",
+            "http://localhost:8788",
+        ),
         "font-src":   ("'self'", "https:", "data:"),
         "connect-src": (
             "'self'",
             "https:",
             "http://127.0.0.1:8787",
             "http://localhost:8787",
+            "http://127.0.0.1:8788",
+            "http://localhost:8788",
         ),
     }
 }
@@ -131,3 +140,13 @@ POS_AGENT_TOKEN = os.getenv(
     "POS_AGENT_TOKEN",
     "BmFclqQdWkKjArLIYvakHG426BuLDUtJA0zVG5DJOgjZTWSEVa_i0hxiyXskSHUi"
 )
+
+# ========= Variables del agente local de inventario por fotos =========
+INVENTARIO_AGENT_URL = os.getenv("INVENTARIO_AGENT_URL", "http://127.0.0.1:8788")
+INVENTARIO_AGENT_TOKEN = os.getenv(
+    "INVENTARIO_AGENT_TOKEN",
+    POS_AGENT_TOKEN,
+)
+INVENTARIO_FOTOS_ALLOW_SERVER_PROCESS = os.getenv("INVENTARIO_FOTOS_ALLOW_SERVER_PROCESS", "0") == "1"
+INVENTARIO_FOTOS_SCRIPT = os.getenv("INVENTARIO_FOTOS_SCRIPT", str(BASE_DIR / "gemini_selenium_cli.py"))
+INVENTARIO_FOTOS_TIMEOUT = int(os.getenv("INVENTARIO_FOTOS_TIMEOUT", "900"))

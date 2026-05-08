@@ -3,9 +3,12 @@ from django.contrib.auth.decorators import login_required
 from django.contrib import messages
 from .models import Usuario, Sucursal, Categoria, Producto, Inventario, Proveedor, PreciosProveedor, PuntosPago, Rol, Empleado, HorariosNegocio, HorarioCaja, Cliente, Venta, DetalleVenta, PedidoProveedor, DetallePedidoProveedor, CambioDevolucion, Permiso, RolPermiso, UsuarioPermiso, PagoVenta, TurnoCaja, TurnoCajaMedio
 from django.db.models import Count, Sum, Exists, OuterRef, Q, F, ExpressionWrapper, DecimalField, Value, IntegerField, Case, When, CharField
-from django.http import JsonResponse, HttpResponseBadRequest, HttpResponseForbidden, HttpRequest
+from django.http import JsonResponse, HttpResponseBadRequest, HttpResponseForbidden, HttpRequest, HttpResponse
 from django.contrib.auth import authenticate, login as auth_login
 import json
+import csv
+import re
+import unicodedata
 from datetime import date, datetime, time
 from django.utils import timezone
 from django.contrib.auth import authenticate
@@ -55,6 +58,8 @@ from .forms import (
     PagoMixtoFormSet,
     ReintegroMixtoFormSet,
     MEDIOS_PAGO,
+    InventarioFotosForm,
+    InventarioFotosConfirmarForm,
 
 )
 from dal import autocomplete
@@ -8636,5 +8641,436 @@ class ProductoVentasStatsAjaxView(LoginRequiredMixin, View):
                 "ingresos": str(ingresos),
             },
             "daily": daily,
+        })
+
+
+# -----------------------------------------------------------------------------
+# Inventario desde fotos con agente local
+# -----------------------------------------------------------------------------
+class InventarioFotosPageView(LoginRequiredMixin, View):
+    template_name = "inventario_fotos.html"
+
+    def get(self, request):
+        return render(request, self.template_name, {
+            "form": InventarioFotosForm(),
+        })
+
+
+class InventarioFotosCatalogoView(LoginRequiredMixin, View):
+    def get(self, request, *args, **kwargs):
+        response = HttpResponse(content_type="text/csv; charset=utf-8")
+        response["Content-Disposition"] = 'attachment; filename="catalogo_productos.csv"'
+        writer = csv.writer(response)
+        writer.writerow(["nombre", "codigo_de_barras", "productoid"])
+        for producto in Producto.objects.order_by("nombre").only("nombre", "codigo_de_barras", "productoid"):
+            writer.writerow([
+                producto.nombre,
+                producto.codigo_de_barras or "",
+                producto.productoid,
+            ])
+        return response
+
+
+def _normalizar_texto_simple(value):
+    texto = str(value or "").strip().lower()
+    texto = unicodedata.normalize("NFKD", texto)
+    texto = "".join(ch for ch in texto if not unicodedata.combining(ch))
+    texto = re.sub(r"[^a-z0-9]+", " ", texto)
+    return re.sub(r"\s+", " ", texto).strip()
+
+
+def _buscar_proveedor_factura(nombre):
+    nombre = str(nombre or "").strip()
+    if not nombre:
+        return None
+
+    proveedor = Proveedor.objects.filter(
+        Q(nombre__iexact=nombre) | Q(empresa__iexact=nombre)
+    ).first()
+    if proveedor:
+        return proveedor
+
+    norm = _normalizar_texto_simple(nombre)
+    if not norm:
+        return None
+
+    candidatos = Proveedor.objects.filter(
+        Q(nombre__icontains=nombre[:80]) | Q(empresa__icontains=nombre[:80])
+    )[:10]
+    for candidato in candidatos:
+        candidato_norm = _normalizar_texto_simple(candidato.nombre) or _normalizar_texto_simple(candidato.empresa)
+        if norm in candidato_norm or candidato_norm in norm:
+            return candidato
+
+    tokens = set(norm.split())
+    mejor = None
+    mejor_score = 0
+    for candidato in Proveedor.objects.all().only("proveedorid", "nombre", "empresa")[:500]:
+        cand_norm = _normalizar_texto_simple(candidato.nombre) or _normalizar_texto_simple(candidato.empresa)
+        if not cand_norm:
+            continue
+        cand_tokens = set(cand_norm.split())
+        inter = len(tokens & cand_tokens)
+        union = len(tokens | cand_tokens) or 1
+        score = inter / union
+        if norm in cand_norm or cand_norm in norm:
+            score += 0.35
+        if score > mejor_score:
+            mejor = candidato
+            mejor_score = score
+    return mejor if mejor_score >= 0.62 else None
+
+
+def _proveedor_payload(proveedor, detectado=None):
+    detectado = detectado or {}
+    return {
+        "nombre": getattr(proveedor, "nombre", "") if proveedor else str(detectado.get("nombre") or "").strip(),
+        "empresa": getattr(proveedor, "empresa", "") if proveedor else str(detectado.get("empresa") or "").strip(),
+        "nit": str(detectado.get("nit") or "").strip(),
+        "factura": str(detectado.get("factura") or "").strip(),
+        "fecha": str(detectado.get("fecha") or "").strip(),
+        "proveedorid": proveedor.pk if proveedor else None,
+        "encontrado": bool(proveedor),
+        "nombre_bd": proveedor.nombre if proveedor else "",
+    }
+
+
+def _decimal_precio_factura(value):
+    texto = str(value or "").strip()
+    if not texto or texto == "?":
+        return None
+    if "/" in texto:
+        for parte in texto.split("/"):
+            precio = _decimal_precio_factura(parte)
+            if precio is not None:
+                return precio
+        return None
+
+    texto = texto.replace("$", "").replace("COP", "").strip()
+    texto = re.sub(r"\s+", "", texto)
+    texto = re.sub(r"[^0-9.,-]", "", texto)
+    if not texto or texto in {"-", ".", ",", "-.", "-,"}:
+        return None
+
+    negativo = texto.startswith("-")
+    texto = texto.lstrip("-")
+    if "." in texto and "," in texto:
+        if texto.rfind(",") > texto.rfind("."):
+            texto = texto.replace(".", "").replace(",", ".")
+        else:
+            texto = texto.replace(",", "")
+    elif "," in texto:
+        partes = texto.split(",")
+        texto = "".join(partes[:-1]) + "." + partes[-1] if len(partes[-1]) in {1, 2} else "".join(partes)
+    elif "." in texto:
+        partes = texto.split(".")
+        texto = partes[0] + "." + partes[-1] if len(partes) == 2 and len(partes[-1]) in {1, 2} else "".join(partes)
+
+    try:
+        precio = Decimal(texto)
+    except (InvalidOperation, ValueError):
+        return None
+    if negativo:
+        precio = -precio
+    if precio <= 0:
+        return None
+    return precio.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+
+def _calcular_rentabilidad_producto(precio_venta, precio_compra):
+    try:
+        venta = Decimal(str(precio_venta or "0"))
+        compra = Decimal(str(precio_compra or "0"))
+    except (InvalidOperation, ValueError):
+        return None
+    if venta <= 0 or compra <= 0:
+        return None
+
+    rentabilidad = ((venta - compra) / venta) * Decimal("100")
+    if rentabilidad < 0:
+        rentabilidad = Decimal("0")
+    if rentabilidad > 100:
+        rentabilidad = Decimal("100")
+    return rentabilidad.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+
+class InventarioFotosProveedorLookupView(LoginRequiredMixin, View):
+    def get(self, request, *args, **kwargs):
+        nombre = (request.GET.get("term") or request.GET.get("nombre") or "").strip()
+        proveedor = _buscar_proveedor_factura(nombre)
+        return JsonResponse({
+            "success": True,
+            "found": bool(proveedor),
+            "proveedor": _proveedor_payload(proveedor, {"nombre": nombre}),
+        })
+
+
+@method_decorator(require_POST, name="dispatch")
+class InventarioFotosProcesarView(LoginRequiredMixin, View):
+    def post(self, request, *args, **kwargs):
+        form = InventarioFotosForm(request.POST, request.FILES)
+        if not form.is_valid():
+            return JsonResponse({"success": False, "errors": form.errors}, status=400)
+
+        if not getattr(settings, "INVENTARIO_FOTOS_ALLOW_SERVER_PROCESS", False):
+            return JsonResponse({
+                "success": False,
+                "error": "El procesamiento por fotos se ejecuta mediante el agente local del PC.",
+            }, status=400)
+
+        from .services.inventario_fotos import ejecutar_procesador_local, InventarioFotosError
+
+        try:
+            resultado = ejecutar_procesador_local(imagenes=form.cleaned_data["fotos"])
+        except InventarioFotosError as exc:
+            return JsonResponse({"success": False, "error": str(exc)}, status=500)
+        except Exception as exc:
+            if getattr(settings, "DEBUG", False):
+                return JsonResponse({"success": False, "error": f"Error inesperado: {exc}"}, status=500)
+            return JsonResponse({"success": False, "error": "Error inesperado procesando las fotos."}, status=500)
+
+        rows = []
+
+        def as_bool(value):
+            if isinstance(value, bool):
+                return value
+            return str(value or "").strip().lower() in {"1", "true", "si", "sí", "yes"}
+
+        for row in (resultado.get("rows") or []):
+            nombre = str((row or {}).get("producto") or (row or {}).get("nombre") or "").strip()
+            codigo = str((row or {}).get("codigo_de_barras") or (row or {}).get("barcode") or "").strip()
+            precio_unitario = str((row or {}).get("precio_unitario") or (row or {}).get("precio") or "").strip()
+            precio_unitario_visible = str((row or {}).get("precio_unitario_visible") or "").strip()
+            precio_unitario_sin_iva = str((row or {}).get("precio_unitario_sin_iva") or "").strip()
+            iva_porcentaje = str((row or {}).get("iva_porcentaje") or (row or {}).get("iva") or "").strip()
+            precio_incluye_iva = as_bool((row or {}).get("precio_incluye_iva"))
+            precio_iva_calculado = as_bool((row or {}).get("precio_iva_calculado"))
+            productoid_raw = (row or {}).get("productoid")
+            try:
+                productoid = int(productoid_raw) if str(productoid_raw).strip() else None
+            except (TypeError, ValueError):
+                productoid = None
+            try:
+                cantidad = int((row or {}).get("cantidad", 0))
+            except (TypeError, ValueError):
+                cantidad = 0
+
+            if (not nombre and not productoid and not codigo) or cantidad <= 0:
+                continue
+
+            producto = None
+            if productoid:
+                producto = Producto.objects.filter(pk=productoid).only("productoid", "nombre", "codigo_de_barras").first()
+            if not producto and codigo:
+                producto = Producto.objects.filter(codigo_de_barras=codigo).only("productoid", "nombre", "codigo_de_barras").first()
+            if not producto:
+                producto = Producto.objects.filter(nombre__iexact=nombre).only("productoid", "nombre", "codigo_de_barras").first()
+
+            rows.append({
+                "producto": producto.nombre if producto else nombre,
+                "original_producto": nombre,
+                "cantidad": cantidad,
+                "productoid": producto.pk if producto else None,
+                "codigo_de_barras": getattr(producto, "codigo_de_barras", "") if producto else "",
+                "precio_unitario": precio_unitario,
+                "precio_unitario_visible": precio_unitario_visible,
+                "precio_unitario_sin_iva": precio_unitario_sin_iva,
+                "iva_porcentaje": iva_porcentaje,
+                "precio_incluye_iva": precio_incluye_iva,
+                "precio_iva_calculado": precio_iva_calculado,
+                "encontrado": bool(producto),
+                "reemplazado_por_barcode": False,
+            })
+
+        proveedor_factura = resultado.get("proveedor_factura") or {}
+        proveedor_nombre = str(
+            proveedor_factura.get("nombre") or resultado.get("proveedor_nombre") or resultado.get("proveedor") or ""
+        ).strip()
+        proveedor_nit = str(proveedor_factura.get("nit") or resultado.get("proveedor_nit") or "").strip()
+        proveedor_db = _buscar_proveedor_factura(proveedor_nombre)
+        proveedor_payload = _proveedor_payload(proveedor_db, {
+            "nombre": proveedor_nombre,
+            "empresa": str(proveedor_factura.get("empresa") or "").strip(),
+            "nit": proveedor_nit,
+            "factura": str(proveedor_factura.get("factura") or resultado.get("factura_numero") or "").strip(),
+            "fecha": str(proveedor_factura.get("fecha") or resultado.get("factura_fecha") or "").strip(),
+        })
+
+        return JsonResponse({
+            "success": True,
+            "rows": rows,
+            "proveedor": proveedor_nombre,
+            "proveedor_nombre": proveedor_nombre,
+            "proveedor_nit": proveedor_nit,
+            "proveedor_factura": proveedor_payload,
+            "factura_numero": proveedor_payload["factura"],
+            "factura_fecha": proveedor_payload["fecha"],
+            "factura_encabezados": resultado.get("factura_encabezados", {}),
+            "raw_text": resultado.get("raw_text", ""),
+            "raw_text_modelo": resultado.get("raw_text_modelo", ""),
+            "ocr_text": resultado.get("ocr_text", ""),
+            "matching_debug": resultado.get("matching_debug", []),
+        })
+
+
+@method_decorator(require_POST, name="dispatch")
+class InventarioFotosConfirmarView(LoginRequiredMixin, View):
+    @transaction.atomic
+    def post(self, request, *args, **kwargs):
+        form = InventarioFotosConfirmarForm(request.POST)
+        if not form.is_valid():
+            return JsonResponse({"success": False, "errors": form.errors}, status=400)
+
+        sucursal = get_object_or_404(Sucursal, pk=form.cleaned_data["sucursal_id"])
+        items = form.cleaned_data["items_json"]
+        proveedor_data = form.cleaned_data.get("proveedor_json") or {}
+        productos_a_sumar = {}
+
+        def as_bool(value):
+            if isinstance(value, bool):
+                return value
+            return str(value or "").strip().lower() in {"1", "true", "si", "sí", "yes"}
+
+        for item in items:
+            nombre = item["producto"]
+            cantidad = int(item["cantidad"])
+            productoid = item.get("productoid")
+            codigo = (item.get("codigo_de_barras") or "").strip()
+            precio_unitario = (item.get("precio_unitario") or "").strip()
+            precio_unitario_visible = (item.get("precio_unitario_visible") or "").strip()
+            precio_unitario_sin_iva = (item.get("precio_unitario_sin_iva") or "").strip()
+            iva_porcentaje = (item.get("iva_porcentaje") or "").strip()
+            precio_incluye_iva = as_bool(item.get("precio_incluye_iva"))
+            precio_iva_calculado = as_bool(item.get("precio_iva_calculado"))
+
+            producto = None
+            if productoid:
+                producto = Producto.objects.filter(pk=productoid).first()
+            if not producto and codigo:
+                producto = Producto.objects.filter(codigo_de_barras=codigo).first()
+            if not producto and nombre:
+                producto = Producto.objects.filter(nombre__iexact=nombre).first()
+            if not producto:
+                return JsonResponse({
+                    "success": False,
+                    "error": f"El producto '{nombre or codigo or productoid}' no existe en la base de datos."
+                }, status=400)
+
+            if producto.pk not in productos_a_sumar:
+                productos_a_sumar[producto.pk] = {
+                    "producto": producto,
+                    "cantidad": 0,
+                    "precio_unitario": precio_unitario,
+                    "precio_unitario_visible": precio_unitario_visible,
+                    "precio_unitario_sin_iva": precio_unitario_sin_iva,
+                    "iva_porcentaje": iva_porcentaje,
+                    "precio_incluye_iva": precio_incluye_iva,
+                    "precio_iva_calculado": precio_iva_calculado,
+                }
+            productos_a_sumar[producto.pk]["cantidad"] += cantidad
+            if precio_unitario and not productos_a_sumar[producto.pk].get("precio_unitario"):
+                productos_a_sumar[producto.pk]["precio_unitario"] = precio_unitario
+            if precio_unitario_visible and not productos_a_sumar[producto.pk].get("precio_unitario_visible"):
+                productos_a_sumar[producto.pk]["precio_unitario_visible"] = precio_unitario_visible
+            if precio_unitario_sin_iva and not productos_a_sumar[producto.pk].get("precio_unitario_sin_iva"):
+                productos_a_sumar[producto.pk]["precio_unitario_sin_iva"] = precio_unitario_sin_iva
+            if iva_porcentaje and not productos_a_sumar[producto.pk].get("iva_porcentaje"):
+                productos_a_sumar[producto.pk]["iva_porcentaje"] = iva_porcentaje
+            if precio_iva_calculado:
+                productos_a_sumar[producto.pk]["precio_iva_calculado"] = True
+                productos_a_sumar[producto.pk]["precio_incluye_iva"] = False
+
+        proveedor = None
+        proveedorid = proveedor_data.get("proveedorid")
+        proveedor_nombre = (proveedor_data.get("nombre") or "").strip()
+        if proveedorid:
+            proveedor = Proveedor.objects.filter(pk=proveedorid).first()
+        if not proveedor and proveedor_nombre:
+            proveedor = _buscar_proveedor_factura(proveedor_nombre)
+        if not proveedor and proveedor_data.get("create_if_missing"):
+            if not proveedor_nombre:
+                return JsonResponse({
+                    "success": False,
+                    "needs_provider": True,
+                    "error": "Escribe el nombre del proveedor para poder crearlo.",
+                    "proveedor_factura": _proveedor_payload(None, proveedor_data),
+                }, status=409)
+            proveedor = Proveedor.objects.create(
+                nombre=proveedor_nombre[:100],
+                empresa=(proveedor_data.get("empresa") or "")[:100],
+                telefono=(proveedor_data.get("telefono") or "")[:20],
+                email=(proveedor_data.get("email") or "")[:100],
+                direccion=proveedor_data.get("direccion") or "",
+            )
+        if not proveedor:
+            return JsonResponse({
+                "success": False,
+                "needs_provider": True,
+                "error": "Confirma o crea el proveedor antes de guardar.",
+                "proveedor_factura": _proveedor_payload(None, proveedor_data),
+            }, status=409)
+
+        actualizados = []
+        precios_actualizados = []
+
+        for data in productos_a_sumar.values():
+            producto = data["producto"]
+            cantidad = int(data["cantidad"])
+            precio_compra = _decimal_precio_factura(data.get("precio_unitario"))
+
+            inv, _created = Inventario.objects.select_for_update().get_or_create(
+                sucursalid=sucursal,
+                productoid=producto,
+                defaults={"cantidad": 0}
+            )
+            Inventario.objects.filter(pk=inv.pk).update(cantidad=F("cantidad") + cantidad)
+
+            precio_guardado = False
+            if precio_compra is not None:
+                precio_proveedor, precio_created = PreciosProveedor.objects.update_or_create(
+                    productoid=producto,
+                    proveedorid=proveedor,
+                    defaults={"precio": precio_compra},
+                )
+                rentabilidad = _calcular_rentabilidad_producto(producto.precio, precio_compra)
+                if rentabilidad is not None and producto.rentabilidad != rentabilidad:
+                    producto.rentabilidad = rentabilidad
+                    producto.save(update_fields=["rentabilidad"])
+                precio_guardado = True
+                precios_actualizados.append({
+                    "id": precio_proveedor.pk,
+                    "productoid": producto.pk,
+                    "producto": producto.nombre,
+                    "proveedorid": proveedor.pk,
+                    "proveedor": proveedor.nombre,
+                    "precio": str(precio_compra),
+                    "precio_venta": str(producto.precio),
+                    "rentabilidad": str(producto.rentabilidad),
+                    "creado": bool(precio_created),
+                })
+
+            actualizados.append({
+                "productoid": producto.pk,
+                "producto": producto.nombre,
+                "codigo_de_barras": getattr(producto, "codigo_de_barras", "") or "",
+                "cantidad_sumada": cantidad,
+                "precio_unitario": data.get("precio_unitario") or "",
+                "precio_proveedor_guardado": precio_guardado,
+                "rentabilidad": str(producto.rentabilidad),
+                "precio_unitario_visible": data.get("precio_unitario_visible") or "",
+                "precio_unitario_sin_iva": data.get("precio_unitario_sin_iva") or "",
+                "iva_porcentaje": data.get("iva_porcentaje") or "",
+                "precio_incluye_iva": as_bool(data.get("precio_incluye_iva")),
+                "precio_iva_calculado": as_bool(data.get("precio_iva_calculado")),
+            })
+
+        messages.success(request, f"Inventario actualizado en {sucursal.nombre} con {len(actualizados)} producto(s).")
+        return JsonResponse({
+            "success": True,
+            "message": f"Inventario actualizado en {sucursal.nombre}; proveedor {proveedor.nombre} vinculado con {len(precios_actualizados)} precio(s).",
+            "rows": actualizados,
+            "proveedor_factura": _proveedor_payload(proveedor, proveedor_data),
+            "precios_actualizados": precios_actualizados,
+            "redirect_url": reverse("visualizar_inventarios"),
         })
 

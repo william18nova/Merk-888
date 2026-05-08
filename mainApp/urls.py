@@ -314,6 +314,12 @@ urlpatterns = [
 
     path("a", views.GestionInventarioMasivaView.as_view(), name="inventario_masivo"),
 
+    path("inventario/fotos/", views.InventarioFotosPageView.as_view(), name="inventario_fotos"),
+    path("inventario/fotos/catalogo/", views.InventarioFotosCatalogoView.as_view(), name="inventario_fotos_catalogo"),
+    path("inventario/fotos/proveedor/", views.InventarioFotosProveedorLookupView.as_view(), name="inventario_fotos_proveedor_lookup"),
+    path("inventario/fotos/procesar/", views.InventarioFotosProcesarView.as_view(), name="inventario_fotos_procesar"),
+    path("inventario/fotos/confirmar/", views.InventarioFotosConfirmarView.as_view(), name="inventario_fotos_confirmar"),
+
     path("autocomplete/sucursales/", views.SucursalAutocompleteView.as_view(), name="sucursal_autocomplete_simple"),
 
     path("autocomplete/productos/nombre/", views.ProductoBuscarNombreView.as_view(), name="producto_buscar_nombre_simple"),

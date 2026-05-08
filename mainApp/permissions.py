@@ -105,6 +105,18 @@ PERMISSION_DEFINITIONS = [
         "aliases": ["editar_inventario", "inventario_masivo", "gestion inventario masiva"],
     },
     {
+        "code": "inventarios_fotos",
+        "label": "Inventario desde fotos",
+        "description": "Permite cargar inventario desde fotos de facturas.",
+        "aliases": [
+            "inventario_fotos",
+            "inventario_fotos_catalogo",
+            "inventario_fotos_proveedor_lookup",
+            "inventario_fotos_procesar",
+            "inventario_fotos_confirmar",
+        ],
+    },
+    {
         "code": "inventarios_eliminar",
         "label": "Eliminar inventario",
         "description": "Permite eliminar productos de inventario.",
@@ -435,6 +447,7 @@ PERMISSION_BY_CODE = {item["code"]: item for item in PERMISSION_DEFINITIONS}
 
 PERMISSION_IMPLICATIONS = {
     "caja_turnos_editar": ["caja_admin"],
+    "inventarios_fotos": ["inventarios_editar"],
 }
 
 
@@ -456,6 +469,11 @@ ROUTE_PERMISSIONS = {
     "visualizar_inventarios": "inventarios_ver",
     "editar_inventario": "inventarios_editar",
     "inventario_masivo": "inventarios_editar",
+    "inventario_fotos": "inventarios_fotos",
+    "inventario_fotos_catalogo": "inventarios_fotos",
+    "inventario_fotos_proveedor_lookup": "inventarios_fotos",
+    "inventario_fotos_procesar": "inventarios_fotos",
+    "inventario_fotos_confirmar": "inventarios_fotos",
     "inventario_item_ajax": "inventarios_editar",
     "producto_detalle_inventario": "inventarios_ver",
     "eliminar_producto_inventario": "inventarios_eliminar",
@@ -573,6 +591,7 @@ NAV_GROUPS = [
             {"label": "Agregar inventario", "url_name": "agregar_inventario"},
             {"label": "Visualizar inventarios", "url_name": "visualizar_inventarios"},
             {"label": "Inventario masivo", "url_name": "inventario_masivo"},
+            {"label": "Inventario desde fotos", "url_name": "inventario_fotos"},
         ],
     },
     {
