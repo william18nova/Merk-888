@@ -42,6 +42,7 @@ $(function () {
   // ✅ pagos mixto
   const $hidPagos     = $("#pagos");      // hidden input name="pagos"
   const $hidMedioPago = $("#medio_pago"); // compat (efectivo/tarjeta/transferencia/mixto)
+  const $hidEmpleadoPassword = $("#empleado_password");
 
   // ✅ Modal refs (para total en vivo)
   const $modal      = $("#myModal");
@@ -189,6 +190,13 @@ $(function () {
   const cantidades = []; // [ 1, -2, ... ]
   let runningTotal = 0;
   let lastAddedPid = null;
+  let selectedClientLabel = "";
+  let selectedEmployeeClient = {
+    isEmployee: false,
+    employeeName: "",
+    documento: "",
+    employeeHasUser: false
+  };
 
   const PROMO_BAG_21 = "21";
   const PROMO_BAG_8001 = "8001";
@@ -204,13 +212,48 @@ $(function () {
     defer(syncHiddenFieldsNow);
   }
 
+  function isEmployeeClientSelected() {
+    return !!(selectedEmployeeClient.isEmployee && String($("#cliente_id").val() || "").trim());
+  }
+
+  function employeeDiscountAmount() {
+    const base = safeNumber(runningTotal);
+    if (!isEmployeeClientSelected() || base <= 0) return 0;
+    return Number(to2(base * 0.10));
+  }
+
+  function saleTotalForPayment() {
+    const base = safeNumber(runningTotal);
+    if (base <= 0) return base;
+    return Number(to2(base - employeeDiscountAmount()));
+  }
+
+  function refreshEmployeeDiscountUI() {
+    const active = isEmployeeClientSelected();
+    const $box = $("#employee-discount-auth");
+    const $summary = $("#employee-discount-summary");
+    const discount = employeeDiscountAmount();
+    const totalWithDiscount = saleTotalForPayment();
+
+    $box.toggle(active);
+    if (!active) {
+      $("#employee-password-input").val("");
+      $hidEmpleadoPassword.val("");
+      return;
+    }
+
+    const employeeName = selectedEmployeeClient.employeeName || "Empleado";
+    $summary.text(`${employeeName}: descuento 10% (${money(discount)}). Total con descuento: ${money(totalWithDiscount)}.`);
+  }
+
   function setTotal(v) {
     const safe = Number(v);
     runningTotal = Number.isFinite(safe) ? safe : 0;
     $totalEl.text(money(runningTotal));
 
     if ($modal && $modal.length && $modal.is(":visible") && $modalTotal && $modalTotal.length) {
-      $modalTotal.text(money(runningTotal));
+      refreshEmployeeDiscountUI();
+      $modalTotal.text(money(saleTotalForPayment()));
     }
     syncHiddenFields();
   }
@@ -460,6 +503,11 @@ $(function () {
     // cliente
     try { $("#cliente_id").val(""); } catch {}
     $inpCliente.val("");
+    selectedClientLabel = "";
+    selectedEmployeeClient = { isEmployee: false, employeeName: "", documento: "", employeeHasUser: false };
+    $("#employee-password-input").val("");
+    $hidEmpleadoPassword.val("");
+    refreshEmployeeDiscountUI();
 
     // producto inputs + pid
     $inpNombre.val("");
@@ -2591,10 +2639,45 @@ $(function () {
         const d = await fetch(CLIENTE_URL + "?" + new URLSearchParams({ term, _ts: Date.now() }), { cache: "no-store" })
           .then(r=> r.ok ? r.json() : {results:[]})
           .catch(()=>({results:[]}));
-        resp((d.results||[]).map(c=>({ id:c.id, label:c.text, value:c.text, name:c.text })));
+        resp((d.results||[]).map(c=>({
+          id:c.id,
+          label:c.text,
+          value:c.text,
+          name:c.text,
+          documento:c.documento || "",
+          isEmployee: !!c.is_employee,
+          employeeName: c.employee_name || "",
+          employeeHasUser: !!c.employee_has_user
+        })));
       })();
     },
-    onSelect: ({ id, label }) => { $inpCliente.val(label); $("#cliente_id").val(id); }
+    onSelect: (item) => {
+      const id = item.id;
+      const label = item.label || item.value || "";
+      selectedClientLabel = label;
+      selectedEmployeeClient = {
+        isEmployee: !!item.isEmployee,
+        employeeName: item.employeeName || label,
+        documento: item.documento || "",
+        employeeHasUser: !!item.employeeHasUser
+      };
+      $inpCliente.val(label);
+      $("#cliente_id").val(id);
+      $("#employee-password-input").val("");
+      $hidEmpleadoPassword.val("");
+      refreshEmployeeDiscountUI();
+    }
+  });
+
+  $inpCliente.on("input.employeeDiscount", function(){
+    if (String(this.value || "") !== selectedClientLabel) {
+      selectedClientLabel = "";
+      selectedEmployeeClient = { isEmployee: false, employeeName: "", documento: "", employeeHasUser: false };
+      $("#cliente_id").val("");
+      $("#employee-password-input").val("");
+      $hidEmpleadoPassword.val("");
+      refreshEmployeeDiscountUI();
+    }
   });
 
   /* ================== UX: inputs vinculados ================== */
@@ -2965,7 +3048,7 @@ $(function () {
   }
 
   function computePaidSoFar(){
-    const total = safeNumber(runningTotal);
+    const total = saleTotalForPayment();
     const medios = getCheckedMedios();
     if (!medios.length) return 0;
 
@@ -2976,7 +3059,7 @@ $(function () {
   }
 
   function refreshPendingUI(){
-    const total = safeNumber(runningTotal);
+    const total = saleTotalForPayment();
     const paid  = safeNumber(computePaidSoFar());
     const diff  = total - paid;
 
@@ -3012,7 +3095,7 @@ $(function () {
       return;
     }
 
-    const efMonto = safeNumber(runningTotal);
+    const efMonto = saleTotalForPayment();
     $amountIn.attr("placeholder", money(efMonto || 0));
 
     const raw = ($amountIn.val() || "").trim();
@@ -3045,7 +3128,7 @@ $(function () {
         if (!on) {
           $amt.val("");
         } else {
-          const total = safeNumber(runningTotal);
+          const total = saleTotalForPayment();
           const already = sumMixtoSelectedAmounts({ excludeMedio: medio });
           const faltante = Math.max(0, total - already);
           if (parseAmt($amt.val()) <= 0) $amt.val(to2(faltante || 0));
@@ -3099,7 +3182,7 @@ $(function () {
           $amt.prop("disabled", false);
           setAmtVisibility($amt, true);
           rowForCheck($chk).addClass("show-amt");
-          if (parseAmt($amt.val()) <= 0) $amt.val(to2(runningTotal || 0));
+          if (parseAmt($amt.val()) <= 0) $amt.val(to2(saleTotalForPayment() || 0));
         }
       }
     } else {
@@ -3111,7 +3194,7 @@ $(function () {
   });
 
   function buildPagosJSONOrError(){
-    const total = safeNumber(runningTotal);
+    const total = saleTotalForPayment();
 
     if (total <= 0) return { pagos: [] };
 
@@ -3187,17 +3270,19 @@ $(function () {
 
     enforceTotalIntegrity();
 
-    if (safeNumber(runningTotal) <= 0) {
+    if (safeNumber(runningTotal) <= 0 && !isEmployeeClientSelected()) {
       $hidPagos.val("[]");
       $hidMedioPago.val("");
+      $hidEmpleadoPassword.val("");
       $("#venta-form").trigger("submit");
       return;
     }
 
     ensureMixUIExists();
     showMixError("");
+    refreshEmployeeDiscountUI();
 
-    $("#modal-total").text(money(runningTotal));
+    $("#modal-total").text(money(saleTotalForPayment()));
 
     $hidPagos.val("");
     $hidMedioPago.val("");
@@ -3519,6 +3604,18 @@ $(function () {
     showMixError("");
     if (REPRICE_ON_MODAL && $modal.attr("data-loading-prices") === "1") return;
 
+    if (isEmployeeClientSelected()) {
+      const pass = String($("#employee-password-input").val() || "").trim();
+      if (!pass) {
+        showMixError("El empleado comprador debe escribir su contrasena para autorizar el descuento.");
+        $("#employee-password-input").focus();
+        return;
+      }
+      $hidEmpleadoPassword.val(pass);
+    } else {
+      $hidEmpleadoPassword.val("");
+    }
+
     const built = buildPagosJSONOrError();
     if (built.error) { showMixError(built.error); return; }
 
@@ -3731,6 +3828,9 @@ $(function () {
 
     // ✅ Asegura productos/cantidades actualizados sin esperar requestIdleCallback.
     syncHiddenFieldsNow();
+    if (!isEmployeeClientSelected()) {
+      $hidEmpleadoPassword.val("");
+    }
 
     const form = this;
     const fd = new FormData(form);
@@ -3760,7 +3860,7 @@ $(function () {
       }
 
       const pagos = readPagosFromHidden();
-      const totalNum = safeNumber(runningTotal);
+      const totalNum = saleTotalForPayment();
 
       const esMixto = isMixtoFromPagos(pagos);
       const ef = (pagos || []).find(p => String(p.medio_pago || "").toLowerCase() === "efectivo");

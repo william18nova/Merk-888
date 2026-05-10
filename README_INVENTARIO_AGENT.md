@@ -36,6 +36,13 @@ Si el celular no abre el enlace, permite el puerto `8788` en el firewall de Wind
 - `INVENTARIO_FOTOS_SCRIPT` (agente): ruta del `gemini_selenium_cli.py`
 - `INVENTARIO_FOTOS_TIMEOUT` (agente): timeout del proceso en segundos
 - `INVENTARIO_MOBILE_SESSION_TTL` (agente): duracion de la sesion movil en segundos
+- `INVENTARIO_BROWSER_BACKGROUND=1`: abre Chrome fuera de pantalla y evita dialogos de Windows cuando sea posible.
+- `INVENTARIO_BROWSER_HEADLESS=1`: intenta Chrome headless real. Es menos confiable con Gemini/DeepSeek y login.
+
+## Modo segundo plano
+`start_inventario_agent.cmd` activa `INVENTARIO_BROWSER_BACKGROUND=1` e `INVENTARIO_BROWSER_HEADLESS=1` por defecto. El proceso usa Chrome sin ventana visible y adjunta archivos mediante inputs del navegador.
+
+Si Gemini o DeepSeek piden iniciar sesion, desactiva temporalmente esas lineas en `start_inventario_agent.cmd`, abre el agente en modo visible, inicia sesion una vez y luego vuelve a activar el modo segundo plano.
 
 ## Nota
 El endpoint Django `inventario/fotos/procesar/` quedo solo como respaldo opcional. Por defecto esta desactivado para evitar ejecutar Selenium dentro del servidor.

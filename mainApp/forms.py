@@ -1943,6 +1943,7 @@ class GenerarVentaForm(forms.Form):
 
     # ✅ NUEVO: efectivo recibido para calcular cambio (hidden)
     efectivo_recibido = forms.CharField(widget=forms.HiddenInput(), required=False)
+    empleado_password = forms.CharField(widget=forms.HiddenInput(), required=False)
 
     # ───── helpers JSON ─────
     def _clean_json(self, field, default="[]"):
@@ -2000,6 +2001,9 @@ class GenerarVentaForm(forms.Form):
             return Decimal(raw.replace(",", "."))
         except (InvalidOperation, ValueError):
             raise forms.ValidationError("Efectivo recibido inválido.")
+
+    def clean_empleado_password(self):
+        return (self.cleaned_data.get("empleado_password") or "").strip()
     
     
 

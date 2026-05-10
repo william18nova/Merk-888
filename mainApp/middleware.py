@@ -34,17 +34,19 @@ class PagePermissionMiddleware:
             return None
 
         user = getattr(request, "user", None)
+        wants_json = (
+            request.headers.get("x-requested-with") == "XMLHttpRequest"
+            or "application/json" in request.headers.get("accept", "")
+        )
         if not getattr(user, "is_authenticated", False):
+            if wants_json:
+                return JsonResponse({"success": False, "error": "Tu sesion expiro. Vuelve a iniciar sesion."}, status=401)
             return redirect_to_login(request.get_full_path())
 
         if user_can_access_url_name(user, url_name):
             return None
 
         message = "No tienes permiso para acceder a esta pagina."
-        wants_json = (
-            request.headers.get("x-requested-with") == "XMLHttpRequest"
-            or "application/json" in request.headers.get("accept", "")
-        )
         if wants_json:
             return JsonResponse({"success": False, "error": message}, status=403)
 

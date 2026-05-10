@@ -112,11 +112,48 @@ PAUSA_BLOQUE_GEMINI = 0.01
 driver = None
 
 
+def modo_navegador_background():
+    return os.getenv("INVENTARIO_BROWSER_BACKGROUND", "").strip().lower() in ("1", "true", "yes", "si")
+
+
+def modo_navegador_headless():
+    return os.getenv("INVENTARIO_BROWSER_HEADLESS", "").strip().lower() in ("1", "true", "yes", "si")
+
+
+def permitir_dialogos_windows():
+    return not modo_navegador_background() and not modo_navegador_headless()
+
+
+def aplicar_modo_background_driver(drv):
+    if not modo_navegador_background() or modo_navegador_headless():
+        return
+    try:
+        drv.set_window_rect(x=-32000, y=-32000, width=1440, height=1000)
+    except Exception:
+        pass
+    try:
+        drv.minimize_window()
+    except Exception:
+        pass
+
+
 def crear_driver():
     chrome_options = Options()
     chrome_options.add_argument(f"--user-data-dir={ruta_user_data}")
     chrome_options.add_argument(f"--profile-directory={nombre_perfil}")
-    chrome_options.add_argument("--start-maximized")
+    if modo_navegador_headless():
+        chrome_options.add_argument("--headless=new")
+        chrome_options.add_argument("--window-size=1440,1000")
+        chrome_options.add_argument("--disable-gpu")
+    elif modo_navegador_background():
+        chrome_options.add_argument("--window-size=1440,1000")
+        chrome_options.add_argument("--window-position=-32000,-32000")
+        chrome_options.add_argument("--start-minimized")
+    else:
+        chrome_options.add_argument("--start-maximized")
+    chrome_options.add_argument("--no-first-run")
+    chrome_options.add_argument("--no-default-browser-check")
+    chrome_options.add_argument("--disable-notifications")
     chrome_options.add_argument("--disable-blink-features=AutomationControlled")
     chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
     chrome_options.add_experimental_option("useAutomationExtension", False)
@@ -124,6 +161,7 @@ def crear_driver():
 
     drv = webdriver.Chrome(options=chrome_options)
     drv.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+    aplicar_modo_background_driver(drv)
     return drv
 
 
@@ -167,6 +205,9 @@ def esperar_hasta(condicion, timeout=10, poll=POLL_FAST, mensaje="Condición no 
 
 
 def esperar_dialogo_archivo_windows(timeout=5):
+    if not permitir_dialogos_windows():
+        return False
+
     fin = time.time() + timeout
 
     while time.time() < fin:
@@ -287,25 +328,96 @@ def limpiar_campo_contenteditable(elem):
             pass
 
 
+def obtener_texto_contenteditable(elem):
+    try:
+        return driver.execute_script("""
+            const el = arguments[0];
+            return (el.innerText || el.textContent || '').trim();
+        """, elem) or ""
+    except Exception:
+        try:
+            return elem.text or ""
+        except Exception:
+            return ""
+
+
+def texto_contenteditable_coincide(elem, texto):
+    texto_actual = obtener_texto_contenteditable(elem)
+    return limpiar_texto_para_comparacion(texto_actual) == limpiar_texto_para_comparacion(texto)
+
+
+def setear_texto_contenteditable(elem, texto):
+    try:
+        driver.execute_script("""
+            const el = arguments[0];
+            const text = arguments[1];
+
+            el.focus();
+
+            const selection = window.getSelection();
+            const range = document.createRange();
+            range.selectNodeContents(el);
+            selection.removeAllRanges();
+            selection.addRange(range);
+
+            document.execCommand('delete', false, null);
+            const inserted = document.execCommand('insertText', false, text);
+
+            if (!inserted) {
+                el.textContent = text;
+            }
+
+            el.dispatchEvent(new InputEvent('input', {
+                bubbles: true,
+                cancelable: true,
+                inputType: 'insertText',
+                data: text
+            }));
+            el.dispatchEvent(new Event('change', { bubbles: true }));
+        """, elem, texto)
+        time.sleep(0.25)
+        return texto_contenteditable_coincide(elem, texto)
+    except Exception:
+        return False
+
+
+def pegar_texto_contenteditable(elem, texto):
+    try:
+        elem.click()
+        limpiar_campo_contenteditable(elem)
+        time.sleep(0.1)
+
+        if poner_texto_portapapeles_windows(texto):
+            ActionChains(driver).key_down(Keys.CONTROL).send_keys("v").key_up(Keys.CONTROL).perform()
+            time.sleep(0.5)
+            return texto_contenteditable_coincide(elem, texto)
+    except Exception:
+        pass
+    return False
+
+
 def escribir_contenteditable_max_velocidad(elem, texto):
     try:
         elem.click()
         limpiar_campo_contenteditable(elem)
 
-        for i, char in enumerate(texto, 1):
-            elem.send_keys(char)
+        if setear_texto_contenteditable(elem, texto):
+            print(" Prompt puesto completo en Gemini con JavaScript")
+            return True
 
-            if i % PAUSA_CADA_N_CARACTERES_GEMINI == 0:
-                time.sleep(PAUSA_BLOQUE_GEMINI)
-            else:
-                time.sleep(DELAY_CARACTER_GEMINI)
+        if pegar_texto_contenteditable(elem, texto):
+            print(" Prompt pegado completo en Gemini desde portapapeles")
+            return True
 
-        texto_actual = driver.execute_script("""
-            const el = arguments[0];
-            return (el.innerText || el.textContent || '').trim();
-        """, elem) or ""
+        elem.click()
+        limpiar_campo_contenteditable(elem)
+        elem.send_keys(texto)
+        time.sleep(0.5)
+        if texto_contenteditable_coincide(elem, texto):
+            print(" Prompt enviado completo a Gemini con send_keys")
+            return True
 
-        return limpiar_texto_para_comparacion(texto_actual) == limpiar_texto_para_comparacion(texto)
+        return False
 
     except Exception:
         return False
@@ -368,6 +480,7 @@ def guardar_debug_gemini(nombre='debug_gemini_inicio.png'):
 
 def abrir_gemini():
     driver.get("https://gemini.google.com/")
+    aplicar_modo_background_driver(driver)
     print("Esperando que cargue Gemini...")
     esperar_documento_listo(timeout=25)
     time.sleep(3)
@@ -390,6 +503,11 @@ def abrir_gemini():
     )
 
     if gemini_pide_login():
+        if modo_navegador_background() or modo_navegador_headless():
+            raise RuntimeError(
+                "Gemini requiere inicio de sesion manual. Desactiva INVENTARIO_BROWSER_BACKGROUND/HEADLESS, "
+                "inicia sesion una vez en modo visible y vuelve a activar el modo segundo plano."
+            )
         print(" Gemini requiere inicio de sesión manual.")
         print(" 1. En la ventana de Chrome inicia sesión en Google/Gemini.")
         print(" 2. Espera a que se vea el chat de Gemini.")
@@ -778,6 +896,9 @@ def poner_texto_portapapeles_windows(texto):
 
 
 def enviar_archivo_por_dialogo_windows(ruta_absoluta, timeout_dialogo=4, requiere_dialogo=True):
+    if not permitir_dialogos_windows():
+        return False
+
     if not os.path.exists(ruta_absoluta):
         print(f" La imagen no existe antes de usar el dialogo: {ruta_absoluta}")
         return False
@@ -816,6 +937,19 @@ def adjuntar_archivo_gemini(ruta_archivo, es_imagen=False):
         ruta_absoluta = os.path.abspath(ruta_archivo)
         if not os.path.exists(ruta_absoluta):
             print(f" La imagen no existe antes de adjuntar: {ruta_absoluta}")
+            return False
+
+        if not permitir_dialogos_windows():
+            if enviar_archivo_por_input_file_gemini(ruta_absoluta, timeout=4):
+                print(" Esperando que Gemini procese el archivo...")
+                return confirmar_archivo_adjuntado_gemini(timeout=14)
+
+            if hacer_primer_clic_add_2() and enviar_archivo_por_input_file_gemini(ruta_absoluta, timeout=6):
+                print(" Esperando que Gemini procese el archivo...")
+                return confirmar_archivo_adjuntado_gemini(timeout=14)
+
+            print(" No se pudo adjuntar la imagen en modo segundo plano sin dialogo de Windows")
+            guardar_debug_gemini('debug_gemini_upload_error.png')
             return False
 
         if not hacer_primer_clic_add_2():
@@ -909,9 +1043,11 @@ def enviar_prompt_gemini(texto_prompt):
             campo_texto.click()
             limpiar_campo_contenteditable(campo_texto)
 
-            for char in texto_prompt:
-                campo_texto.send_keys(char)
-                time.sleep(0.005)
+            if not pegar_texto_contenteditable(campo_texto, texto_prompt):
+                campo_texto.click()
+                limpiar_campo_contenteditable(campo_texto)
+                campo_texto.send_keys(texto_prompt)
+                time.sleep(0.5)
 
         campo_texto.send_keys(Keys.RETURN)
         print(" Prompt enviado a Gemini")
@@ -1233,6 +1369,7 @@ def procesar_todas_las_imagenes_con_gemini(carpeta_actual):
 
 def abrir_deepseek():
     driver.get("https://chat.deepseek.com/")
+    aplicar_modo_background_driver(driver)
     print("Esperando que cargue DeepSeek...")
     esperar_documento_listo(timeout=20)
     esperar_hasta(
@@ -1245,6 +1382,11 @@ def abrir_deepseek():
 def verificar_login_deepseek():
     current_url = driver.current_url.lower()
     if "auth" in current_url or "login" in current_url:
+        if modo_navegador_background() or modo_navegador_headless():
+            raise RuntimeError(
+                "DeepSeek requiere inicio de sesion manual. Desactiva INVENTARIO_BROWSER_BACKGROUND/HEADLESS, "
+                "inicia sesion una vez en modo visible y vuelve a activar el modo segundo plano."
+            )
         print("\n Necesitas iniciar sesión manualmente en DeepSeek.")
         print("1. En la ventana, inicia sesión con tu cuenta.")
         print("2. Espera a que cargue el chat.")

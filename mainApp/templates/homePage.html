@@ -8,15 +8,100 @@
 {% endblock %}
 
 {% block content %}
-<main class="home">
-    <h1 class="home__title">Software Administrativo de Supermercados</h1>
-    <figure class="home__logo">
-      <img src="{% static 'images/logoNovaAdvancetransparente.png' %}"
-           alt="Logo Nova Advance" loading="lazy">
-    </figure>
-    <p class="home__tagline">Nova Advance®</p>
-    <p class="home__copyright">
-      © 2024 Nova Advance. Todos los derechos reservados.
-    </p>
+<main class="dashboard-home">
+  <section class="dashboard-hero" aria-label="Resumen inicial">
+    <div class="brand-panel">
+      <img
+        src="{% static 'images/logoNovaAdvancetransparente.png' %}"
+        alt="Nova Advance"
+        class="brand-panel__logo"
+      >
+      <div>
+        <p class="eyebrow">Nova Advance</p>
+        <h1>Panel de control</h1>
+        <p class="brand-panel__copy">Operacion diaria del punto de venta.</p>
+      </div>
+    </div>
+
+    <div class="session-panel session-panel--{{ dashboard_turno_status }}">
+      <span class="session-panel__status">{{ dashboard_turno_label }}</span>
+      <strong>{{ dashboard_user_label }}</strong>
+      <span>{{ dashboard_turno_detail }}</span>
+      <small>{{ dashboard_today|date:"d/m/Y" }}</small>
+    </div>
+  </section>
+
+  <section class="metric-grid" aria-label="Indicadores">
+    {% for card in dashboard_cards %}
+      <article class="metric-card metric-card--{{ card.tone }}">
+        <span>{{ card.label }}</span>
+        <strong>{{ card.value }}</strong>
+        <small>{{ card.detail }}</small>
+      </article>
+    {% endfor %}
+  </section>
+
+  <section class="dashboard-layout">
+    <div class="dashboard-column">
+      <section class="panel-block">
+        <div class="panel-block__header">
+          <h2>Accesos rapidos</h2>
+          <span>Trabajo frecuente</span>
+        </div>
+
+        <div class="quick-grid">
+          {% for action in dashboard_quick_actions %}
+            <a href="{{ action.url }}" class="quick-action">
+              <span>{{ action.eyebrow }}</span>
+              <strong>{{ action.label }}</strong>
+            </a>
+          {% empty %}
+            <p class="empty-state">No tienes accesos disponibles con tus permisos actuales.</p>
+          {% endfor %}
+        </div>
+      </section>
+
+      <section class="panel-block">
+        <div class="panel-block__header">
+          <h2>Productos mas vendidos hoy</h2>
+          <span>Por cantidad</span>
+        </div>
+
+        <div class="list-stack">
+          {% for item in dashboard_top_products %}
+            <div class="list-row">
+              <span>{{ item.productoid__nombre }}</span>
+              <strong>{{ item.cantidad_vendida }}</strong>
+            </div>
+          {% empty %}
+            <p class="empty-state">Todavia no hay ventas registradas hoy.</p>
+          {% endfor %}
+        </div>
+      </section>
+    </div>
+
+    <section class="panel-block dashboard-alerts">
+      <div class="panel-block__header">
+        <h2>Alertas de inventario</h2>
+        <span>Stock bajo</span>
+      </div>
+
+      <div class="stock-list">
+        {% for item in dashboard_low_stock %}
+          <a href="{% url 'visualizar_inventarios' %}" class="stock-row">
+            <div>
+              <strong>{{ item.productoid.nombre }}</strong>
+              <span>{{ item.sucursalid.nombre }}</span>
+            </div>
+            <em class="{% if item.cantidad < 0 %}is-negative{% endif %}">{{ item.cantidad }}</em>
+          </a>
+        {% empty %}
+          <p class="empty-state">No hay productos con stock bajo.</p>
+        {% endfor %}
+      </div>
+    </section>
+  </section>
+
+  <p class="dashboard-footer">Nova Advance - Software Administrativo de Supermercados</p>
 </main>
 {% endblock %}

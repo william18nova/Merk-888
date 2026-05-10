@@ -10,13 +10,14 @@
       return setTimeout(init, 100);
     }
 
-    const isMobile = () => window.matchMedia("(max-width: 720px)").matches;
+    const isMobile = () => window.matchMedia("(max-width: 1024px)").matches;
 
     // Guard para evitar cierre inmediato por el click global
     let openGuardUntil = 0;
 
     function setOpen(open) {
       links.classList.toggle("is-open", open);
+      document.body.classList.toggle("nv-menu-open", open);
       // sincroniza aria-expanded
       burger.setAttribute("aria-expanded", open ? "true" : "false");
       if (!open) {
@@ -55,6 +56,13 @@
         setOpen(false);
       }
     }, { passive: true, capture: true });
+
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && links.classList.contains("is-open")) {
+        setOpen(false);
+        burger.focus();
+      }
+    });
 
     // === Reset de estado al cambiar tamaño ===
     window.addEventListener("resize", () => {

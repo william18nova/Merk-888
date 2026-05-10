@@ -256,6 +256,54 @@ body.modal-open{
   color: rgba(255,255,255,.94);
 }
 
+#myModal .employee-discount-auth{
+  margin: 10px 0 12px;
+  padding: 13px 14px;
+  border-radius: var(--na-radius2);
+  background: rgba(40,167,69,.15);
+  border: 1px solid rgba(40,167,69,.34);
+  box-shadow: 0 12px 24px rgba(0,0,0,.16);
+}
+#myModal .employee-discount-auth strong,
+#myModal .employee-discount-auth span,
+#myModal .employee-discount-auth label,
+#myModal .employee-discount-auth small{
+  display:block;
+}
+#myModal .employee-discount-auth strong{
+  font-weight:950;
+  margin-bottom:4px;
+}
+#myModal .employee-discount-auth span{
+  color:rgba(255,255,255,.88);
+  font-size:13px;
+  margin-bottom:10px;
+}
+#myModal .employee-discount-auth label{
+  font-weight:900;
+  margin-bottom:7px;
+}
+#myModal .employee-discount-auth input{
+  width:100%;
+  height:44px;
+  padding:11px 12px;
+  border-radius:16px;
+  border:1px solid rgba(255,255,255,.30);
+  background:rgba(255,255,255,.96);
+  color:#0b1220;
+  outline:none;
+  box-shadow:0 12px 24px rgba(0,0,0,.14);
+}
+#myModal .employee-discount-auth input:focus{
+  border-color:rgba(77,166,255,.85);
+  box-shadow:0 0 0 3px rgba(77,166,255,.18), 0 12px 24px rgba(0,0,0,.14);
+}
+#myModal .employee-discount-auth small{
+  margin-top:7px;
+  color:rgba(255,255,255,.76);
+  font-size:12px;
+}
+
 /* =========================================================
    ✅ TEXTO GUÍA
    ========================================================= */

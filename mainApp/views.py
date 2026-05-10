@@ -76,7 +76,7 @@ from django.utils.decorators import method_decorator
 from django.utils.html import escape
 from django.db.models import Subquery
 from django.core.paginator import Paginator
-from django.db.models.functions import Lower, StrIndex, Trim, Coalesce, TruncDate, Cast
+from django.db.models.functions import Lower, StrIndex, Trim, Coalesce, TruncDate, Cast, ExtractHour, ExtractIsoWeekDay, ExtractDay
 import os, io, textwrap, subprocess
 from django.views.decorators.http import require_POST
 from django.conf import settings
@@ -203,6 +203,141 @@ class LoginView(View):
 
 class HomePageView(LoginRequiredMixin, TemplateView):
     template_name = "homePage.html"
+
+    @staticmethod
+    def _money(value):
+        try:
+            amount = Decimal(value or 0)
+        except Exception:
+            amount = Decimal("0")
+        return f"$ {amount:,.0f}".replace(",", ".")
+
+    def _quick_actions(self):
+        items = [
+            ("generar_venta", "Generar venta", "Caja"),
+            ("inventario_fotos", "Inventario por foto", "Inventario"),
+            ("visualizar_inventarios", "Ver inventario", "Inventario"),
+            ("turno_caja", "Turno de caja", "Caja"),
+            ("ventas_diarias", "Ventas diarias", "Reportes"),
+            ("metricas_negocio", "Metricas del negocio", "Reportes"),
+            ("visualizar_pedidos", "Pedidos proveedor", "Compras"),
+        ]
+        actions = []
+        for url_name, label, eyebrow in items:
+            if not user_can_access_url_name(self.request.user, url_name):
+                continue
+            try:
+                url = reverse(url_name)
+            except Exception:
+                continue
+            actions.append({"url": url, "label": label, "eyebrow": eyebrow})
+        return actions
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        today = timezone.localdate()
+        user = self.request.user
+
+        ventas_hoy = Venta.objects.filter(fecha=today).aggregate(
+            total=Sum("total"),
+            cantidad=Count("ventaid"),
+        )
+        total_hoy = ventas_hoy.get("total") or Decimal("0")
+        cantidad_ventas = ventas_hoy.get("cantidad") or 0
+
+        turno = (
+            TurnoCaja.objects
+            .select_related("puntopago", "puntopago__sucursalid")
+            .filter(cajero=user, estado__in=["ABIERTO", "CIERRE"])
+            .order_by("-inicio")
+            .first()
+        )
+
+        low_stock_qs = (
+            Inventario.objects
+            .select_related("productoid", "sucursalid")
+            .filter(cantidad__lte=5)
+            .order_by("cantidad", "productoid__nombre")
+        )
+        low_stock_count = low_stock_qs.count()
+        low_stock_items = low_stock_qs[:6]
+
+        pedidos_pendientes = PedidoProveedor.objects.filter(estado="En espera").count()
+        productos_sin_codigo = Producto.objects.filter(
+            Q(codigo_de_barras__isnull=True) | Q(codigo_de_barras__exact="")
+        ).count()
+
+        top_productos = (
+            DetalleVenta.objects
+            .filter(ventaid__fecha=today, cantidad__gt=0)
+            .values("productoid__nombre")
+            .annotate(cantidad_vendida=Sum("cantidad"))
+            .order_by("-cantidad_vendida", "productoid__nombre")[:5]
+        )
+
+        turno_total = getattr(turno, "ventas_total", None) if turno else None
+        turno_label = "Sin turno abierto"
+        turno_detail = "Inicia o recupera un turno para vender."
+        turno_status = "warning"
+        if turno:
+            turno_label = f"Turno {turno.estado.lower()}"
+            puntopago = getattr(turno, "puntopago", None)
+            sucursal = getattr(puntopago, "sucursalid", None)
+            turno_detail = " - ".join(
+                part for part in [
+                    getattr(sucursal, "nombre", ""),
+                    getattr(puntopago, "nombre", ""),
+                ] if part
+            ) or "Caja activa"
+            turno_status = "ok" if turno.estado == "ABIERTO" else "attention"
+
+        empleado = getattr(user, "empleado", None)
+        user_label = str(empleado or user)
+
+        context.update({
+            "dashboard_today": today,
+            "dashboard_user_label": user_label,
+            "dashboard_turno": turno,
+            "dashboard_turno_label": turno_label,
+            "dashboard_turno_detail": turno_detail,
+            "dashboard_turno_status": turno_status,
+            "dashboard_cards": [
+                {
+                    "label": "Ventas de hoy",
+                    "value": self._money(total_hoy),
+                    "detail": f"{cantidad_ventas} venta{'s' if cantidad_ventas != 1 else ''}",
+                    "tone": "sales",
+                },
+                {
+                    "label": "Turno actual",
+                    "value": self._money(turno_total) if turno else "Pendiente",
+                    "detail": turno_detail,
+                    "tone": turno_status,
+                },
+                {
+                    "label": "Stock bajo",
+                    "value": str(low_stock_count),
+                    "detail": "productos con 5 unidades o menos",
+                    "tone": "stock",
+                },
+                {
+                    "label": "Pedidos pendientes",
+                    "value": str(pedidos_pendientes),
+                    "detail": "pedidos en espera",
+                    "tone": "orders",
+                },
+                {
+                    "label": "Sin codigo",
+                    "value": str(productos_sin_codigo),
+                    "detail": "productos por completar",
+                    "tone": "barcode",
+                },
+            ],
+            "dashboard_low_stock": low_stock_items,
+            "dashboard_top_products": top_productos,
+            "dashboard_quick_actions": self._quick_actions(),
+        })
+        return context
 
 
 class SucursalCreateAJAXView(LoginRequiredMixin, FormView):
@@ -3042,6 +3177,7 @@ class ClienteUpdateAJAXView(LoginRequiredMixin, UpdateView):
 class GenerarVentaView(LoginRequiredMixin, View):
     template_name = "generar_venta.html"
     success_url   = reverse_lazy("generar_venta")
+    EMPLOYEE_DISCOUNT_RATE = Decimal("0.10")
 
     # =========================
     # Helpers TURNO / LOCK
@@ -3075,6 +3211,60 @@ class GenerarVentaView(LoginRequiredMixin, View):
                     "data-locked": "1",
                 })
         return form
+
+    @staticmethod
+    def _normalize_document(value):
+        return re.sub(r"[^0-9A-Za-z]+", "", str(value or "")).lower()
+
+    @classmethod
+    def _empleado_por_documento_cliente(cls, cliente):
+        doc = cls._normalize_document(getattr(cliente, "numerodocumento", ""))
+        if not doc:
+            return None
+
+        exact = (
+            Empleado.objects
+            .select_related("usuarioid")
+            .filter(numerodocumento__iexact=str(getattr(cliente, "numerodocumento", "") or "").strip())
+            .first()
+        )
+        if exact:
+            return exact
+
+        for empleado in Empleado.objects.select_related("usuarioid").all():
+            if cls._normalize_document(empleado.numerodocumento) == doc:
+                return empleado
+        return None
+
+    @classmethod
+    def _validar_compra_empleado(cls, *, cajero_user, cliente, empleado_password):
+        if not cliente:
+            return None
+
+        empleado_comprador = cls._empleado_por_documento_cliente(cliente)
+        if not empleado_comprador:
+            return None
+
+        empleado_cajero = getattr(cajero_user, "empleado", None)
+        if empleado_cajero and empleado_cajero.pk == empleado_comprador.pk:
+            raise ValueError("Un empleado no puede autofacturarse con descuento.")
+
+        doc_cajero = cls._normalize_document(getattr(empleado_cajero, "numerodocumento", "")) if empleado_cajero else ""
+        doc_comprador = cls._normalize_document(getattr(empleado_comprador, "numerodocumento", ""))
+        if doc_cajero and doc_comprador and doc_cajero == doc_comprador:
+            raise ValueError("Un empleado no puede autofacturarse con descuento.")
+
+        usuario_comprador = getattr(empleado_comprador, "usuarioid", None)
+        if not usuario_comprador:
+            raise ValueError("El empleado comprador no tiene usuario asociado para autorizar el descuento.")
+
+        if not empleado_password:
+            raise ValueError("La compra de empleado requiere la contrasena del trabajador comprador.")
+
+        if not usuario_comprador.check_password(empleado_password):
+            raise ValueError("La contrasena del empleado comprador no es correcta.")
+
+        return empleado_comprador
 
     # ---------- GET ----------
     def get(self, request, *args, **kwargs):
@@ -3200,6 +3390,26 @@ class GenerarVentaView(LoginRequiredMixin, View):
 
         detalles, total = self._apply_bag_promo(detalles)
 
+        cliente_id = data.get('cliente_id')
+        cliente_inst = Cliente.objects.filter(pk=cliente_id).first() if cliente_id else None
+        empleado_comprador = None
+        descuento_empleado = Decimal("0")
+
+        try:
+            empleado_comprador = self._validar_compra_empleado(
+                cajero_user=request.user,
+                cliente=cliente_inst,
+                empleado_password=data.get("empleado_password"),
+            )
+        except ValueError as exc:
+            return JsonResponse({'success': False, 'error': str(exc)})
+
+        if empleado_comprador and total > 0:
+            descuento_empleado = (total * self.EMPLOYEE_DISCOUNT_RATE).quantize(
+                Decimal("0.01"), rounding=ROUND_HALF_UP
+            )
+            total = (total - descuento_empleado).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
         # pagos puede llegar como LISTA o como STRING JSON
         pagos = data.get("pagos") or []
         if isinstance(pagos, str):
@@ -3234,10 +3444,13 @@ class GenerarVentaView(LoginRequiredMixin, View):
         # ✅ ULTRA FAST: inventario en 1 UPDATE atómico
         return self._crear_venta_ultra_fast(
             request.user, suc_inst, pp_inst,
-            data.get('cliente_id'),
+            cliente_id,
             pagos_normalizados,
             detalles, total,
             efectivo_recibido,
+            cliente_inst=cliente_inst,
+            empleado_comprador=empleado_comprador,
+            descuento_empleado=descuento_empleado,
         )
 
     # =========================
@@ -3422,6 +3635,8 @@ class GenerarVentaView(LoginRequiredMixin, View):
         cajero_nombre = (venta_data or {}).get("cajero_nombre", "") or "—"
         refund_total  = Decimal((venta_data or {}).get("refund_total", 0) or 0)
         cambio        = Decimal((venta_data or {}).get("cambio", 0) or 0)
+        descuento_empleado = Decimal((venta_data or {}).get("descuento_empleado", 0) or 0)
+        empleado_comprador = (venta_data or {}).get("empleado_comprador", "") or ""
         venta_id      = (venta_data or {}).get("venta_id", "")
 
         head = [
@@ -3458,6 +3673,10 @@ class GenerarVentaView(LoginRequiredMixin, View):
             foot.append(lr("DEVUELTO:", money(refund_total)))
         if cambio > 0:
             foot.append(lr("CAMBIO:", money(cambio)))
+        if descuento_empleado > 0:
+            foot.append(lr("DESC. EMPLEADO:", f"-{money(descuento_empleado)}"))
+            if empleado_comprador:
+                foot.append(line(f"Empleado: {empleado_comprador}"))
 
         foot += [
             lr("TOTAL:", money(total)),
@@ -3472,7 +3691,10 @@ class GenerarVentaView(LoginRequiredMixin, View):
     # ✅ ULTRA FAST CREAR VENTA
     # =========================
     @staticmethod
-    def _crear_venta_ultra_fast(user, suc_inst, pp_inst, cliente_id, pagos, detalles, total, efectivo_recibido):
+    def _crear_venta_ultra_fast(
+        user, suc_inst, pp_inst, cliente_id, pagos, detalles, total, efectivo_recibido,
+        cliente_inst=None, empleado_comprador=None, descuento_empleado=Decimal("0")
+    ):
         """
         ULTRA FAST:
         - NO select_for_update + NO bulk_update con loop Python
@@ -3505,7 +3727,7 @@ class GenerarVentaView(LoginRequiredMixin, View):
             prod_ids = list(qty_map.keys())
 
             with transaction.atomic():
-                cliente_inst = Cliente.objects.filter(pk=cliente_id).first() if cliente_id else None
+                cliente_inst = cliente_inst or (Cliente.objects.filter(pk=cliente_id).first() if cliente_id else None)
                 mediopago = "mixto" if len(pagos) >= 2 else (pagos[0]["medio_pago"] if pagos else "sin_pago").lower()
 
                 venta = Venta.objects.create(
@@ -3589,6 +3811,8 @@ class GenerarVentaView(LoginRequiredMixin, View):
                     "refund_total": refund_total,
                     "cambio": cambio,
                     "venta_id": venta.pk,
+                    "descuento_empleado": descuento_empleado,
+                    "empleado_comprador": str(empleado_comprador or ""),
                 },
                 detalles, total, pagos
             )
@@ -4126,13 +4350,25 @@ class ClienteAutocompleteView(PaginatedAutocompleteMixin):
             )
 
         total   = qs.count()
-        results = [
-            {
+        clientes = list(qs.order_by("nombre")[start:end])
+
+        empleados_por_doc = {}
+        for empleado in Empleado.objects.select_related("usuarioid").all():
+            doc_norm = GenerarVentaView._normalize_document(empleado.numerodocumento)
+            if doc_norm:
+                empleados_por_doc[doc_norm] = empleado
+
+        results = []
+        for c in clientes:
+            empleado = empleados_por_doc.get(GenerarVentaView._normalize_document(c.numerodocumento))
+            results.append({
               "id"  : c.clienteid,
-              "text": f"{c.nombre} {c.apellido} ({c.numerodocumento})"
-            }
-            for c in qs.order_by("nombre")[start:end]
-        ]
+              "text": f"{c.nombre} {c.apellido} ({c.numerodocumento})",
+              "documento": c.numerodocumento or "",
+              "is_employee": bool(empleado),
+              "employee_name": str(empleado or "") if empleado else "",
+              "employee_has_user": bool(getattr(empleado, "usuarioid", None)) if empleado else False,
+            })
         return JsonResponse({"results": results, "has_more": end < total})
 
 
@@ -6115,6 +6351,412 @@ class VentasDiariasView(LoginRequiredMixin,DenyRolesMixin, View):
         return render(request, self.template_name, {"fecha_hoy": _iso_co(hoy)})
 
 
+
+
+class MetricasNegocioView(LoginRequiredMixin, View):
+    template_name = "metricas_negocio.html"
+
+    def get(self, request, *args, **kwargs):
+        today = timezone.localdate()
+        return render(request, self.template_name, {
+            "fecha_desde_default": (today - timedelta(days=30)).isoformat(),
+            "fecha_hasta_default": today.isoformat(),
+            "sucursales": Sucursal.objects.order_by("nombre"),
+            "puntos_pago": PuntosPago.objects.select_related("sucursalid").order_by("sucursalid__nombre", "nombre"),
+        })
+
+
+class MetricasNegocioDataView(LoginRequiredMixin, View):
+    MAX_RANGE_DAYS = 731
+
+    def dispatch(self, request, *args, **kwargs):
+        try:
+            return super().dispatch(request, *args, **kwargs)
+        except Exception as exc:
+            logger.exception("Error calculando metricas del negocio")
+            return JsonResponse({
+                "success": False,
+                "error": f"No se pudieron calcular las metricas: {exc}",
+            }, status=500)
+
+    @staticmethod
+    def _dec(value):
+        try:
+            return float(value or 0)
+        except Exception:
+            return 0.0
+
+    @staticmethod
+    def _int(value):
+        try:
+            return int(value or 0)
+        except Exception:
+            return 0
+
+    @staticmethod
+    def _pct(current, previous):
+        current = Decimal(str(current or 0))
+        previous = Decimal(str(previous or 0))
+        if previous == 0:
+            return None if current == 0 else 100.0
+        return float(((current - previous) / previous * Decimal("100")).quantize(Decimal("0.01")))
+
+    @staticmethod
+    def _avg_decimal(value, divisor):
+        if not divisor:
+            return Decimal("0")
+        return (Decimal(str(value or 0)) / Decimal(divisor)).quantize(Decimal("0.01"))
+
+    @staticmethod
+    def _parse_date_param(value, default):
+        parsed = parse_date(value) if value else None
+        return parsed or default
+
+    def _filters(self, request):
+        today = timezone.localdate()
+        start = self._parse_date_param(request.GET.get("desde"), today - timedelta(days=30))
+        end = self._parse_date_param(request.GET.get("hasta"), today)
+        if end < start:
+            start, end = end, start
+        if (end - start).days > self.MAX_RANGE_DAYS:
+            raise ValueError("El rango maximo permitido es de 731 dias.")
+
+        sucursal_id = (request.GET.get("sucursal_id") or "").strip()
+        puntopago_id = (request.GET.get("puntopago_id") or "").strip()
+        if sucursal_id and not sucursal_id.isdigit():
+            raise ValueError("Sucursal invalida.")
+        if puntopago_id and puntopago_id.upper() != "ALL" and not puntopago_id.isdigit():
+            raise ValueError("Punto de pago invalido.")
+
+        return {
+            "start": start,
+            "end": end,
+            "sucursal_id": int(sucursal_id) if sucursal_id else None,
+            "puntopago_id": int(puntopago_id) if puntopago_id and puntopago_id.upper() != "ALL" else None,
+        }
+
+    @staticmethod
+    def _sales_qs(start, end, sucursal_id=None, puntopago_id=None):
+        qs = Venta.objects.filter(fecha__range=(start, end))
+        if sucursal_id:
+            qs = qs.filter(sucursalid_id=sucursal_id)
+        if puntopago_id:
+            qs = qs.filter(puntopagoid_id=puntopago_id)
+        return qs
+
+    def _period_summary(self, ventas_qs):
+        agg = ventas_qs.aggregate(total=Sum("total"), ventas=Count("ventaid"))
+        total = agg["total"] or Decimal("0")
+        ventas = agg["ventas"] or 0
+        promedio = (total / ventas).quantize(Decimal("0.01")) if ventas else Decimal("0")
+
+        ventas_ids = ventas_qs.values("ventaid")
+        detalle_qs = DetalleVenta.objects.filter(ventaid__in=ventas_ids, cantidad__gt=0)
+        unidades = detalle_qs.aggregate(unidades=Sum("cantidad"))["unidades"] or 0
+
+        pagos_qs = PagoVenta.objects.filter(ventaid__in=ventas_ids)
+        efectivo = pagos_qs.filter(medio_pago__iexact="efectivo").aggregate(total=Sum("monto"))["total"] or Decimal("0")
+        total_pagos = pagos_qs.aggregate(total=Sum("monto"))["total"] or Decimal("0")
+        if total_pagos == 0 and total > 0:
+            medio_rows = ventas_qs.values("mediopago").annotate(total=Sum("total"))
+            efectivo = sum(
+                (row["total"] or Decimal("0"))
+                for row in medio_rows
+                if (row["mediopago"] or "").strip().lower() == "efectivo"
+            )
+            total_pagos = total
+
+        return {
+            "total_sales": total,
+            "sale_count": ventas,
+            "avg_ticket": promedio,
+            "units_sold": unidades,
+            "cash_total": efectivo,
+            "non_cash_total": max(total_pagos - efectivo, Decimal("0")),
+            "active_customers": ventas_qs.exclude(clienteid__isnull=True).values("clienteid").distinct().count(),
+        }
+
+    def _inventory_summary(self, sucursal_id=None):
+        qs = Inventario.objects.select_related("productoid", "sucursalid")
+        if sucursal_id:
+            qs = qs.filter(sucursalid_id=sucursal_id)
+
+        value_expr = ExpressionWrapper(
+            F("cantidad") * F("productoid__precio"),
+            output_field=DecimalField(max_digits=18, decimal_places=2),
+        )
+        inv_value = qs.filter(cantidad__gt=0).aggregate(total=Sum(value_expr))["total"] or Decimal("0")
+        low_qs = qs.filter(cantidad__lte=5).order_by("cantidad", "productoid__nombre")
+
+        return {
+            "inventory_value": inv_value,
+            "low_stock_count": low_qs.count(),
+            "negative_stock_count": qs.filter(cantidad__lt=0).count(),
+            "low_stock": [
+                {
+                    "producto": item.productoid.nombre,
+                    "sucursal": item.sucursalid.nombre,
+                    "cantidad": item.cantidad,
+                }
+                for item in low_qs[:12]
+            ],
+        }
+
+    def get(self, request, *args, **kwargs):
+        try:
+            filters = self._filters(request)
+        except ValueError as exc:
+            return JsonResponse({"success": False, "error": str(exc)}, status=400)
+
+        start = filters["start"]
+        end = filters["end"]
+        sucursal_id = filters["sucursal_id"]
+        puntopago_id = filters["puntopago_id"]
+
+        ventas_qs = self._sales_qs(start, end, sucursal_id, puntopago_id)
+        ventas_ids = ventas_qs.values("ventaid")
+        summary_raw = self._period_summary(ventas_qs)
+
+        period_days = (end - start).days + 1
+        prev_end = start - timedelta(days=1)
+        prev_start = prev_end - timedelta(days=period_days - 1)
+        previous_raw = self._period_summary(self._sales_qs(prev_start, prev_end, sucursal_id, puntopago_id))
+        inventory_raw = self._inventory_summary(sucursal_id)
+
+        pedidos_qs = PedidoProveedor.objects.filter(fechapedido__range=(start, end))
+        if sucursal_id:
+            pedidos_qs = pedidos_qs.filter(sucursalid_id=sucursal_id)
+        pedidos_agg = pedidos_qs.aggregate(total=Sum("costototal"), cantidad=Count("pedidoid"))
+
+        cambios_qs = CambioDevolucion.objects.filter(fecha__range=(start, end))
+        if sucursal_id:
+            cambios_qs = cambios_qs.filter(Q(venta__sucursalid_id=sucursal_id) | Q(venta__isnull=True))
+        if puntopago_id:
+            cambios_qs = cambios_qs.filter(Q(venta__puntopagoid_id=puntopago_id) | Q(venta__isnull=True))
+
+        line_total = ExpressionWrapper(
+            F("cantidad") * F("preciounitario"),
+            output_field=DecimalField(max_digits=18, decimal_places=2),
+        )
+
+        daily_map = {
+            row["fecha"].isoformat(): row
+            for row in ventas_qs.values("fecha").annotate(total=Sum("total"), ventas=Count("ventaid")).order_by("fecha")
+        }
+        daily = []
+        weekday_occurrences = {day: 0 for day in range(1, 8)}
+        month_day_occurrences = {day: 0 for day in range(1, 32)}
+        cursor = start
+        while cursor <= end:
+            row = daily_map.get(cursor.isoformat(), {})
+            daily.append({
+                "label": cursor.isoformat(),
+                "total": self._dec(row.get("total")),
+                "ventas": self._int(row.get("ventas")),
+            })
+            weekday_occurrences[cursor.isoweekday()] += 1
+            month_day_occurrences[cursor.day] += 1
+            cursor += timedelta(days=1)
+
+        hours_map = {
+            self._int(row["hour"]): row
+            for row in ventas_qs.annotate(hour=ExtractHour("hora"))
+            .values("hour")
+            .annotate(total=Sum("total"), ventas=Count("ventaid"))
+            .order_by("hour")
+        }
+        by_hour = [
+            {
+                "label": f"{hour:02d}:00",
+                "total": self._dec(hours_map.get(hour, {}).get("total")),
+                "ventas": self._int(hours_map.get(hour, {}).get("ventas")),
+            }
+            for hour in range(24)
+        ]
+
+        weekday_labels = {
+            1: "Lunes",
+            2: "Martes",
+            3: "Miercoles",
+            4: "Jueves",
+            5: "Viernes",
+            6: "Sabado",
+            7: "Domingo",
+        }
+        weekday_map = {
+            self._int(row["weekday"]): row
+            for row in ventas_qs.annotate(weekday=ExtractIsoWeekDay("fecha"))
+            .values("weekday")
+            .annotate(total=Sum("total"), ventas=Count("ventaid"))
+            .order_by("weekday")
+        }
+        by_weekday = [
+            {
+                "day": day,
+                "label": weekday_labels[day],
+                "occurrences": weekday_occurrences.get(day, 0),
+                "total": self._dec(weekday_map.get(day, {}).get("total")),
+                "average_total": self._dec(self._avg_decimal(
+                    weekday_map.get(day, {}).get("total"),
+                    weekday_occurrences.get(day, 0),
+                )),
+                "ventas": self._int(weekday_map.get(day, {}).get("ventas")),
+                "average_sales": self._dec(self._avg_decimal(
+                    weekday_map.get(day, {}).get("ventas"),
+                    weekday_occurrences.get(day, 0),
+                )),
+            }
+            for day in range(1, 8)
+        ]
+
+        month_day_map = {
+            self._int(row["month_day"]): row
+            for row in ventas_qs.annotate(month_day=ExtractDay("fecha"))
+            .values("month_day")
+            .annotate(total=Sum("total"), ventas=Count("ventaid"))
+            .order_by("month_day")
+        }
+        by_month_day = [
+            {
+                "day": day,
+                "label": str(day),
+                "occurrences": month_day_occurrences.get(day, 0),
+                "total": self._dec(month_day_map.get(day, {}).get("total")),
+                "average_total": self._dec(self._avg_decimal(
+                    month_day_map.get(day, {}).get("total"),
+                    month_day_occurrences.get(day, 0),
+                )),
+                "ventas": self._int(month_day_map.get(day, {}).get("ventas")),
+                "average_sales": self._dec(self._avg_decimal(
+                    month_day_map.get(day, {}).get("ventas"),
+                    month_day_occurrences.get(day, 0),
+                )),
+            }
+            for day in range(1, 32)
+            if month_day_occurrences.get(day, 0) > 0
+        ]
+
+        payments = [
+            {
+                "label": (row["medio_pago"] or "sin_pago").replace("_", " ").title(),
+                "total": self._dec(row["total"]),
+                "cantidad": self._int(row["cantidad"]),
+            }
+            for row in PagoVenta.objects.filter(ventaid__in=ventas_ids)
+            .values("medio_pago")
+            .annotate(total=Sum("monto"), cantidad=Count("id"))
+            .order_by("-total")
+        ]
+        if not payments:
+            payments = [
+                {
+                    "label": (row["mediopago"] or "sin_pago").replace("_", " ").title(),
+                    "total": self._dec(row["total"]),
+                    "cantidad": self._int(row["cantidad"]),
+                }
+                for row in ventas_qs.values("mediopago").annotate(total=Sum("total"), cantidad=Count("ventaid")).order_by("-total")
+            ]
+
+        top_products = [
+            {
+                "producto": row["productoid__nombre"] or "Sin nombre",
+                "cantidad": self._int(row["cantidad"]),
+                "total": self._dec(row["total"]),
+            }
+            for row in DetalleVenta.objects.filter(ventaid__in=ventas_ids, cantidad__gt=0)
+            .annotate(line_total=line_total)
+            .values("productoid__nombre")
+            .annotate(cantidad=Sum("cantidad"), total=Sum("line_total"))
+            .order_by("-total", "-cantidad")[:12]
+        ]
+
+        categories = [
+            {
+                "label": row["productoid__categoria__nombre"] or "Sin categoria",
+                "total": self._dec(row["total"]),
+                "cantidad": self._int(row["cantidad"]),
+            }
+            for row in DetalleVenta.objects.filter(ventaid__in=ventas_ids, cantidad__gt=0)
+            .annotate(line_total=line_total)
+            .values("productoid__categoria__nombre")
+            .annotate(cantidad=Sum("cantidad"), total=Sum("line_total"))
+            .order_by("-total")[:10]
+        ]
+
+        cashiers = [
+            {
+                "nombre": f"{row['empleadoid__nombre'] or ''} {row['empleadoid__apellido'] or ''}".strip() or "Sin cajero",
+                "ventas": self._int(row["ventas"]),
+                "total": self._dec(row["total"]),
+                "promedio": self._dec((row["total"] or Decimal("0")) / row["ventas"]) if row["ventas"] else 0,
+            }
+            for row in ventas_qs.values("empleadoid__nombre", "empleadoid__apellido")
+            .annotate(total=Sum("total"), ventas=Count("ventaid"))
+            .order_by("-total")[:10]
+        ]
+
+        pedidos_estado = [
+            {
+                "estado": row["estado"] or "Sin estado",
+                "cantidad": self._int(row["cantidad"]),
+                "total": self._dec(row["total"]),
+            }
+            for row in pedidos_qs.values("estado").annotate(cantidad=Count("pedidoid"), total=Sum("costototal")).order_by("-total")
+        ]
+
+        cambios_estado = [
+            {
+                "tipo": row["tipo"] or "Sin tipo",
+                "estado": row["estado"] or "Sin estado",
+                "cantidad": self._int(row["cantidad"]),
+            }
+            for row in cambios_qs.values("tipo", "estado").annotate(cantidad=Count("cambioid")).order_by("tipo", "estado")
+        ]
+
+        summary = {
+            **{key: self._dec(value) if isinstance(value, Decimal) else value for key, value in summary_raw.items()},
+            "inventory_value": self._dec(inventory_raw["inventory_value"]),
+            "low_stock_count": inventory_raw["low_stock_count"],
+            "negative_stock_count": inventory_raw["negative_stock_count"],
+            "orders_total": self._dec(pedidos_agg["total"]),
+            "orders_count": pedidos_agg["cantidad"] or 0,
+            "returns_count": cambios_qs.count(),
+        }
+
+        return JsonResponse({
+            "success": True,
+            "filters": {
+                "desde": start.isoformat(),
+                "hasta": end.isoformat(),
+                "dias": period_days,
+                "comparacion_desde": prev_start.isoformat(),
+                "comparacion_hasta": prev_end.isoformat(),
+            },
+            "summary": summary,
+            "comparison": {
+                "total_sales_pct": self._pct(summary_raw["total_sales"], previous_raw["total_sales"]),
+                "sale_count_pct": self._pct(summary_raw["sale_count"], previous_raw["sale_count"]),
+                "avg_ticket_pct": self._pct(summary_raw["avg_ticket"], previous_raw["avg_ticket"]),
+            },
+            "charts": {
+                "daily": daily,
+                "by_hour": by_hour,
+                "by_weekday": by_weekday,
+                "by_month_day": by_month_day,
+                "payments": payments,
+                "top_products": top_products[:10],
+                "categories": categories,
+            },
+            "tables": {
+                "top_products": top_products,
+                "cashiers": cashiers,
+                "low_stock": inventory_raw["low_stock"],
+                "by_weekday": by_weekday,
+                "by_month_day": by_month_day,
+                "orders": pedidos_estado,
+                "returns": cambios_estado,
+            },
+        })
 
 
 class SucursalParaVentasAutocomplete(LoginRequiredMixin, View):

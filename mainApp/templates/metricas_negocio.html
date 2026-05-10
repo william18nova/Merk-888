@@ -1,0 +1,204 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Metricas del negocio{% endblock %}
+
+{% block extra_head %}
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"/>
+  <link rel="stylesheet" href="{% static 'css/metricas_negocio.css' %}">
+{% endblock %}
+
+{% block content %}
+<main class="metrics-page">
+  <section class="metrics-hero">
+    <div>
+      <p class="metrics-eyebrow">Reportes y estadisticas</p>
+      <h1>Metricas del negocio</h1>
+      <p>Ventas, promedios, horarios, medios de pago, productos, cajeros, inventario y compras en un solo tablero.</p>
+    </div>
+    <div class="metrics-range" id="metrics-range-label">Cargando rango...</div>
+  </section>
+
+  <section class="metrics-filters">
+    <label>
+      <span>Desde</span>
+      <input type="date" id="mn-desde" value="{{ fecha_desde_default }}">
+    </label>
+    <label>
+      <span>Hasta</span>
+      <input type="date" id="mn-hasta" value="{{ fecha_hasta_default }}">
+    </label>
+    <label>
+      <span>Sucursal</span>
+      <select id="mn-sucursal">
+        <option value="">Todas las sucursales</option>
+        {% for sucursal in sucursales %}
+          <option value="{{ sucursal.pk }}">{{ sucursal.nombre }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>
+      <span>Punto de pago</span>
+      <select id="mn-puntopago">
+        <option value="">Todos los puntos</option>
+        {% for punto in puntos_pago %}
+          <option value="{{ punto.pk }}" data-sucursal="{{ punto.sucursalid_id }}">{{ punto.sucursalid.nombre }} - {{ punto.nombre }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <div class="metrics-filter-actions">
+      <button type="button" class="quick-range" data-range="today">Hoy</button>
+      <button type="button" class="quick-range" data-range="7">7 dias</button>
+      <button type="button" class="quick-range" data-range="30">30 dias</button>
+      <button type="button" class="quick-range" data-range="month">Mes</button>
+      <button type="button" id="mn-refresh" class="metrics-primary">Actualizar</button>
+    </div>
+  </section>
+
+  <div id="mn-error" class="metrics-error" hidden></div>
+
+  <section class="metrics-grid">
+    <article class="metric-card">
+      <span>Total vendido</span>
+      <strong data-metric="total_sales">$ 0</strong>
+      <small data-change="total_sales_pct">Comparando...</small>
+    </article>
+    <article class="metric-card">
+      <span>Numero de ventas</span>
+      <strong data-metric="sale_count">0</strong>
+      <small data-change="sale_count_pct">Comparando...</small>
+    </article>
+    <article class="metric-card">
+      <span>Ticket promedio</span>
+      <strong data-metric="avg_ticket">$ 0</strong>
+      <small data-change="avg_ticket_pct">Comparando...</small>
+    </article>
+    <article class="metric-card">
+      <span>Unidades vendidas</span>
+      <strong data-metric="units_sold">0</strong>
+      <small>Productos con cantidad positiva</small>
+    </article>
+    <article class="metric-card">
+      <span>Clientes atendidos</span>
+      <strong data-metric="active_customers">0</strong>
+      <small>Clientes asociados a ventas</small>
+    </article>
+    <article class="metric-card">
+      <span>Efectivo</span>
+      <strong data-metric="cash_total">$ 0</strong>
+      <small>Total recibido en efectivo</small>
+    </article>
+    <article class="metric-card">
+      <span>Otros pagos</span>
+      <strong data-metric="non_cash_total">$ 0</strong>
+      <small>Pagos no efectivos</small>
+    </article>
+    <article class="metric-card metric-card--alert">
+      <span>Stock negativo</span>
+      <strong data-metric="negative_stock_count">0</strong>
+      <small>Productos por corregir</small>
+    </article>
+  </section>
+
+  <section class="chart-layout">
+    <article class="chart-card chart-card--wide">
+      <div class="chart-head">
+        <h2>Ventas por dia</h2>
+        <span>Total y cantidad de ventas</span>
+      </div>
+      <canvas id="chart-daily"></canvas>
+    </article>
+    <article class="chart-card">
+      <div class="chart-head">
+        <h2>Medios de pago</h2>
+        <span>Distribucion del recaudo</span>
+      </div>
+      <canvas id="chart-payments"></canvas>
+    </article>
+    <article class="chart-card">
+      <div class="chart-head">
+        <h2>Ventas por hora</h2>
+        <span>Momentos fuertes del dia</span>
+      </div>
+      <canvas id="chart-hour"></canvas>
+    </article>
+    <article class="chart-card">
+      <div class="chart-head">
+        <h2>Promedio por dia de semana</h2>
+        <span>Promedio por cada lunes, martes...</span>
+      </div>
+      <canvas id="chart-weekday"></canvas>
+    </article>
+    <article class="chart-card">
+      <div class="chart-head">
+        <h2>Categorias</h2>
+        <span>Ventas por grupo</span>
+      </div>
+      <canvas id="chart-categories"></canvas>
+    </article>
+    <article class="chart-card chart-card--wide">
+      <div class="chart-head">
+        <h2>Promedio por numero de dia</h2>
+        <span>Promedio por cada dia 1, 2, 3...</span>
+      </div>
+      <canvas id="chart-month-day"></canvas>
+    </article>
+    <article class="chart-card chart-card--wide">
+      <div class="chart-head">
+        <h2>Productos lideres</h2>
+        <span>Ranking por valor vendido</span>
+      </div>
+      <canvas id="chart-products"></canvas>
+    </article>
+  </section>
+
+  <section class="tables-layout">
+    <article class="table-card">
+      <h2>Top productos</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Producto</th><th>Cant.</th><th>Total</th></tr></thead>
+          <tbody id="table-products"></tbody>
+        </table>
+      </div>
+    </article>
+    <article class="table-card">
+      <h2>Ranking cajeros</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Cajero</th><th>Ventas</th><th>Total</th><th>Prom.</th></tr></thead>
+          <tbody id="table-cashiers"></tbody>
+        </table>
+      </div>
+    </article>
+    <article class="table-card">
+      <h2>Alertas inventario</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Producto</th><th>Sucursal</th><th>Cant.</th></tr></thead>
+          <tbody id="table-stock"></tbody>
+        </table>
+      </div>
+    </article>
+    <article class="table-card">
+      <h2>Compras y cambios</h2>
+      <div class="split-tables">
+        <table>
+          <thead><tr><th>Pedidos</th><th>Cant.</th><th>Total</th></tr></thead>
+          <tbody id="table-orders"></tbody>
+        </table>
+        <table>
+          <thead><tr><th>Cambios</th><th>Estado</th><th>Cant.</th></tr></thead>
+          <tbody id="table-returns"></tbody>
+        </table>
+      </div>
+    </article>
+  </section>
+</main>
+
+<script>
+  window.metricasNegocioDataUrl = "{% url 'metricas_negocio_data' %}";
+</script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script defer src="{% static 'javascript/metricas_negocio.js' %}?v=6"></script>
+{% endblock %}

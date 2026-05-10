@@ -369,6 +369,12 @@ PERMISSION_DEFINITIONS = [
         "aliases": ["reporte_ventas_producto", "ventas_producto_data", "producto_ventas_stats"],
     },
     {
+        "code": "metricas_negocio",
+        "label": "Metricas del negocio",
+        "description": "Permite consultar metricas estadisticas generales del negocio.",
+        "aliases": ["metricas_negocio", "metricas_negocio_data", "metricas del negocio", "analitica"],
+    },
+    {
         "code": "pedidos_crear",
         "label": "Agregar pedido",
         "description": "Permite crear pedidos a proveedores.",
@@ -448,6 +454,7 @@ PERMISSION_BY_CODE = {item["code"]: item for item in PERMISSION_DEFINITIONS}
 PERMISSION_IMPLICATIONS = {
     "caja_turnos_editar": ["caja_admin"],
     "inventarios_fotos": ["inventarios_editar"],
+    "metricas_negocio": ["ventas_ver", "ventas_diarias", "reportes_ventas_producto"],
 }
 
 
@@ -529,6 +536,8 @@ ROUTE_PERMISSIONS = {
     "reporte_ventas_producto": "reportes_ventas_producto",
     "ventas_producto_data": "reportes_ventas_producto",
     "producto_ventas_stats": "reportes_ventas_producto",
+    "metricas_negocio": "metricas_negocio",
+    "metricas_negocio_data": "metricas_negocio",
     "agregar_pedido": "pedidos_crear",
     "visualizar_pedidos": "pedidos_ver",
     "ver_pedido": "pedidos_ver",
@@ -564,6 +573,7 @@ ROUTE_PERMISSIONS = {
 
 NAV_GROUPS = [
     {"label": "Inicio", "url_name": "home"},
+    {"label": "Metricas", "url_name": "metricas_negocio"},
     {
         "label": "Sucursales",
         "children": [

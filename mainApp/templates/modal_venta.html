@@ -16,6 +16,21 @@
       <span id="monto-pendiente">Falta por pagar: $ 0,00</span>
     </div>
 
+    <div id="employee-discount-auth" class="employee-discount-auth" style="display:none;">
+      <div>
+        <strong>Descuento de empleado</strong>
+        <span id="employee-discount-summary">Se aplicara 10% cuando el trabajador autorice esta compra.</span>
+      </div>
+      <label for="employee-password-input">Contrasena del empleado comprador</label>
+      <input
+        type="password"
+        id="employee-password-input"
+        autocomplete="current-password"
+        placeholder="El trabajador escribe su contrasena"
+      >
+      <small>El cajero no puede usar su propio documento para autofacturarse.</small>
+    </div>
+
     <p style="margin:.6rem 0 1rem; opacity:.9">
       ✅ Si marcas <b>Pago mixto</b>, puedes seleccionar varios medios y escribir el monto de cada uno (la suma debe dar el total).
       <br>
