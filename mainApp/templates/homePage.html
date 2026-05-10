@@ -19,7 +19,7 @@
       <div>
         <p class="eyebrow">Nova Advance</p>
         <h1>Panel de control</h1>
-        <p class="brand-panel__copy">Operacion diaria del punto de venta.</p>
+        <p class="brand-panel__copy">{{ dashboard_scope_copy }}</p>
       </div>
     </div>
 
@@ -31,17 +31,24 @@
     </div>
   </section>
 
-  <section class="metric-grid" aria-label="Indicadores">
-    {% for card in dashboard_cards %}
-      <article class="metric-card metric-card--{{ card.tone }}">
-        <span>{{ card.label }}</span>
-        <strong>{{ card.value }}</strong>
-        <small>{{ card.detail }}</small>
-      </article>
-    {% endfor %}
-  </section>
+  {% if dashboard_cards %}
+    <section class="metric-grid" aria-label="Indicadores">
+      {% for card in dashboard_cards %}
+        <article class="metric-card metric-card--{{ card.tone }}">
+          <span>{{ card.label }}</span>
+          <strong>{{ card.value }}</strong>
+          <small>{{ card.detail }}</small>
+        </article>
+      {% endfor %}
+    </section>
+  {% else %}
+    <section class="permission-panel" aria-label="Vista limitada">
+      <strong>Panel limitado por permisos</strong>
+      <span>Tu rol no tiene indicadores operativos activos para mostrar en el inicio.</span>
+    </section>
+  {% endif %}
 
-  <section class="dashboard-layout">
+  <section class="dashboard-layout {% if not dashboard_show_inventory_alerts %}dashboard-layout--single{% endif %}">
     <div class="dashboard-column">
       <section class="panel-block">
         <div class="panel-block__header">
@@ -61,45 +68,49 @@
         </div>
       </section>
 
-      <section class="panel-block">
+      {% if dashboard_show_top_products %}
+        <section class="panel-block">
+          <div class="panel-block__header">
+            <h2>Productos mas vendidos hoy</h2>
+            <span>Por cantidad</span>
+          </div>
+
+          <div class="list-stack">
+            {% for item in dashboard_top_products %}
+              <div class="list-row">
+                <span>{{ item.productoid__nombre }}</span>
+                <strong>{{ item.cantidad_vendida }}</strong>
+              </div>
+            {% empty %}
+              <p class="empty-state">Todavia no hay ventas registradas hoy.</p>
+            {% endfor %}
+          </div>
+        </section>
+      {% endif %}
+    </div>
+
+    {% if dashboard_show_inventory_alerts %}
+      <section class="panel-block dashboard-alerts">
         <div class="panel-block__header">
-          <h2>Productos mas vendidos hoy</h2>
-          <span>Por cantidad</span>
+          <h2>Alertas de inventario</h2>
+          <span>Stock bajo</span>
         </div>
 
-        <div class="list-stack">
-          {% for item in dashboard_top_products %}
-            <div class="list-row">
-              <span>{{ item.productoid__nombre }}</span>
-              <strong>{{ item.cantidad_vendida }}</strong>
-            </div>
+        <div class="stock-list">
+          {% for item in dashboard_low_stock %}
+            <a href="{% url 'visualizar_inventarios' %}" class="stock-row">
+              <div>
+                <strong>{{ item.productoid.nombre }}</strong>
+                <span>{{ item.sucursalid.nombre }}</span>
+              </div>
+              <em class="{% if item.cantidad < 0 %}is-negative{% endif %}">{{ item.cantidad }}</em>
+            </a>
           {% empty %}
-            <p class="empty-state">Todavia no hay ventas registradas hoy.</p>
+            <p class="empty-state">No hay productos con stock bajo.</p>
           {% endfor %}
         </div>
       </section>
-    </div>
-
-    <section class="panel-block dashboard-alerts">
-      <div class="panel-block__header">
-        <h2>Alertas de inventario</h2>
-        <span>Stock bajo</span>
-      </div>
-
-      <div class="stock-list">
-        {% for item in dashboard_low_stock %}
-          <a href="{% url 'visualizar_inventarios' %}" class="stock-row">
-            <div>
-              <strong>{{ item.productoid.nombre }}</strong>
-              <span>{{ item.sucursalid.nombre }}</span>
-            </div>
-            <em class="{% if item.cantidad < 0 %}is-negative{% endif %}">{{ item.cantidad }}</em>
-          </a>
-        {% empty %}
-          <p class="empty-state">No hay productos con stock bajo.</p>
-        {% endfor %}
-      </div>
-    </section>
+    {% endif %}
   </section>
 
   <p class="dashboard-footer">Nova Advance - Software Administrativo de Supermercados</p>

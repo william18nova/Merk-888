@@ -6,7 +6,7 @@
 {% block extra_head %}
   <link rel="stylesheet"
         href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"/>
-  <link rel="stylesheet" href="{% static 'css/turno_caja_retiro.css' %}?v=3">
+  <link rel="stylesheet" href="{% static 'css/turno_caja_retiro.css' %}?v=4">
 {% endblock %}
 
 {% block content %}
@@ -74,6 +74,13 @@
 
       <section class="cr-table-panel">
         <table class="cr-table">
+          <colgroup>
+            <col class="cr-col-denom">
+            <col class="cr-col-count">
+            <col class="cr-col-count">
+            <col class="cr-col-count">
+            <col class="cr-col-money">
+          </colgroup>
           <thead>
             <tr>
               <th>Denominacion</th>

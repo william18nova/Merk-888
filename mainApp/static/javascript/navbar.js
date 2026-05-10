@@ -1,38 +1,42 @@
-// Menú móvil y dropdowns en tap/click (combinado y robusto)
+// Menu movil y dropdowns del navbar.
 (function () {
   function init() {
     const burger = document.getElementById("nvBurger");
-    const links  = document.getElementById("nvLinks");
-    const nav    = document.querySelector(".nv");
-    const moreItem = document.getElementById("nvMoreItem");
-    const moreMenu = document.getElementById("nvMoreMenu");
-    const moreToggle = document.getElementById("nvMoreToggle");
+    const links = document.getElementById("nvLinks");
+    const nav = document.querySelector(".nv");
 
     if (!burger || !links || !nav) {
-      // Si el HTML todavía no está, reintenta
       return setTimeout(init, 100);
     }
 
-    const isMobile = () => window.matchMedia("(max-width: 1180px)").matches;
-    const navItems = moreItem
-      ? Array.from(links.children).filter(item => item !== moreItem)
-      : [];
+    const isMobile = () => window.matchMedia("(max-width: 760px)").matches;
 
-    // Guard para evitar cierre inmediato por el click global
     let openGuardUntil = 0;
+    let heightRaf = null;
     let positionRaf = null;
-    let fitRaf = null;
+    const hoverTimers = new WeakMap();
+
+    function syncNavHeight() {
+      if (heightRaf) cancelAnimationFrame(heightRaf);
+      heightRaf = requestAnimationFrame(() => {
+        heightRaf = null;
+        const height = Math.max(56, Math.ceil(nav.getBoundingClientRect().height || 56));
+        document.documentElement.style.setProperty("--nav-current-h", `${height}px`);
+      });
+    }
 
     function positionDropdown(li) {
       if (!li || isMobile()) return;
-      if (li.closest(".nv__more-menu")) return;
       const dd = li.querySelector(".nv__dd");
       if (!dd) return;
 
       const itemRect = li.getBoundingClientRect();
       const navRect = nav.getBoundingClientRect();
       const ddRect = dd.getBoundingClientRect();
-      const fallbackWidth = Math.min(Math.max(itemRect.width + 60, 220), Math.min(window.innerWidth * 0.92, 360));
+      const fallbackWidth = Math.min(
+        Math.max(itemRect.width + 60, 220),
+        Math.min(window.innerWidth * 0.92, 360)
+      );
       const ddWidth = ddRect.width || fallbackWidth;
       const margin = 8;
 
@@ -44,6 +48,14 @@
 
       dd.style.setProperty("--nv-dd-left", `${Math.round(left)}px`);
       dd.style.setProperty("--nv-dd-top", `${Math.round(navRect.bottom + 2)}px`);
+      dd.style.setProperty("--nv-dd-trigger-w", `${Math.ceil(itemRect.width)}px`);
+    }
+
+    function closeOtherDesktopDropdowns(currentLi) {
+      document.querySelectorAll(".nv__item.has-dd.is-hover-open")
+        .forEach(item => {
+          if (item !== currentLi) item.classList.remove("is-hover-open");
+        });
     }
 
     function positionOpenDropdowns() {
@@ -60,131 +72,100 @@
       });
     }
 
-    function restoreMainItems() {
-      if (!moreItem || !moreMenu) return;
-      navItems.forEach(item => links.insertBefore(item, moreItem));
-      moreItem.classList.remove("is-parent-active");
-      moreItem.hidden = true;
-    }
-
-    function syncMoreState() {
-      if (!moreItem || !moreMenu) return;
-      const hasItems = moreMenu.children.length > 0;
-      const hasActive = Boolean(moreMenu.querySelector(".is-active, .is-parent-active"));
-      moreItem.hidden = !hasItems;
-      moreItem.classList.toggle("is-parent-active", hasItems && hasActive);
-    }
-
-    function linksOverflow() {
-      return links.scrollWidth > links.clientWidth + 1;
-    }
-
-    function fitNavItems() {
-      if (!moreItem || !moreMenu) return;
-
-      restoreMainItems();
-      if (isMobile()) return;
-
-      moreItem.hidden = true;
-      if (!linksOverflow()) return;
-
-      moreItem.hidden = false;
-      for (let i = navItems.length - 1; i >= 0 && linksOverflow(); i -= 1) {
-        moreMenu.insertBefore(navItems[i], moreMenu.firstChild);
-      }
-      syncMoreState();
-      scheduleDropdownPosition();
-    }
-
-    function scheduleFitNavItems() {
-      if (fitRaf) cancelAnimationFrame(fitRaf);
-      fitRaf = requestAnimationFrame(() => {
-        fitRaf = null;
-        fitNavItems();
-      });
-    }
-
     function setOpen(open) {
       links.classList.toggle("is-open", open);
       document.body.classList.toggle("nv-menu-open", open);
-      // sincroniza aria-expanded
       burger.setAttribute("aria-expanded", open ? "true" : "false");
       if (!open) {
         document.querySelectorAll(".nv__item.has-dd.is-open")
-          .forEach(x => x.classList.remove("is-open"));
+          .forEach(item => item.classList.remove("is-open"));
       } else {
-        openGuardUntil = Date.now() + 140; // 140ms de protección
+        openGuardUntil = Date.now() + 140;
       }
+      syncNavHeight();
     }
 
-    // === Toggle: mantenemos tu handler que funcionaba en móvil ===
-    burger.addEventListener("click", (e) => {
-      e.preventDefault();
-      e.stopPropagation();
+    burger.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
       setOpen(!links.classList.contains("is-open"));
     }, { passive: false });
-    moreToggle?.addEventListener("click", (e) => {
-      e.preventDefault();
-      positionDropdown(moreItem);
-    });
 
-    // === Submenús: tap en móvil sin navegar (tu patrón original) ===
-    const parents = Array.from(document.querySelectorAll(".nv__item.has-dd > a"));
-    parents.forEach(a => {
-      const li = a.parentElement;
-      li?.addEventListener("mouseenter", () => positionDropdown(li), { passive: true });
-      li?.addEventListener("focusin", () => positionDropdown(li), { passive: true });
+    document.querySelectorAll(".nv__item.has-dd > a").forEach(anchor => {
+      const li = anchor.parentElement;
+      const dd = li?.querySelector(".nv__dd");
 
-      a.addEventListener("click", (e) => {
-        if (!isMobile()) return; // en desktop usa hover
-        e.preventDefault();
-        e.stopPropagation();
+      function openDesktopDropdown() {
+        if (!li || isMobile()) return;
+        const timer = hoverTimers.get(li);
+        if (timer) clearTimeout(timer);
+        closeOtherDesktopDropdowns(li);
+        li.classList.add("is-hover-open");
+        positionDropdown(li);
+      }
+
+      function closeDesktopDropdown() {
+        if (!li || isMobile()) return;
+        const timer = setTimeout(() => {
+          li.classList.remove("is-hover-open");
+        }, 220);
+        hoverTimers.set(li, timer);
+      }
+
+      li?.addEventListener("mouseenter", openDesktopDropdown, { passive: true });
+      li?.addEventListener("mouseleave", closeDesktopDropdown, { passive: true });
+      li?.addEventListener("focusin", openDesktopDropdown, { passive: true });
+      li?.addEventListener("focusout", closeDesktopDropdown, { passive: true });
+      dd?.addEventListener("mouseenter", openDesktopDropdown, { passive: true });
+      dd?.addEventListener("mouseleave", closeDesktopDropdown, { passive: true });
+
+      anchor.addEventListener("click", (event) => {
+        if (!isMobile()) return;
+        event.preventDefault();
+        event.stopPropagation();
         document.querySelectorAll(".nv__item.has-dd.is-open")
-          .forEach(x => { if (x !== li) x.classList.remove("is-open"); });
+          .forEach(item => { if (item !== li) item.classList.remove("is-open"); });
         li.classList.toggle("is-open");
       }, { passive: false });
     });
 
-    links.addEventListener("click", (e) => {
+    links.addEventListener("click", (event) => {
       if (!isMobile()) return;
-      const clickedLink = e.target.closest("a");
+      const clickedLink = event.target.closest("a");
       if (!clickedLink || clickedLink.parentElement?.classList.contains("has-dd")) return;
       setOpen(false);
     });
 
-    // === Cerrar si se hace click fuera (con guard) ===
-    document.addEventListener("click", (e) => {
-      if (Date.now() < openGuardUntil) return;  // evita cierre inmediato
-      if (!nav.contains(e.target)) {
-        setOpen(false);
-      }
+    document.addEventListener("click", (event) => {
+      if (Date.now() < openGuardUntil) return;
+      if (!nav.contains(event.target)) setOpen(false);
     }, { passive: true, capture: true });
 
-    document.addEventListener("keydown", (e) => {
-      if (e.key === "Escape" && links.classList.contains("is-open")) {
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && links.classList.contains("is-open")) {
         setOpen(false);
         burger.focus();
       }
     });
 
-    // === Reset de estado al cambiar tamaño ===
     window.addEventListener("resize", () => {
-      if (!isMobile()) {
-        setOpen(false);
-      }
-      scheduleFitNavItems();
+      if (!isMobile()) setOpen(false);
+      syncNavHeight();
       scheduleDropdownPosition();
     });
 
     if ("ResizeObserver" in window) {
-      const navResizeObserver = new ResizeObserver(scheduleFitNavItems);
-      navResizeObserver.observe(nav);
+      const observer = new ResizeObserver(() => {
+        syncNavHeight();
+        scheduleDropdownPosition();
+      });
+      observer.observe(nav);
     }
-    window.addEventListener("load", scheduleFitNavItems, { once: true });
-    scheduleFitNavItems();
 
-    // Log de depuración
-    console.log("Navbar listo ✅");
+    window.addEventListener("load", syncNavHeight, { once: true });
+    syncNavHeight();
+
+    console.log("Navbar listo");
   }
 
   if (document.readyState === "loading") {

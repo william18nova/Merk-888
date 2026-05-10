@@ -212,6 +212,48 @@ class HomePageView(LoginRequiredMixin, TemplateView):
             amount = Decimal("0")
         return f"$ {amount:,.0f}".replace(",", ".")
 
+    @staticmethod
+    def _can_any_url(user, *url_names):
+        return any(user_can_access_url_name(user, url_name) for url_name in url_names)
+
+    def _dashboard_permissions(self, user):
+        return {
+            "sales_summary": self._can_any_url(
+                user,
+                "visualizar_ventas",
+                "ventas_diarias",
+                "metricas_negocio",
+            ),
+            "sales_products": self._can_any_url(
+                user,
+                "reporte_ventas_producto",
+                "ventas_diarias",
+                "metricas_negocio",
+            ),
+            "cash_turn": self._can_any_url(
+                user,
+                "turno_caja",
+                "turnos_caja_dashboard",
+                "generar_venta",
+            ),
+            "inventory_alerts": self._can_any_url(
+                user,
+                "visualizar_inventarios",
+                "inventario_masivo",
+                "inventario_fotos",
+            ),
+            "product_quality": self._can_any_url(
+                user,
+                "visualizar_productos",
+                "visualizar_inventarios",
+            ),
+            "orders": self._can_any_url(
+                user,
+                "visualizar_pedidos",
+                "pedidos_pagados",
+            ),
+        }
+
     def _quick_actions(self):
         items = [
             ("generar_venta", "Generar venta", "Caja"),
@@ -237,49 +279,89 @@ class HomePageView(LoginRequiredMixin, TemplateView):
         context = super().get_context_data(**kwargs)
         today = timezone.localdate()
         user = self.request.user
+        dashboard_permissions = self._dashboard_permissions(user)
+        dashboard_cards = []
 
-        ventas_hoy = Venta.objects.filter(fecha=today).aggregate(
-            total=Sum("total"),
-            cantidad=Count("ventaid"),
-        )
-        total_hoy = ventas_hoy.get("total") or Decimal("0")
-        cantidad_ventas = ventas_hoy.get("cantidad") or 0
+        if dashboard_permissions["sales_summary"]:
+            ventas_hoy = Venta.objects.filter(fecha=today).aggregate(
+                total=Sum("total"),
+                cantidad=Count("ventaid"),
+            )
+            total_hoy = ventas_hoy.get("total") or Decimal("0")
+            cantidad_ventas = ventas_hoy.get("cantidad") or 0
+            dashboard_cards.append({
+                "label": "Ventas de hoy",
+                "value": self._money(total_hoy),
+                "detail": f"{cantidad_ventas} venta{'s' if cantidad_ventas != 1 else ''}",
+                "tone": "sales",
+            })
 
-        turno = (
-            TurnoCaja.objects
-            .select_related("puntopago", "puntopago__sucursalid")
-            .filter(cajero=user, estado__in=["ABIERTO", "CIERRE"])
-            .order_by("-inicio")
-            .first()
-        )
+        turno = None
+        if dashboard_permissions["cash_turn"]:
+            turno = (
+                TurnoCaja.objects
+                .select_related("puntopago", "puntopago__sucursalid")
+                .filter(cajero=user, estado__in=["ABIERTO", "CIERRE"])
+                .order_by("-inicio")
+                .first()
+            )
 
-        low_stock_qs = (
-            Inventario.objects
-            .select_related("productoid", "sucursalid")
-            .filter(cantidad__lte=5)
-            .order_by("cantidad", "productoid__nombre")
-        )
-        low_stock_count = low_stock_qs.count()
-        low_stock_items = low_stock_qs[:6]
+        low_stock_items = []
+        if dashboard_permissions["inventory_alerts"]:
+            low_stock_qs = (
+                Inventario.objects
+                .select_related("productoid", "sucursalid")
+                .filter(cantidad__lte=5)
+                .order_by("cantidad", "productoid__nombre")
+            )
+            low_stock_count = low_stock_qs.count()
+            low_stock_items = low_stock_qs[:6]
+            dashboard_cards.append({
+                "label": "Stock bajo",
+                "value": str(low_stock_count),
+                "detail": "productos con 5 unidades o menos",
+                "tone": "stock",
+            })
 
-        pedidos_pendientes = PedidoProveedor.objects.filter(estado="En espera").count()
-        productos_sin_codigo = Producto.objects.filter(
-            Q(codigo_de_barras__isnull=True) | Q(codigo_de_barras__exact="")
-        ).count()
+        if dashboard_permissions["orders"]:
+            pedidos_pendientes = PedidoProveedor.objects.filter(estado="En espera").count()
+            dashboard_cards.append({
+                "label": "Pedidos pendientes",
+                "value": str(pedidos_pendientes),
+                "detail": "pedidos en espera",
+                "tone": "orders",
+            })
 
-        top_productos = (
-            DetalleVenta.objects
-            .filter(ventaid__fecha=today, cantidad__gt=0)
-            .values("productoid__nombre")
-            .annotate(cantidad_vendida=Sum("cantidad"))
-            .order_by("-cantidad_vendida", "productoid__nombre")[:5]
-        )
+        if dashboard_permissions["product_quality"]:
+            productos_sin_codigo = Producto.objects.filter(
+                Q(codigo_de_barras__isnull=True) | Q(codigo_de_barras__exact="")
+            ).count()
+            dashboard_cards.append({
+                "label": "Sin codigo",
+                "value": str(productos_sin_codigo),
+                "detail": "productos por completar",
+                "tone": "barcode",
+            })
+
+        top_productos = []
+        if dashboard_permissions["sales_products"]:
+            top_productos = (
+                DetalleVenta.objects
+                .filter(ventaid__fecha=today, cantidad__gt=0)
+                .values("productoid__nombre")
+                .annotate(cantidad_vendida=Sum("cantidad"))
+                .order_by("-cantidad_vendida", "productoid__nombre")[:5]
+            )
 
         turno_total = getattr(turno, "ventas_total", None) if turno else None
-        turno_label = "Sin turno abierto"
-        turno_detail = "Inicia o recupera un turno para vender."
-        turno_status = "warning"
-        if turno:
+        turno_label = "Sesion activa"
+        turno_detail = "Vista ajustada a los permisos de tu rol."
+        turno_status = "neutral"
+        if dashboard_permissions["cash_turn"]:
+            turno_label = "Sin turno abierto"
+            turno_detail = "Inicia o recupera un turno para vender."
+            turno_status = "warning"
+        if dashboard_permissions["cash_turn"] and turno:
             turno_label = f"Turno {turno.estado.lower()}"
             puntopago = getattr(turno, "puntopago", None)
             sucursal = getattr(puntopago, "sucursalid", None)
@@ -290,6 +372,13 @@ class HomePageView(LoginRequiredMixin, TemplateView):
                 ] if part
             ) or "Caja activa"
             turno_status = "ok" if turno.estado == "ABIERTO" else "attention"
+        if dashboard_permissions["cash_turn"]:
+            dashboard_cards.insert(1 if dashboard_permissions["sales_summary"] else 0, {
+                "label": "Turno actual",
+                "value": self._money(turno_total) if turno else "Pendiente",
+                "detail": turno_detail,
+                "tone": turno_status,
+            })
 
         empleado = getattr(user, "empleado", None)
         user_label = str(empleado or user)
@@ -301,41 +390,14 @@ class HomePageView(LoginRequiredMixin, TemplateView):
             "dashboard_turno_label": turno_label,
             "dashboard_turno_detail": turno_detail,
             "dashboard_turno_status": turno_status,
-            "dashboard_cards": [
-                {
-                    "label": "Ventas de hoy",
-                    "value": self._money(total_hoy),
-                    "detail": f"{cantidad_ventas} venta{'s' if cantidad_ventas != 1 else ''}",
-                    "tone": "sales",
-                },
-                {
-                    "label": "Turno actual",
-                    "value": self._money(turno_total) if turno else "Pendiente",
-                    "detail": turno_detail,
-                    "tone": turno_status,
-                },
-                {
-                    "label": "Stock bajo",
-                    "value": str(low_stock_count),
-                    "detail": "productos con 5 unidades o menos",
-                    "tone": "stock",
-                },
-                {
-                    "label": "Pedidos pendientes",
-                    "value": str(pedidos_pendientes),
-                    "detail": "pedidos en espera",
-                    "tone": "orders",
-                },
-                {
-                    "label": "Sin codigo",
-                    "value": str(productos_sin_codigo),
-                    "detail": "productos por completar",
-                    "tone": "barcode",
-                },
-            ],
+            "dashboard_cards": dashboard_cards,
+            "dashboard_permissions": dashboard_permissions,
             "dashboard_low_stock": low_stock_items,
             "dashboard_top_products": top_productos,
             "dashboard_quick_actions": self._quick_actions(),
+            "dashboard_scope_copy": "Informacion visible segun los permisos asignados a tu rol.",
+            "dashboard_show_top_products": dashboard_permissions["sales_products"],
+            "dashboard_show_inventory_alerts": dashboard_permissions["inventory_alerts"],
         })
         return context
 
