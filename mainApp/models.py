@@ -617,6 +617,59 @@ class CambioDevolucion(models.Model):
             .first()
         )
 
+    @staticmethod
+    def _detalle_valor_bruto(detalle, cantidad=None) -> Decimal:
+        cant = int(cantidad if cantidad is not None else (detalle.cantidad or 0))
+        if cant <= 0:
+            return Decimal("0.00")
+        precio = detalle.preciounitario or Decimal("0.00")
+        return Decimal(cant) * precio
+
+    @classmethod
+    def _subtotal_actual_bruto(cls, venta) -> Decimal:
+        from .models import DetalleVenta
+
+        subtotal = Decimal("0.00")
+        for det in (
+            DetalleVenta.objects
+            .filter(ventaid=venta, cantidad__gt=0)
+            .only("cantidad", "preciounitario")
+        ):
+            subtotal += cls._detalle_valor_bruto(det)
+        return _to_q2(subtotal)
+
+    @classmethod
+    def calcular_total_devolucion(cls, venta, devoluciones) -> Decimal:
+        """
+        Calcula el valor realmente reintegrable.
+        Si la venta tiene descuento, prorratea la devolucion contra el total cobrado
+        para no devolver el precio bruto cuando el cliente pago menos.
+        """
+        bruto_dev = Decimal("0.00")
+        for item in devoluciones:
+            det = item["detalle"]
+            cant = int(item["cantidad"] or 0)
+            bruto_dev += cls._detalle_valor_bruto(det, cant)
+
+        bruto_dev = _to_q2(bruto_dev)
+        if bruto_dev <= 0:
+            return Decimal("0.00").quantize(Q2)
+
+        total_actual = _to_q2(venta.total or Decimal("0.00"))
+        if total_actual <= 0:
+            return Decimal("0.00").quantize(Q2)
+
+        subtotal_actual = cls._subtotal_actual_bruto(venta)
+        if subtotal_actual > 0 and total_actual < subtotal_actual:
+            total_dev = (bruto_dev * total_actual / subtotal_actual).quantize(Q2)
+        else:
+            total_dev = bruto_dev
+
+        if total_dev > total_actual:
+            total_dev = total_actual
+
+        return _to_q2(total_dev)
+
     # -------------------------
     # ✅ Método principal
     # -------------------------
@@ -635,18 +688,25 @@ class CambioDevolucion(models.Model):
         reintegro_map = reintegro_map or {}
 
         # 1) calcular total devolución
-        total_dev = Decimal("0.00")
-        for item in devoluciones:
-            det: DetalleVenta = item["detalle"]
-            cant = int(item["cantidad"] or 0)
-            if cant <= 0:
-                continue
-            precio = (det.preciounitario or Decimal("0.00"))
-            total_dev += (Decimal(cant) * precio)
-
-        total_dev = _to_q2(total_dev)
+        total_dev = cls.calcular_total_devolucion(venta, devoluciones)
         if total_dev <= 0:
             return
+
+        venta.refresh_from_db()
+        nuevo_total = _to_q2((venta.total or Decimal("0.00")) - total_dev)
+        if nuevo_total < 0:
+            raise ValueError(f"La devolución ({total_dev}) deja el total negativo ({nuevo_total}).")
+
+        medio_venta = (venta.mediopago or "").strip().lower()
+        if medio_venta == "mixto":
+            suma_reintegro = Decimal("0.00")
+            for monto in reintegro_map.values():
+                monto = _to_q2(monto)
+                if monto > 0:
+                    suma_reintegro += monto
+            suma_reintegro = _to_q2(suma_reintegro)
+            if suma_reintegro != total_dev:
+                raise ValueError(f"Reintegro mixto ({suma_reintegro}) != total devolución ({total_dev}).")
 
         now = timezone.localdate()
 
@@ -679,11 +739,6 @@ class CambioDevolucion(models.Model):
             )
 
         # 3) venta.total baja
-        venta.refresh_from_db()
-        nuevo_total = _to_q2((venta.total or Decimal("0.00")) - total_dev)
-        if nuevo_total < 0:
-            raise ValueError(f"La devolución ({total_dev}) deja el total negativo ({nuevo_total}).")
-
         venta.total = nuevo_total
         venta.save(update_fields=["total"])
 
@@ -694,8 +749,6 @@ class CambioDevolucion(models.Model):
 
         # ventas_total siempre baja
         TurnoCaja.objects.filter(pk=turno.pk).update(ventas_total=F("ventas_total") - total_dev)
-
-        medio_venta = (venta.mediopago or "").strip().lower()
 
         # 4A) no mixto => por el mismo medio
         if medio_venta != "mixto":

@@ -44,6 +44,10 @@ $(function () {
   const $hidMedioPago = $("#medio_pago"); // compat (efectivo/tarjeta/transferencia/mixto)
   const $hidEmpleadoPassword = $("#empleado_password");
 
+  function isClienteBusquedaElement(el) {
+    return !!($inpCliente && $inpCliente.length && el === $inpCliente[0]);
+  }
+
   // ✅ Modal refs (para total en vivo)
   const $modal      = $("#myModal");
   const $modalTotal = $("#modal-total");
@@ -198,7 +202,7 @@ $(function () {
     employeeHasUser: false
   };
 
-  const PROMO_BAG_21 = "21";
+  const PROMO_BAG_21 = "7318";
   const PROMO_BAG_8001 = "8001";
   const PROMO_BLOCK_COP = 11000;
 
@@ -2629,6 +2633,67 @@ $(function () {
   });
 
   /* ================== Cliente ================== */
+  const CLIENTE_AC_LIMIT = 12;
+  const clienteAcCache = new Map();
+  let clienteAcActive = null;
+  let clienteAcSeq = 0;
+
+  function clienteTermKey(term) {
+    return String(term || "").trim().toLowerCase();
+  }
+
+  function mapClienteAc(c) {
+    return {
+      id: c.id,
+      label: c.text,
+      value: c.text,
+      name: c.text,
+      documento: c.documento || "",
+      isEmployee: !!(c.is_employee || c.isEmployee),
+      employeeName: c.employee_name || c.employeeName || "",
+      employeeHasUser: !!(c.employee_has_user || c.employeeHasUser)
+    };
+  }
+
+  function setClienteCache(key, items) {
+    if (!key) return;
+    clienteAcCache.set(key, items);
+    if (clienteAcCache.size > 80) {
+      const firstKey = clienteAcCache.keys().next().value;
+      if (firstKey) clienteAcCache.delete(firstKey);
+    }
+  }
+
+  function cachedClienteMatches(term) {
+    const key = clienteTermKey(term);
+    if (!key) return [];
+    if (clienteAcCache.has(key)) return clienteAcCache.get(key) || [];
+
+    let bestKey = "";
+    for (const cacheKey of clienteAcCache.keys()) {
+      if (key.startsWith(cacheKey) && cacheKey.length > bestKey.length) {
+        bestKey = cacheKey;
+      }
+    }
+
+    const source = bestKey ? (clienteAcCache.get(bestKey) || []) : [];
+    if (!source.length) return [];
+
+    return source.filter((item) => {
+      const haystack = `${item.label || ""} ${item.documento || ""}`.toLowerCase();
+      return haystack.includes(key);
+    });
+  }
+
+  function cancelClienteAcRequest() {
+    if (!clienteAcActive) return;
+    try { clienteAcActive.controller?.abort?.(); } catch (_) {}
+    if (!clienteAcActive.responded && typeof clienteAcActive.resp === "function") {
+      try { clienteAcActive.resp([]); } catch (_) {}
+    }
+    clienteAcActive = null;
+  }
+
   createAC({
     $inp: $inpCliente,
     minChars: 1,
@@ -2636,19 +2701,54 @@ $(function () {
     sourceFn: function(req, resp){
       (async ()=>{
         const term = (req && typeof req.term === "string") ? req.term : "";
-        const d = await fetch(CLIENTE_URL + "?" + new URLSearchParams({ term, _ts: Date.now() }), { cache: "no-store" })
+        const key = clienteTermKey(term);
+        cancelClienteAcRequest();
+        const seq = ++clienteAcSeq;
+
+        const exactCached = clienteAcCache.get(key);
+        if (exactCached) {
+          resp(exactCached);
+          return;
+        }
+
+        let responded = false;
+        const cached = cachedClienteMatches(term);
+        if (cached.length) {
+          resp(cached);
+          responded = true;
+        }
+
+        const controller = window.AbortController ? new AbortController() : null;
+        clienteAcActive = { controller, resp, responded };
+
+        const d = await fetch(CLIENTE_URL + "?" + new URLSearchParams({ term, limit: CLIENTE_AC_LIMIT }), {
+          cache: "default",
+          signal: controller ? controller.signal : undefined
+        })
           .then(r=> r.ok ? r.json() : {results:[]})
-          .catch(()=>({results:[]}));
-        resp((d.results||[]).map(c=>({
-          id:c.id,
-          label:c.text,
-          value:c.text,
-          name:c.text,
-          documento:c.documento || "",
-          isEmployee: !!c.is_employee,
-          employeeName: c.employee_name || "",
-          employeeHasUser: !!c.employee_has_user
-        })));
+          .catch((err)=>{
+            if (err && err.name === "AbortError") return null;
+            return {results:[]};
+          });
+
+        if (seq !== clienteAcSeq || !d) return;
+
+        const items = (d.results || []).map(mapClienteAc);
+        setClienteCache(key, items);
+
+        if (responded) {
+          clienteAcActive = null;
+          if (clienteTermKey($inp.val()) === key) {
+            requestAnimationFrame(() => {
+              try { $inp.autocomplete("search", term); } catch (_) {}
+            });
+          }
+          return;
+        }
+
+        if (clienteAcActive) clienteAcActive.responded = true;
+        resp(items);
+        clienteAcActive = null;
       })();
     },
     onSelect: (item) => {
@@ -3352,11 +3452,14 @@ $(function () {
   (function scannerGuardInsideModal() {
     const MIN_CHARS = 8;
     const GAP_MS = 80;
+    const SCAN_AVG_MS = 45;
 
     let buf = "";
     let first = 0;
     let last = 0;
     let scanning = false;
+    let originEl = null;
+    let originStartValue = "";
 
     let idleTimer = null;
     let finalizeTimer = null;
@@ -3366,8 +3469,31 @@ $(function () {
       first = 0;
       last = 0;
       scanning = false;
+      originEl = null;
+      originStartValue = "";
       if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; }
       if (finalizeTimer) { clearTimeout(finalizeTimer); finalizeTimer = null; }
+    }
+
+    function looksLikeScanner(t) {
+      return !!buf
+        && buf.length >= MIN_CHARS
+        && (t - first) <= Math.max(130, buf.length * SCAN_AVG_MS)
+        && (t - last) <= GAP_MS * 2;
+    }
+
+    function rememberOrigin() {
+      originEl = document.activeElement;
+      originStartValue = (originEl && typeof originEl.value === "string") ? originEl.value : "";
+    }
+
+    function restoreOriginIfNeeded() {
+      if (!originEl || typeof originEl.value !== "string") return;
+      if (originEl.value === originStartValue) return;
+      try {
+        originEl.value = originStartValue;
+        $(originEl).trigger("input");
+      } catch (_) {}
     }
 
     function markActivity() {
@@ -3377,6 +3503,7 @@ $(function () {
 
     function finalize(_code) {
       // ✅ Modal = bloqueo total: no agregues productos
+      restoreOriginIfNeeded();
       markActivity();
       reset();
     }
@@ -3394,17 +3521,12 @@ $(function () {
       const t = Date.now();
 
       if (e.key === "Enter" || e.key === "Tab") {
-        if (buf || scanning) {
+        if (looksLikeScanner(t)) {
           e.preventDefault();
           e.stopImmediatePropagation();
           e.stopPropagation();
 
-          markActivity();
-
-          const fastEnough = buf && (t-first) < buf.length * (GAP_MS+5) && (t-last) < GAP_MS*3;
-          if (fastEnough && buf.length >= MIN_CHARS) finalize(buf);
-          else reset();
-
+          finalize(buf);
           return;
         }
         reset();
@@ -3412,8 +3534,11 @@ $(function () {
       }
 
       if (e.key && e.key.length === 1) {
+        if (!/^\d$/.test(e.key)) { reset(); return; }
+
         // Construcción de buffer con timing
         if (!buf) {
+          rememberOrigin();
           buf = e.key;
           first = t;
           last = t;
@@ -3421,6 +3546,7 @@ $(function () {
         } else {
           if ((t - last) > GAP_MS) {
             // corte: no era escáner continuo
+            rememberOrigin();
             buf = e.key;
             first = t;
             last = t;
@@ -3432,7 +3558,10 @@ $(function () {
         }
 
         // heurística: si va muy rápido, es escáner
-        if (buf.length >= 2 && (t - first) < buf.length * (GAP_MS + 8)) scanning = true;
+        if (!scanning && looksLikeScanner(t)) {
+          scanning = true;
+          restoreOriginIfNeeded();
+        }
 
         if (scanning) {
           // NO dejes que el escáner escriba dentro de inputs del modal
@@ -4622,6 +4751,7 @@ Total: ${money(totalNum)}${msgCambio}`;
 
       const active = document.activeElement;
       const inQty = isQtyElement(active);
+      if (isClienteBusquedaElement(active)) { resetAll(); return; }
       const t = Date.now();
 
       if (e.key === "Enter" || e.key === "Tab") {
@@ -4709,7 +4839,8 @@ Total: ${money(totalNum)}${msgCambio}`;
       // ✅ si el modal está abierto, NO uses este fallback (lo maneja el guard del modal)
       if (isModalOpen()) { reset(); return; }
 
-      if (isQtyElement(document.activeElement)) return;
+      const active = document.activeElement;
+      if (isQtyElement(active) || isClienteBusquedaElement(active)) { reset(); return; }
 
       // ✅ Ignorar teclas artefacto de lectores genéricos (Alt, NumLock, CapsLock, etc).
       if (SCANNER_ARTIFACT_KEYS.has(e.key)) return;

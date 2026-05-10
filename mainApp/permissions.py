@@ -351,6 +351,12 @@ PERMISSION_DEFINITIONS = [
         "aliases": ["visualizar_ventas", "ver_venta", "ventas_datatable"],
     },
     {
+        "code": "ventas_imprimir",
+        "label": "Imprimir venta",
+        "description": "Permite abrir el detalle de una venta en modo solo lectura e imprimir la factura.",
+        "aliases": ["ver_venta_imprimir", "ticket_texto", "imprimir_factura", "imprimir venta", "solo imprimir venta"],
+    },
+    {
         "code": "ventas_cambios",
         "label": "Cambios y devoluciones",
         "description": "Permite ver y gestionar cambios o devoluciones.",
@@ -568,6 +574,13 @@ ROUTE_PERMISSIONS = {
     "visor_barcode": "visor_barcode",
     "visor_barcode_buscar": "visor_barcode",
     "visor_barcode_lookup": "visor_barcode",
+}
+
+
+ROUTE_PERMISSION_ALTERNATIVES = {
+    "ver_venta": ["ventas_ver", "ventas_imprimir"],
+    "ticket_texto": ["ventas_ver", "ventas_imprimir"],
+    "imprimir_factura": ["ventas_ver", "ventas_imprimir"],
 }
 
 
@@ -879,6 +892,16 @@ def route_permission_for_url_name(url_name: Optional[str]) -> Optional[str]:
     return ROUTE_PERMISSIONS.get(url_name)
 
 
+def route_permissions_for_url_name(url_name: Optional[str]) -> List[str]:
+    if not url_name or url_name in PUBLIC_URL_NAMES or url_name in ALWAYS_ALLOWED_URL_NAMES:
+        return []
+    alternatives = ROUTE_PERMISSION_ALTERNATIVES.get(url_name)
+    if alternatives:
+        return alternatives
+    permission = ROUTE_PERMISSIONS.get(url_name)
+    return [permission] if permission else []
+
+
 def user_can_access_url_name(user, url_name: Optional[str]) -> bool:
     if not url_name:
         return True
@@ -886,7 +909,10 @@ def user_can_access_url_name(user, url_name: Optional[str]) -> bool:
         return True
     if url_name in ALWAYS_ALLOWED_URL_NAMES:
         return getattr(user, "is_authenticated", False)
-    return user_has_permission(user, route_permission_for_url_name(url_name))
+    permissions = route_permissions_for_url_name(url_name)
+    if not permissions:
+        return True
+    return any(user_has_permission(user, permission) for permission in permissions)
 
 
 def _resolve_nav_item(raw_item: Dict[str, object], user, current_path: str) -> Optional[Dict[str, object]]:

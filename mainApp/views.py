@@ -83,7 +83,7 @@ from django.conf import settings
 from datetime import timedelta
 import pytz
 from typing import List, Dict, Any
-from .permissions import clear_permission_cache, permission_catalog, sync_permission_catalog, user_can_access_url_name
+from .permissions import clear_permission_cache, permission_catalog, sync_permission_catalog, user_can_access_url_name, user_has_permission
 
 
 CO_TZ = ZoneInfo("America/Bogota")
@@ -3512,7 +3512,7 @@ class GenerarVentaView(LoginRequiredMixin, View):
 
     @staticmethod
     def _apply_bag_promo(detalles):
-        BAG_21 = 21
+        BAG_21 = 7318
         BAG_8001 = 8001
         BLOCK_VALUE = Decimal("11000")
 
@@ -3638,6 +3638,19 @@ class GenerarVentaView(LoginRequiredMixin, View):
         descuento_empleado = Decimal((venta_data or {}).get("descuento_empleado", 0) or 0)
         empleado_comprador = (venta_data or {}).get("empleado_comprador", "") or ""
         venta_id      = (venta_data or {}).get("venta_id", "")
+        total_dec = Decimal(total or 0)
+        subtotal_factura = sum(
+            (Decimal(d.get("subtotal") or 0) for d in detalles or []),
+            Decimal("0"),
+        )
+        descuento_calculado = Decimal("0")
+        if subtotal_factura > 0 and total_dec >= 0:
+            descuento_calculado = (subtotal_factura - total_dec).quantize(Decimal("0.01"))
+            if descuento_calculado < Decimal("0.01"):
+                descuento_calculado = Decimal("0")
+        descuento_total = max(descuento_empleado, descuento_calculado)
+        if descuento_total > 0 and subtotal_factura <= total_dec:
+            subtotal_factura = total_dec + descuento_total
 
         head = [
             line("NOVA POS"),
@@ -3671,15 +3684,17 @@ class GenerarVentaView(LoginRequiredMixin, View):
         foot = ["-" * WIDTH]
         if refund_total > 0:
             foot.append(lr("DEVUELTO:", money(refund_total)))
-        if cambio > 0:
-            foot.append(lr("CAMBIO:", money(cambio)))
-        if descuento_empleado > 0:
-            foot.append(lr("DESC. EMPLEADO:", f"-{money(descuento_empleado)}"))
+        if descuento_total > 0:
+            foot.append(lr("SUBTOTAL:", money(subtotal_factura)))
+            descuento_label = "DESC. EMPLEADO:" if descuento_empleado > 0 else "DESCUENTO:"
+            foot.append(lr(descuento_label, f"-{money(descuento_total)}"))
+            foot.append(lr("USTED AHORRA:", money(descuento_total)))
             if empleado_comprador:
                 foot.append(line(f"Empleado: {empleado_comprador}"))
 
         foot += [
             lr("TOTAL:", money(total)),
+            *( [lr("CAMBIO:", money(cambio))] if cambio > 0 else [] ),
             "",
             line("¡Gracias por su compra! :) "),
             ""
@@ -3988,6 +4003,39 @@ def _line() -> str:
     return "-" * TICKET_WIDTH_CHARS
 
 
+def _ticket_subtotal_discount(detalles, total) -> tuple[Decimal, Decimal]:
+    subtotal = Decimal("0")
+    for det in detalles or []:
+        try:
+            qty = Decimal(int(getattr(det, "cantidad", 0) or 0))
+            price = Decimal(getattr(det, "preciounitario", 0) or 0)
+        except Exception:
+            continue
+        subtotal += qty * price
+
+    try:
+        total_dec = Decimal(total or 0)
+    except Exception:
+        total_dec = Decimal("0")
+
+    if subtotal <= 0 or total_dec < 0:
+        return subtotal.quantize(Decimal("0.01")), Decimal("0")
+
+    discount = (subtotal - total_dec).quantize(Decimal("0.01"))
+    if discount < Decimal("0.01"):
+        discount = Decimal("0")
+    return subtotal.quantize(Decimal("0.01")), discount
+
+
+def _ticket_amount_line(label: str, amount: Decimal, width: int = TICKET_WIDTH_CHARS) -> str:
+    try:
+        amount_dec = Decimal(amount or 0)
+    except Exception:
+        amount_dec = Decimal("0")
+    right = f"-{_fmt_money(amount_dec.copy_abs())}" if amount_dec < 0 else _fmt_money(amount_dec)
+    return f"{label:<{width-len(right)}}{right}"
+
+
 def _build_ticket_lines(venta: Venta) -> list[str]:
     """
     Devuelve líneas ya formateadas a 48 columnas (80mm).
@@ -4018,11 +4066,12 @@ def _build_ticket_lines(venta: Venta) -> list[str]:
         out += _wrap(f"Cliente: {venta.clienteid.nombre}")
     out.append(_line())
 
-    detalles = (
+    detalles = list(
         DetalleVenta.objects
         .filter(ventaid=venta)
         .select_related("productoid")
     )
+    subtotal_factura, descuento_total = _ticket_subtotal_discount(detalles, venta.total)
 
     # ✅ calcular devuelto (sumatoria de qty<0 en positivo)
     refund_total = Decimal("0")
@@ -4052,7 +4101,12 @@ def _build_ticket_lines(venta: Venta) -> list[str]:
     if refund_total > 0:
         out.append(f"{'DEVUELTO':<{TICKET_WIDTH_CHARS-10}}{_fmt_money(refund_total):>10}")
 
-    out.append(f"{'TOTAL':<{TICKET_WIDTH_CHARS-10}}{_fmt_money(venta.total):>10}")
+    if descuento_total > 0:
+        out.append(_ticket_amount_line("SUBTOTAL", subtotal_factura))
+        out.append(_ticket_amount_line("DESCUENTO", -descuento_total))
+        out.append(_ticket_amount_line("USTED AHORRA", descuento_total))
+
+    out.append(_ticket_amount_line("TOTAL", venta.total))
     out.append(_line())
     out += _wrap(f"Medio de pago: {str(venta.mediopago or '').upper()}")
     out.append("")
@@ -4335,11 +4389,19 @@ class ClienteAutocompleteView(PaginatedAutocompleteMixin):
     """
     model = Cliente
     id_field = "clienteid"
+    per_page = 12
 
     def get(self, request, *args, **kwargs):
-        term   = request.GET.get("term", "").strip()
-        page   = max(int(request.GET.get("page", 1)), 1)
-        start, end = (page-1)*self.per_page, page*self.per_page
+        term = request.GET.get("term", "").strip()
+        try:
+            page = max(int(request.GET.get("page", 1)), 1)
+        except (TypeError, ValueError):
+            page = 1
+        try:
+            limit = max(1, min(int(request.GET.get("limit", self.per_page)), 30))
+        except (TypeError, ValueError):
+            limit = self.per_page
+        start, end = (page - 1) * limit, page * limit
 
         qs = Cliente.objects.all()
         if term:
@@ -4349,27 +4411,46 @@ class ClienteAutocompleteView(PaginatedAutocompleteMixin):
                 Q(numerodocumento__icontains=term)
             )
 
-        total   = qs.count()
-        clientes = list(qs.order_by("nombre")[start:end])
+        clientes = list(
+            qs.order_by("nombre", "apellido")
+            .values("clienteid", "nombre", "apellido", "numerodocumento")[start:end + 1]
+        )
+        has_more = len(clientes) > limit
+        clientes = clientes[:limit]
+
+        documentos = {
+            str(c["numerodocumento"] or "").strip()
+            for c in clientes
+            if str(c["numerodocumento"] or "").strip()
+        }
 
         empleados_por_doc = {}
-        for empleado in Empleado.objects.select_related("usuarioid").all():
+        empleados_qs = Empleado.objects.select_related("usuarioid")
+        if documentos:
+            empleados_qs = empleados_qs.filter(numerodocumento__in=documentos)
+        else:
+            empleados_qs = Empleado.objects.none()
+
+        for empleado in empleados_qs:
             doc_norm = GenerarVentaView._normalize_document(empleado.numerodocumento)
             if doc_norm:
                 empleados_por_doc[doc_norm] = empleado
 
         results = []
         for c in clientes:
-            empleado = empleados_por_doc.get(GenerarVentaView._normalize_document(c.numerodocumento))
+            empleado = empleados_por_doc.get(GenerarVentaView._normalize_document(c["numerodocumento"]))
+            nombre = c["nombre"] or ""
+            apellido = c["apellido"] or ""
+            documento = c["numerodocumento"] or ""
             results.append({
-              "id"  : c.clienteid,
-              "text": f"{c.nombre} {c.apellido} ({c.numerodocumento})",
-              "documento": c.numerodocumento or "",
+              "id"  : c["clienteid"],
+              "text": f"{nombre} {apellido} ({documento})",
+              "documento": documento,
               "is_employee": bool(empleado),
               "employee_name": str(empleado or "") if empleado else "",
               "employee_has_user": bool(getattr(empleado, "usuarioid", None)) if empleado else False,
             })
-        return JsonResponse({"results": results, "has_more": end < total})
+        return JsonResponse({"results": results, "has_more": has_more})
 
 
 
@@ -4849,6 +4930,22 @@ class VentaDataTableView(LoginRequiredMixin, View):
 class VentaDetailView(LoginRequiredMixin, DenyRolesMixin, View):
     deny_roles = ["Cajero", "Auxiliar"]
     template_name = "ver_venta.html"
+    edit_permission = "ventas_ver"
+    print_permission = "ventas_imprimir"
+
+    def _can_edit_venta(self, user) -> bool:
+        return user_has_permission(user, self.edit_permission)
+
+    def _can_print_venta(self, user) -> bool:
+        return self._can_edit_venta(user) or user_has_permission(user, self.print_permission)
+
+    def _is_print_only(self, user) -> bool:
+        return self._can_print_venta(user) and not self._can_edit_venta(user)
+
+    def dispatch(self, request, *args, **kwargs):
+        if self._is_print_only(request.user):
+            return View.dispatch(self, request, *args, **kwargs)
+        return super().dispatch(request, *args, **kwargs)
 
     # -------------------------
     # Helpers
@@ -4903,20 +5000,8 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin, View):
     def _build_reintegro_initial(self, venta):
         return [{"medio_pago": key, "monto": Decimal("0.00")} for key, _label in MEDIOS_PAGO]
 
-    def _calcular_total_reintegro(self, detalles, dev_formset) -> Decimal:
-        total = Decimal("0.00")
-        det_map = {d.pk: d for d in detalles}
-
-        for row in dev_formset.cleaned_data:
-            cant = int(row.get("devolver") or 0)
-            if cant <= 0:
-                continue
-            det = det_map.get(row["detalle_id"])
-            if not det:
-                continue
-            total += (Decimal(cant) * (det.preciounitario or Decimal("0.00")))
-
-        return total.quantize(Q2)
+    def _calcular_total_reintegro(self, venta, devoluciones) -> Decimal:
+        return CambioDevolucion.calcular_total_devolucion(venta, devoluciones).quantize(Q2)
 
     def _sum_formset_montos(self, formset) -> Decimal:
         s = Decimal("0.00")
@@ -4951,7 +5036,7 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin, View):
 
         ahora = timezone.localtime(venta.fechaventa) if getattr(venta, "fechaventa", None) else timezone.localtime()
 
-        detalles = (
+        detalles = list(
             DetalleVenta.objects
             .filter(ventaid=venta)
             .select_related("productoid")
@@ -4961,6 +5046,7 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin, View):
         pagos = []
         medio = (venta.mediopago or "").strip().lower()
         total = (venta.total or Decimal("0.00")).quantize(Q2)
+        subtotal_factura, descuento_total = _ticket_subtotal_discount(detalles, total)
 
         if medio == "mixto":
             rows = (
@@ -5005,6 +5091,10 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin, View):
             out.append(line(f"{nombre:<28} {cant:>4} {cls._money(sub):>7}"))
 
         out.append(line("-" * WIDTH))
+        if descuento_total > 0:
+            out.append(lr("SUBTOTAL", cls._money(subtotal_factura)))
+            out.append(lr("DESCUENTO", f"-{cls._money(descuento_total)}"))
+            out.append(lr("USTED AHORRA", cls._money(descuento_total)))
         out.append(lr("TOTAL", cls._money(total)))
         out.append(line("-" * WIDTH))
 
@@ -5110,6 +5200,7 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin, View):
             "es_mixto": self._venta_es_mixta(venta),
             "medios_pago": MEDIOS_PAGO,
             "venta_total": (venta.total or Decimal("0.00")).quantize(Q2),
+            "venta_print_only": self._is_print_only(request.user),
         })
 
     # -------------------------
@@ -5128,6 +5219,16 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin, View):
                 return JsonResponse({"ok": True, "text": text, "venta_id": venta.pk})
             except Exception as e:
                 return JsonResponse({"ok": False, "error": str(e)}, status=400)
+
+        if self._is_print_only(request.user):
+            message = "Este permiso solo permite ver e imprimir la factura."
+            wants_json = (
+                request.headers.get("x-requested-with") == "XMLHttpRequest"
+                or "application/json" in request.headers.get("accept", "")
+            )
+            if wants_json:
+                return JsonResponse({"success": False, "error": message}, status=403)
+            return HttpResponseForbidden(message)
 
         detalles = list(DetalleVenta.objects.filter(ventaid=venta))
 
@@ -5199,7 +5300,7 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin, View):
         if not devoluciones:
             return redirect(reverse_lazy("ver_venta", kwargs={"venta_id": venta_id}))
 
-        total_reintegro = self._calcular_total_reintegro(detalles, dev_formset)
+        total_reintegro = self._calcular_total_reintegro(venta, devoluciones)
 
         if self._venta_es_mixta(venta):
             ok, err, reintegro_map = self._validar_reintegro_mixto(venta, reintegro_formset, total_reintegro)

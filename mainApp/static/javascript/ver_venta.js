@@ -51,16 +51,25 @@
 
   function calcTotalDevolucion() {
     const rows = document.querySelectorAll("#tabla-detalles tbody tr");
-    let total = 0;
+    const totalVenta = parseMoney(window.VENTA_TOTAL || (totalVentaEl ? totalVentaEl.textContent : "0"));
+    let subtotalActual = 0;
+    let totalBruto = 0;
 
     rows.forEach(tr => {
       const precio = parseMoney(tr.getAttribute("data-precio"));
+      const cantidadActual = parseInt(tr.getAttribute("data-cantidad") || "0", 10);
       const inputDev = tr.querySelector("input[name^='dev-'][name$='-devolver']");
       const cant = inputDev ? parseInt(inputDev.value || "0", 10) : 0;
-      if (cant > 0) total += cant * precio;
+      if (cantidadActual > 0) subtotalActual += cantidadActual * precio;
+      if (cant > 0) totalBruto += cant * precio;
     });
 
-    return Math.max(0, total);
+    let total = totalBruto;
+    if (subtotalActual > 0 && totalVenta >= 0 && totalVenta < subtotalActual) {
+      total = totalBruto * (totalVenta / subtotalActual);
+    }
+
+    return Math.min(Math.max(0, total), Math.max(0, totalVenta));
   }
 
   function setReintegroInputsEnabled(enabled) {

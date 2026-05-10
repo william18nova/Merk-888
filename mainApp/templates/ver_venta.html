@@ -35,6 +35,9 @@
 
       <div>
         <label for="id_mediopago">Medio de Pago</label>
+        {% if venta_print_only %}
+          <input readonly value="{{ venta.mediopago|cut:'_'|title }}">
+        {% else %}
         {% with mp=venta.mediopago|lower %}
         <select name="mediopago" id="id_mediopago">
           <option value="efectivo" {% if mp == "efectivo" %}selected{% endif %}>Efectivo</option>
@@ -45,6 +48,7 @@
           <option value="mixto" {% if mp == "mixto" %}selected{% endif %}>Mixto</option>
         </select>
         {% endwith %}
+        {% endif %}
       </div>
 
       <div>
@@ -68,6 +72,7 @@
       </div>
     </div>
 
+    {% if not venta_print_only %}
     <!-- ===================== PAGO MIXTO: COMO SE PAGO ===================== -->
     <div id="bloque-mixto-pagos"
          class="mixto-card"
@@ -102,6 +107,7 @@
 
       <div class="mixto-error" id="mixto-error-pagos" style="display:none;"></div>
     </div>
+    {% endif %}
 
     <h2 class="venta-card__subtitle">Productos</h2>
 
@@ -113,27 +119,32 @@
             <th class="text-end">Cant.</th>
             <th class="text-end">Precio U.</th>
             <th class="text-end">Subtotal</th>
+            {% if not venta_print_only %}
             <th class="text-end">Devolver</th>
+            {% endif %}
           </tr>
         </thead>
         <tbody>
           {% for det, f in filas %}
-          <tr data-precio="{{ det.preciounitario }}">
+          <tr data-precio="{{ det.preciounitario }}" data-cantidad="{{ det.cantidad }}">
             <td>{{ det.productoid.nombre }}</td>
             <td class="text-end">{{ det.cantidad }}</td>
             <td class="text-end">${{ det.preciounitario|floatformat:2 }}</td>
             <td class="text-end">${{ det.subtotal|floatformat:2 }}</td>
+            {% if not venta_print_only %}
             <td class="text-end">
               {{ f.devolver }} {{ f.detalle_id }}
             </td>
+            {% endif %}
           </tr>
           {% empty %}
-          <tr><td colspan="5" class="empty">Sin productos</td></tr>
+          <tr><td colspan="{% if venta_print_only %}4{% else %}5{% endif %}" class="empty">Sin productos</td></tr>
           {% endfor %}
         </tbody>
       </table>
     </div>
 
+    {% if not venta_print_only %}
     <!-- ===================== REINTEGRO MIXTO: CON QUE MEDIOS SE DEVUELVE ===================== -->
     <div id="bloque-mixto-reintegro"
          class="mixto-card"
@@ -169,11 +180,13 @@
 
       <div class="mixto-error" id="mixto-error-reintegro" style="display:none;"></div>
     </div>
+    {% endif %}
 
     <div class="venta-footer">
       <h3>Total actual: <span>${{ venta.total|floatformat:2 }}</span></h3>
 
       <div class="btn-group">
+        {% if not venta_print_only %}
         <button type="submit" class="btn-primary-alt" name="accion" value="guardar">
           <i class="fas fa-save me-1"></i> Guardar cambios / devolución
         </button>
@@ -181,6 +194,8 @@
         <button type="submit" class="btn-primary" name="accion" value="volver_lista">
           <i class="fas fa-list me-1"></i> Volver a la lista
         </button>
+
+        {% endif %}
 
         <button type="button"
                 id="btn-imprimir-factura"
