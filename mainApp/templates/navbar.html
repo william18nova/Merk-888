@@ -37,22 +37,26 @@
       {% endif %}
     {% endfor %}
 
-    {% if user.is_authenticated %}
-      <li class="nv__session-item">
-        <div class="nv__session-chip" title="Sesion: {{ nav_session_username }}">
-          <span class="nv__session-dot" aria-hidden="true"></span>
-          <span class="nv__session-name">{{ nav_session_name }}</span>
-        </div>
-      </li>
-
-      <li>
-        <form method="post" action="{% url 'logout' %}" style="display:inline;">
-          {% csrf_token %}
-          <button type="submit" class="nv__logout-btn">
-            <i class="fas fa-sign-out-alt"></i> Cerrar sesion
-          </button>
-        </form>
-      </li>
-    {% endif %}
+    <li class="nv__item nv__more has-dd" id="nvMoreItem" hidden>
+      <a href="#" id="nvMoreToggle" aria-label="Mas opciones">Mas</a>
+      <ul class="nv__dd nv__more-menu" id="nvMoreMenu"></ul>
+    </li>
   </ul>
+
+  {% if user.is_authenticated %}
+    <div class="nv__actions">
+      <div class="nv__session-chip" title="Sesion: {{ nav_session_username }}">
+        <span class="nv__session-dot" aria-hidden="true"></span>
+        <span class="nv__session-name">{{ nav_session_name }}</span>
+      </div>
+
+      <form method="post" action="{% url 'logout' %}" class="nv__logout-form">
+        {% csrf_token %}
+        <button type="submit" class="nv__logout-btn">
+          <i class="fas fa-sign-out-alt"></i>
+          <span class="nv__logout-label">Cerrar sesion</span>
+        </button>
+      </form>
+    </div>
+  {% endif %}
 </nav>

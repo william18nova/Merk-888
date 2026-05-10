@@ -7,7 +7,7 @@ html, body { margin: 0; padding: 0; }
 
 :root {
   --nav-h: 56px;
-  --nav-mobile-break: 1024px;
+  --nav-mobile-break: 1180px;
 
   /* Danger palette para Logout */
   --danger-50:#ffe9ea;
@@ -32,12 +32,14 @@ html, body { margin: 0; padding: 0; }
   position: fixed;
   top: 0; left: 0; right: 0;
   width: 100%;
+  height: var(--nav-h);
   min-height: var(--nav-h);
 
   display: flex;
   align-items: center;
+  flex-wrap: nowrap;
   gap: clamp(6px, 1vw, 16px);
-  padding: 10px clamp(12px, 3vw, 28px);
+  padding: 8px clamp(12px, 2vw, 22px);
 
   background: var(--nv-bg);
   backdrop-filter: blur(8px);
@@ -68,32 +70,37 @@ html, body { margin: 0; padding: 0; }
 /* ── Marca ── */
 .nv__brand { display:flex; align-items:center; gap:10px; text-decoration:none; color:var(--nv-text); white-space:nowrap; }
 .nv__logo  { width:26px; height:26px; border-radius:6px; box-shadow:0 3px 10px rgba(0,0,0,.25); }
-.nv__title { font: 600 clamp(12px, 1.1vw, 14px)/1 "Inter", system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
+.nv__title {
+  max-width: 148px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font: 600 clamp(12px, 1.1vw, 14px)/1 "Inter", system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+}
 
 /* ───────── Enlaces ───────── */
 .nv__links {
   list-style: none;
   display: flex;
   align-items: center;
-  justify-content: center;
-  gap: clamp(6px, 1vw, 12px);
-  row-gap: 6px;
+  justify-content: flex-start;
+  gap: clamp(4px, .55vw, 9px);
   margin: 0;
   padding: 0;
   flex: 1 1 auto;
   min-width: 0;
+  max-width: 100%;
   overflow: visible;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
 }
 .nv__links > li { position: relative; flex: 0 0 auto; }
 
 .nv__links a {
   display: inline-block;
-  padding: clamp(6px, 0.9vw, 8px) clamp(10px, 1.2vw, 14px);
+  padding: 7px clamp(8px, .8vw, 12px);
   border-radius: 10px;
   color: var(--nv-text-muted);
   text-decoration: none;
-  font: 600 clamp(11px, 1vw, 13px)/1 "Inter", system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+  font: 700 clamp(11px, .75vw, 12.5px)/1 "Inter", system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
   transition: background .18s ease, color .18s ease, transform .18s ease;
   white-space: nowrap;
 }
@@ -116,9 +123,9 @@ html, body { margin: 0; padding: 0; }
 .nv__item > a { white-space: nowrap; }
 
 .nv__dd {
-  position: absolute;
-  top: 100%;
-  left: 0;
+  position: fixed;
+  top: var(--nv-dd-top, var(--nav-h));
+  left: var(--nv-dd-left, 0px);
   min-width: 220px;
   max-width: min(92vw, 360px);
   max-height: min(70vh, 480px);
@@ -142,19 +149,52 @@ html, body { margin: 0; padding: 0; }
 .nv__dd a { display:block; padding:10px 12px; border-radius:10px; color:var(--nv-text-muted); text-decoration:none; font:600 13px/1 "Inter", system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
 .nv__dd a:hover { background: var(--nv-bg-hover); color: var(--nv-text); }
 
+.nv__more[hidden] { display: none !important; }
+.nv__more { order: 999; }
+.nv__more > a {
+  background: rgba(255,255,255,.06);
+  border: 1px solid rgba(255,255,255,.08);
+}
+.nv__more-menu > li {
+  width: 100%;
+  position: relative;
+}
+.nv__more-menu .nv__dd {
+  position: static;
+  min-width: 0;
+  max-width: none;
+  max-height: none;
+  overflow: visible;
+  margin: 6px 0 4px;
+  padding: 5px;
+  background: rgba(7,20,39,.32);
+  box-shadow: none;
+  border-radius: 10px;
+}
+.nv__more-menu .nv__dd a {
+  padding-left: 18px;
+  font-size: 12.5px;
+}
+
 @media (hover: hover) and (pointer: fine) {
   .nv__item.has-dd:hover > .nv__dd,
   .nv__item.has-dd:focus-within > .nv__dd { display: block; }
+  .nv__more-menu .nv__item.has-dd:hover > .nv__dd,
+  .nv__more-menu .nv__item.has-dd:focus-within > .nv__dd { display: block; }
   .nv__item.has-dd::after { content:""; position:absolute; left:0; right:0; top:100%; height:10px; }
 }
 
-.nv__links > li:nth-last-child(-n+4) > .nv__dd { right: 0; left: auto; }
+.nv__links > li:nth-last-child(-n+4) > .nv__dd { right: auto; }
 .is-parent-active > a { background: var(--nv-accent); color:#fff; box-shadow: 0 6px 14px rgba(31,105,210,.35) inset, 0 6px 14px rgba(0,0,0,.15); }
 
 /* ───────── Sesion activa ───────── */
-.nv__session-item{
+.nv__actions{
   display:flex;
   align-items:center;
+  gap:10px;
+  flex:0 0 auto;
+  margin-left:auto;
+  min-width:0;
 }
 .nv__session-chip{
   display:inline-flex;
@@ -190,23 +230,24 @@ html, body { margin: 0; padding: 0; }
 /* ================================
    Escritorio estrecho
    ================================ */
-@media (min-width: 1025px) and (max-width: 1280px) {
-  .nv__links { gap: 8px; }
-  .nv__links a { padding: 6px 10px; font-size: 12px; }
-  .nv__session-chip{ max-width:118px; }
-  .page-wrap { padding-top: calc(var(--nav-h) + 30px); }
-}
-@media (min-width: 1025px) and (max-width: 1120px) {
-  .nv__links { gap: 6px; }
+@media (min-width: 1181px) and (max-width: 1360px) {
+  .nv__links { gap: 5px; }
   .nv__links a { padding: 6px 9px; font-size: 11.5px; }
+  .nv__session-chip{ max-width:118px; }
+  .nv__logout-btn{ padding-inline:10px; }
+  .nv__logout-label{ display:none; }
+}
+@media (min-width: 1181px) and (max-width: 1240px) {
+  .nv__links { gap: 4px; }
+  .nv__links a { padding: 6px 8px; font-size: 11px; }
   .nv__session-chip{ max-width:112px; }
-  .page-wrap { padding-top: calc(var(--nav-h) + 36px); }
+  .nv__title{ max-width:112px; }
 }
 
 /* ================================
    Móvil
    ================================ */
-@media (max-width: 1024px) {
+@media (max-width: 1180px) {
   body.nv-menu-open{ overflow:hidden; }
 
   .nv {
@@ -223,7 +264,7 @@ html, body { margin: 0; padding: 0; }
 
   .nv__brand{
     min-width:0;
-    flex-direction:row-reverse;
+    flex-direction:row;
     gap:8px;
   }
 
@@ -261,8 +302,10 @@ html, body { margin: 0; padding: 0; }
     left: 0;
     right: 0;
     bottom: 0;
+    height: calc(100dvh - var(--nav-h));
+    max-height: calc(100dvh - var(--nav-h));
     margin:0;
-    padding:12px max(12px, env(safe-area-inset-right)) calc(18px + env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
+    padding:12px max(12px, env(safe-area-inset-right)) calc(132px + env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
     background:rgba(16, 34, 58, .96);
     backdrop-filter: blur(14px);
     -webkit-backdrop-filter: blur(14px);
@@ -273,7 +316,7 @@ html, body { margin: 0; padding: 0; }
     justify-content:flex-start;
     gap: 7px;
 
-    max-height:none;
+    overflow-x:hidden;
     overflow-y:auto;
     overscroll-behavior:contain;
     -webkit-overflow-scrolling:touch;
@@ -350,7 +393,28 @@ html, body { margin: 0; padding: 0; }
     color:var(--nv-text);
     background:rgba(255,255,255,.09);
   }
-  .nv__session-item{ width:100%; }
+  .nv__actions{
+    display:none;
+  }
+  body.nv-menu-open .nv__actions{
+    position:fixed;
+    left:max(12px, env(safe-area-inset-left));
+    right:max(12px, env(safe-area-inset-right));
+    bottom:calc(12px + env(safe-area-inset-bottom));
+    z-index:10000;
+    display:flex;
+    flex-direction:column;
+    align-items:stretch;
+    gap:8px;
+    margin:0;
+    padding:10px;
+    border-radius:16px;
+    background:rgba(7,20,39,.72);
+    border:1px solid rgba(255,255,255,.10);
+    box-shadow:0 16px 36px rgba(0,0,0,.34);
+    backdrop-filter:blur(14px);
+    -webkit-backdrop-filter:blur(14px);
+  }
   .nv__session-chip{
     width:100%;
     max-width:none;
@@ -364,7 +428,7 @@ html, body { margin: 0; padding: 0; }
     color:var(--nv-text);
     font-size:13px;
   }
-  .nv__links li form{
+  .nv__logout-form{
     display:block;
     width:100%;
   }
@@ -379,15 +443,35 @@ html, body { margin: 0; padding: 0; }
 }
 
 @media (max-width: 380px){
-  .nv__title{ max-width:44vw; font-size:13px; }
+  .nv__title{ max-width:42vw; font-size:13px; }
   .nv__links{ padding-left:10px; padding-right:10px; }
   .nv__links a{ min-height:44px; padding:12px; font-size:13px; }
+}
+
+@media (max-width: 320px){
+  .nv__title{ display:none; }
+  .nv__brand{ gap:0; }
+  .nv__logo{ width:32px; height:32px; }
+}
+
+@media (max-width: 1180px) and (max-height: 540px){
+  .nv__links{
+    padding-bottom:calc(102px + env(safe-area-inset-bottom));
+  }
+  body.nv-menu-open .nv__actions{
+    padding:8px;
+    gap:6px;
+  }
+  .nv__session-chip,
+  .nv__logout-btn{
+    min-height:38px;
+  }
 }
 
 /* ================================
    Botón Cerrar sesión (compacto + outline)
    ================================ */
-.nv__links li form{ margin:0; padding:0; display:inline; }
+.nv__logout-form{ margin:0; padding:0; display:inline; }
 .nv__logout-btn{
   --btn-bg: linear-gradient(180deg, var(--danger-500), var(--danger-600));
   --btn-shadow: 0 6px 14px rgba(229,72,77,.28), inset 0 1px 0 rgba(255,255,255,.12);
