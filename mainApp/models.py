@@ -779,3 +779,30 @@ class CambioDevolucion(models.Model):
         suma = _to_q2(suma)
         if suma != total_dev:
             raise ValueError(f"Reintegro mixto ({suma}) != total devolución ({total_dev}).")
+
+
+class NotificacionNequi(models.Model):
+    notificacionid = models.BigAutoField(primary_key=True)
+    titulo = models.CharField(max_length=180, blank=True)
+    texto = models.TextField()
+    app = models.CharField(max_length=120, blank=True)
+    paquete = models.CharField(max_length=160, blank=True)
+    monto = models.DecimalField(max_digits=14, decimal_places=2, null=True, blank=True)
+    remitente = models.CharField(max_length=160, blank=True)
+    referencia = models.CharField(max_length=120, blank=True)
+    recibido_en = models.DateTimeField(default=timezone.now)
+    creado_en = models.DateTimeField(auto_now_add=True)
+    raw_payload = models.JSONField(default=dict, blank=True)
+    fingerprint = models.CharField(max_length=64, unique=True, db_index=True)
+
+    class Meta:
+        db_table = "notificaciones_nequi"
+        ordering = ["-recibido_en", "-notificacionid"]
+        indexes = [
+            models.Index(fields=["recibido_en"], name="notificacio_recibid_6f12d3_idx"),
+            models.Index(fields=["monto"], name="notificacio_monto_429441_idx"),
+        ]
+
+    def __str__(self):
+        monto = f" ${self.monto}" if self.monto is not None else ""
+        return f"Nequi{monto} - {self.recibido_en:%Y-%m-%d %H:%M}"

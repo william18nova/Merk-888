@@ -141,6 +141,9 @@ POS_AGENT_TOKEN = os.getenv(
     "BmFclqQdWkKjArLIYvakHG426BuLDUtJA0zVG5DJOgjZTWSEVa_i0hxiyXskSHUi"
 )
 
+# Token privado que MacroDroid debe enviar en X-Macrodroid-Token.
+MACRODROID_NEQUI_TOKEN = os.getenv("MACRODROID_NEQUI_TOKEN", "")
+
 # ========= Variables del agente local de inventario por fotos =========
 INVENTARIO_AGENT_URL = os.getenv("INVENTARIO_AGENT_URL", "http://127.0.0.1:8788")
 INVENTARIO_AGENT_TOKEN = os.getenv(

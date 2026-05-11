@@ -9,7 +9,7 @@ from .models import Permiso, Rol, RolPermiso
 
 
 ADMIN_ROLE_NAMES = {"admin", "administrador", "supervisor"}
-PUBLIC_URL_NAMES = {"login", "logout", "visor_barcode", "visor_barcode_buscar", "visor_barcode_lookup"}
+PUBLIC_URL_NAMES = {"login", "logout", "visor_barcode", "visor_barcode_buscar", "visor_barcode_lookup", "macrodroid_nequi_webhook"}
 ALWAYS_ALLOWED_URL_NAMES = {"home"}
 
 
@@ -381,6 +381,12 @@ PERMISSION_DEFINITIONS = [
         "aliases": ["metricas_negocio", "metricas_negocio_data", "metricas del negocio", "analitica"],
     },
     {
+        "code": "nequi_notificaciones",
+        "label": "Notificaciones Nequi",
+        "description": "Permite ver las notificaciones de pagos recibidos por Nequi.",
+        "aliases": ["nequi_notificaciones", "nequi_notificaciones_data", "pagos nequi", "notificaciones nequi"],
+    },
+    {
         "code": "pedidos_crear",
         "label": "Agregar pedido",
         "description": "Permite crear pedidos a proveedores.",
@@ -544,6 +550,8 @@ ROUTE_PERMISSIONS = {
     "producto_ventas_stats": "reportes_ventas_producto",
     "metricas_negocio": "metricas_negocio",
     "metricas_negocio_data": "metricas_negocio",
+    "nequi_notificaciones": "nequi_notificaciones",
+    "nequi_notificaciones_data": "nequi_notificaciones",
     "agregar_pedido": "pedidos_crear",
     "visualizar_pedidos": "pedidos_ver",
     "ver_pedido": "pedidos_ver",
@@ -697,6 +705,7 @@ NAV_GROUPS = [
             {"label": "Turno de caja", "url_name": "turno_caja"},
             {"label": "Dashboard turnos", "url_name": "turnos_caja_dashboard"},
             {"label": "Admin turnos", "url_name": "turnos_caja_admin"},
+            {"label": "Notificaciones Nequi", "url_name": "nequi_notificaciones"},
             {"label": "Abrir caja (ventas)", "url_name": "abrir_caja"},
         ],
     },

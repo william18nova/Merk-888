@@ -1,7 +1,7 @@
 from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib.auth.decorators import login_required
 from django.contrib import messages
-from .models import Usuario, Sucursal, Categoria, Producto, Inventario, Proveedor, PreciosProveedor, PuntosPago, Rol, Empleado, HorariosNegocio, HorarioCaja, Cliente, Venta, DetalleVenta, PedidoProveedor, DetallePedidoProveedor, CambioDevolucion, Permiso, RolPermiso, UsuarioPermiso, PagoVenta, TurnoCaja, TurnoCajaMedio
+from .models import Usuario, Sucursal, Categoria, Producto, Inventario, Proveedor, PreciosProveedor, PuntosPago, Rol, Empleado, HorariosNegocio, HorarioCaja, Cliente, Venta, DetalleVenta, PedidoProveedor, DetallePedidoProveedor, CambioDevolucion, Permiso, RolPermiso, UsuarioPermiso, PagoVenta, TurnoCaja, TurnoCajaMedio, NotificacionNequi
 from django.db.models import Count, Sum, Exists, OuterRef, Q, F, ExpressionWrapper, DecimalField, Value, IntegerField, Case, When, CharField
 from django.http import JsonResponse, HttpResponseBadRequest, HttpResponseForbidden, HttpRequest, HttpResponse
 from django.contrib.auth import authenticate, login as auth_login
@@ -9,11 +9,13 @@ import json
 import csv
 import re
 import unicodedata
+import hashlib
+import hmac
 from datetime import date, datetime, time
 from django.utils import timezone
 from django.contrib.auth import authenticate
 import logging
-from django.utils.dateparse import parse_date
+from django.utils.dateparse import parse_date, parse_datetime
 from django.db import transaction, connection, IntegrityError
 from django.contrib import messages
 from zoneinfo import ZoneInfo
@@ -79,6 +81,7 @@ from django.core.paginator import Paginator
 from django.db.models.functions import Lower, StrIndex, Trim, Coalesce, TruncDate, Cast, ExtractHour, ExtractIsoWeekDay, ExtractDay
 import os, io, textwrap, subprocess
 from django.views.decorators.http import require_POST
+from django.views.decorators.csrf import csrf_exempt
 from django.conf import settings
 from datetime import timedelta
 import pytz
@@ -235,6 +238,7 @@ class HomePageView(LoginRequiredMixin, TemplateView):
                 "turno_caja",
                 "turnos_caja_dashboard",
                 "generar_venta",
+                "nequi_notificaciones",
             ),
             "inventory_alerts": self._can_any_url(
                 user,
@@ -260,6 +264,7 @@ class HomePageView(LoginRequiredMixin, TemplateView):
             ("inventario_fotos", "Inventario por foto", "Inventario"),
             ("visualizar_inventarios", "Ver inventario", "Inventario"),
             ("turno_caja", "Turno de caja", "Caja"),
+            ("nequi_notificaciones", "Notificaciones Nequi", "Caja"),
             ("ventas_diarias", "Ventas diarias", "Reportes"),
             ("metricas_negocio", "Metricas del negocio", "Reportes"),
             ("visualizar_pedidos", "Pedidos proveedor", "Compras"),
@@ -294,6 +299,18 @@ class HomePageView(LoginRequiredMixin, TemplateView):
                 "value": self._money(total_hoy),
                 "detail": f"{cantidad_ventas} venta{'s' if cantidad_ventas != 1 else ''}",
                 "tone": "sales",
+            })
+
+        if user_can_access_url_name(user, "nequi_notificaciones"):
+            nequi_hoy = NotificacionNequi.objects.filter(recibido_en__date=today).aggregate(
+                total=Sum("monto"),
+                cantidad=Count("notificacionid"),
+            )
+            dashboard_cards.append({
+                "label": "Nequi hoy",
+                "value": self._money(nequi_hoy.get("total") or Decimal("0")),
+                "detail": f"{nequi_hoy.get('cantidad') or 0} notificacion{'es' if (nequi_hoy.get('cantidad') or 0) != 1 else ''}",
+                "tone": "ok",
             })
 
         turno = None
@@ -6512,6 +6529,242 @@ class VentasDiariasView(LoginRequiredMixin,DenyRolesMixin, View):
     def get(self, request):
         hoy = timezone.localdate()  # date
         return render(request, self.template_name, {"fecha_hoy": _iso_co(hoy)})
+
+
+NEQUI_NOTIFICATION_LIMIT = 80
+
+
+def _nequi_field(payload, *names):
+    for name in names:
+        value = payload.get(name)
+        if value not in (None, ""):
+            return str(value).strip()
+    return ""
+
+
+def _normalize_money_value(raw_value):
+    raw_value = (raw_value or "").strip()
+    raw_value = re.sub(r"[^\d,.]", "", raw_value)
+    if not raw_value:
+        return None
+
+    last_comma = raw_value.rfind(",")
+    last_dot = raw_value.rfind(".")
+    last_sep = max(last_comma, last_dot)
+    if last_sep > -1:
+        decimals = len(raw_value) - last_sep - 1
+        sep = raw_value[last_sep]
+        if decimals == 2 and raw_value.count(sep) == 1:
+            whole = re.sub(r"[^\d]", "", raw_value[:last_sep]) or "0"
+            cents = re.sub(r"[^\d]", "", raw_value[last_sep + 1:])
+            return Decimal(f"{whole}.{cents}").quantize(Decimal("0.01"))
+
+    digits = re.sub(r"[^\d]", "", raw_value)
+    if not digits:
+        return None
+    return Decimal(digits).quantize(Decimal("0.01"))
+
+
+def _parse_nequi_amount(text):
+    text = text or ""
+    patterns = [
+        r"(?:\$|cop\s*)\s*([0-9][0-9.,]*)",
+        r"(?:recibiste|enviaron|envio|depositaron|pagaron|pago|por)\s+(?:de\s+)?([0-9][0-9.,]*)",
+        r"([0-9]{1,3}(?:[.,][0-9]{3})+(?:[.,][0-9]{2})?)",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, text, flags=re.IGNORECASE)
+        if not match:
+            continue
+        try:
+            amount = _normalize_money_value(match.group(1))
+        except (InvalidOperation, ValueError):
+            amount = None
+        if amount is not None:
+            return amount
+    return None
+
+
+def _parse_nequi_sender(text):
+    text = text or ""
+    match = re.search(r"(?:\bde|\bdesde)\s+([^,.\n]{3,100})", text, flags=re.IGNORECASE)
+    if not match:
+        return ""
+    sender = re.sub(r"\s+", " ", match.group(1)).strip()
+    return sender[:160]
+
+
+def _parse_nequi_reference(text):
+    text = text or ""
+    match = re.search(
+        r"(?:referencia|ref\.?|codigo|transaccion)\s*[:#-]?\s*([A-Za-z0-9-]{4,80})",
+        text,
+        flags=re.IGNORECASE,
+    )
+    return match.group(1)[:120] if match else ""
+
+
+def _parse_nequi_received_at(payload):
+    raw_value = _nequi_field(payload, "received_at", "fecha", "timestamp", "notification_time", "time")
+    if raw_value:
+        parsed = parse_datetime(raw_value)
+        if parsed:
+            if timezone.is_naive(parsed):
+                parsed = timezone.make_aware(parsed, CO_TZ)
+            return parsed
+        parsed_date = parse_date(raw_value)
+        if parsed_date:
+            return timezone.make_aware(datetime.combine(parsed_date, time.min), CO_TZ)
+    return timezone.now()
+
+
+def _make_nequi_fingerprint(payload, title, text, package, received_at):
+    explicit_id = _nequi_field(payload, "id", "notification_id", "event_id", "macro_id")
+    raw_time = _nequi_field(payload, "received_at", "fecha", "timestamp", "notification_time", "time")
+    unique_part = explicit_id or raw_time
+    if not unique_part:
+        unique_part = received_at.isoformat(timespec="microseconds")
+    base = f"{package}|{title}|{text}|{unique_part}"
+    return hashlib.sha256(base.encode("utf-8", errors="ignore")).hexdigest()
+
+
+def _nequi_item_json(item):
+    recibido = _as_co(item.recibido_en)
+    return {
+        "id": item.notificacionid,
+        "titulo": item.titulo,
+        "texto": item.texto,
+        "app": item.app,
+        "paquete": item.paquete,
+        "monto": str(item.monto) if item.monto is not None else "",
+        "remitente": item.remitente,
+        "referencia": item.referencia,
+        "fecha": recibido.strftime("%Y-%m-%d"),
+        "hora": recibido.strftime("%I:%M %p").lower(),
+        "iso": recibido.isoformat(),
+    }
+
+
+def _nequi_summary():
+    today = timezone.localdate()
+    today_qs = NotificacionNequi.objects.filter(recibido_en__date=today)
+    total = today_qs.aggregate(total=Sum("monto"))["total"] or Decimal("0")
+    last_item = NotificacionNequi.objects.order_by("-recibido_en", "-notificacionid").first()
+    return {
+        "hoy_total": str(total.quantize(Decimal("0.01"))),
+        "hoy_count": today_qs.count(),
+        "ultima_hora": _as_co(last_item.recibido_en).strftime("%I:%M %p").lower() if last_item else "",
+        "ultima_monto": str(last_item.monto) if last_item and last_item.monto is not None else "",
+    }
+
+
+class NequiNotificacionesView(LoginRequiredMixin, TemplateView):
+    template_name = "nequi_notificaciones.html"
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        items = NotificacionNequi.objects.order_by("-recibido_en", "-notificacionid")[:NEQUI_NOTIFICATION_LIMIT]
+        context["notificaciones"] = items
+        context["resumen_nequi"] = _nequi_summary()
+        return context
+
+
+class NequiNotificacionesDataView(LoginRequiredMixin, View):
+    def get(self, request, *args, **kwargs):
+        items = NotificacionNequi.objects.order_by("-recibido_en", "-notificacionid")[:NEQUI_NOTIFICATION_LIMIT]
+        return JsonResponse({
+            "success": True,
+            "summary": _nequi_summary(),
+            "items": [_nequi_item_json(item) for item in items],
+        })
+
+
+@method_decorator(csrf_exempt, name="dispatch")
+class NequiNotificationWebhookView(View):
+    http_method_names = ["post"]
+
+    def _payload(self, request):
+        content_type = (request.headers.get("Content-Type") or "").lower()
+        if "application/json" in content_type:
+            try:
+                data = json.loads(request.body.decode("utf-8") or "{}")
+            except json.JSONDecodeError as exc:
+                raise ValueError(f"JSON invalido: {exc}") from exc
+            if not isinstance(data, dict):
+                raise ValueError("El cuerpo JSON debe ser un objeto.")
+            return data
+        return request.POST.dict()
+
+    def _request_token(self, request, payload):
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header.lower().startswith("bearer "):
+            return auth_header.split(" ", 1)[1].strip()
+        return (
+            request.headers.get("X-Macrodroid-Token")
+            or request.headers.get("X-MacroDroid-Token")
+            or request.GET.get("token")
+            or payload.get("token")
+            or ""
+        )
+
+    def post(self, request, *args, **kwargs):
+        configured_token = getattr(settings, "MACRODROID_NEQUI_TOKEN", "")
+        if not configured_token:
+            return JsonResponse({
+                "success": False,
+                "error": "MACRODROID_NEQUI_TOKEN no esta configurado en el servidor.",
+            }, status=503)
+
+        try:
+            payload = self._payload(request)
+        except ValueError as exc:
+            return JsonResponse({"success": False, "error": str(exc)}, status=400)
+
+        request_token = str(self._request_token(request, payload)).strip()
+        if not hmac.compare_digest(request_token, configured_token):
+            return JsonResponse({"success": False, "error": "Token invalido."}, status=403)
+
+        title = _nequi_field(payload, "title", "titulo", "notification_title", "not_title")
+        text = _nequi_field(payload, "text", "texto", "body", "message", "notification_text", "not_text")
+        app_name = _nequi_field(payload, "app", "application", "application_name", "notification_app_name")
+        package = _nequi_field(payload, "package", "package_name", "notification_package", "app_package")
+        joined = f"{title} {text} {app_name} {package}".lower()
+        if "nequi" not in joined:
+            return JsonResponse({
+                "success": True,
+                "ignored": True,
+                "reason": "La notificacion no parece venir de Nequi.",
+            }, status=202)
+
+        if not text and not title:
+            return JsonResponse({"success": False, "error": "La notificacion llego sin titulo ni texto."}, status=400)
+
+        received_at = _parse_nequi_received_at(payload)
+        amount = _parse_nequi_amount(f"{title} {text}")
+        sender = _nequi_field(payload, "sender", "remitente") or _parse_nequi_sender(text)
+        reference = _nequi_field(payload, "reference", "referencia") or _parse_nequi_reference(text)
+        fingerprint = _make_nequi_fingerprint(payload, title, text, package, received_at)
+
+        notification, created = NotificacionNequi.objects.get_or_create(
+            fingerprint=fingerprint,
+            defaults={
+                "titulo": title[:180],
+                "texto": text or title,
+                "app": app_name[:120],
+                "paquete": package[:160],
+                "monto": amount,
+                "remitente": sender[:160],
+                "referencia": reference[:120],
+                "recibido_en": received_at,
+                "raw_payload": payload,
+            },
+        )
+
+        return JsonResponse({
+            "success": True,
+            "created": created,
+            "item": _nequi_item_json(notification),
+        }, status=201 if created else 200)
 
 
 

@@ -258,6 +258,9 @@ urlpatterns = [
      path("ventas/diarias/stats/", views.VentasDiariasStatsView.as_view(), name="ventas_diarias_stats"),
      path("reportes/metricas/", views.MetricasNegocioView.as_view(), name="metricas_negocio"),
      path("reportes/metricas/data/", views.MetricasNegocioDataView.as_view(), name="metricas_negocio_data"),
+     path("nequi/notificaciones/", views.NequiNotificacionesView.as_view(), name="nequi_notificaciones"),
+     path("nequi/notificaciones/data/", views.NequiNotificacionesDataView.as_view(), name="nequi_notificaciones_data"),
+     path("api/macrodroid/nequi/", views.NequiNotificationWebhookView.as_view(), name="macrodroid_nequi_webhook"),
 
 
      # --- Reporte: pedidos pagados ---

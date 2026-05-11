@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Notificaciones Nequi{% endblock %}
+
+{% block extra_head %}
+  <link rel="stylesheet" href="{% static 'css/nequi_notificaciones.css' %}">
+{% endblock %}
+
+{% block content %}
+<section class="nequi-page" data-feed-url="{% url 'nequi_notificaciones_data' %}">
+  <header class="nequi-hero">
+    <div>
+      <p class="nequi-eyebrow">Pagos en tiempo real</p>
+      <h1>Notificaciones Nequi</h1>
+      <p>Depositos recibidos desde el celular conectado con MacroDroid.</p>
+    </div>
+    <div class="nequi-live-pill" id="nequi-status">
+      <span></span>
+      Conectando
+    </div>
+  </header>
+
+  <section class="nequi-summary">
+    <article>
+      <span>Total recibido hoy</span>
+      <strong data-nequi-summary="hoy_total">$ {{ resumen_nequi.hoy_total }}</strong>
+      <small>Sumando notificaciones con monto detectado</small>
+    </article>
+    <article>
+      <span>Notificaciones hoy</span>
+      <strong data-nequi-summary="hoy_count">{{ resumen_nequi.hoy_count }}</strong>
+      <small>Entradas recibidas durante el dia</small>
+    </article>
+    <article>
+      <span>Ultimo pago</span>
+      <strong data-nequi-summary="ultima_monto">
+        {% if resumen_nequi.ultima_monto %}$ {{ resumen_nequi.ultima_monto }}{% else %}-{% endif %}
+      </strong>
+      <small data-nequi-summary="ultima_hora">
+        {% if resumen_nequi.ultima_hora %}{{ resumen_nequi.ultima_hora }}{% else %}Sin registros{% endif %}
+      </small>
+    </article>
+  </section>
+
+  <section class="nequi-panel">
+    <div class="nequi-panel__head">
+      <div>
+        <p class="nequi-eyebrow">Historial</p>
+        <h2>Ultimas notificaciones</h2>
+      </div>
+      <button type="button" class="nequi-refresh" id="nequi-refresh">Actualizar</button>
+    </div>
+
+    <div class="nequi-list" id="nequi-list">
+      {% for item in notificaciones %}
+        <article class="nequi-item" data-id="{{ item.notificacionid }}">
+          <div class="nequi-item__main">
+            <div class="nequi-item__title">
+              <strong>{% if item.monto %}$ {{ item.monto }}{% else %}Pago Nequi{% endif %}</strong>
+              <span>{{ item.recibido_en|date:"Y-m-d h:i A" }}</span>
+            </div>
+            <p>{{ item.texto }}</p>
+            <div class="nequi-item__meta">
+              {% if item.remitente %}<span>{{ item.remitente }}</span>{% endif %}
+              {% if item.referencia %}<span>Ref. {{ item.referencia }}</span>{% endif %}
+              {% if item.app %}<span>{{ item.app }}</span>{% endif %}
+            </div>
+          </div>
+        </article>
+      {% empty %}
+        <div class="nequi-empty" id="nequi-empty">Todavia no hay notificaciones de Nequi.</div>
+      {% endfor %}
+    </div>
+  </section>
+</section>
+{% endblock %}
+
+{% block scripts %}
+  <script src="{% static 'javascript/nequi_notificaciones.js' %}"></script>
+{% endblock %}
