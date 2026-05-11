@@ -6684,6 +6684,7 @@ class NequiNotificationWebhookView(View):
     http_method_names = ["post"]
 
     def _payload(self, request):
+        payload = request.GET.dict()
         content_type = (request.headers.get("Content-Type") or "").lower()
         if "application/json" in content_type:
             try:
@@ -6692,8 +6693,10 @@ class NequiNotificationWebhookView(View):
                 raise ValueError(f"JSON invalido: {exc}") from exc
             if not isinstance(data, dict):
                 raise ValueError("El cuerpo JSON debe ser un objeto.")
-            return data
-        return request.POST.dict()
+            payload.update(data)
+            return payload
+        payload.update(request.POST.dict())
+        return payload
 
     def _request_token(self, request, payload):
         auth_header = request.headers.get("Authorization", "")
@@ -6744,6 +6747,7 @@ class NequiNotificationWebhookView(View):
         sender = _nequi_field(payload, "sender", "remitente") or _parse_nequi_sender(text)
         reference = _nequi_field(payload, "reference", "referencia") or _parse_nequi_reference(text)
         fingerprint = _make_nequi_fingerprint(payload, title, text, package, received_at)
+        safe_payload = {key: value for key, value in payload.items() if key.lower() != "token"}
 
         notification, created = NotificacionNequi.objects.get_or_create(
             fingerprint=fingerprint,
@@ -6756,7 +6760,7 @@ class NequiNotificationWebhookView(View):
                 "remitente": sender[:160],
                 "referencia": reference[:120],
                 "recibido_en": received_at,
-                "raw_payload": payload,
+                "raw_payload": safe_payload,
             },
         )
 
