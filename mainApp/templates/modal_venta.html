@@ -109,6 +109,19 @@
 
     </div>
 
+    <div id="nequi-payment-panel" class="nequi-payment-panel" hidden>
+      <div class="nequi-payment-head">
+        <div>
+          <strong>Envios de Nequi disponibles</strong>
+          <small>Selecciona el envio que corresponde a esta venta. Tambien puedes cerrar sin asociar uno.</small>
+        </div>
+        <button type="button" id="nequi-refresh-payments" class="nequi-mini-btn">Actualizar</button>
+      </div>
+      <div id="nequi-selected-payment" class="nequi-selected-payment" hidden></div>
+      <div id="nequi-payment-list" class="nequi-payment-list"></div>
+      <small id="nequi-payment-status" class="nequi-payment-status">Cargando envios...</small>
+    </div>
+
     <div style="margin-top:.8rem">
       <div id="mix-error"></div>
       <button type="button" id="confirmar-pago" class="btn-confirmar">CONFIRMAR PAGO</button>

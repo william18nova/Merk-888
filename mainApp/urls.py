@@ -260,6 +260,7 @@ urlpatterns = [
      path("reportes/metricas/data/", views.MetricasNegocioDataView.as_view(), name="metricas_negocio_data"),
      path("nequi/notificaciones/", views.NequiNotificacionesView.as_view(), name="nequi_notificaciones"),
      path("nequi/notificaciones/data/", views.NequiNotificacionesDataView.as_view(), name="nequi_notificaciones_data"),
+     path("nequi/notificaciones/disponibles/", views.NequiNotificacionesDisponiblesView.as_view(), name="nequi_notificaciones_disponibles"),
      path("api/macrodroid/nequi/", views.NequiNotificationWebhookView.as_view(), name="macrodroid_nequi_webhook"),
 
 

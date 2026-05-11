@@ -794,6 +794,15 @@ class NotificacionNequi(models.Model):
     creado_en = models.DateTimeField(auto_now_add=True)
     raw_payload = models.JSONField(default=dict, blank=True)
     fingerprint = models.CharField(max_length=64, unique=True, db_index=True)
+    venta = models.ForeignKey(
+        "Venta",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        db_column="ventaid",
+        related_name="notificaciones_nequi",
+    )
+    usado_en = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         db_table = "notificaciones_nequi"
@@ -801,6 +810,7 @@ class NotificacionNequi(models.Model):
         indexes = [
             models.Index(fields=["recibido_en"], name="notificacio_recibid_6f12d3_idx"),
             models.Index(fields=["monto"], name="notificacio_monto_429441_idx"),
+            models.Index(fields=["venta"], name="notificacio_ventaid_41c4f5_idx"),
         ]
 
     def __str__(self):

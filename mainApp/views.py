@@ -3499,6 +3499,7 @@ class GenerarVentaView(LoginRequiredMixin, View):
 
         medio_pago_simple = (data.get("medio_pago") or "").strip().lower()
         efectivo_recibido = data.get("efectivo_recibido") or Decimal("0")
+        nequi_notificacion_id = data.get("nequi_notificacion_id")
 
         # 🔥 si quieres máxima velocidad en prod, NO imprimas debug
         if getattr(settings, "DEBUG", False):
@@ -3530,6 +3531,7 @@ class GenerarVentaView(LoginRequiredMixin, View):
             cliente_inst=cliente_inst,
             empleado_comprador=empleado_comprador,
             descuento_empleado=descuento_empleado,
+            nequi_notificacion_id=nequi_notificacion_id,
         )
 
     # =========================
@@ -3787,7 +3789,8 @@ class GenerarVentaView(LoginRequiredMixin, View):
     @staticmethod
     def _crear_venta_ultra_fast(
         user, suc_inst, pp_inst, cliente_id, pagos, detalles, total, efectivo_recibido,
-        cliente_inst=None, empleado_comprador=None, descuento_empleado=Decimal("0")
+        cliente_inst=None, empleado_comprador=None, descuento_empleado=Decimal("0"),
+        nequi_notificacion_id=None
     ):
         """
         ULTRA FAST:
@@ -3821,6 +3824,45 @@ class GenerarVentaView(LoginRequiredMixin, View):
             prod_ids = list(qty_map.keys())
 
             with transaction.atomic():
+                nequi_notification = None
+                nequi_pago_total = sum(
+                    (
+                        GenerarVentaView._to_decimal(p.get("monto", 0))
+                        for p in (pagos or [])
+                        if (p.get("medio_pago") or "").strip().lower() == "nequi"
+                    ),
+                    Decimal("0")
+                )
+
+                if nequi_notificacion_id:
+                    if nequi_pago_total <= 0:
+                        return JsonResponse({
+                            "success": False,
+                            "error": "Seleccionaste un envio de Nequi, pero la venta no tiene pago por Nequi."
+                        })
+
+                    nequi_notification = (
+                        NotificacionNequi.objects
+                        .select_for_update()
+                        .filter(pk=nequi_notificacion_id, venta__isnull=True)
+                        .first()
+                    )
+                    if not nequi_notification:
+                        return JsonResponse({
+                            "success": False,
+                            "error": "Ese envio de Nequi ya fue usado o no esta disponible."
+                        })
+
+                    nequi_monto = GenerarVentaView._to_decimal(nequi_notification.monto or 0)
+                    if nequi_monto < nequi_pago_total:
+                        return JsonResponse({
+                            "success": False,
+                            "error": (
+                                f"El envio de Nequi seleccionado ({nequi_monto}) "
+                                f"no cubre el pago Nequi ({nequi_pago_total})."
+                            )
+                        })
+
                 cliente_inst = cliente_inst or (Cliente.objects.filter(pk=cliente_id).first() if cliente_id else None)
                 mediopago = "mixto" if len(pagos) >= 2 else (pagos[0]["medio_pago"] if pagos else "sin_pago").lower()
 
@@ -3889,6 +3931,12 @@ class GenerarVentaView(LoginRequiredMixin, View):
                 if efectivo_monto > 0:
                     PuntosPago.objects.filter(pk=pp_inst.pk).update(
                         dinerocaja=F("dinerocaja") + efectivo_monto
+                    )
+
+                if nequi_notification:
+                    NotificacionNequi.objects.filter(pk=nequi_notification.pk).update(
+                        venta=venta,
+                        usado_en=timezone.now(),
                     )
 
             # CAMBIO: solo pago simple en efectivo
@@ -6587,6 +6635,11 @@ def _parse_nequi_amount(text):
 
 def _parse_nequi_sender(text):
     text = text or ""
+    direct = re.search(r"^\s*(.+?)\s+te\s+envi[oó]\b", text, flags=re.IGNORECASE)
+    if direct:
+        sender = re.sub(r"\s+", " ", direct.group(1)).strip()
+        return sender[:160]
+
     match = re.search(r"(?:\bde|\bdesde)\s+([^,.\n]{3,100})", text, flags=re.IGNORECASE)
     if not match:
         return ""
@@ -6645,6 +6698,26 @@ def _nequi_item_json(item):
     }
 
 
+def _nequi_sender_names(sender):
+    parts = [p for p in re.split(r"\s+", str(sender or "").strip()) if p]
+    return {
+        "nombre": parts[0] if len(parts) >= 1 else "",
+        "segundo_nombre": parts[1] if len(parts) >= 2 else "",
+    }
+
+
+def _nequi_sale_item_json(item):
+    data = _nequi_item_json(item)
+    names = _nequi_sender_names(item.remitente)
+    data.update({
+        "nombre": names["nombre"],
+        "segundo_nombre": names["segundo_nombre"],
+        "monto_num": float(item.monto or 0),
+        "monto_label": f"$ {int(item.monto or 0):,}".replace(",", "."),
+    })
+    return data
+
+
 def _nequi_summary():
     today = timezone.localdate()
     today_qs = NotificacionNequi.objects.filter(recibido_en__date=today)
@@ -6676,6 +6749,19 @@ class NequiNotificacionesDataView(LoginRequiredMixin, View):
             "success": True,
             "summary": _nequi_summary(),
             "items": [_nequi_item_json(item) for item in items],
+        })
+
+
+class NequiNotificacionesDisponiblesView(LoginRequiredMixin, View):
+    def get(self, request, *args, **kwargs):
+        items = (
+            NotificacionNequi.objects
+            .filter(venta__isnull=True, monto__isnull=False, monto__gt=0)
+            .order_by("-recibido_en", "-notificacionid")[:120]
+        )
+        return JsonResponse({
+            "success": True,
+            "items": [_nequi_sale_item_json(item) for item in items],
         })
 
 

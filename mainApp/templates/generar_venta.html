@@ -145,6 +145,7 @@
       <input type="hidden" id="pagos" name="pagos" value="">
       <input type="hidden" id="efectivo_recibido" name="efectivo_recibido" value="">
       <input type="hidden" id="empleado_password" name="empleado_password" value="">
+      <input type="hidden" id="nequi_notificacion_id" name="nequi_notificacion_id" value="">
     </form>
   </section>
 
@@ -241,6 +242,7 @@
 
   window.imprimirFacturaUrl             = "{% url 'imprimir_factura' %}";
   window.abrirCajaUrl                   = "{% url 'abrir_caja' %}";
+  window.nequiNotificacionesDisponiblesUrl = "{% url 'nequi_notificaciones_disponibles' %}";
 </script>
 
 <!-- POS Agent -->

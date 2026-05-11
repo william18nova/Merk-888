@@ -384,7 +384,7 @@ PERMISSION_DEFINITIONS = [
         "code": "nequi_notificaciones",
         "label": "Notificaciones Nequi",
         "description": "Permite ver las notificaciones de pagos recibidos por Nequi.",
-        "aliases": ["nequi_notificaciones", "nequi_notificaciones_data", "pagos nequi", "notificaciones nequi"],
+        "aliases": ["nequi_notificaciones", "nequi_notificaciones_data", "nequi_notificaciones_disponibles", "pagos nequi", "notificaciones nequi"],
     },
     {
         "code": "pedidos_crear",
@@ -552,6 +552,7 @@ ROUTE_PERMISSIONS = {
     "metricas_negocio_data": "metricas_negocio",
     "nequi_notificaciones": "nequi_notificaciones",
     "nequi_notificaciones_data": "nequi_notificaciones",
+    "nequi_notificaciones_disponibles": "ventas_generar",
     "agregar_pedido": "pedidos_crear",
     "visualizar_pedidos": "pedidos_ver",
     "ver_pedido": "pedidos_ver",

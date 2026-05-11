@@ -16,6 +16,7 @@ $(function () {
   const VERIFICAR_URL   = window.verificarProductoUrl;
   const POR_COD_URL     = window.buscarProductoPorCodigoUrl;
   const SNAPSHOT_URL    = window.productoSnapshotUrl || "/api/productos/snapshot/";
+  const NEQUI_DISPONIBLES_URL = window.nequiNotificacionesDisponiblesUrl || "";
 
   /* ================== Agente local ================== */
   const POS_AGENT_URL   = (window.POS_AGENT_URL || "http://127.0.0.1:8787").replace(/\/+$/,'');
@@ -43,6 +44,7 @@ $(function () {
   const $hidPagos     = $("#pagos");      // hidden input name="pagos"
   const $hidMedioPago = $("#medio_pago"); // compat (efectivo/tarjeta/transferencia/mixto)
   const $hidEmpleadoPassword = $("#empleado_password");
+  const $hidNequiNotification = $("#nequi_notificacion_id");
 
   function isClienteBusquedaElement(el) {
     return !!($inpCliente && $inpCliente.length && el === $inpCliente[0]);
@@ -492,6 +494,8 @@ $(function () {
     // ✅ limpiar pagos SIEMPRE
     $hidMedioPago.val("");
     $hidPagos.val("");
+    $hidNequiNotification.val("");
+    resetNequiPaymentState({ clearCache: false });
 
     $("#monto-recibido").val("");
     $("#cambio").text("");
@@ -503,6 +507,7 @@ $(function () {
   function resetAfterSaleFast() {
     // carrito + total + pagos + modal
     clearCartAndTotals();
+    resetNequiPaymentState({ clearCache: true });
 
     // cliente
     try { $("#cliente_id").val(""); } catch {}
@@ -3088,6 +3093,15 @@ $(function () {
   const $pendingOut = $("#monto-pendiente");
 
   const REPRICE_ON_MODAL = false;
+  const $nequiPanel = $("#nequi-payment-panel");
+  const $nequiList = $("#nequi-payment-list");
+  const $nequiStatus = $("#nequi-payment-status");
+  const $nequiSelected = $("#nequi-selected-payment");
+  const $nequiRefresh = $("#nequi-refresh-payments");
+  let nequiPaymentsCache = [];
+  let nequiPaymentsLoaded = false;
+  let nequiPaymentsLoading = false;
+  let selectedNequiPayment = null;
 
   function isMixtoUI(){
     return !!($mixMode && $mixMode.length && $mixMode.prop("checked"));
@@ -3170,6 +3184,180 @@ $(function () {
       return;
     }
     $pendingOut.text(`Falta por pagar: ${money(Math.max(0, diff))}`);
+  }
+
+  function nequiPaymentAmountNeeded(){
+    if (!getCheckedMedios().includes("nequi")) return 0;
+    if (isMixtoUI()){
+      const $chk = $modal.find(".pm-check[value='nequi']").first();
+      return parseAmt(amtInputFor("nequi", $chk).val());
+    }
+    return saleTotalForPayment();
+  }
+
+  function nequiDisplayName(item){
+    const shortName = [item?.nombre, item?.segundo_nombre].filter(Boolean).join(" ").trim();
+    return shortName || item?.remitente || "Sin nombre";
+  }
+
+  function renderNequiSelected(){
+    if (!$nequiSelected.length) return;
+    $nequiSelected.empty();
+
+    if (!selectedNequiPayment){
+      $nequiSelected.prop("hidden", true);
+      return;
+    }
+
+    const amount = Number(selectedNequiPayment.monto_num || 0);
+    const needed = nequiPaymentAmountNeeded();
+    const ok = needed <= 0 || amount + 0.01 >= needed;
+
+    const $label = $("<span>").text(`Seleccionado: ${selectedNequiPayment.monto_label || money(amount)} de ${nequiDisplayName(selectedNequiPayment)}`);
+    const $state = $("<strong>").text(ok ? "Cubre el pago" : `No cubre, faltan ${money(Math.max(0, needed - amount))}`);
+    const $clear = $("<button>", {
+      type: "button",
+      id: "nequi-clear-payment",
+      class: "nequi-mini-btn",
+      text: "Quitar"
+    });
+
+    $nequiSelected
+      .toggleClass("is-low", !ok)
+      .append($label, $state, $clear)
+      .prop("hidden", false);
+  }
+
+  function renderNequiPaymentList(){
+    if (!$nequiList.length) return;
+
+    $nequiList.empty();
+    const needed = nequiPaymentAmountNeeded();
+
+    if (nequiPaymentsLoading){
+      $nequiStatus.text("Cargando envios de Nequi...");
+      return;
+    }
+
+    if (!nequiPaymentsCache.length){
+      $nequiStatus.text("No hay envios disponibles por ahora. Puedes cerrar sin asociar un envio.");
+      return;
+    }
+
+    for (const item of nequiPaymentsCache){
+      const amount = Number(item.monto_num || 0);
+      const selected = selectedNequiPayment && String(selectedNequiPayment.id) === String(item.id);
+      const ok = needed <= 0 || amount + 0.01 >= needed;
+
+      const $btn = $("<button>", {
+        type: "button",
+        class: `nequi-payment-item${selected ? " is-selected" : ""}${ok ? "" : " is-low"}`,
+        "data-id": item.id
+      });
+      const $top = $("<div>", { class: "nequi-payment-item-top" });
+      const $name = $("<strong>").text(`${item.monto_label || money(amount)} · ${nequiDisplayName(item)}`);
+      const $badge = $("<span>", { class: "nequi-payment-badge" }).text(ok ? "Cubre" : "Menor al pago");
+      const $meta = $("<span>", { class: "nequi-payment-meta" }).text([item.fecha, item.hora].filter(Boolean).join(" · "));
+      const $text = $("<small>").text(item.texto || "");
+
+      $top.append($name, $badge);
+      $btn.append($top, $meta);
+      if (item.texto) $btn.append($text);
+      $nequiList.append($btn);
+    }
+
+    $nequiStatus.text(
+      needed > 0
+        ? `Seleccionar es opcional. Si asocias un envio, debe cubrir ${money(needed)}.`
+        : "Seleccionar un envio es opcional."
+    );
+  }
+
+  function resetNequiPaymentState({ clearCache = false } = {}){
+    selectedNequiPayment = null;
+    $hidNequiNotification.val("");
+    if (clearCache){
+      nequiPaymentsCache = [];
+      nequiPaymentsLoaded = false;
+    }
+    renderNequiSelected();
+    renderNequiPaymentList();
+  }
+
+  async function loadNequiPayments(force = false){
+    if (!$nequiPanel.length || !NEQUI_DISPONIBLES_URL) return;
+    if (nequiPaymentsLoading) return;
+    if (nequiPaymentsLoaded && !force){
+      renderNequiPaymentList();
+      return;
+    }
+
+    nequiPaymentsLoading = true;
+    $nequiStatus.text("Cargando envios de Nequi...");
+
+    try {
+      const response = await fetch(NEQUI_DISPONIBLES_URL, {
+        method: "GET",
+        credentials: "same-origin",
+        cache: "no-store",
+        headers: { "X-Requested-With": "XMLHttpRequest" }
+      });
+      const data = await response.json();
+      if (!response.ok || !data.success) throw new Error(data.error || "No se pudieron cargar los envios.");
+
+      nequiPaymentsCache = Array.isArray(data.items) ? data.items : [];
+      nequiPaymentsLoaded = true;
+
+      if (selectedNequiPayment && !nequiPaymentsCache.some((item) => String(item.id) === String(selectedNequiPayment.id))){
+        selectedNequiPayment = null;
+        $hidNequiNotification.val("");
+        showMixError("El envio de Nequi seleccionado ya no esta disponible.");
+      }
+    } catch (err) {
+      $nequiStatus.text("No se pudieron cargar los envios de Nequi. Puedes cerrar sin asociar uno.");
+    } finally {
+      nequiPaymentsLoading = false;
+      renderNequiSelected();
+      renderNequiPaymentList();
+    }
+  }
+
+  function refreshNequiPanel(){
+    if (!$nequiPanel.length) return;
+    const active = getCheckedMedios().includes("nequi");
+    $nequiPanel.prop("hidden", !active);
+
+    if (!active){
+      resetNequiPaymentState({ clearCache: false });
+      return;
+    }
+
+    if (!nequiPaymentsLoaded && !nequiPaymentsLoading) {
+      loadNequiPayments(false);
+    }
+    renderNequiSelected();
+    renderNequiPaymentList();
+  }
+
+  function selectNequiPayment(item){
+    selectedNequiPayment = item || null;
+    $hidNequiNotification.val(selectedNequiPayment ? selectedNequiPayment.id : "");
+    showMixError("");
+    renderNequiSelected();
+    renderNequiPaymentList();
+
+    const error = validateSelectedNequiPayment();
+    if (error) showMixError(error);
+  }
+
+  function validateSelectedNequiPayment(){
+    if (!getCheckedMedios().includes("nequi") || !selectedNequiPayment) return "";
+    const needed = nequiPaymentAmountNeeded();
+    const amount = Number(selectedNequiPayment.monto_num || 0);
+    if (needed > 0 && amount + 0.01 < needed){
+      return `El envio de Nequi seleccionado (${money(amount)}) no cubre el pago Nequi (${money(needed)}).`;
+    }
+    return "";
   }
 
   function refreshEfectivoUI(){
@@ -3267,6 +3455,7 @@ $(function () {
 
     refreshEfectivoUI();
     refreshPendingUI();
+    refreshNequiPanel();
   }
 
   $modal.on("change", "#mix-mode", function(){
@@ -3314,6 +3503,8 @@ $(function () {
         if (recibido < total) return { error: "Monto recibido en efectivo insuficiente." };
         if (raw === "") $amountIn.val(to2(total));
       }
+      const nequiError = validateSelectedNequiPayment();
+      if (nequiError) return { error: nequiError };
       return { pagos };
     }
 
@@ -3337,8 +3528,28 @@ $(function () {
       const last = pagos[pagos.length - 1];
       last.monto = to2(parseAmt(last.monto) + diff);
     }
+    const nequiError = validateSelectedNequiPayment();
+    if (nequiError) return { error: nequiError };
     return { pagos };
   }
+
+  $nequiRefresh.on("click", function(){
+    loadNequiPayments(true);
+  });
+
+  $modal.on("click", ".nequi-payment-item", function(e){
+    e.preventDefault();
+    e.stopPropagation();
+    const id = String($(this).data("id") || "");
+    const item = nequiPaymentsCache.find((row) => String(row.id) === id);
+    if (item) selectNequiPayment(item);
+  });
+
+  $modal.on("click", "#nequi-clear-payment", function(e){
+    e.preventDefault();
+    e.stopPropagation();
+    resetNequiPaymentState({ clearCache: false });
+  });
 
   const confirmPagoGuard = { ts: 0 };
   function triggerConfirmPago(){
@@ -3386,6 +3597,7 @@ $(function () {
 
     $hidPagos.val("");
     $hidMedioPago.val("");
+    resetNequiPaymentState({ clearCache: true });
 
     $modal.find(".pm-check").not("#mix-mode").prop("checked", false);
     $modal.find(".pm-amt").val("").prop("disabled", true).each(function(){ setAmtVisibility($(this), false); });
@@ -3633,6 +3845,8 @@ $(function () {
     showMixError("");
     refreshEfectivoUI();
     refreshPendingUI();
+    renderNequiSelected();
+    renderNequiPaymentList();
   });
 
   $(document).on("click", ".mix-row", function (e) {

@@ -484,6 +484,140 @@ body.modal-open{
 }
 
 /* =========================================================
+   Nequi: lista de envios recibidos
+   ========================================================= */
+#myModal .nequi-payment-panel{
+  margin: 12px 0 10px;
+  padding: 13px 13px;
+  border-radius: 18px;
+  background: rgba(25,195,125,.10);
+  border: 1px solid rgba(25,195,125,.28);
+  box-shadow: 0 16px 30px rgba(0,0,0,.16);
+}
+#myModal .nequi-payment-panel[hidden]{ display:none !important; }
+#myModal .nequi-payment-head{
+  display:flex;
+  align-items:flex-start;
+  justify-content:space-between;
+  gap:10px;
+  margin-bottom:10px;
+}
+#myModal .nequi-payment-head strong,
+#myModal .nequi-payment-head small{ display:block; }
+#myModal .nequi-payment-head strong{ font-weight:950; }
+#myModal .nequi-payment-head small,
+#myModal .nequi-payment-status{
+  color:rgba(255,255,255,.78);
+  font-size:12px;
+  line-height:1.35;
+}
+#myModal .nequi-mini-btn{
+  flex:0 0 auto;
+  border:1px solid rgba(255,255,255,.18);
+  border-radius:999px;
+  padding:8px 11px;
+  background:rgba(255,255,255,.10);
+  color:#fff;
+  font-weight:900;
+  cursor:pointer;
+}
+#myModal .nequi-payment-list{
+  display:grid;
+  gap:8px;
+  max-height:260px;
+  overflow-y:auto;
+  padding-right:2px;
+}
+#myModal .nequi-payment-item{
+  width:100%;
+  border:1px solid rgba(255,255,255,.13);
+  border-radius:16px;
+  padding:11px 12px;
+  background:rgba(255,255,255,.08);
+  color:#fff;
+  text-align:left;
+  cursor:pointer;
+  box-shadow:0 10px 20px rgba(0,0,0,.12);
+}
+#myModal .nequi-payment-item:hover,
+#myModal .nequi-payment-item.is-selected{
+  border-color:rgba(25,195,125,.58);
+  background:rgba(25,195,125,.16);
+}
+#myModal .nequi-payment-item.is-low{
+  border-color:rgba(251,191,36,.46);
+  background:rgba(251,191,36,.12);
+}
+#myModal .nequi-payment-item-top{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+}
+#myModal .nequi-payment-badge{
+  flex:0 0 auto;
+  display:inline-flex !important;
+  align-items:center;
+  justify-content:center;
+  border-radius:999px;
+  padding:5px 8px;
+  background:rgba(255,255,255,.12);
+  color:rgba(255,255,255,.9) !important;
+  font-size:11px;
+  font-weight:900;
+  line-height:1;
+}
+#myModal .nequi-payment-item.is-low .nequi-payment-badge{
+  background:rgba(251,191,36,.20);
+  color:#ffe8a3 !important;
+}
+#myModal .nequi-payment-meta{
+  margin-top:4px;
+}
+#myModal .nequi-payment-item strong,
+#myModal .nequi-selected-payment strong{
+  display:block;
+  font-size:18px;
+  font-weight:950;
+}
+#myModal .nequi-payment-item span,
+#myModal .nequi-payment-item small,
+#myModal .nequi-selected-payment small{
+  display:block;
+  color:rgba(255,255,255,.78);
+  line-height:1.35;
+}
+#myModal .nequi-selected-payment{
+  margin:0 0 9px;
+  padding:10px 12px;
+  border-radius:16px;
+  background:rgba(77,166,255,.15);
+  border:1px solid rgba(77,166,255,.28);
+}
+#myModal .nequi-selected-payment.is-low{
+  background:rgba(251,191,36,.14);
+  border-color:rgba(251,191,36,.34);
+}
+#myModal .nequi-selected-payment button{
+  margin-top:8px;
+  border:0;
+  border-radius:999px;
+  padding:7px 10px;
+  background:rgba(255,255,255,.14);
+  color:#fff;
+  font-weight:900;
+  cursor:pointer;
+}
+#myModal .nequi-empty{
+  border:1px dashed rgba(255,255,255,.22);
+  border-radius:16px;
+  padding:14px;
+  color:rgba(255,255,255,.78);
+  text-align:center;
+  font-weight:800;
+}
+
+/* =========================================================
    ✅ ERROR MIX
    ========================================================= */
 #myModal #mix-error{
