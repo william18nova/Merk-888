@@ -142,7 +142,36 @@ body{
   margin-bottom:14px;
 }
 
-.nequi-refresh{
+.nequi-panel__actions{
+  display:flex;
+  align-items:center;
+  justify-content:flex-end;
+  flex-wrap:wrap;
+  gap:10px;
+}
+
+.nequi-select-all{
+  display:inline-flex;
+  align-items:center;
+  gap:8px;
+  border-radius:999px;
+  padding:9px 12px;
+  background:rgba(255,255,255,.08);
+  border:1px solid rgba(255,255,255,.14);
+  color:var(--nequi-muted);
+  font-weight:900;
+  cursor:pointer;
+  user-select:none;
+}
+
+.nequi-select-all input{
+  width:16px;
+  height:16px;
+  accent-color:var(--nequi-green);
+}
+
+.nequi-refresh,
+.nequi-delete-selected{
   border:0;
   border-radius:999px;
   padding:10px 16px;
@@ -153,7 +182,24 @@ body{
   box-shadow:0 10px 22px rgba(58,134,216,.24);
 }
 
-.nequi-refresh:disabled{
+.nequi-delete-selected{
+  display:inline-flex;
+  align-items:center;
+  gap:8px;
+  background:var(--nequi-red);
+  box-shadow:0 10px 22px rgba(255,91,107,.20);
+}
+
+.nequi-delete-selected span{
+  min-width:22px;
+  border-radius:999px;
+  padding:2px 6px;
+  background:rgba(255,255,255,.18);
+}
+
+.nequi-refresh:disabled,
+.nequi-delete-selected:disabled,
+.nequi-select-all:has(input:disabled){
   opacity:.7;
   cursor:wait;
 }
@@ -172,7 +218,39 @@ body{
 
 .nequi-item{
   padding:14px;
+  display:flex;
+  align-items:flex-start;
+  justify-content:space-between;
+  gap:14px;
   transition:transform .18s ease, background .18s ease, border-color .18s ease;
+}
+
+.nequi-item__main{
+  min-width:0;
+}
+
+.nequi-check{
+  flex:0 0 auto;
+  width:30px;
+  height:30px;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  border-radius:10px;
+  background:rgba(255,255,255,.08);
+  border:1px solid rgba(255,255,255,.13);
+  cursor:pointer;
+}
+
+.nequi-check input{
+  width:18px;
+  height:18px;
+  accent-color:var(--nequi-green);
+}
+
+.nequi-check:has(input:disabled){
+  opacity:.48;
+  cursor:not-allowed;
 }
 
 .nequi-item.is-new{
@@ -220,6 +298,34 @@ body{
   font-weight:800;
 }
 
+.nequi-item__actions{
+  flex:0 0 auto;
+}
+
+.nequi-delete{
+  border:1px solid rgba(255,91,107,.35);
+  border-radius:999px;
+  padding:9px 12px;
+  background:rgba(255,91,107,.14);
+  color:#ffdce1;
+  font-weight:900;
+  cursor:pointer;
+  transition:background .16s ease, transform .16s ease, opacity .16s ease;
+}
+
+.nequi-delete:hover:not(:disabled){
+  background:rgba(255,91,107,.24);
+  transform:translateY(-1px);
+}
+
+.nequi-delete:disabled{
+  cursor:not-allowed;
+  opacity:.62;
+  border-color:rgba(255,255,255,.16);
+  background:rgba(255,255,255,.08);
+  color:var(--nequi-muted);
+}
+
 .nequi-empty{
   padding:28px;
   color:var(--nequi-muted);
@@ -239,9 +345,15 @@ body{
   }
 
   .nequi-live-pill,
-  .nequi-refresh{
+  .nequi-refresh,
+  .nequi-delete-selected,
+  .nequi-select-all{
     width:100%;
     justify-content:center;
+  }
+
+  .nequi-panel__actions{
+    width:100%;
   }
 }
 
@@ -259,6 +371,20 @@ body{
   .nequi-item__title{
     flex-direction:column;
     gap:4px;
+  }
+
+  .nequi-item{
+    display:grid;
+    grid-template-columns:auto 1fr;
+  }
+
+  .nequi-item__actions,
+  .nequi-delete{
+    width:100%;
+  }
+
+  .nequi-item__actions{
+    grid-column:1 / -1;
   }
 
   .nequi-item__title span{

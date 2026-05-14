@@ -105,6 +105,235 @@ body{
   box-shadow:0 0 0 3px color-mix(in srgb, var(--ring) 50%, transparent);
 }
 
+/* Filtros avanzados */
+.ventas-filters{
+  margin:16px 0 18px;
+  overflow:hidden;
+  border:1px solid rgba(216,232,255,.24);
+  border-radius:18px;
+  background:linear-gradient(180deg, rgba(255,255,255,.13), rgba(255,255,255,.07));
+  box-shadow:0 14px 34px rgba(2,12,32,.18), inset 0 1px 0 rgba(255,255,255,.10);
+}
+.ventas-filters-toggle{
+  width:100%;
+  min-height:54px;
+  display:grid;
+  grid-template-columns:auto minmax(0, 1fr) auto;
+  align-items:center;
+  gap:12px;
+  border:0;
+  padding:12px 14px;
+  cursor:pointer;
+  color:var(--text);
+  background:rgba(12,30,63,.30);
+  text-align:left;
+}
+.ventas-filters-toggle:hover{
+  background:rgba(77,166,255,.16);
+}
+.ventas-filters-toggle__title{
+  display:inline-flex;
+  align-items:center;
+  gap:9px;
+  font-size:17px;
+  font-weight:900;
+  letter-spacing:.01em;
+}
+.ventas-filters-toggle__title i{
+  width:34px;
+  height:34px;
+  display:grid;
+  place-items:center;
+  border-radius:10px;
+  color:#dff0ff;
+  background:rgba(77,166,255,.22);
+  box-shadow:inset 0 0 0 1px rgba(184,219,255,.24);
+}
+.ventas-filters-toggle__summary{
+  justify-self:end;
+  min-width:0;
+  max-width:100%;
+  padding:6px 11px;
+  border-radius:999px;
+  color:#d8e8ff;
+  background:rgba(255,255,255,.08);
+  font-size:12px;
+  font-weight:800;
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+.ventas-filters-toggle__icon{
+  width:32px;
+  height:32px;
+  display:grid;
+  place-items:center;
+  border-radius:999px;
+  background:rgba(255,255,255,.10);
+  transition:transform .18s ease, background .18s ease;
+}
+.ventas-filters:not(.is-open) .ventas-filters-toggle__icon{
+  transform:rotate(180deg);
+}
+.ventas-filters-body{
+  display:none;
+  padding:0;
+  border-top:1px solid rgba(216,232,255,.18);
+}
+.ventas-filters.is-open .ventas-filters-body{
+  display:block;
+}
+.ventas-filter-layout{
+  display:grid;
+  grid-template-columns:minmax(190px, .48fr) minmax(0, 1.52fr);
+  gap:0;
+}
+.ventas-filter-sidebar{
+  display:flex;
+  flex-direction:column;
+  gap:12px;
+  padding:18px;
+  border-right:1px solid rgba(216,232,255,.16);
+  background:rgba(11,28,60,.20);
+}
+.ventas-eyebrow{
+  margin:0;
+  color:var(--text-muted);
+  font-size:12px;
+  font-weight:900;
+  letter-spacing:.08em;
+  text-transform:uppercase;
+}
+.ventas-filter-sidebar h3{
+  margin:0;
+  color:var(--text);
+  font-size:18px;
+  line-height:1.25;
+  font-weight:900;
+}
+.ventas-filter-actions{
+  display:flex;
+  flex-direction:column;
+  gap:8px;
+  margin-top:4px;
+}
+.ventas-chip-btn,
+.ventas-clear-btn{
+  width:100%;
+  min-height:38px;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  gap:8px;
+  border:1px solid rgba(255,255,255,.18);
+  border-radius:12px;
+  padding:8px 12px;
+  cursor:pointer;
+  color:var(--text);
+  background:rgba(255,255,255,.10);
+  font-weight:900;
+  transition:background .18s ease, transform .18s ease, border-color .18s ease;
+}
+.ventas-chip-btn:hover,
+.ventas-clear-btn:hover{
+  background:rgba(77,166,255,.24);
+  border-color:rgba(184,219,255,.48);
+  transform:translateY(-1px);
+}
+.ventas-clear-btn{
+  color:#f8fbff;
+  background:rgba(255,77,95,.22);
+  border-color:rgba(255,140,150,.34);
+}
+.ventas-filter-groups{
+  display:grid;
+  grid-template-columns:repeat(2, minmax(0, 1fr));
+  gap:1px;
+  background:rgba(216,232,255,.12);
+}
+.ventas-filter-group{
+  min-width:0;
+  margin:0;
+  padding:16px;
+  border:0;
+  background:rgba(34,70,126,.34);
+}
+.ventas-filter-group:last-child{
+  grid-column:1 / -1;
+}
+.ventas-filter-group legend{
+  float:left;
+  width:100%;
+  margin:0 0 12px;
+  padding:0;
+  color:#f8fbff;
+  font-size:14px;
+  font-weight:900;
+}
+.ventas-filter-group legend::after{
+  content:"";
+  display:block;
+  width:44px;
+  height:3px;
+  margin-top:8px;
+  border-radius:999px;
+  background:linear-gradient(90deg, var(--brand), rgba(184,219,255,.35));
+}
+.ventas-filter-group legend + *{
+  clear:both;
+}
+.ventas-filter-grid{
+  display:grid;
+  grid-template-columns:repeat(4, minmax(0, 1fr));
+  gap:12px;
+}
+.ventas-filter-grid--two{
+  grid-template-columns:repeat(2, minmax(0, 1fr));
+}
+.ventas-filter-field{
+  display:flex;
+  flex-direction:column;
+  gap:6px;
+  min-width:0;
+}
+.ventas-filter-field--wide{ grid-column:span 2; }
+.ventas-filter-field > span{
+  color:var(--text-muted);
+  font-size:12px;
+  font-weight:900;
+  letter-spacing:.02em;
+}
+.ventas-filter-control{
+  width:100%;
+  min-height:42px;
+  border:1px solid rgba(216,232,255,.24);
+  border-radius:10px;
+  padding:0 12px;
+  background:rgba(245,249,255,.14);
+  color:var(--text);
+  outline:none;
+  font:800 14px/1 var(--font);
+  transition:background var(--transition), border-color var(--transition), box-shadow var(--transition);
+}
+.ventas-filter-control::placeholder{ color:rgba(216,232,255,.74); }
+.ventas-filter-control:hover{ background:rgba(245,249,255,.20); }
+.ventas-filter-control:focus{
+  border-color:var(--ring);
+  box-shadow:0 0 0 3px color-mix(in srgb, var(--ring) 42%, transparent);
+}
+.ventas-filter-control option{ color:#0b1220; background:#fff; }
+.ventas-filter-chip{
+  display:none;
+  width:max-content;
+  max-width:100%;
+  padding:4px 10px;
+  border-radius:999px;
+  background:#e0f2fe;
+  color:#075985;
+  font-size:12px;
+  font-weight:800;
+}
+
 /* ── Tabla DataTables ───────────────────────────────────────── */
 .table-wrap{ margin-top:6px; }
 
@@ -197,6 +426,47 @@ table.dataTable thead th.sorting_desc::after{
 
 /* ── Responsive: tarjetas + centrado fuerte ─────────────────── */
 @media (max-width:768px){
+  .ventas-filters-toggle{
+    grid-template-columns:1fr auto;
+    align-items:start;
+  }
+  .ventas-filters-toggle__summary{
+    grid-column:1 / -1;
+    justify-self:start;
+    white-space:normal;
+  }
+  .ventas-filter-layout{
+    grid-template-columns:1fr;
+  }
+  .ventas-filter-sidebar{
+    border-right:0;
+    border-bottom:1px solid rgba(216,232,255,.16);
+  }
+  .ventas-filter-actions{
+    flex-direction:row;
+    flex-wrap:wrap;
+  }
+  .ventas-chip-btn,
+  .ventas-clear-btn{
+    width:auto;
+    flex:1 1 130px;
+  }
+  .ventas-filter-groups{
+    grid-template-columns:1fr;
+  }
+  .ventas-filter-group:last-child{
+    grid-column:auto;
+  }
+  .ventas-filter-grid{
+    grid-template-columns:1fr;
+  }
+  .ventas-filter-grid--two{
+    grid-template-columns:1fr;
+  }
+  .ventas-filter-field--wide{
+    grid-column:auto;
+  }
+
   /* Centrado robusto del contenedor */
   .container-pedidos{
     width: calc(100vw - 24px);

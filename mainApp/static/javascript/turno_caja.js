@@ -645,12 +645,17 @@
 
     for (const m of MEDIOS) {
       const metodo = m.metodo;
-      const contado = metodo === "efectivo" ? efectivoParaCuadre : num(CONTADOS[metodo] || 0);
+      const autoConfirmado = metodo === "efectivo" ? 0 : num(m.auto_confirmado || 0);
+      const contadoUsuario = metodo === "efectivo" ? efectivoParaCuadre : num(CONTADOS[metodo] || 0);
+      const contado = contadoUsuario + autoConfirmado;
       sumContado += contado;
 
       if (metodo === "efectivo") {
         const contadoEl = document.querySelector(`[data-contado='${metodo}']`);
         if (contadoEl) contadoEl.textContent = money2(contado);
+      } else {
+        const reconocidoEl = document.querySelector(`[data-auto-total='${metodo}']`);
+        if (reconocidoEl) reconocidoEl.textContent = `Reconocido en cierre: ${money2(contado)}`;
       }
     }
 
@@ -679,9 +684,15 @@
           <div class="hint">Efectivo contado + facturas pagadas</div>
         `;
       } else {
+        const autoConfirmado = num(m.auto_confirmado || 0);
+        const autoHint = autoConfirmado > 0
+          ? `<div class="hint hint-ok">Confirmado por API: ${money2(autoConfirmado)}. Escribe solo lo no asociado.</div>
+             <div class="hint" data-auto-total="${escapeHtml(m.metodo)}">Reconocido en cierre: ${money2(autoConfirmado)}</div>`
+          : "";
         tdC.innerHTML = `
           <input class="in-num no-spin" type="number" step="0.01" min="0"
                  inputmode="decimal" data-in="${escapeHtml(m.metodo)}" placeholder="0.00">
+          ${autoHint}
         `;
       }
       tr.appendChild(tdC);
@@ -791,6 +802,7 @@
       MEDIOS = (data.medios || []).map((x) => ({
         metodo: (x.metodo || "").toLowerCase().trim(),
         contado: x.contado ?? null,
+        auto_confirmado: num(x.auto_confirmado || 0),
         label:
           x.label ||
           (x.metodo || "").replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()),
@@ -806,9 +818,9 @@
       buildTable();
       MEDIOS.forEach((m) => {
         if (m.metodo === "efectivo" || m.contado === null || typeof m.contado === "undefined") return;
-        CONTADOS[m.metodo] = num(m.contado);
+        CONTADOS[m.metodo] = Math.max(0, num(m.contado) - num(m.auto_confirmado || 0));
         const inp = mediosBody?.querySelector(`[data-in='${m.metodo}']`);
-        if (inp) inp.value = num(m.contado).toFixed(2);
+        if (inp) inp.value = CONTADOS[m.metodo].toFixed(2);
       });
       restoreContados();   // ✅ recupera lo que el cajero ya había contado
       refreshCloseCashTotal();
@@ -910,9 +922,16 @@
     const facturasPagadas = num(facturasPagadasInp?.value);
     if (facturasPagadas < 0) { err("Facturas pagadas no puede ser negativo."); return; }
 
+    const nequiMedio = MEDIOS.find((m) => m.metodo === "nequi");
+    const nequiAuto = num(nequiMedio?.auto_confirmado || 0);
+    const nequiUsuario = num(CONTADOS.nequi || 0);
+    const nequiMsg = nequiAuto > 0
+      ? ` Nequi confirmado por API: ${money2(nequiAuto)}. Nequi digitado adicional: ${money2(nequiUsuario)}.`
+      : "";
+
     const goAhead = await confirmModal({
       title: "Cerrar turno",
-      msg: `Vas a cerrar el turno con efectivo contado de ${money2(efectivoEntregado)} y facturas pagadas por ${money2(facturasPagadas)}. Esta accion no se puede deshacer.`,
+      msg: `Vas a cerrar el turno con efectivo contado de ${money2(efectivoEntregado)} y facturas pagadas por ${money2(facturasPagadas)}.${nequiMsg} Esta accion no se puede deshacer.`,
       okText: "Si, continuar",
       danger: true,
     });
@@ -953,9 +972,11 @@
       const ventas = Number(data.ventas_total ?? 0);
       const deuda  = Number(data.deuda_total ?? 0);
       const facturas = Number(data.facturas_pagadas ?? 0);
+      const nequiApi = Number(data.auto_confirmados?.nequi ?? 0);
       const filas = [
-        ["Ventas (según usuario)", money2(ventas)],
+        ["Ventas reconocidas", money2(ventas)],
         ["Facturas pagadas", money2(facturas)],
+        ...(nequiApi > 0 ? [["Nequi confirmado por API", money2(nequiApi)]] : []),
         ["Faltante", money2(Math.abs(deuda))],
       ].map(([k, v]) => `<div class="sum-row"><span>${k}</span><b>${v}</b></div>`).join("");
       summaryModal(`<div class="sum-grid">${filas}</div>`);

@@ -4844,7 +4844,7 @@ class VentaDataTableView(LoginRequiredMixin, View):
             order_column = "-" + order_column
 
         # ---------- slice + values (solo columnas que usamos) ----------
-        qs_page = (
+        qs_values = (
             qs.order_by(order_column)
               .values(
                   "ventaid",
@@ -4858,8 +4858,9 @@ class VentaDataTableView(LoginRequiredMixin, View):
                   "empleadoid__apellido",
                   "sucursalid__nombre",
                   "puntopagoid__nombre",
-              )[start:start + length]
+              )
         )
+        qs_page = qs_values[start:] if length == -1 else qs_values[start:start + length]
 
         # ---------- construir datos para DataTables ----------
         data = []
@@ -4922,6 +4923,20 @@ class VentaListView(LoginRequiredMixin, ListView):
     def get_paginate_by(self, queryset):
         return None
 
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context.update({
+            "sucursales": Sucursal.objects.order_by("nombre"),
+            "puntos_pago": (
+                PuntosPago.objects
+                .select_related("sucursalid")
+                .order_by("sucursalid__nombre", "nombre")
+            ),
+            "empleados": Empleado.objects.order_by("nombre", "apellido"),
+            "medios_pago": [("mixto", "Mixto"), *MEDIOS_PAGO],
+        })
+        return context
+
 
 class VentaDataTableView(LoginRequiredMixin, View):
     """
@@ -4943,6 +4958,19 @@ class VentaDataTableView(LoginRequiredMixin, View):
         #   - producto_term: texto libre (busca por nombre o codigo_de_barras)
         producto_id   = (request.GET.get("producto_id", "") or "").strip()
         producto_term = (request.GET.get("producto_term", "") or "").strip()
+        venta_id      = (request.GET.get("venta_id", "") or "").strip()
+        fecha_desde   = parse_date((request.GET.get("fecha_desde", "") or "").strip())
+        fecha_hasta   = parse_date((request.GET.get("fecha_hasta", "") or "").strip())
+        hora_desde    = (request.GET.get("hora_desde", "") or "").strip()
+        hora_hasta    = (request.GET.get("hora_hasta", "") or "").strip()
+        sucursal_id   = (request.GET.get("sucursal_id", "") or "").strip()
+        puntopago_id  = (request.GET.get("puntopago_id", "") or "").strip()
+        empleado_id   = (request.GET.get("empleado_id", "") or "").strip()
+        cliente_term  = (request.GET.get("cliente_term", "") or "").strip()
+        mediopago     = (request.GET.get("mediopago", "") or "").strip().lower()
+        total_min_raw = (request.GET.get("total_min", "") or "").strip().replace(",", ".")
+        total_max_raw = (request.GET.get("total_max", "") or "").strip().replace(",", ".")
+        devoluciones  = (request.GET.get("devoluciones", "") or "").strip().lower()
 
         base_qs = Venta.objects.select_related(
             "clienteid", "empleadoid", "sucursalid", "puntopagoid"
@@ -4950,6 +4978,62 @@ class VentaDataTableView(LoginRequiredMixin, View):
 
         records_total = base_qs.count()
         qs = base_qs
+
+        if venta_id.isdigit():
+            qs = qs.filter(ventaid=int(venta_id))
+
+        if fecha_desde:
+            qs = qs.filter(fecha__gte=fecha_desde)
+        if fecha_hasta:
+            qs = qs.filter(fecha__lte=fecha_hasta)
+
+        if hora_desde:
+            try:
+                qs = qs.filter(hora__gte=time.fromisoformat(hora_desde))
+            except ValueError:
+                pass
+        if hora_hasta:
+            try:
+                qs = qs.filter(hora__lte=time.fromisoformat(hora_hasta))
+            except ValueError:
+                pass
+
+        if sucursal_id.isdigit():
+            qs = qs.filter(sucursalid_id=int(sucursal_id))
+        if puntopago_id.isdigit():
+            qs = qs.filter(puntopagoid_id=int(puntopago_id))
+        if empleado_id.isdigit():
+            qs = qs.filter(empleadoid_id=int(empleado_id))
+
+        if mediopago:
+            qs = qs.filter(mediopago__iexact=mediopago)
+
+        if cliente_term:
+            cliente_q = (
+                Q(clienteid__nombre__icontains=cliente_term) |
+                Q(clienteid__apellido__icontains=cliente_term) |
+                Q(clienteid__numerodocumento__icontains=cliente_term) |
+                Q(clienteid__telefono__icontains=cliente_term)
+            )
+            for token in cliente_term.split():
+                cliente_q |= Q(clienteid__nombre__icontains=token) | Q(clienteid__apellido__icontains=token)
+            qs = qs.filter(cliente_q)
+
+        try:
+            if total_min_raw:
+                qs = qs.filter(total__gte=Decimal(total_min_raw))
+        except InvalidOperation:
+            pass
+        try:
+            if total_max_raw:
+                qs = qs.filter(total__lte=Decimal(total_max_raw))
+        except InvalidOperation:
+            pass
+
+        if devoluciones == "con":
+            qs = qs.filter(cambios__isnull=False).distinct()
+        elif devoluciones == "sin":
+            qs = qs.filter(cambios__isnull=True)
 
         if producto_id.isdigit():
             qs = qs.filter(detalleventa__productoid_id=int(producto_id)).distinct()
@@ -5002,7 +5086,7 @@ class VentaDataTableView(LoginRequiredMixin, View):
         if order_dir == "desc":
             order_column = "-" + order_column
 
-        qs_page = (
+        qs_values = (
             qs.order_by(order_column)
               .values(
                   "ventaid",
@@ -5016,8 +5100,9 @@ class VentaDataTableView(LoginRequiredMixin, View):
                   "empleadoid__apellido",
                   "sucursalid__nombre",
                   "puntopagoid__nombre",
-              )[start:start + length]
+              )
         )
+        qs_page = qs_values[start:] if length == -1 else qs_values[start:start + length]
 
         data = []
         for v in qs_page:
@@ -6695,6 +6780,8 @@ def _nequi_item_json(item):
         "fecha": recibido.strftime("%Y-%m-%d"),
         "hora": recibido.strftime("%I:%M %p").lower(),
         "iso": recibido.isoformat(),
+        "venta_id": item.venta_id,
+        "usada": bool(item.venta_id),
     }
 
 
@@ -6749,6 +6836,66 @@ class NequiNotificacionesDataView(LoginRequiredMixin, View):
             "success": True,
             "summary": _nequi_summary(),
             "items": [_nequi_item_json(item) for item in items],
+        })
+
+
+class NequiNotificacionEliminarView(LoginRequiredMixin, View):
+    http_method_names = ["post"]
+
+    def post(self, request, notificacion_id, *args, **kwargs):
+        item = get_object_or_404(NotificacionNequi, pk=notificacion_id)
+        if item.venta_id:
+            return JsonResponse({
+                "success": False,
+                "error": "Esta notificacion ya fue usada en una venta y no se puede eliminar desde aqui.",
+            }, status=409)
+
+        item.delete()
+        return JsonResponse({
+            "success": True,
+            "summary": _nequi_summary(),
+        })
+
+
+class NequiNotificacionesEliminarSeleccionadasView(LoginRequiredMixin, View):
+    http_method_names = ["post"]
+
+    def post(self, request, *args, **kwargs):
+        ids = []
+        content_type = (request.headers.get("Content-Type") or "").lower()
+        if "application/json" in content_type:
+            try:
+                payload = json.loads(request.body.decode("utf-8") or "{}")
+            except json.JSONDecodeError:
+                payload = {}
+            raw_ids = payload.get("ids", [])
+        else:
+            raw_ids = request.POST.getlist("ids[]") or request.POST.getlist("ids") or []
+
+        for value in raw_ids:
+            try:
+                parsed = int(value)
+            except (TypeError, ValueError):
+                continue
+            if parsed > 0:
+                ids.append(parsed)
+
+        ids = list(dict.fromkeys(ids))
+        if not ids:
+            return JsonResponse({
+                "success": False,
+                "error": "No seleccionaste notificaciones para eliminar.",
+            }, status=400)
+
+        qs = NotificacionNequi.objects.filter(pk__in=ids)
+        protected_count = qs.filter(venta__isnull=False).count()
+        deleted_count, _ = qs.filter(venta__isnull=True).delete()
+
+        return JsonResponse({
+            "success": True,
+            "deleted": deleted_count,
+            "protected": protected_count,
+            "summary": _nequi_summary(),
         })
 
 
@@ -7522,18 +7669,21 @@ def _turno_identity_payload(turno):
         },
     }
 
-def _medios_payload(turno):
+def _medios_payload(turno, auto_confirmados=None):
+    auto_confirmados = auto_confirmados or {}
     medios = []
     for m in TurnoCajaMedio.objects.filter(turno=turno).order_by("metodo"):
         metodo = _normalize_metodo(m.metodo)
         if metodo == FACTURAS_PAGADAS_METODO:
             continue
+        auto_confirmado = auto_confirmados.get(metodo, Decimal("0.00")) or Decimal("0.00")
         medios.append({
             "metodo": metodo,
             "label": DISPLAY_METODO.get(metodo, metodo.replace("_", " ").title()),
             "esperado": float(m.esperado or 0),
             "contado": float(m.contado) if m.contado is not None else None,
             "diferencia": float(m.diferencia or 0),
+            "auto_confirmado": float(auto_confirmado),
         })
     return medios
 
@@ -7668,6 +7818,63 @@ def _sum_ventas_por_mediopago_fallback(puntopago_id: int, start_naive, end_naive
             m = _normalize_metodo(metodo_raw)
             out[m] = _to_decimal(total)
     return out
+
+def _sum_nequi_confirmado_api(turno: TurnoCaja) -> Decimal:
+    """
+    Nequi confirmado por MacroDroid/API dentro del intervalo del turno.
+    Sumamos el valor del pago registrado en la venta, no el monto bruto de la
+    notificacion, para que el cierre cuadre contra lo vendido.
+    """
+    if not turno.cierre_iniciado:
+        return Decimal("0.00")
+
+    start_naive, end_naive = _range_local_naive(turno, turno.cierre_iniciado)
+
+    sql_pagos = """
+        SELECT COALESCE(SUM(vp.monto),0) as total
+        FROM venta_pagos vp
+        JOIN ventas v ON v.ventaid = vp.ventaid
+        WHERE v.puntopagoid = %s
+          AND (v.fecha + v.hora) >= %s
+          AND (v.fecha + v.hora) <= %s
+          AND lower(trim(vp.metodo)) = 'nequi'
+          AND EXISTS (
+              SELECT 1
+              FROM notificaciones_nequi nn
+              WHERE nn.ventaid = v.ventaid
+          )
+    """
+    sql_fallback = """
+        SELECT COALESCE(SUM(v.total),0) as total
+        FROM ventas v
+        WHERE v.puntopagoid = %s
+          AND (v.fecha + v.hora) >= %s
+          AND (v.fecha + v.hora) <= %s
+          AND lower(trim(v.mediopago)) = 'nequi'
+          AND NOT EXISTS (
+              SELECT 1
+              FROM venta_pagos vp
+              WHERE vp.ventaid = v.ventaid
+          )
+          AND EXISTS (
+              SELECT 1
+              FROM notificaciones_nequi nn
+              WHERE nn.ventaid = v.ventaid
+          )
+    """
+
+    with connection.cursor() as cur:
+        cur.execute(sql_pagos, [turno.puntopago_id, start_naive, end_naive])
+        total_pagos = _to_decimal(cur.fetchone()[0])
+        cur.execute(sql_fallback, [turno.puntopago_id, start_naive, end_naive])
+        total_fallback = _to_decimal(cur.fetchone()[0])
+
+    return (total_pagos + total_fallback).quantize(Decimal("0.01"))
+
+def _auto_confirmados_por_metodo(turno: TurnoCaja) -> dict[str, Decimal]:
+    return {
+        "nequi": _sum_nequi_confirmado_api(turno),
+    }
 
 def _expected_por_metodo(turno: TurnoCaja) -> tuple[dict[str, Decimal], Decimal, Decimal, Decimal]:
     """
@@ -7872,6 +8079,7 @@ class TurnoCajaIniciarCierreApi(LoginRequiredMixin, View):
         ])
 
         _sync_turno_medios_esperados(turno, expected, reset_contados=reset_contados)
+        auto_confirmados = _auto_confirmados_por_metodo(turno)
 
         return JsonResponse({
             "success": True,
@@ -7884,7 +8092,8 @@ class TurnoCajaIniciarCierreApi(LoginRequiredMixin, View):
             "esperado_no_efectivo": float(esperado_no_efectivo),
             "puntopago": {"id": turno.puntopago_id, "nombre": getattr(turno.puntopago, "nombre", str(turno.puntopago_id))},
             "cajero": {"id": turno.cajero_id, "nombreusuario": _turno_label_usuario(turno.cajero)},
-            "medios": _medios_payload(turno),
+            "medios": _medios_payload(turno, auto_confirmados=auto_confirmados),
+            "auto_confirmados": {k: float(v or 0) for k, v in auto_confirmados.items()},
 
             # ✅ CLAVE
             "hide_bd_cols": _hide_bd_cols_for_user(request.user),
@@ -7940,6 +8149,7 @@ class TurnoCajaCerrarApi(LoginRequiredMixin, View):
 
         expected, esperado_total, esperado_efectivo, esperado_no_efectivo = _expected_por_metodo(turno)
         _sync_turno_medios_esperados(turno, expected, reset_contados=False)
+        auto_confirmados = _auto_confirmados_por_metodo(turno)
 
         medios_db = {_normalize_metodo(m.metodo): m for m in turno.medios.select_for_update().all()}
 
@@ -7961,6 +8171,11 @@ class TurnoCajaCerrarApi(LoginRequiredMixin, View):
                 contado = Decimal("0.00")
 
             contados[metodo] = contado
+
+        for metodo, confirmado in auto_confirmados.items():
+            confirmado = (confirmado or Decimal("0.00")).quantize(Decimal("0.01"))
+            if confirmado > 0:
+                contados[metodo] = (contados.get(metodo, Decimal("0.00")) + confirmado).quantize(Decimal("0.01"))
 
         missing_methods = [
             metodo for metodo in contados
@@ -8079,6 +8294,7 @@ class TurnoCajaCerrarApi(LoginRequiredMixin, View):
             "diferencia_total": float(turno.diferencia_total),
             "deuda_total": float(turno.deuda_total),
             "facturas_pagadas": float(facturas_pagadas),
+            "auto_confirmados": {k: float(v or 0) for k, v in auto_confirmados.items()},
             "retiro_url": reverse("turno_caja_retiro", kwargs={"turno_id": turno.id}),
             "msg": msg,
 
@@ -8720,6 +8936,7 @@ class TurnoCajaRecuperarOIniciarView(LoginRequiredMixin, View):
             if turno.estado == "CIERRE":
                 expected, esperado_total, esperado_efectivo, esperado_no_efectivo = _expected_por_metodo(turno)
                 _sync_turno_medios_esperados(turno, expected, reset_contados=False)
+                auto_confirmados = _auto_confirmados_por_metodo(turno)
                 turno.esperado_total = esperado_total
                 turno.ventas_total = esperado_total
                 turno.ventas_efectivo = esperado_efectivo
@@ -8737,7 +8954,8 @@ class TurnoCajaRecuperarOIniciarView(LoginRequiredMixin, View):
                     "puntopago": {"id": turno.puntopago_id, "nombre": getattr(turno.puntopago, "nombre", str(turno.puntopago_id))},
                     "cajero": {"id": turno.cajero_id, "nombreusuario": _turno_label_usuario(turno.cajero)},
                     "esperado_total": float(esperado_total),
-                    "medios": _medios_payload(turno),
+                    "medios": _medios_payload(turno, auto_confirmados=auto_confirmados),
+                    "auto_confirmados": {k: float(v or 0) for k, v in auto_confirmados.items()},
                     "hide_bd_cols": _hide_bd_cols_for_user(request.user),
                 })
 

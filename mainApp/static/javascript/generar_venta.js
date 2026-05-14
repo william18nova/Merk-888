@@ -438,6 +438,7 @@ $(function () {
     $("body").addClass("modal-open");
   }
   function closeModal(){
+    try { stopNequiAutoRefresh(); } catch (_) {}
     $modal.removeClass("is-open").hide();
     $("body").removeClass("modal-open");
   }
@@ -1112,8 +1113,8 @@ $(function () {
          <td class="price-cell">${priceTxt}</td>
          <td class="subtotal-cell">${subtotalTxt}</td>
          <td class="text-center">
-           <button class="btn btn-chip-danger eliminar-producto" title="Eliminar">
-             <i class="fas fa-trash-alt"></i><span>Eliminar</span>
+           <button class="btn btn-chip-danger eliminar-producto" title="Eliminar" aria-label="Eliminar producto">
+             <i class="fas fa-trash-alt" aria-hidden="true"></i>
            </button>
          </td>
        </tr>`
@@ -3098,9 +3099,12 @@ $(function () {
   const $nequiStatus = $("#nequi-payment-status");
   const $nequiSelected = $("#nequi-selected-payment");
   const $nequiRefresh = $("#nequi-refresh-payments");
+  const NEQUI_AUTO_REFRESH_MS = 4000;
   let nequiPaymentsCache = [];
   let nequiPaymentsLoaded = false;
   let nequiPaymentsLoading = false;
+  let nequiSilentLoading = false;
+  let nequiAutoRefreshTimer = null;
   let selectedNequiPayment = null;
 
   function isMixtoUI(){
@@ -3234,7 +3238,7 @@ $(function () {
     $nequiList.empty();
     const needed = nequiPaymentAmountNeeded();
 
-    if (nequiPaymentsLoading){
+    if (nequiPaymentsLoading && !nequiSilentLoading){
       $nequiStatus.text("Cargando envios de Nequi...");
       return;
     }
@@ -3284,7 +3288,28 @@ $(function () {
     renderNequiPaymentList();
   }
 
-  async function loadNequiPayments(force = false){
+  function shouldAutoRefreshNequi(){
+    return isModalOpen() && getCheckedMedios().includes("nequi");
+  }
+
+  function startNequiAutoRefresh(){
+    if (!$nequiPanel.length || !NEQUI_DISPONIBLES_URL || nequiAutoRefreshTimer) return;
+    nequiAutoRefreshTimer = setInterval(() => {
+      if (!shouldAutoRefreshNequi()){
+        stopNequiAutoRefresh();
+        return;
+      }
+      loadNequiPayments(true, { silent: true });
+    }, NEQUI_AUTO_REFRESH_MS);
+  }
+
+  function stopNequiAutoRefresh(){
+    if (!nequiAutoRefreshTimer) return;
+    clearInterval(nequiAutoRefreshTimer);
+    nequiAutoRefreshTimer = null;
+  }
+
+  async function loadNequiPayments(force = false, { silent = false } = {}){
     if (!$nequiPanel.length || !NEQUI_DISPONIBLES_URL) return;
     if (nequiPaymentsLoading) return;
     if (nequiPaymentsLoaded && !force){
@@ -3293,7 +3318,8 @@ $(function () {
     }
 
     nequiPaymentsLoading = true;
-    $nequiStatus.text("Cargando envios de Nequi...");
+    nequiSilentLoading = !!silent;
+    if (!silent) $nequiStatus.text("Cargando envios de Nequi...");
 
     try {
       const response = await fetch(NEQUI_DISPONIBLES_URL, {
@@ -3314,9 +3340,10 @@ $(function () {
         showMixError("El envio de Nequi seleccionado ya no esta disponible.");
       }
     } catch (err) {
-      $nequiStatus.text("No se pudieron cargar los envios de Nequi. Puedes cerrar sin asociar uno.");
+      if (!silent) $nequiStatus.text("No se pudieron cargar los envios de Nequi. Puedes cerrar sin asociar uno.");
     } finally {
       nequiPaymentsLoading = false;
+      nequiSilentLoading = false;
       renderNequiSelected();
       renderNequiPaymentList();
     }
@@ -3328,10 +3355,12 @@ $(function () {
     $nequiPanel.prop("hidden", !active);
 
     if (!active){
+      stopNequiAutoRefresh();
       resetNequiPaymentState({ clearCache: false });
       return;
     }
 
+    startNequiAutoRefresh();
     if (!nequiPaymentsLoaded && !nequiPaymentsLoading) {
       loadNequiPayments(false);
     }

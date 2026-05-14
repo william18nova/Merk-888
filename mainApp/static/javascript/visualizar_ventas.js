@@ -23,6 +23,76 @@ $(function () {
 
   // ✅ Estado del filtro por producto (id seleccionado o término libre)
   const productoFiltro = { id: "", term: "" };
+  const advancedFilterSelector = [
+    "#filtro-fecha-desde",
+    "#filtro-fecha-hasta",
+    "#filtro-hora-desde",
+    "#filtro-hora-hasta",
+    "#filtro-puntopago",
+    "#filtro-mediopago",
+    "#filtro-empleado",
+    "#filtro-cliente",
+    "#filtro-total-min",
+    "#filtro-total-max",
+    "#filtro-venta-id",
+    "#filtro-devoluciones"
+  ].join(",");
+
+  function debounce(fn, wait){
+    let timer = null;
+    return function (...args){
+      clearTimeout(timer);
+      timer = setTimeout(() => fn.apply(this, args), wait);
+    };
+  }
+
+  function getAdvancedFilters(){
+    return {
+      fecha_desde: $("#filtro-fecha-desde").val() || "",
+      fecha_hasta: $("#filtro-fecha-hasta").val() || "",
+      hora_desde: $("#filtro-hora-desde").val() || "",
+      hora_hasta: $("#filtro-hora-hasta").val() || "",
+      sucursal_id: $("#filtro-sucursal").val() || "",
+      puntopago_id: $("#filtro-puntopago").val() || "",
+      mediopago: $("#filtro-mediopago").val() || "",
+      empleado_id: $("#filtro-empleado").val() || "",
+      cliente_term: ($("#filtro-cliente").val() || "").trim(),
+      total_min: $("#filtro-total-min").val() || "",
+      total_max: $("#filtro-total-max").val() || "",
+      venta_id: $("#filtro-venta-id").val() || "",
+      devoluciones: $("#filtro-devoluciones").val() || ""
+    };
+  }
+
+  function filterPuntosPagoBySucursal(){
+    const sucursalId = $("#filtro-sucursal").val() || "";
+    const $pp = $("#filtro-puntopago");
+    const current = $pp.val();
+    let currentStillVisible = !current;
+
+    $pp.find("option").each(function (){
+      const $opt = $(this);
+      const optSucursal = String($opt.data("sucursal") || "");
+      const visible = !$opt.val() || !sucursalId || optSucursal === String(sucursalId);
+      $opt.prop("hidden", !visible).prop("disabled", !visible);
+      if (visible && $opt.val() === current) currentStillVisible = true;
+    });
+
+    if (!currentStillVisible) $pp.val("");
+  }
+
+  function updateFilterSummary(){
+    let active = 0;
+    Object.values(getAdvancedFilters()).forEach(value => {
+      if (String(value || "").trim()) active += 1;
+    });
+    if (productoFiltro.id || productoFiltro.term) active += 1;
+    if (($("#buscador-ventas").val() || "").trim()) active += 1;
+
+    $("#ventas-filters-summary").text(
+      active ? `${active} filtro${active === 1 ? "" : "s"} activo${active === 1 ? "" : "s"}` : "Sin filtros activos"
+    );
+  }
 
   const table = $("#ventasTable").DataTable({
     processing : true,
@@ -37,6 +107,7 @@ $(function () {
         } else if (productoFiltro.term) {
           d.producto_term = productoFiltro.term;
         }
+        Object.assign(d, getAdvancedFilters());
       }
     },
 
@@ -89,8 +160,49 @@ $(function () {
     }
   });
 
-  $("#buscador-ventas").on("input", function () { table.search(this.value).draw(); });
+  $("#buscador-ventas").on("input", function () {
+    table.search(this.value).draw();
+    updateFilterSummary();
+  });
   $("#ventasTable_filter").hide();
+
+  const reloadWithFilters = debounce(function () {
+    updateFilterSummary();
+    table.ajax.reload();
+  }, 250);
+
+  $("#ventas-filters-toggle").on("click", function () {
+    const $filters = $(".ventas-filters");
+    const isOpen = !$filters.hasClass("is-open");
+    $filters.toggleClass("is-open", isOpen);
+    $(this).attr("aria-expanded", String(isOpen));
+  });
+
+  $(advancedFilterSelector).on("input change", reloadWithFilters);
+  $("#filtro-sucursal").on("change", function () {
+    filterPuntosPagoBySucursal();
+    reloadWithFilters();
+  });
+
+  $(".ventas-chip-btn[data-range]").on("click", function () {
+    const now = new Date();
+    const yyyy = now.getFullYear();
+    const mm = String(now.getMonth() + 1).padStart(2, "0");
+    const dd = String(now.getDate()).padStart(2, "0");
+
+    if ($(this).data("range") === "today") {
+      const today = `${yyyy}-${mm}-${dd}`;
+      $("#filtro-fecha-desde").val(today);
+      $("#filtro-fecha-hasta").val(today);
+    } else {
+      const first = `${yyyy}-${mm}-01`;
+      const lastDate = new Date(yyyy, now.getMonth() + 1, 0).getDate();
+      $("#filtro-fecha-desde").val(first);
+      $("#filtro-fecha-hasta").val(`${yyyy}-${mm}-${String(lastDate).padStart(2, "0")}`);
+    }
+    updateFilterSummary();
+    table.ajax.reload();
+  });
 
   $("#ventasTable tbody").on("click", "tr.clickable-row", function () {
     const id = $(this).data("id");
@@ -120,6 +232,7 @@ $(function () {
     productoFiltro.term = "";
     $hidProd.val(productoFiltro.id);
     applyProductoChip(label ? `Producto: ${label}` : `Producto #${id}`);
+    updateFilterSummary();
     table.ajax.reload();
   }
 
@@ -128,6 +241,7 @@ $(function () {
     productoFiltro.term = String(term || "").trim();
     $hidProd.val("");
     applyProductoChip(productoFiltro.term ? `Producto: "${productoFiltro.term}"` : "");
+    updateFilterSummary();
     table.ajax.reload();
   }
 
@@ -137,6 +251,7 @@ $(function () {
     $hidProd.val("");
     $inpProd.val("");
     applyProductoChip("");
+    updateFilterSummary();
     table.ajax.reload();
   }
 
@@ -195,4 +310,25 @@ $(function () {
   });
 
   $clearBtn.on("click", clearProductoFiltro);
+
+  $("#limpiar-filtros-ventas").on("click", function () {
+    $(advancedFilterSelector).val("");
+    $("#filtro-sucursal").val("");
+    $("#filtro-puntopago").val("");
+    filterPuntosPagoBySucursal();
+
+    productoFiltro.id = "";
+    productoFiltro.term = "";
+    $hidProd.val("");
+    $inpProd.val("");
+    applyProductoChip("");
+
+    table.search("");
+    $("#buscador-ventas").val("");
+    updateFilterSummary();
+    table.ajax.reload();
+  });
+
+  filterPuntosPagoBySucursal();
+  updateFilterSummary();
 });

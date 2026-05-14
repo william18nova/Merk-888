@@ -7,7 +7,7 @@
 {% block extra_head %}
   <link rel="stylesheet"
         href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"/>
-  <link rel="stylesheet" href="{% static 'css/turno_caja.css' %}?v=10">
+  <link rel="stylesheet" href="{% static 'css/turno_caja.css' %}?v=11">
 {% endblock %}
 
 {% block content %}
@@ -232,7 +232,7 @@
 
         <div class="tc-metrics tc-metrics-2">
           <div class="metric">
-            <div class="metric-label">Ventas (según usuario)</div>
+            <div class="metric-label">Ventas reconocidas</div>
             <div id="mVentas" class="metric-value">—</div>
           </div>
         </div>
@@ -295,5 +295,5 @@
     const API_CERRAR     = "{% url 'turno_caja_cerrar' %}";
   </script>
 
-  <script defer src="{% static 'javascript/turno_caja.js' %}?v=13"></script>
+  <script defer src="{% static 'javascript/turno_caja.js' %}?v=14"></script>
 {% endblock %}

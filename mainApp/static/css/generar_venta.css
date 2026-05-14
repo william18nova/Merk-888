@@ -49,13 +49,19 @@
    RESET + ANTI SCROLL LATERAL (GLOBAL)
    ========================================================== */
 *{box-sizing:border-box;margin:0;padding:0}
-html,body{height:100%; width:100%; max-width:100%;}
-html{overflow-x:hidden;}
+html,body{min-height:100%; width:100%; max-width:100%;}
+html{
+  height:auto;
+  overflow-x:hidden;
+  overflow-y:auto;
+}
 body{
   font-family:var(--font);
   color:var(--text);
+  height:auto;
   min-height:100svh;
   overflow-x:hidden;
+  overflow-y:visible;
   padding:clamp(14px,3.2vw,32px);
   background:
     radial-gradient(1400px 800px at 10% 20%, rgba(77,166,255,.35), transparent 60%),
@@ -434,6 +440,31 @@ body::before{
 .btn-chip-danger:active{ transform:translateY(0); }
 .btn-chip-danger i{ font-size:16px; line-height:1; }
 .btn-chip-danger span{ font-size:12px; letter-spacing:.25px; }
+.btn-chip-danger.eliminar-producto{
+  display:inline-grid;
+  place-items:center;
+  width:38px;
+  min-width:38px;
+  height:38px;
+  padding:0;
+  gap:0;
+  border-radius:11px;
+}
+.btn-chip-danger.eliminar-producto i{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  width:1em;
+  height:1em;
+  margin:0;
+  font-size:15px;
+  line-height:1;
+  text-align:center;
+}
+.btn-chip-danger.eliminar-producto i::before{
+  display:block;
+  line-height:1;
+}
 
 /* ==========================================================
    PANEL DERECHO
@@ -510,11 +541,10 @@ body::before{
 
 .table-wrap{
   flex:1;
-  min-height:0;
+  min-height:auto;
   width:100%;
   min-width:0;
-  overflow-x:auto;
-  overflow-y:auto;
+  overflow:visible;
   border-radius:12px;
   -webkit-overflow-scrolling:touch;
 }
@@ -560,20 +590,23 @@ body::before{
 #detalle-productos tbody td:nth-child(3),
 #detalle-productos tbody td:nth-child(4){ text-align:right; }
 #detalle-productos thead th:nth-child(5),
-#detalle-productos tbody td:nth-child(5){ text-align:center; }
+#detalle-productos tbody td:nth-child(5){ text-align:center; width:64px; }
 
 #detalle-productos td{
   padding:12px 12px;
   color:#0b1220;
   border-top:1px solid var(--slate-100);
+  vertical-align:middle;
 }
 #detalle-productos tr:nth-child(even){ background:#f9fbff; }
 
 @media (min-width: 641px){
   #detalle-productos tbody td:nth-child(5){
-    display:flex;
-    justify-content:center;
-    align-items:center;
+    display:table-cell;
+    vertical-align:middle;
+  }
+  #detalle-productos tbody td:nth-child(5) .btn-chip-danger{
+    margin:0 auto;
   }
   #detalle-productos tbody td:nth-child(2) .qty-input{
     margin-left:auto;
@@ -754,6 +787,7 @@ body::before{
   #detalle-productos tbody td:nth-child(5){
     grid-column:1 / -1; grid-row:5;
     justify-content:space-between;
+    width:100%;
   }
   #detalle-productos tbody td:nth-child(5) .btn-chip-danger{ margin-left:auto; }
 }
@@ -851,6 +885,16 @@ body::before{
 .right-title .promo-bolsas-status{
   max-width:620px;
   margin:0 auto 12px;
+}
+
+/* La pagina completa debe tener un solo scroll vertical: el del navegador. */
+body:has(.page-grid):not(.modal-open):not(.nv-menu-open) .page-wrap,
+body:has(.page-grid):not(.modal-open):not(.nv-menu-open) .page-grid,
+body:has(.page-grid):not(.modal-open):not(.nv-menu-open) .panel,
+body:has(.page-grid):not(.modal-open):not(.nv-menu-open) .table-wrap{
+  height:auto !important;
+  max-height:none !important;
+  overflow-y:visible !important;
 }
 
 @media (max-width: 640px){

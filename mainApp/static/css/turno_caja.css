@@ -348,6 +348,9 @@ h2 i{ color:var(--brand); margin-right:8px; }
   font-weight:800;
   text-align:right;
 }
+.hint-ok{
+  color:#0f766e;
+}
 
 /* métricas */
 .tc-metrics{

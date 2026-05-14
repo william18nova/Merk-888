@@ -45,6 +45,151 @@
   </div>
 
   {# ——— Tabla de ventas ——— #}
+  <section class="ventas-filters" aria-label="Filtros avanzados de ventas">
+    <button type="button"
+            class="ventas-filters-toggle"
+            id="ventas-filters-toggle"
+            aria-expanded="false"
+            aria-controls="ventas-filters-body">
+      <span class="ventas-filters-toggle__title">
+        <i class="fas fa-sliders"></i>
+        Filtros
+      </span>
+      <span class="ventas-filters-toggle__summary" id="ventas-filters-summary">Sin filtros activos</span>
+      <span class="ventas-filters-toggle__icon" aria-hidden="true">
+        <i class="fas fa-chevron-up"></i>
+      </span>
+    </button>
+
+    <div class="ventas-filters-body" id="ventas-filters-body">
+      <div class="ventas-filter-layout">
+        <aside class="ventas-filter-sidebar" aria-label="Acciones rapidas de filtros">
+          <p class="ventas-eyebrow">Refinar ventas</p>
+          <h3>Encuentra ventas por fecha, cliente, caja o valor.</h3>
+          <div class="ventas-filter-actions">
+            <button type="button" class="ventas-chip-btn" data-range="today">
+              <i class="fas fa-calendar-day"></i> Hoy
+            </button>
+            <button type="button" class="ventas-chip-btn" data-range="month">
+              <i class="fas fa-calendar-days"></i> Este mes
+            </button>
+            <button type="button" class="ventas-clear-btn" id="limpiar-filtros-ventas">
+              <i class="fas fa-rotate-left"></i> Limpiar
+            </button>
+          </div>
+        </aside>
+
+        <div class="ventas-filter-groups">
+          <fieldset class="ventas-filter-group">
+            <legend>Fecha y hora</legend>
+            <div class="ventas-filter-grid ventas-filter-grid--two">
+              <label class="ventas-filter-field">
+                <span>Desde</span>
+                <input id="filtro-fecha-desde" class="ventas-filter-control" type="date">
+              </label>
+
+              <label class="ventas-filter-field">
+                <span>Hasta</span>
+                <input id="filtro-fecha-hasta" class="ventas-filter-control" type="date">
+              </label>
+
+              <label class="ventas-filter-field">
+                <span>Hora desde</span>
+                <input id="filtro-hora-desde" class="ventas-filter-control" type="time">
+              </label>
+
+              <label class="ventas-filter-field">
+                <span>Hora hasta</span>
+                <input id="filtro-hora-hasta" class="ventas-filter-control" type="time">
+              </label>
+            </div>
+          </fieldset>
+
+          <fieldset class="ventas-filter-group">
+            <legend>Ubicacion y pago</legend>
+            <div class="ventas-filter-grid ventas-filter-grid--two">
+              <label class="ventas-filter-field">
+                <span>Sucursal</span>
+                <select id="filtro-sucursal" class="ventas-filter-control">
+                  <option value="">Todas</option>
+                  {% for sucursal in sucursales %}
+                    <option value="{{ sucursal.sucursalid }}">{{ sucursal.nombre }}</option>
+                  {% endfor %}
+                </select>
+              </label>
+
+              <label class="ventas-filter-field">
+                <span>Punto de pago</span>
+                <select id="filtro-puntopago" class="ventas-filter-control">
+                  <option value="">Todos</option>
+                  {% for punto in puntos_pago %}
+                    <option value="{{ punto.puntopagoid }}" data-sucursal="{{ punto.sucursalid_id }}">
+                      {{ punto.sucursalid.nombre }} - {{ punto.nombre }}
+                    </option>
+                  {% endfor %}
+                </select>
+              </label>
+
+              <label class="ventas-filter-field">
+                <span>Medio de pago</span>
+                <select id="filtro-mediopago" class="ventas-filter-control">
+                  <option value="">Todos</option>
+                  {% for value,label in medios_pago %}
+                    <option value="{{ value }}">{{ label }}</option>
+                  {% endfor %}
+                </select>
+              </label>
+
+              <label class="ventas-filter-field">
+                <span>Empleado</span>
+                <select id="filtro-empleado" class="ventas-filter-control">
+                  <option value="">Todos</option>
+                  {% for empleado in empleados %}
+                    <option value="{{ empleado.empleadoid }}">{{ empleado.nombre }} {{ empleado.apellido }}</option>
+                  {% endfor %}
+                </select>
+              </label>
+            </div>
+          </fieldset>
+
+          <fieldset class="ventas-filter-group">
+            <legend>Cliente y valores</legend>
+            <div class="ventas-filter-grid">
+              <label class="ventas-filter-field ventas-filter-field--wide">
+                <span>Cliente</span>
+                <input id="filtro-cliente" class="ventas-filter-control" type="text" placeholder="Nombre, documento o telefono">
+              </label>
+
+              <label class="ventas-filter-field">
+                <span>Total min.</span>
+                <input id="filtro-total-min" class="ventas-filter-control" type="number" min="0" step="100" inputmode="decimal" placeholder="0">
+              </label>
+
+              <label class="ventas-filter-field">
+                <span>Total max.</span>
+                <input id="filtro-total-max" class="ventas-filter-control" type="number" min="0" step="100" inputmode="decimal" placeholder="Sin limite">
+              </label>
+
+              <label class="ventas-filter-field">
+                <span>ID venta</span>
+                <input id="filtro-venta-id" class="ventas-filter-control" type="number" min="1" step="1" inputmode="numeric" placeholder="# venta">
+              </label>
+
+              <label class="ventas-filter-field">
+                <span>Devoluciones</span>
+                <select id="filtro-devoluciones" class="ventas-filter-control">
+                  <option value="">Todas</option>
+                  <option value="con">Con cambios/devoluciones</option>
+                  <option value="sin">Sin cambios/devoluciones</option>
+                </select>
+              </label>
+            </div>
+          </fieldset>
+        </div>
+      </div>
+    </div>
+  </section>
+
   <div class="table-wrap">
     <table id="ventasTable" class="display">
       <thead>
@@ -78,7 +223,7 @@
 {# ——— Estilos base (igual a listar_pedidos.css) ——— #}
 <link rel="stylesheet" href="{% static 'css/visualizar_pedidos.css' %}">
 {# ——— Overrides específicos de ventas (muestra los alerts) ——— #}
-<link rel="stylesheet" href="{% static 'css/visualizar_ventas.css' %}">
+<link rel="stylesheet" href="{% static 'css/visualizar_ventas.css' %}?v=3">
 
 {# URL base para navegar al ver_venta/id y URL de datos para DataTables #}
 <script>
@@ -88,5 +233,5 @@
 </script>
 
 {# ——— Lógica JS ——— #}
-<script src="{% static 'javascript/visualizar_ventas.js' %}" defer></script>
+<script src="{% static 'javascript/visualizar_ventas.js' %}?v=3" defer></script>
 {% endblock %}

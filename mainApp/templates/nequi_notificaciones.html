@@ -4,11 +4,14 @@
 {% block title %}Notificaciones Nequi{% endblock %}
 
 {% block extra_head %}
-  <link rel="stylesheet" href="{% static 'css/nequi_notificaciones.css' %}">
+  <link rel="stylesheet" href="{% static 'css/nequi_notificaciones.css' %}?v=3">
 {% endblock %}
 
 {% block content %}
-<section class="nequi-page" data-feed-url="{% url 'nequi_notificaciones_data' %}">
+<section class="nequi-page"
+         data-feed-url="{% url 'nequi_notificaciones_data' %}"
+         data-delete-url-template="{% url 'nequi_notificacion_eliminar' 0 %}"
+         data-bulk-delete-url="{% url 'nequi_notificaciones_eliminar_seleccionadas' %}">
   <header class="nequi-hero">
     <div>
       <p class="nequi-eyebrow">Pagos en tiempo real</p>
@@ -49,12 +52,29 @@
         <p class="nequi-eyebrow">Historial</p>
         <h2>Ultimas notificaciones</h2>
       </div>
-      <button type="button" class="nequi-refresh" id="nequi-refresh">Actualizar</button>
+      <div class="nequi-panel__actions">
+        <label class="nequi-select-all">
+          <input type="checkbox" id="nequi-select-all">
+          <span>Seleccionar visibles</span>
+        </label>
+        <button type="button" class="nequi-delete-selected" id="nequi-delete-selected" disabled>
+          Eliminar seleccionadas
+          <span id="nequi-selected-count">0</span>
+        </button>
+        <button type="button" class="nequi-refresh" id="nequi-refresh">Actualizar</button>
+      </div>
     </div>
 
     <div class="nequi-list" id="nequi-list">
       {% for item in notificaciones %}
         <article class="nequi-item" data-id="{{ item.notificacionid }}">
+          <label class="nequi-check">
+            <input type="checkbox"
+                   class="nequi-row-check"
+                   value="{{ item.notificacionid }}"
+                   {% if item.venta_id %}disabled{% endif %}>
+            <span></span>
+          </label>
           <div class="nequi-item__main">
             <div class="nequi-item__title">
               <strong>{% if item.monto %}$ {{ item.monto }}{% else %}Pago Nequi{% endif %}</strong>
@@ -65,7 +85,15 @@
               {% if item.remitente %}<span>{{ item.remitente }}</span>{% endif %}
               {% if item.referencia %}<span>Ref. {{ item.referencia }}</span>{% endif %}
               {% if item.app %}<span>{{ item.app }}</span>{% endif %}
+              {% if item.venta_id %}<span>Usada en venta #{{ item.venta_id }}</span>{% endif %}
             </div>
+          </div>
+          <div class="nequi-item__actions">
+            {% if item.venta_id %}
+              <button type="button" class="nequi-delete" disabled>Usada</button>
+            {% else %}
+              <button type="button" class="nequi-delete" data-delete-id="{{ item.notificacionid }}">Eliminar</button>
+            {% endif %}
           </div>
         </article>
       {% empty %}
@@ -77,5 +105,5 @@
 {% endblock %}
 
 {% block scripts %}
-  <script src="{% static 'javascript/nequi_notificaciones.js' %}"></script>
+  <script src="{% static 'javascript/nequi_notificaciones.js' %}?v=3"></script>
 {% endblock %}

@@ -14,6 +14,8 @@
     let openGuardUntil = 0;
     let heightRaf = null;
     let positionRaf = null;
+    let touchStartX = null;
+    let touchStartY = null;
     const hoverTimers = new WeakMap();
 
     function syncNavHeight() {
@@ -74,15 +76,38 @@
 
     function setOpen(open) {
       links.classList.toggle("is-open", open);
+      nav.classList.toggle("is-open", open);
       document.body.classList.toggle("nv-menu-open", open);
       burger.setAttribute("aria-expanded", open ? "true" : "false");
+      burger.setAttribute("aria-label", open ? "Cerrar menu" : "Abrir menu");
       if (!open) {
         document.querySelectorAll(".nv__item.has-dd.is-open")
           .forEach(item => item.classList.remove("is-open"));
+        nav.scrollTop = 0;
+        touchStartX = null;
+        touchStartY = null;
       } else {
         openGuardUntil = Date.now() + 140;
+        document.querySelectorAll(".nv__item.has-dd.is-parent-active")
+          .forEach(item => item.classList.add("is-open"));
       }
       syncNavHeight();
+    }
+
+    function menuIsOpen() {
+      return isMobile() && nav.classList.contains("is-open");
+    }
+
+    function scrollMenuBy(deltaY) {
+      const maxScroll = nav.scrollHeight - nav.clientHeight;
+      if (maxScroll <= 0 || !deltaY) return false;
+
+      const current = nav.scrollTop;
+      const next = Math.max(0, Math.min(maxScroll, current + deltaY));
+      if (next === current) return false;
+
+      nav.scrollTop = next;
+      return true;
     }
 
     burger.addEventListener("click", (event) => {
@@ -90,6 +115,40 @@
       event.stopPropagation();
       setOpen(!links.classList.contains("is-open"));
     }, { passive: false });
+
+    nav.addEventListener("wheel", (event) => {
+      if (!menuIsOpen()) return;
+      if (scrollMenuBy(event.deltaY)) {
+        event.preventDefault();
+      }
+    }, { passive: false });
+
+    nav.addEventListener("touchstart", (event) => {
+      if (!menuIsOpen() || event.touches.length !== 1) return;
+      touchStartX = event.touches[0].clientX;
+      touchStartY = event.touches[0].clientY;
+    }, { passive: true });
+
+    nav.addEventListener("touchmove", (event) => {
+      if (!menuIsOpen() || event.touches.length !== 1 || touchStartY === null) return;
+
+      const touch = event.touches[0];
+      const deltaY = touchStartY - touch.clientY;
+      const deltaX = Math.abs(touchStartX - touch.clientX);
+
+      touchStartX = touch.clientX;
+      touchStartY = touch.clientY;
+
+      if (Math.abs(deltaY) <= deltaX || Math.abs(deltaY) < 2) return;
+      if (scrollMenuBy(deltaY)) {
+        event.preventDefault();
+      }
+    }, { passive: false });
+
+    nav.addEventListener("touchend", () => {
+      touchStartX = null;
+      touchStartY = null;
+    }, { passive: true });
 
     document.querySelectorAll(".nv__item.has-dd > a").forEach(anchor => {
       const li = anchor.parentElement;
