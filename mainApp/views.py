@@ -86,6 +86,7 @@ from django.conf import settings
 from datetime import timedelta
 import pytz
 from typing import List, Dict, Any
+from urllib.parse import parse_qsl
 from .permissions import clear_permission_cache, permission_catalog, sync_permission_catalog, user_can_access_url_name, user_has_permission
 
 
@@ -6675,6 +6676,11 @@ def _nequi_field(payload, *names):
     return ""
 
 
+def _nequi_plain_text(value):
+    value = str(value or "")
+    return unicodedata.normalize("NFKD", value).encode("ascii", "ignore").decode("ascii").lower()
+
+
 def _normalize_money_value(raw_value):
     raw_value = (raw_value or "").strip()
     raw_value = re.sub(r"[^\d,.]", "", raw_value)
@@ -6700,13 +6706,14 @@ def _normalize_money_value(raw_value):
 
 def _parse_nequi_amount(text):
     text = text or ""
+    search_text = _nequi_plain_text(text)
     patterns = [
         r"(?:\$|cop\s*)\s*([0-9][0-9.,]*)",
         r"(?:recibiste|enviaron|envio|depositaron|pagaron|pago|por)\s+(?:de\s+)?([0-9][0-9.,]*)",
         r"([0-9]{1,3}(?:[.,][0-9]{3})+(?:[.,][0-9]{2})?)",
     ]
     for pattern in patterns:
-        match = re.search(pattern, text, flags=re.IGNORECASE)
+        match = re.search(pattern, search_text, flags=re.IGNORECASE)
         if not match:
             continue
         try:
@@ -6729,6 +6736,21 @@ def _parse_nequi_sender(text):
     if not match:
         return ""
     sender = re.sub(r"\s+", " ", match.group(1)).strip()
+    return sender[:160]
+
+
+def _parse_nequi_sender_plain(text):
+    text = text or ""
+    plain_text = _nequi_plain_text(text)
+    direct = re.search(r"^\s*(.+?)\s+te\s+envio\b", plain_text, flags=re.IGNORECASE)
+    if direct:
+        sender = re.sub(r"\s+", " ", text[: direct.end(1)]).strip()
+        return sender[:160]
+
+    match = re.search(r"(?:\bde|\bdesde)\s+([^,.\n]{3,100})", plain_text, flags=re.IGNORECASE)
+    if not match:
+        return ""
+    sender = re.sub(r"\s+", " ", text[match.start(1): match.end(1)]).strip()
     return sender[:160]
 
 
@@ -6764,6 +6786,23 @@ def _make_nequi_fingerprint(payload, title, text, package, received_at):
         unique_part = received_at.isoformat(timespec="microseconds")
     base = f"{package}|{title}|{text}|{unique_part}"
     return hashlib.sha256(base.encode("utf-8", errors="ignore")).hexdigest()
+
+
+def _looks_like_nequi_payment(title, text, amount):
+    if amount is None:
+        return False
+    plain_text = _nequi_plain_text(f"{title} {text}")
+    payment_markers = (
+        "te envio",
+        "te enviaron",
+        "recibiste",
+        "recibido",
+        "depositaron",
+        "pagaron",
+        "transferencia",
+        "pago",
+    )
+    return any(marker in plain_text for marker in payment_markers)
 
 
 def _nequi_item_json(item):
@@ -6928,7 +6967,25 @@ class NequiNotificationWebhookView(View):
                 raise ValueError("El cuerpo JSON debe ser un objeto.")
             payload.update(data)
             return payload
-        payload.update(request.POST.dict())
+        form_data = request.POST.dict()
+        if form_data:
+            payload.update(form_data)
+            return payload
+
+        raw_body = (request.body or b"").decode("utf-8", errors="ignore").strip()
+        if raw_body:
+            if raw_body.startswith("{"):
+                try:
+                    data = json.loads(raw_body)
+                except json.JSONDecodeError as exc:
+                    raise ValueError(f"JSON invalido: {exc}") from exc
+                if not isinstance(data, dict):
+                    raise ValueError("El cuerpo JSON debe ser un objeto.")
+                payload.update(data)
+            elif "=" in raw_body:
+                payload.update(dict(parse_qsl(raw_body, keep_blank_values=True)))
+            else:
+                payload["raw_text"] = raw_body
         return payload
 
     def _request_token(self, request, payload):
@@ -6960,12 +7017,30 @@ class NequiNotificationWebhookView(View):
         if not hmac.compare_digest(request_token, configured_token):
             return JsonResponse({"success": False, "error": "Token invalido."}, status=403)
 
-        title = _nequi_field(payload, "title", "titulo", "notification_title", "not_title")
-        text = _nequi_field(payload, "text", "texto", "body", "message", "notification_text", "not_text")
-        app_name = _nequi_field(payload, "app", "application", "application_name", "notification_app_name")
-        package = _nequi_field(payload, "package", "package_name", "notification_package", "app_package")
-        joined = f"{title} {text} {app_name} {package}".lower()
-        if "nequi" not in joined:
+        title = _nequi_field(
+            payload,
+            "title", "titulo", "notification_title", "not_title", "subject",
+        )
+        text = _nequi_field(
+            payload,
+            "text", "texto", "body", "message", "notification_text", "not_text",
+            "notification_body", "notification_message", "big_text", "not_big_text",
+            "not_text_lines", "ticker", "not_ticker", "content", "raw_text",
+        )
+        app_name = _nequi_field(
+            payload,
+            "app", "application", "application_name", "notification_app_name",
+            "notification_app", "app_name", "not_app_name", "not_application_name",
+        )
+        package = _nequi_field(
+            payload,
+            "package", "package_name", "notification_package", "notification_package_name",
+            "app_package", "not_package", "not_package_name",
+        )
+
+        amount = _parse_nequi_amount(f"{title} {text}")
+        joined = _nequi_plain_text(f"{title} {text} {app_name} {package}")
+        if "nequi" not in joined and not _looks_like_nequi_payment(title, text, amount):
             return JsonResponse({
                 "success": True,
                 "ignored": True,
@@ -6976,8 +7051,7 @@ class NequiNotificationWebhookView(View):
             return JsonResponse({"success": False, "error": "La notificacion llego sin titulo ni texto."}, status=400)
 
         received_at = _parse_nequi_received_at(payload)
-        amount = _parse_nequi_amount(f"{title} {text}")
-        sender = _nequi_field(payload, "sender", "remitente") or _parse_nequi_sender(text)
+        sender = _nequi_field(payload, "sender", "remitente") or _parse_nequi_sender_plain(text)
         reference = _nequi_field(payload, "reference", "referencia") or _parse_nequi_reference(text)
         fingerprint = _make_nequi_fingerprint(payload, title, text, package, received_at)
         safe_payload = {key: value for key, value in payload.items() if key.lower() != "token"}
