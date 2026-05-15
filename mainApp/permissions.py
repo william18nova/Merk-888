@@ -117,6 +117,16 @@ PERMISSION_DEFINITIONS = [
         ],
     },
     {
+        "code": "inventario_plaza_whatsapp",
+        "label": "Inventario plaza WhatsApp",
+        "description": "Permite llenar y enviar por WhatsApp el inventario de plaza.",
+        "aliases": [
+            "inventario_plaza_whatsapp",
+            "inventario plaza",
+            "inventario plaza whatsapp",
+        ],
+    },
+    {
         "code": "inventarios_eliminar",
         "label": "Eliminar inventario",
         "description": "Permite eliminar productos de inventario.",
@@ -508,6 +518,7 @@ ROUTE_PERMISSIONS = {
     "inventario_fotos_proveedor_lookup": "inventarios_fotos",
     "inventario_fotos_procesar": "inventarios_fotos",
     "inventario_fotos_confirmar": "inventarios_fotos",
+    "inventario_plaza_whatsapp": "inventario_plaza_whatsapp",
     "inventario_item_ajax": "inventarios_editar",
     "producto_inventario_autocomplete": "inventarios_crear",
     "sucursal_sin_inventario_autocomplete": "inventarios_crear",
@@ -630,6 +641,7 @@ ROUTE_PERMISSION_ALTERNATIVES = {
     "ver_venta": ["ventas_ver", "ventas_imprimir", "ventas_cambios"],
     "ticket_texto": ["ventas_ver", "ventas_imprimir", "ventas_cambios"],
     "imprimir_factura": ["ventas_ver", "ventas_imprimir", "ventas_cambios"],
+    "inventario_plaza_whatsapp": ["inventario_plaza_whatsapp", "inventarios_ver", "inventarios_editar", "inventarios_fotos"],
     "producto_inventario_buscar_nombre": ["inventarios_ver", "inventarios_editar", "inventarios_fotos", "reportes_ventas_producto"],
     "producto_inventario_buscar_barras": ["inventarios_ver", "inventarios_editar", "inventarios_fotos", "reportes_ventas_producto"],
     "producto_inventario_buscar_id": ["inventarios_ver", "inventarios_editar", "inventarios_fotos", "reportes_ventas_producto"],
@@ -667,6 +679,7 @@ NAV_GROUPS = [
             {"label": "Visualizar inventarios", "url_name": "visualizar_inventarios"},
             {"label": "Inventario masivo", "url_name": "inventario_masivo"},
             {"label": "Inventario desde fotos", "url_name": "inventario_fotos"},
+            {"label": "Inventario plaza WhatsApp", "url_name": "inventario_plaza_whatsapp"},
         ],
     },
     {

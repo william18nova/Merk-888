@@ -5172,10 +5172,19 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin, View):
     edit_permission = "ventas_cambios"
     print_permission = "ventas_imprimir"
 
+    def _is_cajero_role(self, user) -> bool:
+        try:
+            role_name = (getattr(getattr(user, "rolid", None), "nombre", "") or "").strip().lower()
+        except Exception:
+            role_name = ""
+        return role_name == "cajero"
+
     def _can_view_venta(self, user) -> bool:
         return user_has_permission(user, self.view_permission)
 
     def _can_edit_venta(self, user) -> bool:
+        if self._is_cajero_role(user):
+            return False
         return user_has_permission(user, self.edit_permission)
 
     def _can_print_venta(self, user) -> bool:
@@ -5186,6 +5195,8 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin, View):
         )
 
     def _is_print_only(self, user) -> bool:
+        if self._is_cajero_role(user) and self._can_print_venta(user):
+            return True
         return self._can_print_venta(user) and not self._can_edit_venta(user)
 
     def dispatch(self, request, *args, **kwargs):
@@ -9785,6 +9796,120 @@ class ProductoDetalleInventarioView(LoginRequiredMixin, View):
             },
             "inventario": {"cantidad": cantidad}
         })
+
+
+PLAZA_VERDURAS = [
+    "Acelga",
+    "Aguacate",
+    "Ahuyama",
+    "Ajo",
+    "Ajo x 3",
+    "Apio",
+    "Arracacha",
+    "Arveja",
+    "Arveja verde",
+    "Brócoli",
+    "Cilantro",
+    "Cebolla cabezona",
+    "Cabezona blanca",
+    "Cebolla cabezona blanca",
+    "Cabezona morada",
+    "Cebolla morada",
+    "Cebolla larga",
+    "Espinaca",
+    "Jengibre",
+    "Habichuela",
+    "Guascas",
+    "Guineo",
+    "Laurel",
+    "Lechuga batavia",
+    "Lechuga crespa",
+    "Mazorca",
+    "Papá criolla",
+    "Papa lavada",
+    "Papá negra",
+    "Pepino cohombro",
+    "Perejil",
+    "Pimentón",
+    "Plátano maduro",
+    "Plátano verde",
+    "Remolacha",
+    "Tomate",
+    "Tomillo",
+    "Yuca",
+    "Zanahoria",
+    "Zukini amarillo",
+    "Zukini verde",
+    "Zucchini amarillo",
+    "Zucchini verde",
+    "Zuckini amarillo",
+    "Zuckini verde",
+]
+
+PLAZA_FRUTAS = [
+    "Arándanos",
+    "Arándano",
+    "Banano",
+    "Coco",
+    "Fresa",
+    "Granadilla",
+    "Guayaba",
+    "Kiwi",
+    "Limón",
+    "Lulo",
+    "Mandarina",
+    "Mango",
+    "Manzana verde",
+    "Manzana roja",
+    "Maracuyá",
+    "Melón",
+    "Naranja",
+    "Papaya",
+    "Pera",
+    "Piña",
+    "Pitaya",
+    "Sandía",
+    "Tomate de árbol",
+    "Tomate árbol",
+    "Uva chilena",
+    "Uva Isabelina",
+    "Sabila",
+    "Sábila",
+]
+
+PLAZA_CARNES = [
+    "Alas",
+    "Contra muslo",
+    "Lomo bandeja de cerdo",
+    "Lomo bandeja res",
+    "Lomo bandeja de res",
+    "Muslo",
+    "Muslo y contra muslo",
+    "Pechuga",
+    "Pechuga con hueso",
+    "Pechuga deshuesada",
+    "Media pechuga",
+    "Pechuga pernil",
+    "Pernil",
+    "Pernil x 3",
+    "Pechuga grande",
+    "Deshuesada",
+    "Rabadilla",
+]
+
+
+class InventarioPlazaWhatsappView(LoginRequiredMixin, TemplateView):
+    template_name = "inventario_plaza_whatsapp.html"
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context["plaza_sections"] = [
+            {"title": "Verdura", "items": PLAZA_VERDURAS},
+            {"title": "Fruta", "items": PLAZA_FRUTAS},
+            {"title": "Carnes", "items": PLAZA_CARNES},
+        ]
+        context["whatsapp_phone"] = "573189092347"
+        return context
 
 
 

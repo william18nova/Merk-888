@@ -21,6 +21,23 @@ def grant_cajero_print_sales(apps, schema_editor):
 
     with schema_editor.connection.cursor() as cursor:
         cursor.execute(
+            """
+            DELETE FROM rolespermisos
+            WHERE rolid = %s
+              AND permisoid IN (
+                SELECT permisoid
+                FROM permisos
+                WHERE lower(nombre) IN (
+                  'visualizar ventas',
+                  'ventas_ver',
+                  'cambios y devoluciones',
+                  'ventas_cambios'
+                )
+              )
+            """,
+            [cajero.pk],
+        )
+        cursor.execute(
             "SELECT 1 FROM rolespermisos WHERE rolid = %s AND permisoid = %s LIMIT 1",
             [cajero.pk, permiso.pk],
         )

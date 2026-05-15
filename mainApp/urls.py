@@ -322,6 +322,7 @@ urlpatterns = [
 
     path("a", views.GestionInventarioMasivaView.as_view(), name="inventario_masivo"),
 
+    path("inventario/plaza-whatsapp/", views.InventarioPlazaWhatsappView.as_view(), name="inventario_plaza_whatsapp"),
     path("inventario/fotos/", views.InventarioFotosPageView.as_view(), name="inventario_fotos"),
     path("inventario/fotos/catalogo/", views.InventarioFotosCatalogoView.as_view(), name="inventario_fotos_catalogo"),
     path("inventario/fotos/proveedor/", views.InventarioFotosProveedorLookupView.as_view(), name="inventario_fotos_proveedor_lookup"),

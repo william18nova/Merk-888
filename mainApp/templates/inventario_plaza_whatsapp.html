@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Inventario plaza WhatsApp{% endblock %}
+
+{% block extra_head %}
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"/>
+  <link rel="stylesheet" href="{% static 'css/inventario_plaza_whatsapp.css' %}">
+{% endblock %}
+
+{% block content %}
+<main class="plaza-page" data-whatsapp-phone="{{ whatsapp_phone }}">
+  <header class="plaza-hero">
+    <div>
+      <p class="plaza-eyebrow">Plaza Yerbabuena</p>
+      <h1>Inventario para WhatsApp</h1>
+      <p>Completa cantidades y envia el reporte directo al chat de don William.</p>
+    </div>
+    <div class="plaza-hero__actions">
+      <button type="button" class="plaza-btn plaza-btn--ghost" id="plazaFillNoHay">
+        <i class="fa-solid fa-ban"></i>
+        Vacios: No hay
+      </button>
+      <button type="button" class="plaza-btn plaza-btn--ghost" id="plazaClear">
+        <i class="fa-solid fa-eraser"></i>
+        Limpiar
+      </button>
+    </div>
+  </header>
+
+  <section class="plaza-layout">
+    <form class="plaza-form" id="plazaInventoryForm" autocomplete="off">
+      {% for section in plaza_sections %}
+        <section class="plaza-section">
+          <div class="plaza-section__head">
+            <h2>{{ section.title }}</h2>
+            <span>{{ section.items|length }}</span>
+          </div>
+
+          <div class="plaza-items">
+            {% for item in section.items %}
+              <label class="plaza-row">
+                <span>{{ item }}</span>
+                <input
+                  type="text"
+                  inputmode="text"
+                  placeholder="Cantidad"
+                  data-plaza-input
+                  data-section="{{ section.title }}"
+                  data-product="{{ item }}"
+                >
+                <button type="button" class="plaza-nohay" data-plaza-nohay aria-label="Marcar {{ item }} como no hay">
+                  No hay
+                </button>
+              </label>
+            {% endfor %}
+          </div>
+        </section>
+      {% endfor %}
+
+      <section class="plaza-section plaza-section--manual">
+        <div class="plaza-section__head">
+          <h2>Adicionales</h2>
+          <span id="plazaManualCount">0</span>
+        </div>
+
+        <div class="plaza-manual">
+          <div class="plaza-manual__controls">
+            <input type="text" id="plazaManualName" placeholder="Nombre del producto">
+            <input type="text" id="plazaManualQuantity" placeholder="Cantidad">
+            <button type="button" class="plaza-btn plaza-btn--primary" id="plazaAddManual">
+              <i class="fa-solid fa-plus"></i>
+              Agregar
+            </button>
+          </div>
+          <div class="plaza-items plaza-manual__items" id="plazaManualItems"></div>
+        </div>
+      </section>
+    </form>
+
+    <aside class="plaza-preview">
+      <div class="plaza-preview__head">
+        <div>
+          <p class="plaza-eyebrow">Mensaje</p>
+          <h2>Vista previa</h2>
+        </div>
+        <button type="button" class="plaza-btn plaza-btn--ghost plaza-btn--small" id="plazaCopy">
+          <i class="fa-regular fa-copy"></i>
+          Copiar
+        </button>
+      </div>
+
+      <textarea id="plazaMessagePreview" readonly></textarea>
+
+      <button type="button" class="plaza-btn plaza-btn--whatsapp" id="plazaSendWhatsapp">
+        <i class="fa-brands fa-whatsapp"></i>
+        Enviar por WhatsApp
+      </button>
+    </aside>
+  </section>
+</main>
+
+<script src="{% static 'javascript/inventario_plaza_whatsapp.js' %}" defer></script>
+{% endblock %}
