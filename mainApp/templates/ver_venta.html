@@ -197,6 +197,15 @@
 
         {% endif %}
 
+        {% if venta_print_only %}
+        <a href="{{ venta_solicitud_cambio_whatsapp_url }}"
+           class="btn-whatsapp-change"
+           target="_blank"
+           rel="noopener noreferrer">
+          <i class="fab fa-whatsapp me-1"></i> Solicitar cambio/devolución
+        </a>
+        {% endif %}
+
         <button type="button"
                 id="btn-imprimir-factura"
                 class="btn-primary"

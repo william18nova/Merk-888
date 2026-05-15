@@ -11,8 +11,10 @@ import re
 import unicodedata
 import hashlib
 import hmac
+from urllib.parse import quote
 from datetime import date, datetime, time
 from django.utils import timezone
+from django.utils.http import url_has_allowed_host_and_scheme
 from django.contrib.auth import authenticate
 import logging
 from django.utils.dateparse import parse_date, parse_datetime
@@ -204,8 +206,25 @@ class PaginatedAutocompleteMixin(LoginRequiredMixin, View):
 class LoginView(View):
     template_name = "login.html"
 
+    def _safe_next_url(self, request):
+        next_url = (request.POST.get("next") or request.GET.get("next") or "").strip()
+        if next_url and url_has_allowed_host_and_scheme(
+            url=next_url,
+            allowed_hosts={request.get_host()},
+            require_https=request.is_secure(),
+        ):
+            return next_url
+        return ""
+
+    def _render_login(self, request):
+        return render(request, self.template_name, {
+            "next_url": self._safe_next_url(request),
+        })
+
     def get(self, request):
-        return render(request, self.template_name)
+        if getattr(request.user, "is_authenticated", False):
+            return redirect(self._safe_next_url(request) or "home")
+        return self._render_login(request)
 
     def post(self, request):
         u = request.POST.get("nombreusuario")
@@ -213,9 +232,9 @@ class LoginView(View):
         user = authenticate(request, username=u, password=p)
         if user:
             auth_login(request, user)
-            return redirect("home")
+            return redirect(self._safe_next_url(request) or "home")
         messages.error(request, "Usuario o contraseña incorrectos.")
-        return render(request, self.template_name)
+        return self._render_login(request)
 
 
 class HomePageView(LoginRequiredMixin, TemplateView):
@@ -5454,6 +5473,13 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin, View):
             prefix="reint"
         )
 
+        venta_url = f"https://merk888.pythonanywhere.com{reverse('ver_venta', args=[venta.pk])}"
+        solicitud_texto = (
+            f"Hola, solicito revisar un cambio/devolución para la venta #{venta.pk}: "
+            f"{venta_url}"
+        )
+        solicitud_whatsapp_url = f"https://wa.me/573054622892?text={quote(solicitud_texto)}"
+
         return render(request, self.template_name, {
             "venta": venta,
             "filas": zip(detalles, dev_formset.forms),
@@ -5464,6 +5490,7 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin, View):
             "medios_pago": MEDIOS_PAGO,
             "venta_total": (venta.total or Decimal("0.00")).quantize(Q2),
             "venta_print_only": self._is_print_only(request.user),
+            "venta_solicitud_cambio_whatsapp_url": solicitud_whatsapp_url,
         })
 
     # -------------------------

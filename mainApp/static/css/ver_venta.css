@@ -306,7 +306,8 @@
 
 /* Botones con estilo más moderno */
 .btn-primary,
-.btn-primary-alt{
+.btn-primary-alt,
+.btn-whatsapp-change{
   appearance: none;
   border: none;
   border-radius: 14px;
@@ -318,6 +319,26 @@
   max-width: 100%;
   transition: transform .08s ease, filter .12s ease, box-shadow .12s ease;
 }
+
+.btn-whatsapp-change{
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 44px;
+  color: #fff;
+  text-decoration: none;
+  background: linear-gradient(180deg, #19b77d 0%, #11845b 100%);
+  box-shadow: 0 10px 18px rgba(17,132,91,.22);
+}
+
+.btn-whatsapp-change:hover{
+  color: #fff;
+  filter: brightness(1.05);
+  box-shadow: 0 14px 22px rgba(17,132,91,.28);
+}
+
+.btn-whatsapp-change:active{ transform: translateY(1px); }
 
 .btn-primary{
   background: linear-gradient(180deg, var(--na-500) 0%, #1e6fff 100%);
@@ -354,7 +375,8 @@
     grid-template-columns: 1fr;
   }
   .btn-primary,
-  .btn-primary-alt{
+  .btn-primary-alt,
+  .btn-whatsapp-change{
     width: 100%;
   }
 }

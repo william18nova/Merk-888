@@ -21,6 +21,9 @@
   <h2>Iniciar sesión</h2>
   <form method="post" action="{% url 'login' %}">
     {% csrf_token %}
+    {% if next_url %}
+    <input type="hidden" name="next" value="{{ next_url }}">
+    {% endif %}
     <input
       type="text"
       name="nombreusuario"
