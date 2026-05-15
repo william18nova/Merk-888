@@ -84,6 +84,7 @@ from django.db.models.functions import Lower, StrIndex, Trim, Coalesce, TruncDat
 import os, io, textwrap, subprocess
 from django.views.decorators.http import require_POST
 from django.views.decorators.csrf import csrf_exempt
+from django.views.decorators.cache import never_cache
 from django.conf import settings
 from datetime import timedelta
 import pytz
@@ -203,6 +204,7 @@ class PaginatedAutocompleteMixin(LoginRequiredMixin, View):
         ]
         return JsonResponse({"results": results, "has_more": end < total})
 
+@method_decorator(never_cache, name="dispatch")
 class LoginView(View):
     template_name = "login.html"
 
@@ -9935,7 +9937,7 @@ class InventarioPlazaWhatsappView(LoginRequiredMixin, TemplateView):
             {"title": "Fruta", "items": PLAZA_FRUTAS},
             {"title": "Carnes", "items": PLAZA_CARNES},
         ]
-        context["whatsapp_phone"] = "573189092347"
+        context["whatsapp_phone"] = "573144783398"
         return context
 
 
