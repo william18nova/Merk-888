@@ -3119,7 +3119,7 @@ $(function () {
   const $nequiStatus = $("#nequi-payment-status");
   const $nequiSelected = $("#nequi-selected-payment");
   const $nequiRefresh = $("#nequi-refresh-payments");
-  const NEQUI_AUTO_REFRESH_MS = 4000;
+  const NEQUI_AUTO_REFRESH_MS = 1000;
   let nequiPaymentsCache = [];
   let nequiPaymentsLoaded = false;
   let nequiPaymentsLoading = false;
@@ -3292,8 +3292,8 @@ $(function () {
 
     $nequiStatus.text(
       needed > 0
-        ? `Seleccionar es opcional. Si asocias un envio, debe cubrir ${money(needed)}.`
-        : "Seleccionar un envio es opcional."
+        ? `En vivo: si asocias un envio, debe cubrir ${money(needed)}.`
+        : "En vivo: seleccionar un envio es opcional."
     );
   }
 
@@ -3312,20 +3312,24 @@ $(function () {
     return isModalOpen() && getCheckedMedios().includes("nequi");
   }
 
-  function startNequiAutoRefresh(){
-    if (!$nequiPanel.length || !NEQUI_DISPONIBLES_URL || nequiAutoRefreshTimer) return;
-    nequiAutoRefreshTimer = setInterval(() => {
-      if (!shouldAutoRefreshNequi()){
-        stopNequiAutoRefresh();
-        return;
-      }
-      loadNequiPayments(true, { silent: true });
+  function queueNequiAutoRefresh(){
+    if (nequiAutoRefreshTimer || !shouldAutoRefreshNequi()) return;
+    nequiAutoRefreshTimer = setTimeout(async () => {
+      nequiAutoRefreshTimer = null;
+      if (!shouldAutoRefreshNequi()) return;
+      await loadNequiPayments(true, { silent: true });
+      queueNequiAutoRefresh();
     }, NEQUI_AUTO_REFRESH_MS);
+  }
+
+  function startNequiAutoRefresh(){
+    if (!$nequiPanel.length || !NEQUI_DISPONIBLES_URL) return;
+    queueNequiAutoRefresh();
   }
 
   function stopNequiAutoRefresh(){
     if (!nequiAutoRefreshTimer) return;
-    clearInterval(nequiAutoRefreshTimer);
+    clearTimeout(nequiAutoRefreshTimer);
     nequiAutoRefreshTimer = null;
   }
 
@@ -3584,6 +3588,13 @@ $(function () {
 
   $nequiRefresh.on("click", function(){
     loadNequiPayments(true);
+  });
+
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden && shouldAutoRefreshNequi()){
+      loadNequiPayments(true, { silent: true });
+      startNequiAutoRefresh();
+    }
   });
 
   $modal.on("click", ".nequi-payment-item", function(e){

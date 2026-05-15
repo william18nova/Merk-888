@@ -7019,15 +7019,19 @@ class NequiNotificacionesEliminarSeleccionadasView(LoginRequiredMixin, View):
 
 class NequiNotificacionesDisponiblesView(LoginRequiredMixin, View):
     def get(self, request, *args, **kwargs):
-        items = (
+        items = list(
             NotificacionNequi.objects
             .filter(venta__isnull=True, monto__isnull=False, monto__gt=0)
             .order_by("-recibido_en", "-notificacionid")[:120]
         )
-        return JsonResponse({
+        response = JsonResponse({
             "success": True,
             "items": [_nequi_sale_item_json(item) for item in items],
         })
+        response["Cache-Control"] = "no-store, max-age=0"
+        response["Pragma"] = "no-cache"
+        response["Expires"] = "0"
+        return response
 
 
 @method_decorator(csrf_exempt, name="dispatch")
