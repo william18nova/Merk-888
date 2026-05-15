@@ -5166,24 +5166,42 @@ class VentaDataTableView(LoginRequiredMixin, View):
 
 
 class VentaDetailView(LoginRequiredMixin, DenyRolesMixin, View):
-    deny_roles = ["Cajero", "Auxiliar"]
+    deny_roles = []
     template_name = "ver_venta.html"
-    edit_permission = "ventas_ver"
+    view_permission = "ventas_ver"
+    edit_permission = "ventas_cambios"
     print_permission = "ventas_imprimir"
+
+    def _can_view_venta(self, user) -> bool:
+        return user_has_permission(user, self.view_permission)
 
     def _can_edit_venta(self, user) -> bool:
         return user_has_permission(user, self.edit_permission)
 
     def _can_print_venta(self, user) -> bool:
-        return self._can_edit_venta(user) or user_has_permission(user, self.print_permission)
+        return (
+            self._can_view_venta(user)
+            or self._can_edit_venta(user)
+            or user_has_permission(user, self.print_permission)
+        )
 
     def _is_print_only(self, user) -> bool:
         return self._can_print_venta(user) and not self._can_edit_venta(user)
 
     def dispatch(self, request, *args, **kwargs):
-        if self._is_print_only(request.user):
+        if not getattr(request.user, "is_authenticated", False):
+            return super().dispatch(request, *args, **kwargs)
+        if self._can_print_venta(request.user):
             return View.dispatch(self, request, *args, **kwargs)
-        return super().dispatch(request, *args, **kwargs)
+        message = "No tienes permiso para ver esta venta."
+        wants_json = (
+            request.headers.get("x-requested-with") == "XMLHttpRequest"
+            or "application/json" in request.headers.get("accept", "")
+        )
+        if wants_json:
+            return JsonResponse({"success": False, "error": message}, status=403)
+        messages.error(request, message)
+        return redirect("home")
 
     # -------------------------
     # Helpers

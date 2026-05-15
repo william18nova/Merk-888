@@ -627,9 +627,9 @@ ROUTE_PERMISSIONS = {
 
 
 ROUTE_PERMISSION_ALTERNATIVES = {
-    "ver_venta": ["ventas_ver", "ventas_imprimir"],
-    "ticket_texto": ["ventas_ver", "ventas_imprimir"],
-    "imprimir_factura": ["ventas_ver", "ventas_imprimir"],
+    "ver_venta": ["ventas_ver", "ventas_imprimir", "ventas_cambios"],
+    "ticket_texto": ["ventas_ver", "ventas_imprimir", "ventas_cambios"],
+    "imprimir_factura": ["ventas_ver", "ventas_imprimir", "ventas_cambios"],
     "producto_inventario_buscar_nombre": ["inventarios_ver", "inventarios_editar", "inventarios_fotos", "reportes_ventas_producto"],
     "producto_inventario_buscar_barras": ["inventarios_ver", "inventarios_editar", "inventarios_fotos", "reportes_ventas_producto"],
     "producto_inventario_buscar_id": ["inventarios_ver", "inventarios_editar", "inventarios_fotos", "reportes_ventas_producto"],
