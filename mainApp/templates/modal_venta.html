@@ -45,7 +45,7 @@
           <input type="checkbox" class="pm-check" value="nequi">
           <span>Nequi</span>
         </label>
-        <input type="number" class="pm-amt" data-medio="nequi" min="0" step="100"
+        <input type="number" class="pm-amt" data-medio="nequi" min="0" step="0.01"
                inputmode="decimal" placeholder="0" autocomplete="off" disabled>
       </div>
 
@@ -55,7 +55,7 @@
           <input type="checkbox" class="pm-check" value="daviplata">
           <span>Daviplata</span>
         </label>
-        <input type="number" class="pm-amt" data-medio="daviplata" min="0" step="100"
+        <input type="number" class="pm-amt" data-medio="daviplata" min="0" step="0.01"
                inputmode="decimal" placeholder="0" autocomplete="off" disabled>
       </div>
 
@@ -65,14 +65,14 @@
           <input type="checkbox" class="pm-check" value="efectivo">
           <span>Efectivo</span>
         </label>
-        <input type="number" class="pm-amt" data-medio="efectivo" min="0" step="100"
+        <input type="number" class="pm-amt" data-medio="efectivo" min="0" step="0.01"
                inputmode="decimal" placeholder="0" autocomplete="off" disabled>
       </div>
 
       <!-- Solo NO mixto -->
       <div id="efectivo-options">
         <label for="monto-recibido">Monto recibido (solo efectivo)</label>
-        <input type="number" id="monto-recibido" min="0" step="100" inputmode="decimal" placeholder="0" autocomplete="off">
+        <input type="number" id="monto-recibido" min="0" step="0.01" inputmode="decimal" placeholder="0" autocomplete="off">
         <p id="cambio" class="cambio-text"></p>
       </div>
 
@@ -82,7 +82,7 @@
           <input type="checkbox" class="pm-check" value="tarjeta">
           <span>Tarjeta</span>
         </label>
-        <input type="number" class="pm-amt" data-medio="tarjeta" min="0" step="100"
+        <input type="number" class="pm-amt" data-medio="tarjeta" min="0" step="0.01"
                inputmode="decimal" placeholder="0" autocomplete="off" disabled>
       </div>
 
@@ -92,7 +92,7 @@
           <input type="checkbox" class="pm-check" value="banco_caja_social">
           <span>Banco Caja Social</span>
         </label>
-        <input type="number" class="pm-amt" data-medio="banco_caja_social" min="0" step="100"
+        <input type="number" class="pm-amt" data-medio="banco_caja_social" min="0" step="0.01"
                inputmode="decimal" placeholder="0" autocomplete="off" disabled>
       </div>
 

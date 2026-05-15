@@ -65,7 +65,7 @@ from .forms import (
 
 )
 from dal import autocomplete
-from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP, ROUND_CEILING, ROUND_FLOOR
 from django.urls import reverse, reverse_lazy
 from itertools import zip_longest
 from django.forms import formset_factory
@@ -88,6 +88,19 @@ import pytz
 from typing import List, Dict, Any
 from urllib.parse import parse_qsl
 from .permissions import clear_permission_cache, permission_catalog, sync_permission_catalog, user_can_access_url_name, user_has_permission
+
+
+def _round_account_peso(value) -> Decimal:
+    try:
+        amount = Decimal(str(value if value is not None else "0"))
+    except Exception:
+        amount = Decimal("0")
+
+    if amount > 0:
+        return amount.quantize(Decimal("1"), rounding=ROUND_CEILING)
+    if amount < 0:
+        return amount.quantize(Decimal("1"), rounding=ROUND_FLOOR)
+    return Decimal("0")
 
 
 CO_TZ = ZoneInfo("America/Bogota")
@@ -3484,11 +3497,12 @@ class GenerarVentaView(LoginRequiredMixin, View):
         except ValueError as exc:
             return JsonResponse({'success': False, 'error': str(exc)})
 
-        if empleado_comprador and total > 0:
-            descuento_empleado = (total * self.EMPLOYEE_DISCOUNT_RATE).quantize(
-                Decimal("0.01"), rounding=ROUND_HALF_UP
-            )
-            total = (total - descuento_empleado).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        total_cuenta = _round_account_peso(total)
+        if empleado_comprador and total_cuenta > 0:
+            descuento_empleado = _round_account_peso(total_cuenta * self.EMPLOYEE_DISCOUNT_RATE)
+            total = _round_account_peso(total_cuenta - descuento_empleado)
+        else:
+            total = total_cuenta
 
         # pagos puede llegar como LISTA o como STRING JSON
         pagos = data.get("pagos") or []
@@ -3694,11 +3708,7 @@ class GenerarVentaView(LoginRequiredMixin, View):
     @staticmethod
     def _build_receipt_text(venta_data: Dict[str, Any], detalles: list[dict], total, pagos: list[dict]):
         def money(n):
-            try:
-                q = Decimal(n)
-            except Exception:
-                q = Decimal("0")
-            return f"${int(q):,}".replace(",", ".")
+            return _format_money_cop(n)
 
         WIDTH = 48
 
@@ -3721,10 +3731,11 @@ class GenerarVentaView(LoginRequiredMixin, View):
         empleado_comprador = (venta_data or {}).get("empleado_comprador", "") or ""
         venta_id      = (venta_data or {}).get("venta_id", "")
         total_dec = Decimal(total or 0)
-        subtotal_factura = sum(
+        subtotal_factura_raw = sum(
             (Decimal(d.get("subtotal") or 0) for d in detalles or []),
             Decimal("0"),
         )
+        subtotal_factura = _round_account_peso(subtotal_factura_raw)
         descuento_calculado = Decimal("0")
         if subtotal_factura > 0 and total_dec >= 0:
             descuento_calculado = (subtotal_factura - total_dec).quantize(Decimal("0.01"))
@@ -4087,17 +4098,30 @@ DOTS_PER_MM        = 8       # 203dpi ~ 8 dots/mm
 LABEL_HEIGHT_DOTS  = int(LABEL_HEIGHT_MM * DOTS_PER_MM)  # 60mm => 480 dots aprox
 LINE_HEIGHT_DOTS   = 24      # línea Font A aprox (default)
 
-def _fmt_money(x: Decimal) -> str:
+def _format_money_cop(x) -> str:
     """
-    Formato COP sin decimales: $1.234.567
+    Formato COP compacto: $1.234 para enteros y $1,80 cuando hay decimales.
     """
     try:
-        q = Decimal(x or "0")
+        q = Decimal(str(x if x is not None else "0"))
     except Exception:
         q = Decimal("0")
 
-    # Miles con punto (estilo Colombia)
-    return f"${int(q):,}".replace(",", ".")
+    q = q.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    sign = "-" if q < 0 else ""
+    q_abs = q.copy_abs()
+
+    if q_abs == q_abs.to_integral_value():
+        return f"{sign}${int(q_abs):,}".replace(",", ".")
+
+    entero = int(q_abs)
+    centavos = int((q_abs - Decimal(entero)) * 100)
+    entero_text = f"{entero:,}".replace(",", ".")
+    return f"{sign}${entero_text},{centavos:02d}"
+
+
+def _fmt_money(x: Decimal) -> str:
+    return _format_money_cop(x)
 
 def _wrap(text: str, width: int = TICKET_WIDTH_CHARS) -> List[str]:
     """
@@ -4146,13 +4170,14 @@ def _ticket_subtotal_discount(detalles, total) -> tuple[Decimal, Decimal]:
     except Exception:
         total_dec = Decimal("0")
 
-    if subtotal <= 0 or total_dec < 0:
-        return subtotal.quantize(Decimal("0.01")), Decimal("0")
+    subtotal_cuenta = _round_account_peso(subtotal)
+    if subtotal_cuenta <= 0 or total_dec < 0:
+        return subtotal_cuenta.quantize(Decimal("0.01")), Decimal("0")
 
-    discount = (subtotal - total_dec).quantize(Decimal("0.01"))
+    discount = (subtotal_cuenta - total_dec).quantize(Decimal("0.01"))
     if discount < Decimal("0.01"):
         discount = Decimal("0")
-    return subtotal.quantize(Decimal("0.01")), discount
+    return subtotal_cuenta.quantize(Decimal("0.01")), discount
 
 
 def _ticket_amount_line(label: str, amount: Decimal, width: int = TICKET_WIDTH_CHARS) -> str:
@@ -5227,11 +5252,7 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin, View):
     # -------------------------
     @staticmethod
     def _money(n) -> str:
-        try:
-            q = Decimal(n or 0)
-        except Exception:
-            q = Decimal("0")
-        return f"${int(q):,}".replace(",", ".")
+        return _format_money_cop(n)
 
     @classmethod
     def _build_ticket_text_from_venta(cls, venta) -> str:

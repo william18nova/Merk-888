@@ -85,9 +85,29 @@ $(function () {
   });
 
   /* ================== Utils ================== */
-  const money = (n) =>
-    new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP" })
-      .format(Number(n) || 0);
+  const hasDecimalPart = (n) => {
+    const value = Number(n);
+    return Number.isFinite(value) && Math.abs(value - Math.trunc(value)) > 0.000001;
+  };
+
+  const money = (n) => {
+    const value = Number(n) || 0;
+    const fractionDigits = hasDecimalPart(value) ? 2 : 0;
+    return new Intl.NumberFormat("es-CO", {
+      style: "currency",
+      currency: "COP",
+      minimumFractionDigits: fractionDigits,
+      maximumFractionDigits: fractionDigits,
+    }).format(value);
+  };
+
+  const roundAccountAmount = (n) => {
+    const value = Number(n) || 0;
+    if (!Number.isFinite(value) || value === 0) return 0;
+    return value > 0
+      ? Math.ceil(value - 0.000001)
+      : Math.floor(value + 0.000001);
+  };
 
   const onlyDigits = (s) => String(s||"").replace(/\D+/g, "");
   const norm = (s)=> (s||"").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").trim();
@@ -223,15 +243,15 @@ $(function () {
   }
 
   function employeeDiscountAmount() {
-    const base = safeNumber(runningTotal);
+    const base = roundAccountAmount(runningTotal);
     if (!isEmployeeClientSelected() || base <= 0) return 0;
-    return Number(to2(base * 0.10));
+    return roundAccountAmount(base * 0.10);
   }
 
   function saleTotalForPayment() {
-    const base = safeNumber(runningTotal);
+    const base = roundAccountAmount(runningTotal);
     if (base <= 0) return base;
-    return Number(to2(base - employeeDiscountAmount()));
+    return roundAccountAmount(base - employeeDiscountAmount());
   }
 
   function refreshEmployeeDiscountUI() {
@@ -255,7 +275,7 @@ $(function () {
   function setTotal(v) {
     const safe = Number(v);
     runningTotal = Number.isFinite(safe) ? safe : 0;
-    $totalEl.text(money(runningTotal));
+    $totalEl.text(money(roundAccountAmount(runningTotal)));
 
     if ($modal && $modal.length && $modal.is(":visible") && $modalTotal && $modalTotal.length) {
       refreshEmployeeDiscountUI();
@@ -3666,7 +3686,7 @@ $(function () {
         repricingMode = true;
         repriceAllRowsAndRecalcTotalPooled(8)
           .then(() => {
-            $("#modal-total").text(money(runningTotal));
+            $("#modal-total").text(money(saleTotalForPayment()));
             applyModeRules();
           })
           .catch(() => {})
