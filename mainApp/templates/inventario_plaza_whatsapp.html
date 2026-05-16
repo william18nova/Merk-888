@@ -14,12 +14,12 @@
     <div>
       <p class="plaza-eyebrow">Plaza Yerbabuena</p>
       <h1>Inventario para WhatsApp</h1>
-      <p>Completa cantidades y envia el reporte directo al chat de don William.</p>
+      <p>Marca solo lo que toca traer y envia el pedido directo al chat de don William.</p>
     </div>
     <div class="plaza-hero__actions">
       <button type="button" class="plaza-btn plaza-btn--ghost" id="plazaFillNoHay">
-        <i class="fa-solid fa-ban"></i>
-        Vacios: No hay
+        <i class="fa-solid fa-circle-check"></i>
+        Vacios: Hay suficiente
       </button>
       <button type="button" class="plaza-btn plaza-btn--ghost" id="plazaClear">
         <i class="fa-solid fa-eraser"></i>
@@ -39,20 +39,25 @@
 
           <div class="plaza-items">
             {% for item in section.items %}
-              <label class="plaza-row">
-                <span>{{ item }}</span>
+              <div class="plaza-row is-sufficient" data-plaza-row data-status="suficiente">
+                <span class="plaza-product-name">{{ item }}</span>
                 <input
                   type="text"
                   inputmode="text"
-                  placeholder="Cantidad"
+                  placeholder="Hay ahora"
                   data-plaza-input
                   data-section="{{ section.title }}"
                   data-product="{{ item }}"
                 >
-                <button type="button" class="plaza-nohay" data-plaza-nohay aria-label="Marcar {{ item }} como no hay">
-                  No hay
-                </button>
-              </label>
+                <div class="plaza-status-toggle" role="group" aria-label="Estado de {{ item }}">
+                  <button type="button" class="plaza-status-btn plaza-status-btn--enough is-active" data-plaza-suficiente>
+                    Hay suficiente
+                  </button>
+                  <button type="button" class="plaza-status-btn plaza-status-btn--bring" data-plaza-traer>
+                    Traer
+                  </button>
+                </div>
+              </div>
             {% endfor %}
           </div>
         </section>
@@ -67,7 +72,7 @@
         <div class="plaza-manual">
           <div class="plaza-manual__controls">
             <input type="text" id="plazaManualName" placeholder="Nombre del producto">
-            <input type="text" id="plazaManualQuantity" placeholder="Cantidad">
+            <input type="text" id="plazaManualQuantity" placeholder="Hay ahora">
             <button type="button" class="plaza-btn plaza-btn--primary" id="plazaAddManual">
               <i class="fa-solid fa-plus"></i>
               Agregar
@@ -94,7 +99,7 @@
 
       <button type="button" class="plaza-btn plaza-btn--whatsapp" id="plazaSendWhatsapp">
         <i class="fa-brands fa-whatsapp"></i>
-        Enviar por WhatsApp
+        Enviar pedido por WhatsApp
       </button>
     </aside>
   </section>

@@ -9844,9 +9844,6 @@ PLAZA_VERDURAS = [
     "Brócoli",
     "Cilantro",
     "Cebolla cabezona",
-    "Cabezona blanca",
-    "Cebolla cabezona blanca",
-    "Cabezona morada",
     "Cebolla morada",
     "Cebolla larga",
     "Espinaca",
@@ -9873,15 +9870,10 @@ PLAZA_VERDURAS = [
     "Zanahoria",
     "Zukini amarillo",
     "Zukini verde",
-    "Zucchini amarillo",
-    "Zucchini verde",
-    "Zuckini amarillo",
-    "Zuckini verde",
 ]
 
 PLAZA_FRUTAS = [
     "Arándanos",
-    "Arándano",
     "Banano",
     "Coco",
     "Fresa",
@@ -9903,10 +9895,8 @@ PLAZA_FRUTAS = [
     "Pitaya",
     "Sandía",
     "Tomate de árbol",
-    "Tomate árbol",
     "Uva chilena",
     "Uva Isabelina",
-    "Sabila",
     "Sábila",
 ]
 
@@ -9914,7 +9904,6 @@ PLAZA_CARNES = [
     "Alas",
     "Contra muslo",
     "Lomo bandeja de cerdo",
-    "Lomo bandeja res",
     "Lomo bandeja de res",
     "Muslo",
     "Muslo y contra muslo",
@@ -9922,11 +9911,9 @@ PLAZA_CARNES = [
     "Pechuga con hueso",
     "Pechuga deshuesada",
     "Media pechuga",
-    "Pechuga pernil",
     "Pernil",
     "Pernil x 3",
     "Pechuga grande",
-    "Deshuesada",
     "Rabadilla",
 ]
 

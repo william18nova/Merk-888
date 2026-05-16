@@ -16,55 +16,96 @@
   const manualItems = document.getElementById("plazaManualItems");
   const manualCount = document.getElementById("plazaManualCount");
 
-  const HEADER = "Hola don william este es el inventario de plaza de yerbabuena:";
+  const HEADER = "Hola don william, esto es lo que toca traer para plaza de yerbabuena:";
+
+  function getRows() {
+    return Array.from(document.querySelectorAll("[data-plaza-row]"));
+  }
 
   function getInputs() {
     return Array.from(document.querySelectorAll("[data-plaza-input]"));
   }
 
-  function normalizeQuantity(value) {
+  function rowFor(element) {
+    return element ? element.closest("[data-plaza-row]") : null;
+  }
+
+  function normalizeCurrentAmount(value) {
     const text = String(value || "").trim();
-    if (!text) return "No hay";
-    if (/^0+([,.]0+)?$/.test(text)) return "No hay";
-    if (/^no\s*hay$/i.test(text)) return "No hay";
+    if (!text) return "";
+    if (/^0+([,.]0+)?$/.test(text)) return "no hay";
+    if (/^no\s*hay$/i.test(text)) return "no hay";
+    if (/^traer$/i.test(text)) return "";
     return text;
   }
 
   function productNameForInput(input) {
-    const row = input.closest(".plaza-row");
+    const row = rowFor(input);
     const manualNameInput = row ? row.querySelector("[data-plaza-manual-name]") : null;
     return String(input.dataset.product || manualNameInput?.value || "").trim();
+  }
+
+  function setRowStatus(row, status, { focus = false } = {}) {
+    if (!row) return;
+    const isBring = status === "traer";
+    row.dataset.status = isBring ? "traer" : "suficiente";
+    row.classList.toggle("is-bring", isBring);
+    row.classList.toggle("is-sufficient", !isBring);
+    row.querySelector("[data-plaza-traer]")?.classList.toggle("is-active", isBring);
+    row.querySelector("[data-plaza-suficiente]")?.classList.toggle("is-active", !isBring);
+    if (focus) row.querySelector("[data-plaza-input]")?.focus();
+    updatePreview();
   }
 
   function groupedInputs() {
     const groups = [];
     const byName = new Map();
 
-    for (const input of getInputs()) {
+    for (const row of getRows()) {
+      if (row.dataset.status !== "traer") continue;
+      const input = row.querySelector("[data-plaza-input]");
+      if (!input) continue;
+
       const section = input.dataset.section || "Inventario";
       const product = productNameForInput(input);
       if (!product) continue;
+
       if (!byName.has(section)) {
         const group = { title: section, rows: [] };
         byName.set(section, group);
         groups.push(group);
       }
+
       byName.get(section).rows.push({
         product,
-        quantity: normalizeQuantity(input.value),
+        quantity: normalizeCurrentAmount(input.value),
       });
     }
 
     return groups;
   }
 
+  function countBringItems() {
+    return groupedInputs().reduce((total, group) => total + group.rows.length, 0);
+  }
+
   function buildMessage() {
+    const groups = groupedInputs();
     const lines = [HEADER, ""];
 
-    for (const group of groupedInputs()) {
+    if (!groups.length) {
+      lines.push("No hay productos marcados para traer.");
+      return lines.join("\n").trim();
+    }
+
+    for (const group of groups) {
       lines.push(`*${group.title}*`);
       for (const row of group.rows) {
-        lines.push(`${row.product}: ${row.quantity}`);
+        if (row.quantity === "no hay") {
+          lines.push(`${row.product}: no hay`);
+        } else {
+          lines.push(row.quantity ? `${row.product}: hay ${row.quantity}` : `${row.product}: traer`);
+        }
       }
       lines.push("");
     }
@@ -74,11 +115,6 @@
 
   function updatePreview() {
     if (preview) preview.value = buildMessage();
-  }
-
-  function markInputNoHay(input) {
-    input.value = "No hay";
-    updatePreview();
   }
 
   function updateManualCount() {
@@ -95,11 +131,20 @@
     }
 
     const row = document.createElement("div");
-    row.className = "plaza-row plaza-row--manual";
+    row.className = "plaza-row plaza-row--manual is-bring";
+    row.dataset.status = "traer";
+    row.setAttribute("data-plaza-row", "");
     row.innerHTML = `
       <input class="plaza-manual-name" type="text" data-plaza-manual-name aria-label="Nombre del adicional">
-      <input type="text" inputmode="text" placeholder="Cantidad" data-plaza-input data-section="Adicionales">
-      <button type="button" class="plaza-nohay" data-plaza-nohay>No hay</button>
+      <input type="text" inputmode="text" placeholder="Hay ahora" data-plaza-input data-section="Adicionales">
+      <div class="plaza-status-toggle" role="group" aria-label="Estado del adicional">
+        <button type="button" class="plaza-status-btn plaza-status-btn--enough" data-plaza-suficiente>
+          Hay suficiente
+        </button>
+        <button type="button" class="plaza-status-btn plaza-status-btn--bring is-active" data-plaza-traer>
+          Traer
+        </button>
+      </div>
       <button type="button" class="plaza-remove" data-plaza-remove aria-label="Eliminar adicional">
         <i class="fa-solid fa-trash"></i>
       </button>
@@ -119,6 +164,10 @@
   }
 
   function openWhatsapp() {
+    if (countBringItems() <= 0) {
+      alert("Marca al menos un producto como Traer antes de enviar.");
+      return;
+    }
     const text = buildMessage();
     const url = `https://wa.me/${phone}?text=${encodeURIComponent(text)}`;
     window.open(url, "_blank", "noopener,noreferrer");
@@ -142,7 +191,20 @@
   }
 
   document.addEventListener("input", (event) => {
-    if (event.target.matches("[data-plaza-input], [data-plaza-manual-name]")) {
+    const target = event.target;
+    if (!target) return;
+
+    if (target.matches("[data-plaza-input]")) {
+      const row = rowFor(target);
+      if (String(target.value || "").trim()) {
+        setRowStatus(row, "traer");
+      } else {
+        updatePreview();
+      }
+      return;
+    }
+
+    if (target.matches("[data-plaza-manual-name]")) {
       updatePreview();
     }
   });
@@ -150,41 +212,51 @@
   document.addEventListener("blur", (event) => {
     const input = event.target;
     if (!input.matches("[data-plaza-input]")) return;
-    if (/^0+([,.]0+)?$/.test(String(input.value || "").trim())) {
-      markInputNoHay(input);
+    const value = String(input.value || "").trim();
+    const row = rowFor(input);
+
+    if (/^(hay\s*suficiente|suficiente|ok)$/i.test(value)) {
+      input.value = "";
+      setRowStatus(row, "suficiente");
+    } else if (/^traer$/i.test(value) || /^0+([,.]0+)?$/.test(value)) {
+      input.value = "";
+      setRowStatus(row, "traer");
     }
   }, true);
 
   document.addEventListener("click", (event) => {
-    const noHayBtn = event.target.closest("[data-plaza-nohay]");
+    const bringBtn = event.target.closest("[data-plaza-traer]");
+    const sufficientBtn = event.target.closest("[data-plaza-suficiente]");
     const removeBtn = event.target.closest("[data-plaza-remove]");
 
-    if (noHayBtn) {
-      const row = noHayBtn.closest(".plaza-row");
-      const input = row ? row.querySelector("[data-plaza-input]") : null;
-      if (input) {
-        markInputNoHay(input);
-        input.focus();
-      }
+    if (bringBtn) {
+      setRowStatus(rowFor(bringBtn), "traer", { focus: true });
+      return;
+    }
+
+    if (sufficientBtn) {
+      setRowStatus(rowFor(sufficientBtn), "suficiente");
       return;
     }
 
     if (removeBtn) {
-      removeBtn.closest(".plaza-row")?.remove();
+      removeBtn.closest("[data-plaza-row]")?.remove();
       updateManualCount();
       updatePreview();
     }
   });
 
   fillBtn?.addEventListener("click", () => {
-    getInputs().forEach((input) => {
-      if (!String(input.value || "").trim()) input.value = "No hay";
+    getRows().forEach((row) => {
+      const input = row.querySelector("[data-plaza-input]");
+      if (!String(input?.value || "").trim()) setRowStatus(row, "suficiente");
     });
     updatePreview();
   });
 
   clearBtn?.addEventListener("click", () => {
     getInputs().forEach((input) => { input.value = ""; });
+    getRows().forEach((row) => setRowStatus(row, "suficiente"));
     if (manualItems) manualItems.innerHTML = "";
     if (manualName) manualName.value = "";
     if (manualQuantity) manualQuantity.value = "";
