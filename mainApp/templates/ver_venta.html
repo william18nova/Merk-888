@@ -213,6 +213,26 @@
           <i class="fas fa-print me-1"></i> Imprimir factura
         </button>
       </div>
+
+      {% if venta_print_only %}
+      <div class="venta-whatsapp-qr">
+        <div class="venta-whatsapp-qr__copy">
+          <strong>Solicitud por WhatsApp</strong>
+          <span>Escanea este QR para pedir el cambio/devolucion de esta venta.</span>
+        </div>
+        <a href="{{ venta_solicitud_cambio_whatsapp_url }}"
+           class="venta-whatsapp-qr__link"
+           target="_blank"
+           rel="noopener noreferrer"
+           aria-label="Abrir solicitud de cambio o devolucion por WhatsApp">
+          <img
+            src="https://api.qrserver.com/v1/create-qr-code/?size=220x220&margin=10&data={{ venta_solicitud_cambio_whatsapp_url|urlencode }}"
+            alt="QR para solicitar cambio o devolucion por WhatsApp"
+            loading="lazy"
+            decoding="async">
+        </a>
+      </div>
+      {% endif %}
     </div>
 
   </form>
