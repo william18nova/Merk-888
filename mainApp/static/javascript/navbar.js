@@ -224,7 +224,6 @@
     window.addEventListener("load", syncNavHeight, { once: true });
     syncNavHeight();
 
-    console.log("Navbar listo");
   }
 
   if (document.readyState === "loading") {

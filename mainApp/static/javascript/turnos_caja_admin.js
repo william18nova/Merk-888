@@ -293,4 +293,11 @@
       btnDelete.disabled = false;
     }
   });
+
+  const params = new URLSearchParams(window.location.search);
+  const initialTurnoId = (params.get("turno_id") || "").trim();
+  if (/^\d+$/.test(initialTurnoId)) {
+    turnoId.value = initialTurnoId;
+    loadTurno();
+  }
 })();

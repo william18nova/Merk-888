@@ -5,7 +5,7 @@
 
 {% block extra_head %}
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"/>
-  <link rel="stylesheet" href="{% static 'css/turnos_caja_dashboard.css' %}">
+  <link rel="stylesheet" href="{% static 'css/turnos_caja_dashboard.css' %}?v=2">
 {% endblock %}
 
 {% block content %}
@@ -149,7 +149,9 @@
 <script>
   const API_LIST   = "{% url 'api_turnos_caja_list' %}";
   const API_DETAIL = (id) => "{% url 'api_turno_caja_detail' 999999 %}".replace("999999", String(id));
+  const TURNO_ADMIN_URL = "{% url 'turnos_caja_admin' %}";
+  const CAN_EDIT_TURNOS = {{ can_edit_turnos|yesno:"true,false" }};
 </script>
 
-<script defer src="{% static 'javascript/turnos_caja_dashboard.js' %}"></script>
+<script defer src="{% static 'javascript/turnos_caja_dashboard.js' %}?v=2"></script>
 {% endblock %}

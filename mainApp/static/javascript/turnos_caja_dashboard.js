@@ -84,6 +84,14 @@
     const real = Number(t.ventas_total || 0);
     const diff = Number(t.diferencia_total || 0);
     const deuda = Number(t.deuda_total || 0);
+    const canEdit = typeof CAN_EDIT_TURNOS !== "undefined" && CAN_EDIT_TURNOS === true;
+    const adminUrl = typeof TURNO_ADMIN_URL !== "undefined" ? TURNO_ADMIN_URL : "/turnos_caja_admin/";
+    const editHref = `${adminUrl}?turno_id=${encodeURIComponent(t.id)}`;
+    const editButton = canEdit
+      ? `<a class="btn btn-ghost btn-sm btn-edit-turno" href="${editHref}" title="Editar turno #${t.id}" aria-label="Editar turno #${t.id}">
+           <i class="fa-solid fa-pen"></i>
+         </a>`
+      : "";
 
     return `
       <tr>
@@ -98,9 +106,12 @@
         <td class="num ${numClass(diff)}">${money2(diff)}</td>
         <td class="num ${numClass(deuda)}">${money2(deuda)}</td>
         <td class="act">
-          <button class="btn btn-ghost btn-sm" data-detail="${t.id}">
+          <div class="row-actions">
+          <button class="btn btn-ghost btn-sm" data-detail="${t.id}" title="Ver detalle" aria-label="Ver detalle del turno #${t.id}">
             <i class="fa-solid fa-eye"></i>
           </button>
+          ${editButton}
+          </div>
         </td>
       </tr>
     `;

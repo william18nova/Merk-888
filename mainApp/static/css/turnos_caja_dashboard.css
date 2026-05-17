@@ -270,7 +270,14 @@ body{
   font-weight: 800;
   color: rgba(248,251,255,.92);
 }
-.act{ width: 96px; text-align:center; }
+.act{ width: 112px; text-align:center; }
+
+.row-actions{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  gap:7px;
+}
 
 .loading, .empty{
   text-align:center;

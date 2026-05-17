@@ -2265,6 +2265,7 @@ class RolCreateAJAXView(LoginRequiredMixin, FormView):
     # ---------- POST OK ----------
     def form_valid(self, form):
         rol = form.save()
+        clear_permission_cache()
 
         # Llamada AJAX (fetch) → devolvemos JSON
         if self.request.headers.get("x-requested-with") == "XMLHttpRequest":
@@ -2310,6 +2311,7 @@ class RolUpdateAJAXView(LoginRequiredMixin, UpdateView):
     # -------- AJAX OK --------
     def form_valid(self, form):
         self.object = form.save()
+        clear_permission_cache()
         msg = f'Rol «{self.object.nombre}» actualizado correctamente.'
         # Siempre guardar el mensaje (aparecerá tras la redirección)
         messages.success(self.request, msg)
@@ -2338,6 +2340,7 @@ def eliminar_rol_view(request, rol_id):
         rol = get_object_or_404(Rol, pk=rol_id)
         nombre_rol = rol.nombre
         rol.delete()
+        clear_permission_cache()
         messages.success(request, f'Se eliminó el rol "{nombre_rol}" correctamente.')
         return redirect('visualizar_roles')
     # Si no es POST, retornamos un JSON de error (o podrías redirigir)
@@ -5413,6 +5416,79 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin, View):
 
         return True, None
 
+    def _validar_reintegro_mixto(self, venta, reintegro_formset, total_reintegro):
+        if not reintegro_formset.is_valid():
+            return False, "Montos de reintegro invalidos.", {}
+
+        total_reintegro = _to_q2(total_reintegro)
+        pagos_actuales = {
+            (row["medio_pago"] or "").strip().lower(): _to_q2(row["total"] or Decimal("0.00"))
+            for row in (
+                PagoVenta.objects
+                .filter(ventaid=venta)
+                .values("medio_pago")
+                .annotate(total=Sum("monto"))
+            )
+        }
+
+        reintegro_map = {}
+        suma = Decimal("0.00")
+
+        for row in (reintegro_formset.cleaned_data or []):
+            medio = (row.get("medio_pago") or "").strip().lower()
+            monto = _to_q2(row.get("monto") or Decimal("0.00"))
+
+            if monto < 0:
+                return False, "No puedes poner montos negativos en el reintegro.", {}
+            if not medio or monto <= 0:
+                continue
+
+            pagado = pagos_actuales.get(medio, Decimal("0.00"))
+            if monto > pagado:
+                return False, f"No puedes reintegrar {monto} por {medio}; la venta solo tiene {pagado} en ese medio.", {}
+
+            reintegro_map[medio] = (reintegro_map.get(medio, Decimal("0.00")) + monto).quantize(Q2)
+            suma += monto
+
+        suma = _to_q2(suma)
+        if suma != total_reintegro:
+            return False, f"Reintegro mixto ({suma}) debe ser igual al total a devolver ({total_reintegro}).", {}
+
+        return True, None, reintegro_map
+
+    def _restar_reintegro_de_pagos(self, venta, reintegro_map):
+        for medio, monto in (reintegro_map or {}).items():
+            medio = (medio or "").strip().lower()
+            restante = _to_q2(monto)
+            if not medio or restante <= 0:
+                continue
+
+            pagos = (
+                PagoVenta.objects
+                .select_for_update()
+                .filter(ventaid=venta, medio_pago__iexact=medio)
+                .order_by("-monto", "pk")
+            )
+
+            for pago in pagos:
+                if restante <= 0:
+                    break
+
+                actual = _to_q2(pago.monto)
+                delta = min(actual, restante)
+                nuevo = _to_q2(actual - delta)
+
+                if nuevo <= 0:
+                    pago.delete()
+                else:
+                    pago.monto = nuevo
+                    pago.save(update_fields=["monto"])
+
+                restante = _to_q2(restante - delta)
+
+            if restante > 0:
+                raise ValueError(f"No se pudo descontar {restante} del pago {medio}.")
+
     def _guardar_pagos_mixtos(self, venta, pagos_formset):
         PagoVenta.objects.filter(ventaid=venta).delete()
 
@@ -6044,6 +6120,7 @@ class PermisoCreateView(SyncPermissionCatalogMixin, LoginRequiredMixin, CreateVi
 
     def form_valid(self, form):
         response = super().form_valid(form)
+        clear_permission_cache()
         messages.success(self.request, "Permiso creado correctamente.")
         return response
 
@@ -6072,6 +6149,7 @@ class PermisoUpdateAJAXView(SyncPermissionCatalogMixin, LoginRequiredMixin, Upda
     # -------- AJAX OK --------
     def form_valid(self, form):
         self.object = form.save()
+        clear_permission_cache()
         msg = f'Permiso «{self.object.nombre}» actualizado correctamente.'
         messages.success(self.request, msg)  # persiste tras redirect
 
@@ -6098,6 +6176,7 @@ def eliminar_permiso(request, pk):
         obj = get_object_or_404(Permiso, pk=pk)
         nombre = obj.nombre
         obj.delete()
+        clear_permission_cache()
         messages.success(request, f"Permiso «{nombre}» eliminado correctamente.")
     return redirect("visualizar_permisos")
 
@@ -6161,6 +6240,7 @@ class RolPermisoAssignView(SyncPermissionCatalogMixin, LoginRequiredMixin, View)
                 status=400,
             )
 
+        clear_permission_cache()
         messages.success(request, f"Se asociaron {creados} permisos al rol «{rol.nombre}».")
         return JsonResponse({"success": True, "created": creados})
 
@@ -6275,6 +6355,7 @@ def eliminar_rol_permiso_view(request, rp_id):
 
     nombre_perm = rel.permiso.nombre
     rel.delete()
+    clear_permission_cache()
     return JsonResponse(
         {"success": True, "message": f'Permiso "{nombre_perm}" desvinculado correctamente.'}
     )
@@ -6393,6 +6474,7 @@ class RolesPermisosEditView(SyncPermissionCatalogMixin, LoginRequiredMixin, View
             request,
             f"Cambios guardados para «{rol.nombre}». (+{creados} altas, −{eliminados} bajas)"
         )
+        clear_permission_cache()
         return JsonResponse({
             "success": True,
             "created": creados,
@@ -7988,13 +8070,23 @@ def _sum_nequi_confirmado_api(turno: TurnoCaja) -> Decimal:
     start_naive, end_naive = _range_local_naive(turno, turno.cierre_iniciado)
 
     sql_pagos = """
-        SELECT COALESCE(SUM(vp.monto),0) as total
-        FROM venta_pagos vp
-        JOIN ventas v ON v.ventaid = vp.ventaid
+        SELECT COALESCE(SUM(
+            CASE
+              WHEN COALESCE(v.total, 0) <= 0 THEN 0
+              WHEN np.total_nequi > COALESCE(v.total, 0) THEN COALESCE(v.total, 0)
+              ELSE np.total_nequi
+            END
+        ),0) as total
+        FROM (
+            SELECT vp.ventaid, COALESCE(SUM(vp.monto),0) as total_nequi
+            FROM venta_pagos vp
+            WHERE lower(trim(vp.metodo)) = 'nequi'
+            GROUP BY vp.ventaid
+        ) np
+        JOIN ventas v ON v.ventaid = np.ventaid
         WHERE v.puntopagoid = %s
           AND (v.fecha + v.hora) >= %s
           AND (v.fecha + v.hora) <= %s
-          AND lower(trim(vp.metodo)) = 'nequi'
           AND EXISTS (
               SELECT 1
               FROM notificaciones_nequi nn
@@ -8791,7 +8883,9 @@ class TurnosCajaDashboardView(View):
     template_name = "turnos_caja_dashboard.html"
 
     def get(self, request: HttpRequest):
-        return render(request, self.template_name, {})
+        return render(request, self.template_name, {
+            "can_edit_turnos": _can_edit_turnos(request.user),
+        })
 
 
 # =========================
@@ -9831,90 +9925,71 @@ class ProductoDetalleInventarioView(LoginRequiredMixin, View):
         })
 
 
-PLAZA_VERDURAS = [
-    "Acelga",
+PLAZA_PRODUCTOS = [
     "Aguacate",
     "Ahuyama",
     "Ajo",
-    "Ajo x 3",
     "Apio",
     "Arracacha",
     "Arveja",
-    "Arveja verde",
+    "Banano",
     "Brócoli",
     "Cilantro",
-    "Cebolla cabezona",
-    "Cebolla morada",
+    "Cabezona blanca",
+    "Cabezona morada",
     "Cebolla larga",
     "Espinaca",
-    "Jengibre",
-    "Habichuela",
+    "Fresa",
     "Guascas",
+    "Guayaba",
     "Guineo",
-    "Laurel",
+    "Habichuela",
+    "Jengibre",
+    "Laurel tomillo",
     "Lechuga batavia",
     "Lechuga crespa",
+    "Limón",
+    "Lulo",
+    "Mango",
+    "Manzana roja",
+    "Manzana verde",
+    "Maracuyá",
     "Mazorca",
-    "Papá criolla",
-    "Papa lavada",
-    "Papá negra",
-    "Pepino cohombro",
+    "Melón",
+    "Naranja",
+    "Papa criolla",
+    "Papa negra",
+    "Papaya",
+    "Pera",
+    "Pepino",
     "Perejil",
     "Pimentón",
+    "Piña",
+    "Pitaya",
     "Plátano maduro",
     "Plátano verde",
     "Remolacha",
-    "Tomate",
+    "Sábila",
+    "Sandía",
+    "Tomate guiso",
+    "Tomate árbol",
     "Tomillo",
     "Yuca",
     "Zanahoria",
-    "Zukini amarillo",
-    "Zukini verde",
 ]
 
-PLAZA_FRUTAS = [
-    "Arándanos",
-    "Banano",
-    "Coco",
-    "Fresa",
-    "Granadilla",
-    "Guayaba",
-    "Kiwi",
-    "Limón",
-    "Lulo",
-    "Mandarina",
-    "Mango",
-    "Manzana verde",
-    "Manzana roja",
-    "Maracuyá",
-    "Melón",
-    "Naranja",
-    "Papaya",
-    "Pera",
-    "Piña",
-    "Pitaya",
-    "Sandía",
-    "Tomate de árbol",
-    "Uva chilena",
-    "Uva Isabelina",
-    "Sábila",
-]
-
-PLAZA_CARNES = [
-    "Alas",
+PLAZA_CARNES_POLLO = [
+    "Ala",
     "Contra muslo",
-    "Lomo bandeja de cerdo",
-    "Lomo bandeja de res",
+    "Pernil sin rabadilla",
+    "Pierna pernil",
     "Muslo",
-    "Muslo y contra muslo",
-    "Pechuga",
-    "Pechuga con hueso",
-    "Pechuga deshuesada",
+    "Pechuga entera",
     "Media pechuga",
-    "Pernil",
-    "Pernil x 3",
-    "Pechuga grande",
-    "Rabadilla",
+    "Pechuga deshuesada",
+    "Lomo cerdo",
+    "Lomo res",
+    "Costilla",
 ]
 
 
@@ -9924,9 +9999,8 @@ class InventarioPlazaWhatsappView(LoginRequiredMixin, TemplateView):
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         context["plaza_sections"] = [
-            {"title": "Verdura", "items": PLAZA_VERDURAS},
-            {"title": "Fruta", "items": PLAZA_FRUTAS},
-            {"title": "Carnes", "items": PLAZA_CARNES},
+            {"title": "Plaza", "items": PLAZA_PRODUCTOS},
+            {"title": "Carnes y pollo", "items": PLAZA_CARNES_POLLO},
         ]
         context["whatsapp_phone"] = "573144783398"
         return context

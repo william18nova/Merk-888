@@ -3,8 +3,6 @@ $(function () {
   "use strict";
   const $ = window.jQuery;
 
-  console.log("⚡ generar_venta.js — AC ultra + snapshot L1 + live price + ✅ allow qty negativo (devolución) + modal MIXTO + POS Agent + submit ultrarrápido + scanner qty-guard + ✅ cámara universal (BarcodeDetector + ZXing fallback)");
-
   /* ================== URLs inyectadas ================== */
   const SUCURSAL_URL    = window.sucursalAutocompleteUrl;
   const PUNTOPAGO_URL   = window.puntopagoAutocompleteUrl;
@@ -195,7 +193,6 @@ $(function () {
         localStorage.setItem("sucursalName", $("#sucursal_autocomplete").val() || "");
       } catch {}
 
-      console.log("[BOOT] sucursalID tomado del DOM:", sucursalID);
     }
 
     const domPp = String($("#puntopago_id").val() || "").match(/\d+/)?.[0] || "";
@@ -207,7 +204,6 @@ $(function () {
         localStorage.setItem("puntopagoSucursalID", sucursalID || domSid || "");
       } catch {}
 
-      console.log("[BOOT] puntopago tomado del DOM:", domPp, domPpName);
     }
   })();
 

@@ -1,7 +1,9 @@
 import re
+import time
 import unicodedata
 from typing import Dict, List, Optional, Set
 
+from django.core.cache import cache
 from django.db import DatabaseError
 from django.urls import NoReverseMatch, reverse
 
@@ -11,6 +13,11 @@ from .models import Permiso, Rol, RolPermiso
 ADMIN_ROLE_NAMES = {"admin", "administrador", "supervisor"}
 PUBLIC_URL_NAMES = {"login", "logout", "visor_barcode", "visor_barcode_buscar", "visor_barcode_lookup", "macrodroid_nequi_webhook"}
 ALWAYS_ALLOWED_URL_NAMES = {"home"}
+
+PERMISSION_CACHE_SECONDS = 300
+NAV_CACHE_SECONDS = 300
+ROLE_NAME_CACHE_SECONDS = 600
+PERMISSION_CACHE_VERSION_KEY = "mainapp:permissions:version"
 
 
 PERMISSION_DEFINITIONS = [
@@ -812,6 +819,7 @@ def permission_catalog() -> List[Dict[str, object]]:
 
 def sync_permission_catalog() -> int:
     created = 0
+    updated = 0
     existing_by_key = {
         normalize_permission_key(permission.nombre): permission
         for permission in Permiso.objects.all()
@@ -827,6 +835,7 @@ def sync_permission_catalog() -> int:
             if not existing.descripcion:
                 existing.descripcion = definition["description"]
                 existing.save(update_fields=["descripcion"])
+                updated += 1
             continue
         permission = Permiso.objects.create(
             nombre=definition["label"],
@@ -834,6 +843,8 @@ def sync_permission_catalog() -> int:
         )
         existing_by_key[normalize_permission_key(permission.nombre)] = permission
         created += 1
+    if created or updated:
+        _bump_permission_cache_version()
     return created
 
 
@@ -860,6 +871,24 @@ def grant_all_permissions_to_web_master(role_id: int = 1) -> int:
 
 
 def role_name(user) -> str:
+    role_id = getattr(user, "rolid_id", None)
+    if role_id:
+        fields_cache = getattr(getattr(user, "_state", None), "fields_cache", {})
+        if "rolid" in fields_cache:
+            return (getattr(fields_cache.get("rolid"), "nombre", "") or "").strip()
+
+        cache_key = f"mainapp:role-name:{_permission_cache_version()}:{role_id}"
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        try:
+            value = (Rol.objects.filter(pk=role_id).values_list("nombre", flat=True).first() or "").strip()
+        except DatabaseError:
+            value = ""
+        cache.set(cache_key, value, ROLE_NAME_CACHE_SECONDS)
+        return value
+
     try:
         return (getattr(getattr(user, "rolid", None), "nombre", "") or "").strip()
     except Exception:
@@ -874,6 +903,43 @@ def is_permission_admin(user) -> bool:
     return normalize_permission_key(role_name(user)) in ADMIN_ROLE_NAMES
 
 
+def _permission_cache_version() -> str:
+    version = cache.get(PERMISSION_CACHE_VERSION_KEY)
+    if version is None:
+        version = str(time.time_ns())
+        cache.add(PERMISSION_CACHE_VERSION_KEY, version, None)
+    return str(version)
+
+
+def _bump_permission_cache_version() -> None:
+    cache.set(PERMISSION_CACHE_VERSION_KEY, str(time.time_ns()), None)
+
+
+def _user_permission_cache_key(user) -> str:
+    return ":".join([
+        "mainapp:permission-state",
+        _permission_cache_version(),
+        str(getattr(user, "pk", "anon") or "anon"),
+        str(getattr(user, "rolid_id", "") or "none"),
+        "1" if getattr(user, "is_staff", False) else "0",
+        "1" if getattr(user, "is_superuser", False) else "0",
+    ])
+
+
+def _serializable_permission_state(state: Dict[str, Set[str]]) -> Dict[str, tuple]:
+    return {key: tuple(sorted(values)) for key, values in state.items()}
+
+
+def _permission_state_from_cache(cached) -> Optional[Dict[str, Set[str]]]:
+    if not isinstance(cached, dict):
+        return None
+    return {
+        "role": set(cached.get("role") or ()),
+        "allow": set(cached.get("allow") or ()),
+        "deny": set(cached.get("deny") or ()),
+    }
+
+
 def _load_permission_state(user) -> Dict[str, Set[str]]:
     cache_name = "_mainapp_permission_state"
     cached = getattr(user, cache_name, None)
@@ -884,6 +950,12 @@ def _load_permission_state(user) -> Dict[str, Set[str]]:
     if not getattr(user, "is_authenticated", False):
         setattr(user, cache_name, state)
         return state
+
+    cache_key = _user_permission_cache_key(user)
+    cached_state = _permission_state_from_cache(cache.get(cache_key))
+    if cached_state is not None:
+        setattr(user, cache_name, cached_state)
+        return cached_state
 
     try:
         role_id = getattr(user, "rolid_id", None)
@@ -915,13 +987,15 @@ def _load_permission_state(user) -> Dict[str, Set[str]]:
         state["allow"] = set()
         state["deny"] = set()
 
+    cache.set(cache_key, _serializable_permission_state(state), PERMISSION_CACHE_SECONDS)
     setattr(user, cache_name, state)
     return state
 
 
-def clear_permission_cache(user) -> None:
-    if hasattr(user, "_mainapp_permission_state"):
+def clear_permission_cache(user=None) -> None:
+    if user is not None and hasattr(user, "_mainapp_permission_state"):
         delattr(user, "_mainapp_permission_state")
+    _bump_permission_cache_version()
 
 
 def user_has_permission(user, code: Optional[str]) -> bool:
@@ -981,7 +1055,7 @@ def user_can_access_url_name(user, url_name: Optional[str]) -> bool:
     return any(user_has_permission(user, permission) for permission in permissions)
 
 
-def _resolve_nav_item(raw_item: Dict[str, object], user, current_path: str) -> Optional[Dict[str, object]]:
+def _resolve_nav_item(raw_item: Dict[str, object], user) -> Optional[Dict[str, object]]:
     url_name = raw_item.get("url_name")
     if url_name and not user_can_access_url_name(user, str(url_name)):
         return None
@@ -991,25 +1065,35 @@ def _resolve_nav_item(raw_item: Dict[str, object], user, current_path: str) -> O
     except NoReverseMatch:
         return None
 
-    path = current_path or ""
-    active = path == url or (url != "/" and path.startswith(url))
     return {
         "label": raw_item["label"],
         "url": url,
-        "active": active,
         "children": [],
     }
 
 
-def build_nav_menu(user, current_path: str) -> List[Dict[str, object]]:
-    if not getattr(user, "is_authenticated", False):
-        return []
+def _nav_cache_key(user) -> str:
+    return ":".join([
+        "mainapp:nav",
+        _permission_cache_version(),
+        str(getattr(user, "pk", "anon") or "anon"),
+        str(getattr(user, "rolid_id", "") or "none"),
+        "1" if getattr(user, "is_staff", False) else "0",
+        "1" if getattr(user, "is_superuser", False) else "0",
+    ])
+
+
+def _visible_nav_menu(user) -> List[Dict[str, object]]:
+    cache_key = _nav_cache_key(user)
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached
 
     menu = []
     for raw_group in NAV_GROUPS:
         children = raw_group.get("children")
         if not children:
-            item = _resolve_nav_item(raw_group, user, current_path)
+            item = _resolve_nav_item(raw_group, user)
             if item:
                 menu.append(item)
             continue
@@ -1017,7 +1101,7 @@ def build_nav_menu(user, current_path: str) -> List[Dict[str, object]]:
         visible_children = [
             child
             for child in (
-                _resolve_nav_item(raw_child, user, current_path)
+                _resolve_nav_item(raw_child, user)
                 for raw_child in children
             )
             if child
@@ -1028,8 +1112,33 @@ def build_nav_menu(user, current_path: str) -> List[Dict[str, object]]:
         group = {
             "label": raw_group["label"],
             "url": visible_children[0]["url"],
-            "active": any(child["active"] for child in visible_children),
             "children": visible_children,
         }
         menu.append(group)
+
+    cache.set(cache_key, menu, NAV_CACHE_SECONDS)
     return menu
+
+
+def _mark_nav_active(menu: List[Dict[str, object]], current_path: str) -> List[Dict[str, object]]:
+    path = current_path or ""
+    marked = []
+    for item in menu:
+        children = []
+        for child in item.get("children", []):
+            child_url = child.get("url", "#")
+            child_active = path == child_url or (child_url != "/" and path.startswith(child_url))
+            children.append({**child, "active": child_active})
+
+        item_url = item.get("url", "#")
+        item_active = path == item_url or (item_url != "/" and path.startswith(item_url))
+        if children:
+            item_active = any(child["active"] for child in children)
+        marked.append({**item, "active": item_active, "children": children})
+    return marked
+
+
+def build_nav_menu(user, current_path: str) -> List[Dict[str, object]]:
+    if not getattr(user, "is_authenticated", False):
+        return []
+    return _mark_nav_active(_visible_nav_menu(user), current_path)

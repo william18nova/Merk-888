@@ -14,12 +14,17 @@
     <div>
       <p class="plaza-eyebrow">Plaza Yerbabuena</p>
       <h1>Inventario para WhatsApp</h1>
-      <p>Marca solo lo que toca traer y envia el pedido directo al chat de don William.</p>
+      <p>
+        Deja en <strong>Hay suficiente</strong> los productos que no haga falta pedir.
+        Cuando toque pedir algo, marca <strong>Traer</strong> y escribe en la caja
+        cuánto queda aproximadamente en inventario; así plaza sabe cuánto debe completar.
+        Solo se enviará por WhatsApp lo que marques como <strong>Traer</strong>.
+      </p>
     </div>
     <div class="plaza-hero__actions">
       <button type="button" class="plaza-btn plaza-btn--ghost" id="plazaFillNoHay">
         <i class="fa-solid fa-circle-check"></i>
-        Vacios: Hay suficiente
+        Vacíos: Hay suficiente
       </button>
       <button type="button" class="plaza-btn plaza-btn--ghost" id="plazaClear">
         <i class="fa-solid fa-eraser"></i>
@@ -44,7 +49,7 @@
                 <input
                   type="text"
                   inputmode="text"
-                  placeholder="Hay ahora"
+                  placeholder="Cuánto hay aprox."
                   data-plaza-input
                   data-section="{{ section.title }}"
                   data-product="{{ item }}"
@@ -72,7 +77,7 @@
         <div class="plaza-manual">
           <div class="plaza-manual__controls">
             <input type="text" id="plazaManualName" placeholder="Nombre del producto">
-            <input type="text" id="plazaManualQuantity" placeholder="Hay ahora">
+            <input type="text" id="plazaManualQuantity" placeholder="Cuánto hay aprox.">
             <button type="button" class="plaza-btn plaza-btn--primary" id="plazaAddManual">
               <i class="fa-solid fa-plus"></i>
               Agregar

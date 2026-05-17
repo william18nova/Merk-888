@@ -98,6 +98,11 @@ body::before{
   font-size:16px;
 }
 
+.plaza-hero p strong{
+  color:#fff;
+  font-weight:800;
+}
+
 .plaza-hero__actions{
   display:flex;
   flex-wrap:wrap;
@@ -115,7 +120,7 @@ body::before{
 
 .plaza-form{
   display:grid;
-  grid-template-columns:repeat(3, minmax(0, 1fr));
+  grid-template-columns:repeat(2, minmax(0, 1fr));
   gap:16px;
 }
 
@@ -170,7 +175,7 @@ body::before{
 
 .plaza-row{
   display:grid;
-  grid-template-columns:minmax(96px, 1fr) minmax(82px, 96px) minmax(116px, 126px);
+  grid-template-columns:minmax(118px, 1fr) minmax(118px, 150px) minmax(116px, 132px);
   align-items:center;
   gap:7px;
   min-height:54px;

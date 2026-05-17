@@ -1,6 +1,9 @@
 # mainApp/context_processors.py
 from django.conf import settings
+from django.core.cache import cache
 from .permissions import build_nav_menu
+
+SESSION_USER_CACHE_SECONDS = 300
 
 
 def _first_token(value):
@@ -15,6 +18,11 @@ def _session_user_payload(user):
             "nav_session_username": "",
             "nav_session_initials": "",
         }
+
+    cache_key = f"mainapp:nav-session-user:{getattr(user, 'pk', 'anon')}"
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached
 
     username = (
         getattr(user, "nombreusuario", "")
@@ -39,11 +47,13 @@ def _session_user_payload(user):
     if not initials:
         initials = (username[:2] or "U").upper()
 
-    return {
+    payload = {
         "nav_session_name": display_name,
         "nav_session_username": username,
         "nav_session_initials": initials,
     }
+    cache.set(cache_key, payload, SESSION_USER_CACHE_SECONDS)
+    return payload
 
 
 def pos_agent(request):

@@ -16,7 +16,7 @@
   const manualItems = document.getElementById("plazaManualItems");
   const manualCount = document.getElementById("plazaManualCount");
 
-  const HEADER = "Hola don william, esto es lo que toca traer para plaza de yerbabuena:";
+  const HEADER = "Hola don William, esto es lo que toca traer para plaza de Yerbabuena:";
 
   function getRows() {
     return Array.from(document.querySelectorAll("[data-plaza-row]"));
@@ -104,7 +104,7 @@
         if (row.quantity === "no hay") {
           lines.push(`${row.product}: no hay`);
         } else {
-          lines.push(row.quantity ? `${row.product}: hay ${row.quantity}` : `${row.product}: traer`);
+          lines.push(row.quantity ? `${row.product}: queda aprox. ${row.quantity}` : `${row.product}: traer`);
         }
       }
       lines.push("");
@@ -136,7 +136,7 @@
     row.setAttribute("data-plaza-row", "");
     row.innerHTML = `
       <input class="plaza-manual-name" type="text" data-plaza-manual-name aria-label="Nombre del adicional">
-      <input type="text" inputmode="text" placeholder="Hay ahora" data-plaza-input data-section="Adicionales">
+      <input type="text" inputmode="text" placeholder="Cuánto hay aprox." data-plaza-input data-section="Adicionales">
       <div class="plaza-status-toggle" role="group" aria-label="Estado del adicional">
         <button type="button" class="plaza-status-btn plaza-status-btn--enough" data-plaza-suficiente>
           Hay suficiente

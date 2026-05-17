@@ -10,17 +10,17 @@
 
   const UNIT = 50;
   const DENOMS = [
-    { key: "b100000", value: 100000, label: "Billete $100.000", unit: "billete" },
-    { key: "b50000", value: 50000, label: "Billete $50.000", unit: "billete", reserve: 1 },
-    { key: "b20000", value: 20000, label: "Billete $20.000", unit: "billete", reserve: 4 },
-    { key: "b10000", value: 10000, label: "Billete $10.000", unit: "billete", reserve: 5 },
-    { key: "b5000", value: 5000, label: "Billete $5.000", unit: "billete", reserve: 1 },
-    { key: "b2000", value: 2000, label: "Billete $2.000", unit: "billete", reserve: 1 },
-    { key: "m1000", value: 1000, label: "Moneda $1.000", unit: "moneda", reserve: 1 },
-    { key: "m500", value: 500, label: "Moneda $500", unit: "moneda", reserve: 1 },
-    { key: "m200", value: 200, label: "Moneda $200", unit: "moneda", reserve: 1 },
-    { key: "m100", value: 100, label: "Moneda $100", unit: "moneda", reserve: 1 },
-    { key: "m50", value: 50, label: "Moneda $50", unit: "moneda", reserve: 1 },
+    { key: "b100000", value: 100000, label: "Billete $100.000", unit: "billete", withdrawCost: 8 },
+    { key: "b50000", value: 50000, label: "Billete $50.000", unit: "billete", reserve: 1, withdrawCost: 16 },
+    { key: "b20000", value: 20000, label: "Billete $20.000", unit: "billete", reserve: 2, withdrawCost: 24 },
+    { key: "b10000", value: 10000, label: "Billete $10.000", unit: "billete", reserve: 5, withdrawCost: 34 },
+    { key: "b5000", value: 5000, label: "Billete $5.000", unit: "billete", reserve: 1, withdrawCost: 90 },
+    { key: "b2000", value: 2000, label: "Billete $2.000", unit: "billete", reserve: 1, withdrawCost: 130 },
+    { key: "m1000", value: 1000, label: "Moneda $1.000", unit: "moneda", reserve: 1, withdrawCost: 160 },
+    { key: "m500", value: 500, label: "Moneda $500", unit: "moneda", reserve: 1, withdrawCost: 190 },
+    { key: "m200", value: 200, label: "Moneda $200", unit: "moneda", reserve: 1, withdrawCost: 230 },
+    { key: "m100", value: 100, label: "Moneda $100", unit: "moneda", reserve: 1, withdrawCost: 260 },
+    { key: "m50", value: 50, label: "Moneda $50", unit: "moneda", reserve: 1, withdrawCost: 300 },
     { key: "pack_monedas", value: 10000, label: "Paquete monedas", unit: "paquete", locked: true },
     { key: "pack_m50", value: 2000, label: "Paquete monedas de 50", unit: "paquete", locked: true },
   ];
@@ -177,13 +177,16 @@
 
     const INF = 1_000_000_000;
     const dp = new Int32Array(targetUnits + 1);
+    const pieceDp = new Int32Array(targetUnits + 1);
     const prevAmount = new Int32Array(targetUnits + 1);
     const prevDenom = new Int16Array(targetUnits + 1);
     const prevCount = new Int32Array(targetUnits + 1);
     dp.fill(INF);
+    pieceDp.fill(INF);
     prevAmount.fill(-1);
     prevDenom.fill(-1);
     dp[0] = 0;
+    pieceDp[0] = 0;
 
     DENOMS.forEach((d, denomIndex) => {
       let count = availableCounts[d.key] || 0;
@@ -191,10 +194,13 @@
       while (count > 0) {
         const use = Math.min(batch, count);
         const amountUnits = (d.value / UNIT) * use;
+        const cost = (d.withdrawCost || 100) * use;
         for (let a = targetUnits; a >= amountUnits; a -= 1) {
-          const candidate = dp[a - amountUnits] + use;
-          if (candidate < dp[a]) {
+          const candidate = dp[a - amountUnits] + cost;
+          const candidatePieces = pieceDp[a - amountUnits] + use;
+          if (candidate < dp[a] || (candidate === dp[a] && candidatePieces < pieceDp[a])) {
             dp[a] = candidate;
+            pieceDp[a] = candidatePieces;
             prevAmount[a] = a - amountUnits;
             prevDenom[a] = denomIndex;
             prevCount[a] = use;
@@ -218,7 +224,7 @@
 
     return {
       amount: bestUnits * UNIT,
-      pieces: dp[bestUnits] >= INF ? 0 : dp[bestUnits],
+      pieces: pieceDp[bestUnits] >= INF ? 0 : pieceDp[bestUnits],
       counts: out,
       exact: bestUnits === targetUnits,
     };
@@ -271,7 +277,7 @@
     if (total < base) {
       note = "El efectivo contado es menor que la base indicada.";
     } else if (remaining > base) {
-      note = `Quedan ${money(remaining - base)} por encima de la base porque se conservan paquetes y denominaciones para devueltas.`;
+      note = `Quedan ${money(remaining - base)} por encima de la base porque no hay una combinacion exacta con las denominaciones disponibles.`;
     }
     if (planNoteEl) planNoteEl.textContent = note;
 
