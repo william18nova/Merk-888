@@ -810,35 +810,96 @@ def hacer_segundo_clic_subir_archivos():
         return False
 
 
+def obtener_file_inputs_gemini():
+    inputs = []
+    try:
+        inputs.extend(driver.find_elements(By.CSS_SELECTOR, "input[type='file']"))
+    except Exception:
+        pass
+
+    try:
+        shadow_inputs = driver.execute_script("""
+            const found = [];
+            const seen = new Set();
+
+            function collect(root) {
+                if (!root || !root.querySelectorAll) return;
+
+                root.querySelectorAll("input[type='file']").forEach((input) => {
+                    if (!seen.has(input)) {
+                        seen.add(input);
+                        found.push(input);
+                    }
+                });
+
+                root.querySelectorAll("*").forEach((el) => {
+                    if (el.shadowRoot) collect(el.shadowRoot);
+                });
+            }
+
+            collect(document);
+            return found;
+        """)
+        if shadow_inputs:
+            inputs.extend(shadow_inputs)
+    except Exception:
+        pass
+
+    try:
+        captured_inputs = driver.execute_script("""
+            const inputs = [];
+            if (window.__geminiCapturedFileInput) inputs.push(window.__geminiCapturedFileInput);
+            if (Array.isArray(window.__geminiCapturedFileInputs)) {
+                window.__geminiCapturedFileInputs.forEach((input) => {
+                    if (input && !inputs.includes(input)) inputs.push(input);
+                });
+            }
+            return inputs;
+        """)
+        if captured_inputs:
+            inputs.extend(captured_inputs)
+    except Exception:
+        pass
+
+    return inputs
+
+
+def preparar_input_file_gemini(inp):
+    try:
+        driver.execute_script("""
+            const el = arguments[0];
+            el.removeAttribute('hidden');
+            el.removeAttribute('disabled');
+            el.style.display = 'block';
+            el.style.visibility = 'visible';
+            el.style.opacity = '1';
+            el.style.width = '1px';
+            el.style.height = '1px';
+            el.style.position = 'fixed';
+            el.style.left = '0';
+            el.style.top = '0';
+        """, inp)
+    except Exception:
+        pass
+
+
+def enviar_archivo_a_input_file_gemini(inp, ruta_absoluta):
+    preparar_input_file_gemini(inp)
+    inp.send_keys(ruta_absoluta)
+    print(" Archivo enviado directamente al input file de Gemini")
+    time.sleep(1.5)
+    return True
+
+
 def enviar_archivo_por_input_file_gemini(ruta_absoluta, timeout=6):
     fin = time.time() + timeout
     ultimo_error = None
 
     while time.time() < fin:
-        file_inputs = driver.find_elements(By.CSS_SELECTOR, "input[type='file']")
+        file_inputs = obtener_file_inputs_gemini()
         for inp in file_inputs:
             try:
-                driver.execute_script("""
-                    const el = arguments[0];
-                    el.removeAttribute('hidden');
-                    el.removeAttribute('disabled');
-                    el.style.display = 'block';
-                    el.style.visibility = 'visible';
-                    el.style.opacity = '1';
-                    el.style.width = '1px';
-                    el.style.height = '1px';
-                    el.style.position = 'fixed';
-                    el.style.left = '0';
-                    el.style.top = '0';
-                """, inp)
-            except Exception:
-                pass
-
-            try:
-                inp.send_keys(ruta_absoluta)
-                print(" Archivo enviado directamente al input file de Gemini")
-                time.sleep(1.5)
-                return True
+                return enviar_archivo_a_input_file_gemini(inp, ruta_absoluta)
             except Exception as e:
                 ultimo_error = e
 
@@ -846,6 +907,91 @@ def enviar_archivo_por_input_file_gemini(ruta_absoluta, timeout=6):
 
     if ultimo_error:
         print(f" No se pudo enviar archivo por input file: {ultimo_error}")
+    return False
+
+
+def instalar_interceptor_file_input_gemini():
+    try:
+        driver.execute_script("""
+            if (!window.__geminiFileInputInterceptInstalled) {
+                window.__geminiCapturedFileInput = null;
+                window.__geminiCapturedFileInputs = [];
+
+                const capture = (input) => {
+                    if (!input || String(input.type || '').toLowerCase() !== 'file') return;
+                    window.__geminiCapturedFileInput = input;
+                    if (!window.__geminiCapturedFileInputs.includes(input)) {
+                        window.__geminiCapturedFileInputs.push(input);
+                    }
+                };
+
+                const originalClick = HTMLInputElement.prototype.click;
+                HTMLInputElement.prototype.click = function() {
+                    if (String(this.type || '').toLowerCase() === 'file') {
+                        capture(this);
+                        return;
+                    }
+                    return originalClick.apply(this, arguments);
+                };
+
+                if (HTMLInputElement.prototype.showPicker) {
+                    const originalShowPicker = HTMLInputElement.prototype.showPicker;
+                    HTMLInputElement.prototype.showPicker = function() {
+                        if (String(this.type || '').toLowerCase() === 'file') {
+                            capture(this);
+                            return;
+                        }
+                        return originalShowPicker.apply(this, arguments);
+                    };
+                }
+
+                document.addEventListener('click', function(event) {
+                    const target = event.target;
+                    const label = target && target.closest ? target.closest('label') : null;
+                    if (!label) return;
+
+                    let input = label.control || null;
+                    if (!input && label.getAttribute('for')) {
+                        input = document.getElementById(label.getAttribute('for'));
+                    }
+                    if (input && String(input.type || '').toLowerCase() === 'file') {
+                        capture(input);
+                        event.preventDefault();
+                        event.stopImmediatePropagation();
+                    }
+                }, true);
+
+                window.__geminiFileInputInterceptInstalled = true;
+            }
+
+            window.__geminiCapturedFileInput = null;
+            window.__geminiCapturedFileInputs = [];
+        """)
+        return True
+    except Exception as e:
+        print(f" No se pudo instalar interceptor de input file: {e}")
+        return False
+
+
+def enviar_archivo_por_interceptor_gemini(ruta_absoluta, timeout=8):
+    if not instalar_interceptor_file_input_gemini():
+        return False
+
+    if not hacer_segundo_clic_subir_archivos():
+        return False
+
+    fin = time.time() + timeout
+    ultimo_error = None
+    while time.time() < fin:
+        for inp in obtener_file_inputs_gemini():
+            try:
+                return enviar_archivo_a_input_file_gemini(inp, ruta_absoluta)
+            except Exception as e:
+                ultimo_error = e
+        time.sleep(0.25)
+
+    if ultimo_error:
+        print(f" No se pudo usar el input capturado por Gemini: {ultimo_error}")
     return False
 
 
@@ -944,9 +1090,14 @@ def adjuntar_archivo_gemini(ruta_archivo, es_imagen=False):
                 print(" Esperando que Gemini procese el archivo...")
                 return confirmar_archivo_adjuntado_gemini(timeout=14)
 
-            if hacer_primer_clic_add_2() and enviar_archivo_por_input_file_gemini(ruta_absoluta, timeout=6):
-                print(" Esperando que Gemini procese el archivo...")
-                return confirmar_archivo_adjuntado_gemini(timeout=14)
+            if hacer_primer_clic_add_2():
+                if enviar_archivo_por_input_file_gemini(ruta_absoluta, timeout=4):
+                    print(" Esperando que Gemini procese el archivo...")
+                    return confirmar_archivo_adjuntado_gemini(timeout=14)
+
+                if enviar_archivo_por_interceptor_gemini(ruta_absoluta, timeout=8):
+                    print(" Esperando que Gemini procese el archivo...")
+                    return confirmar_archivo_adjuntado_gemini(timeout=14)
 
             print(" No se pudo adjuntar la imagen en modo segundo plano sin dialogo de Windows")
             guardar_debug_gemini('debug_gemini_upload_error.png')
@@ -961,6 +1112,10 @@ def adjuntar_archivo_gemini(ruta_archivo, es_imagen=False):
                 return confirmar_archivo_adjuntado_gemini(timeout=14)
 
         if enviar_archivo_por_input_file_gemini(ruta_absoluta, timeout=5):
+            print(" Esperando que Gemini procese el archivo...")
+            return confirmar_archivo_adjuntado_gemini(timeout=14)
+
+        if enviar_archivo_por_interceptor_gemini(ruta_absoluta, timeout=8):
             print(" Esperando que Gemini procese el archivo...")
             return confirmar_archivo_adjuntado_gemini(timeout=14)
 
