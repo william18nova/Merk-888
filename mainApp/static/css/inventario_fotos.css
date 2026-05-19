@@ -251,20 +251,69 @@ body{
 
 .invf-loading{
   display:flex;
-  align-items:center;
-  gap:10px;
-  padding:14px 16px;
-  border-radius:14px;
-  background:rgba(255,255,255,.08);
+  align-items:flex-start;
+  gap:14px;
+  padding:16px;
+  border-radius:18px;
+  border:1px solid rgba(255,255,255,.14);
+  background:linear-gradient(135deg, rgba(255,255,255,.10), rgba(255,255,255,.05));
   margin-bottom:16px;
+  box-shadow:0 14px 36px rgba(0,0,0,.18);
 }
 .invf-spinner{
-  width:20px; height:20px; border-radius:50%;
+  width:22px; height:22px; border-radius:50%;
+  flex:0 0 auto;
+  margin-top:2px;
   border:3px solid rgba(255,255,255,.2);
   border-top-color:var(--invf-brand);
   animation:invfSpin 1s linear infinite;
 }
 @keyframes invfSpin{to{transform:rotate(360deg);}}
+.invf-progress{width:100%; display:grid; gap:8px; min-width:0;}
+.invf-progress__head{display:flex; align-items:center; justify-content:space-between; gap:12px;}
+.invf-progress__head strong{font-size:15px; color:#f8fbff;}
+.invf-progress__head span{
+  flex:0 0 auto;
+  font-weight:900;
+  color:#b9dcff;
+  background:rgba(77,166,255,.14);
+  border:1px solid rgba(77,166,255,.24);
+  border-radius:999px;
+  padding:4px 9px;
+  min-width:48px;
+  text-align:center;
+}
+.invf-progress__bar{
+  width:100%;
+  height:9px;
+  overflow:hidden;
+  border-radius:999px;
+  background:rgba(8,22,43,.56);
+  border:1px solid rgba(255,255,255,.10);
+}
+.invf-progress__bar span{
+  display:block;
+  width:0%;
+  height:100%;
+  border-radius:inherit;
+  background:linear-gradient(90deg, #2dd4bf, #4da6ff);
+  transition:width .28s ease;
+}
+.invf-progress__detail{font-size:13px; color:#d8e8fb; line-height:1.35;}
+.invf-progress__meta{display:flex; align-items:center; justify-content:space-between; gap:12px; font-size:12px; color:var(--invf-muted);}
+.invf-progress__log{
+  display:grid;
+  gap:4px;
+  max-height:76px;
+  overflow:auto;
+  padding:8px 10px;
+  border-radius:12px;
+  background:rgba(5,14,28,.28);
+  color:#b9cce4;
+  font-size:11px;
+  line-height:1.35;
+}
+.invf-progress__log:empty{display:none;}
 
 .invf-review-summary{
   display:grid;

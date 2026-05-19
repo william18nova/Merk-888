@@ -3115,12 +3115,16 @@ $(function () {
   const $nequiStatus = $("#nequi-payment-status");
   const $nequiSelected = $("#nequi-selected-payment");
   const $nequiRefresh = $("#nequi-refresh-payments");
-  const NEQUI_AUTO_REFRESH_MS = 1000;
+  const NEQUI_AUTO_REFRESH_MS = 650;
   let nequiPaymentsCache = [];
   let nequiPaymentsLoaded = false;
   let nequiPaymentsLoading = false;
   let nequiSilentLoading = false;
   let nequiAutoRefreshTimer = null;
+  let nequiLastFetchController = null;
+  let nequiKnownIds = new Set();
+  let nequiNewIds = new Set();
+  let nequiLastRefreshAt = 0;
   let selectedNequiPayment = null;
 
   function isMixtoUI(){
@@ -3266,12 +3270,13 @@ $(function () {
 
     for (const item of nequiPaymentsCache){
       const amount = Number(item.monto_num || 0);
+      const id = String(item.id || "");
       const selected = selectedNequiPayment && String(selectedNequiPayment.id) === String(item.id);
       const ok = needed <= 0 || amount + 0.01 >= needed;
 
       const $btn = $("<button>", {
         type: "button",
-        class: `nequi-payment-item${selected ? " is-selected" : ""}${ok ? "" : " is-low"}`,
+        class: `nequi-payment-item${selected ? " is-selected" : ""}${ok ? "" : " is-low"}${nequiNewIds.has(id) ? " is-new" : ""}`,
         "data-id": item.id
       });
       const $top = $("<div>", { class: "nequi-payment-item-top" });
@@ -3293,12 +3298,31 @@ $(function () {
     );
   }
 
+  function markNewNequiPayments(items){
+    const nextIds = new Set((items || []).map((item) => String(item.id || "")).filter(Boolean));
+    if (nequiPaymentsLoaded && nequiKnownIds.size){
+      for (const id of nextIds){
+        if (!nequiKnownIds.has(id)){
+          nequiNewIds.add(id);
+          setTimeout(() => {
+            nequiNewIds.delete(id);
+            renderNequiPaymentList();
+          }, 4500);
+        }
+      }
+    }
+    nequiKnownIds = nextIds;
+  }
+
   function resetNequiPaymentState({ clearCache = false } = {}){
     selectedNequiPayment = null;
     $hidNequiNotification.val("");
     if (clearCache){
       nequiPaymentsCache = [];
       nequiPaymentsLoaded = false;
+      nequiKnownIds = new Set();
+      nequiNewIds = new Set();
+      nequiLastRefreshAt = 0;
     }
     renderNequiSelected();
     renderNequiPaymentList();
@@ -3320,13 +3344,18 @@ $(function () {
 
   function startNequiAutoRefresh(){
     if (!$nequiPanel.length || !NEQUI_DISPONIBLES_URL) return;
+    if (nequiAutoRefreshTimer) clearTimeout(nequiAutoRefreshTimer);
+    nequiAutoRefreshTimer = null;
     queueNequiAutoRefresh();
   }
 
   function stopNequiAutoRefresh(){
-    if (!nequiAutoRefreshTimer) return;
-    clearTimeout(nequiAutoRefreshTimer);
+    if (nequiAutoRefreshTimer) clearTimeout(nequiAutoRefreshTimer);
     nequiAutoRefreshTimer = null;
+    if (nequiLastFetchController) {
+      try { nequiLastFetchController.abort(); } catch (_) {}
+      nequiLastFetchController = null;
+    }
   }
 
   async function loadNequiPayments(force = false, { silent = false } = {}){
@@ -3342,17 +3371,23 @@ $(function () {
     if (!silent) $nequiStatus.text("Cargando envios de Nequi...");
 
     try {
+      if (nequiLastFetchController) nequiLastFetchController.abort();
+      nequiLastFetchController = new AbortController();
       const response = await fetch(NEQUI_DISPONIBLES_URL, {
         method: "GET",
         credentials: "same-origin",
         cache: "no-store",
-        headers: { "X-Requested-With": "XMLHttpRequest" }
+        headers: { "X-Requested-With": "XMLHttpRequest" },
+        signal: nequiLastFetchController.signal
       });
       const data = await response.json();
       if (!response.ok || !data.success) throw new Error(data.error || "No se pudieron cargar los envios.");
 
-      nequiPaymentsCache = Array.isArray(data.items) ? data.items : [];
+      const items = Array.isArray(data.items) ? data.items : [];
+      markNewNequiPayments(items);
+      nequiPaymentsCache = items;
       nequiPaymentsLoaded = true;
+      nequiLastRefreshAt = Date.now();
 
       if (selectedNequiPayment && !nequiPaymentsCache.some((item) => String(item.id) === String(selectedNequiPayment.id))){
         selectedNequiPayment = null;
@@ -3360,8 +3395,10 @@ $(function () {
         showMixError("El envio de Nequi seleccionado ya no esta disponible.");
       }
     } catch (err) {
+      if (err?.name === "AbortError") return;
       if (!silent) $nequiStatus.text("No se pudieron cargar los envios de Nequi. Puedes cerrar sin asociar uno.");
     } finally {
+      nequiLastFetchController = null;
       nequiPaymentsLoading = false;
       nequiSilentLoading = false;
       renderNequiSelected();
@@ -3381,8 +3418,8 @@ $(function () {
     }
 
     startNequiAutoRefresh();
-    if (!nequiPaymentsLoaded && !nequiPaymentsLoading) {
-      loadNequiPayments(false);
+    if (!nequiPaymentsLoading) {
+      loadNequiPayments(true, { silent: nequiPaymentsLoaded });
     }
     renderNequiSelected();
     renderNequiPaymentList();

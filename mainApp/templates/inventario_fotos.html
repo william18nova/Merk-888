@@ -6,7 +6,7 @@
 {% block extra_head %}
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"/>
   <link rel="stylesheet" href="https://code.jquery.com/ui/1.13.3/themes/base/jquery-ui.css"/>
-  <link rel="stylesheet" href="{% static 'css/inventario_fotos.css' %}">
+  <link rel="stylesheet" href="{% static 'css/inventario_fotos.css' %}?v=2">
 {% endblock %}
 
 {% block content %}
@@ -178,7 +178,21 @@
 
       <div class="invf-loading" id="invfLoading" style="display:none;">
         <div class="invf-spinner"></div>
-        <span>Analizando fotos en este PC...</span>
+        <div class="invf-progress">
+          <div class="invf-progress__head">
+            <strong id="invfProgressTitle">Analizando fotos en este PC...</strong>
+            <span id="invfProgressPercent">0%</span>
+          </div>
+          <div class="invf-progress__bar" aria-hidden="true">
+            <span id="invfProgressBar"></span>
+          </div>
+          <div class="invf-progress__detail" id="invfProgressDetail">Preparando fotos y catalogo.</div>
+          <div class="invf-progress__meta">
+            <span id="invfProgressRemaining">Falta aprox. 100%</span>
+            <span id="invfProgressElapsed">0s</span>
+          </div>
+          <div class="invf-progress__log" id="invfProgressLog" aria-live="polite"></div>
+        </div>
       </div>
 
       <div class="invf-table-wrap">
@@ -283,5 +297,5 @@
       agentToken: "{{ INVENTARIO_AGENT_TOKEN|default:''|escapejs }}"
     };
   </script>
-  <script defer src="{% static 'javascript/inventario_fotos.js' %}"></script>
+  <script defer src="{% static 'javascript/inventario_fotos.js' %}?v=2"></script>
 {% endblock %}

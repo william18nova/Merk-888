@@ -8,7 +8,7 @@
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"/>
   <link rel="stylesheet" href="https://code.jquery.com/ui/1.13.2/themes/base/jquery-ui.css"/>
   <link rel="stylesheet" href="{% static 'css/generar_venta.css' %}?v=17">
-  <link rel="stylesheet" href="{% static 'css/modal_venta.css' %}">
+  <link rel="stylesheet" href="{% static 'css/modal_venta.css' %}?v=18">
 {% endblock %}
 
 {% block content %}
@@ -252,5 +252,5 @@
   if (!/^https?:\/\//.test(window.POS_AGENT_URL)) window.POS_AGENT_URL = "http://127.0.0.1:8787";
 </script>
 
-<script src="{% static 'javascript/generar_venta.js' %}?v=17"></script>
+<script src="{% static 'javascript/generar_venta.js' %}?v=18"></script>
 {% endblock %}

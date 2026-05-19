@@ -24,6 +24,13 @@
   const rawResponse = document.getElementById("rawResponse");
   const invfAlert = document.getElementById("invfAlert");
   const invfLoading = document.getElementById("invfLoading");
+  const invfProgressTitle = document.getElementById("invfProgressTitle");
+  const invfProgressPercent = document.getElementById("invfProgressPercent");
+  const invfProgressBar = document.getElementById("invfProgressBar");
+  const invfProgressDetail = document.getElementById("invfProgressDetail");
+  const invfProgressRemaining = document.getElementById("invfProgressRemaining");
+  const invfProgressElapsed = document.getElementById("invfProgressElapsed");
+  const invfProgressLog = document.getElementById("invfProgressLog");
   const agentStatus = document.getElementById("agentStatus");
   const agentStatusText = document.getElementById("agentStatusText");
   const btnMobileSession = document.getElementById("btnMobileSession");
@@ -67,6 +74,10 @@
   let mobileSession = null;
   let mobilePollTimer = null;
   let mobileImportedFiles = new Set();
+  let progressTicker = null;
+  let progressStartedAt = 0;
+  let lastProgressPercent = 0;
+  let lastProgressState = {};
 
   function getCSRFToken() {
     return form.querySelector("input[name='csrfmiddlewaretoken']")?.value || "";
@@ -117,6 +128,72 @@
   function clearErrors() {
     errorSucursal.textContent = "";
     errorFotos.textContent = "";
+  }
+
+  function clampPercent(value) {
+    const number = Number(value);
+    if (!Number.isFinite(number)) return 0;
+    return Math.max(0, Math.min(100, Math.round(number)));
+  }
+
+  function formatElapsed(seconds) {
+    const value = Math.max(0, Number(seconds) || 0);
+    if (value < 60) return `${Math.floor(value)}s`;
+    const minutes = Math.floor(value / 60);
+    const rest = Math.floor(value % 60);
+    return `${minutes}m ${String(rest).padStart(2, "0")}s`;
+  }
+
+  function updateProcessProgress({ percent, stage, detail, remainingLabel, elapsedSeconds, logLines } = {}) {
+    const nextPercent = clampPercent(percent ?? lastProgressPercent);
+    lastProgressPercent = Math.max(lastProgressPercent, nextPercent);
+    const displayPercent = lastProgressPercent;
+    if (stage !== undefined) lastProgressState.stage = stage;
+    if (detail !== undefined) lastProgressState.detail = detail;
+    if (remainingLabel !== undefined) lastProgressState.remainingLabel = remainingLabel;
+    if (Array.isArray(logLines)) lastProgressState.logLines = logLines;
+
+    if (invfProgressTitle) invfProgressTitle.textContent = lastProgressState.stage || "Analizando fotos en este PC...";
+    if (invfProgressPercent) invfProgressPercent.textContent = `${displayPercent}%`;
+    if (invfProgressBar) invfProgressBar.style.width = `${displayPercent}%`;
+    if (invfProgressDetail) invfProgressDetail.textContent = lastProgressState.detail || "Preparando fotos y catalogo.";
+    if (invfProgressRemaining) {
+      invfProgressRemaining.textContent = lastProgressState.remainingLabel || (displayPercent >= 100 ? "Completado" : `Falta aprox. ${100 - displayPercent}%`);
+    }
+    if (invfProgressElapsed) {
+      const elapsed = elapsedSeconds ?? ((Date.now() - progressStartedAt) / 1000);
+      invfProgressElapsed.textContent = formatElapsed(elapsed);
+    }
+    if (invfProgressLog) {
+      const lines = Array.isArray(lastProgressState.logLines) ? lastProgressState.logLines : [];
+      invfProgressLog.innerHTML = lines.slice(-6).map(line => `<div>${escapeHtml(line)}</div>`).join("");
+    }
+  }
+
+  function stopProgressTicker() {
+    if (progressTicker) window.clearInterval(progressTicker);
+    progressTicker = null;
+  }
+
+  function startProgressTicker() {
+    stopProgressTicker();
+    progressStartedAt = Date.now();
+    lastProgressPercent = 0;
+    lastProgressState = {};
+    updateProcessProgress({
+      percent: 1,
+      stage: "Preparando proceso",
+      detail: "Validando fotos y preparando el catalogo.",
+      remainingLabel: "Falta aprox. 99%",
+      elapsedSeconds: 0,
+      logLines: []
+    });
+    progressTicker = window.setInterval(() => {
+      if (lastProgressPercent < 92) {
+        lastProgressPercent += lastProgressPercent < 60 ? 1 : 0;
+      }
+      updateProcessProgress();
+    }, 1000);
   }
 
   function setFlowStep(stage) {
@@ -496,6 +573,12 @@
   }
 
   async function descargarCatalogoBlob() {
+    updateProcessProgress({
+      percent: 3,
+      stage: "Preparando catalogo",
+      detail: "Descargando el catalogo local de productos para comparar la factura.",
+      remainingLabel: "Falta aprox. 97%"
+    });
     const response = await fetch(window.INVF.catalogoUrl, {
       method: "GET",
       credentials: "same-origin",
@@ -503,17 +586,65 @@
       cache: "no-store"
     });
     if (!response.ok) throw new Error("No se pudo descargar el catálogo de productos.");
-    return await response.blob();
+    const blob = await response.blob();
+    updateProcessProgress({
+      percent: 5,
+      stage: "Catalogo listo",
+      detail: "Catalogo descargado. Enviando fotos al agente local.",
+      remainingLabel: "Falta aprox. 95%"
+    });
+    return blob;
   }
 
-  async function procesarEnAgenteLocal() {
-    const base = normalizeAgentBase(window.INVF.agentUrl);
-    const catalogoBlob = await descargarCatalogoBlob();
-
+  function buildAgentProcessFormData(catalogoBlob) {
     const fd = new FormData();
     fd.append("catalogo", catalogoBlob, "catalogo_productos.csv");
     Array.from(inputFotos.files || []).forEach(file => fd.append("fotos", file, file.name));
+    return fd;
+  }
 
+  async function waitForAgentJob(base, jobId) {
+    while (true) {
+      await new Promise(resolve => window.setTimeout(resolve, 900));
+      const response = await fetch(`${base}/inventory/process/status/${encodeURIComponent(jobId)}`, {
+        method: "GET",
+        mode: "cors",
+        cache: "no-store",
+        headers: agentHeaders()
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || data.success === false) {
+        throw new Error(data.error || "No se pudo consultar el progreso del agente local.");
+      }
+
+      updateProcessProgress({
+        percent: data.percent,
+        stage: data.stage,
+        detail: data.detail,
+        remainingLabel: data.remaining_label,
+        elapsedSeconds: data.elapsed_seconds,
+        logLines: data.log_lines
+      });
+
+      if (data.state === "done") {
+        updateProcessProgress({
+          percent: 100,
+          stage: "Resultado listo",
+          detail: "Tabla generada. Puedes revisar productos, cantidades y precios.",
+          remainingLabel: "Completado",
+          elapsedSeconds: data.elapsed_seconds,
+          logLines: data.log_lines
+        });
+        return data.result || {};
+      }
+      if (data.state === "error") {
+        throw new Error(data.error || data.result?.error || "El agente local no pudo procesar las fotos.");
+      }
+    }
+  }
+
+  async function procesarEnAgenteLocalSinProgreso(base, catalogoBlob) {
+    const fd = buildAgentProcessFormData(catalogoBlob);
     const response = await fetch(`${base}/inventory/process`, {
       method: "POST",
       mode: "cors",
@@ -525,6 +656,49 @@
       throw new Error(data.error || data.message || "El agente local no pudo procesar las fotos.");
     }
     return data;
+  }
+
+  async function procesarEnAgenteLocal() {
+    const base = normalizeAgentBase(window.INVF.agentUrl);
+    const catalogoBlob = await descargarCatalogoBlob();
+    const fd = buildAgentProcessFormData(catalogoBlob);
+
+    updateProcessProgress({
+      percent: 6,
+      stage: "Enviando fotos",
+      detail: "Subiendo fotos y catalogo al agente local de este PC.",
+      remainingLabel: "Falta aprox. 94%"
+    });
+
+    const response = await fetch(`${base}/inventory/process/start`, {
+      method: "POST",
+      mode: "cors",
+      headers: agentHeaders(),
+      body: fd
+    });
+    const data = await response.json().catch(() => ({}));
+
+    if (response.status === 404 || response.status === 405) {
+      updateProcessProgress({
+        percent: 7,
+        stage: "Usando agente clasico",
+        detail: "Este agente no expone progreso detallado. Se mostrara el avance estimado.",
+        remainingLabel: "Falta aprox. 93%"
+      });
+      return await procesarEnAgenteLocalSinProgreso(base, catalogoBlob);
+    }
+
+    if (!response.ok || data.success === false || !data.job_id) {
+      throw new Error(data.error || data.message || "El agente local no pudo iniciar el proceso.");
+    }
+
+    updateProcessProgress({
+      percent: 8,
+      stage: "Proceso iniciado",
+      detail: "El agente local comenzo a leer las fotos.",
+      remainingLabel: "Falta aprox. 92%"
+    });
+    return await waitForAgentJob(base, data.job_id);
   }
 
   function buildRawOutput(data) {
@@ -717,9 +891,11 @@
     invfLoading.style.display = state ? "flex" : "none";
     btnProcesar.disabled = state;
     if (state) {
+      startProgressTicker();
       setFlowStep("process");
       btnConfirmar.disabled = true;
     } else {
+      stopProgressTicker();
       updateConfirmButtonState();
     }
   }

@@ -521,6 +521,23 @@ body.modal-open{
   font-weight:900;
   cursor:pointer;
 }
+#myModal .nequi-live-refresh{
+  display:inline-flex;
+  align-items:center;
+  gap:7px;
+}
+#myModal .nequi-live-refresh span{
+  width:8px;
+  height:8px;
+  border-radius:50%;
+  background:#19c37d;
+  box-shadow:0 0 0 4px rgba(25,195,125,.16);
+  animation:nequiLivePulse 1.25s ease-in-out infinite;
+}
+@keyframes nequiLivePulse{
+  0%,100%{ transform:scale(1); opacity:1; }
+  50%{ transform:scale(.72); opacity:.65; }
+}
 #myModal .nequi-payment-list{
   display:grid;
   gap:8px;
@@ -543,6 +560,15 @@ body.modal-open{
 #myModal .nequi-payment-item.is-selected{
   border-color:rgba(25,195,125,.58);
   background:rgba(25,195,125,.16);
+}
+#myModal .nequi-payment-item.is-new{
+  border-color:rgba(45,212,191,.78);
+  background:rgba(45,212,191,.18);
+  animation:nequiNewPaymentPulse 1.15s ease-in-out 3;
+}
+@keyframes nequiNewPaymentPulse{
+  0%,100%{ box-shadow:0 10px 20px rgba(0,0,0,.12); }
+  45%{ box-shadow:0 0 0 4px rgba(45,212,191,.22), 0 16px 30px rgba(0,0,0,.18); }
 }
 #myModal .nequi-payment-item.is-low{
   border-color:rgba(251,191,36,.46);

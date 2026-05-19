@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import json
 import os
+import queue
+import re
 import shutil
 import socket
 import subprocess
 import sys
+import threading
 import time
 import secrets
+import uuid
 from datetime import datetime
 from io import BytesIO
 from pathlib import Path
@@ -25,6 +29,9 @@ DEBUG_DIR = APP_DIR / "inventario_agent_debug"
 MOBILE_UPLOAD_DIR = DEBUG_DIR / "mobile_uploads"
 MOBILE_SESSION_TTL = int(os.getenv("INVENTARIO_MOBILE_SESSION_TTL", str(6 * 60 * 60)))
 MOBILE_SESSIONS = {}
+PROCESS_JOB_TTL = int(os.getenv("INVENTARIO_PROCESS_JOB_TTL", str(60 * 60)))
+PROCESS_JOBS = {}
+PROCESS_JOBS_LOCK = threading.Lock()
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 100 * 1024 * 1024
@@ -161,6 +168,146 @@ def _tail(text: str, limit: int = 6000) -> str:
     return text[-limit:].strip()
 
 
+def _cleanup_process_jobs() -> None:
+    now = time.time()
+    with PROCESS_JOBS_LOCK:
+        expired = [
+            job_id
+            for job_id, job in PROCESS_JOBS.items()
+            if now - job.get("created_at", now) > PROCESS_JOB_TTL
+        ]
+        for job_id in expired:
+            PROCESS_JOBS.pop(job_id, None)
+
+
+def _new_process_job(run_dir: Path) -> dict:
+    _cleanup_process_jobs()
+    job_id = uuid.uuid4().hex
+    job = {
+        "id": job_id,
+        "created_at": time.time(),
+        "updated_at": time.time(),
+        "state": "queued",
+        "percent": 1,
+        "stage": "Preparando archivos",
+        "detail": "Recibiendo fotos y preparando el catalogo.",
+        "remaining_label": "Falta aprox. 99%",
+        "log_lines": [],
+        "stdout": "",
+        "result": None,
+        "error": "",
+        "run_dir": str(run_dir),
+        "debug_dir": str(DEBUG_DIR),
+    }
+    with PROCESS_JOBS_LOCK:
+        PROCESS_JOBS[job_id] = job
+    return job
+
+
+def _get_process_job(job_id: str):
+    _cleanup_process_jobs()
+    with PROCESS_JOBS_LOCK:
+        job = PROCESS_JOBS.get(job_id)
+        return dict(job) if job else None
+
+
+def _set_process_job(job_id: str, **updates) -> None:
+    with PROCESS_JOBS_LOCK:
+        job = PROCESS_JOBS.get(job_id)
+        if not job:
+            return
+        job.update(updates)
+        job["updated_at"] = time.time()
+        percent = int(job.get("percent") or 0)
+        if job.get("state") == "done":
+            job["remaining_label"] = "Completado"
+        elif job.get("state") == "error":
+            job["remaining_label"] = "Detenido por error"
+        else:
+            job["remaining_label"] = f"Falta aprox. {max(0, 100 - min(99, percent))}%"
+
+
+def _append_process_log(job_id: str, text: str) -> None:
+    if not text:
+        return
+    with PROCESS_JOBS_LOCK:
+        job = PROCESS_JOBS.get(job_id)
+        if not job:
+            return
+        clean = text.rstrip("\n")
+        if clean.strip():
+            job["log_lines"].append(clean.strip())
+            job["log_lines"] = job["log_lines"][-12:]
+        job["stdout"] = _tail((job.get("stdout") or "") + text, 12000)
+        job["updated_at"] = time.time()
+
+
+def _line_progress(line: str, current_percent: int = 1) -> dict:
+    text = (line or "").strip()
+    if not text:
+        return {}
+    lower = text.lower()
+    update = {"detail": text}
+
+    match = re.search(r"im[aá]genes encontradas:\s*(\d+)", lower)
+    if match:
+        total = int(match.group(1))
+        update.update({
+            "percent": max(current_percent, 8),
+            "stage": "Fotos recibidas",
+            "detail": f"{total} foto(s) listas para analizar.",
+        })
+        return update
+
+    match = re.search(r"procesando imagen\s+(\d+)\s*/\s*(\d+)", lower)
+    if match:
+        index = int(match.group(1))
+        total = max(int(match.group(2)), 1)
+        percent = 18 + int(((index - 1) / total) * 45)
+        update.update({
+            "percent": max(current_percent, percent),
+            "stage": f"Leyendo foto {index} de {total}",
+            "detail": "Gemini esta recibiendo la imagen y preparando OCR.",
+        })
+        return update
+
+    phase_rules = [
+        ("abriendo gemini", 12, "Abriendo Gemini", "Cargando la sesion de Gemini en Chrome."),
+        ("esperando que cargue gemini", 15, "Cargando Gemini", "Esperando que la interfaz este lista."),
+        ("buscando botón add_2", 22, "Adjuntando foto", "Buscando el boton para subir archivos."),
+        ("boton de adjuntar localizado", 24, "Adjuntando foto", "El boton de adjuntar ya fue localizado."),
+        ("archivo enviado directamente", 30, "Foto enviada", "La imagen ya fue entregada al input interno de Gemini."),
+        ("archivo adjuntado", 34, "Foto adjuntada", "Gemini ya muestra la foto adjunta."),
+        ("prompt enviado a gemini", 40, "Solicitando OCR", "Se envio la instruccion para extraer texto de la factura."),
+        ("esperando respuesta de gemini", 46, "Leyendo OCR", "Gemini esta generando el texto de la foto."),
+        ("gemini sigue generando", 52, "Leyendo OCR", "Gemini tarda un poco mas; seguimos esperando la bandera final."),
+        ("bandera final detectada", 60, "OCR recibido", "La respuesta de Gemini termino correctamente."),
+        ("ocr consolidado", 66, "Unificando texto", "Uniendo el texto extraido de todas las fotos."),
+        ("enviando a deepseek", 72, "Cruzando catalogo", "DeepSeek va a comparar el OCR contra el catalogo de productos."),
+        ("csv seleccionado", 75, "Catalogo listo", "El catalogo de productos ya esta adjunto para comparar."),
+        ("prompt a enviar a deepseek", 80, "Analizando productos", "Se esta pidiendo la lista final de productos, cantidades y precios."),
+        ("respuesta final filtrada de deepseek", 91, "Armando resultado", "DeepSeek devolvio la lista; preparando la tabla final."),
+    ]
+    for needle, percent, stage, detail in phase_rules:
+        if needle in lower:
+            update.update({
+                "percent": max(current_percent, percent),
+                "stage": stage,
+                "detail": detail,
+            })
+            return update
+
+    if text == ".":
+        update.update({
+            "percent": min(88, current_percent + 1),
+            "stage": "Esperando respuesta",
+            "detail": "El modelo sigue generando la respuesta.",
+        })
+        return update
+
+    return update
+
+
 def _read_result_json(output_json: Path):
     if not output_json.exists():
         return None, None
@@ -188,6 +335,17 @@ def _write_debug_run(proc, output_json: Path):
             (DEBUG_DIR / f"{stamp}_resultado.json").write_text(contenido, encoding="utf-8", errors="replace")
     except Exception:
         pass
+
+
+def _write_debug_stream(stdout: str, output_json: Path):
+    class ProcLike:
+        returncode = 0
+        stderr = ""
+
+        def __init__(self, stdout_text):
+            self.stdout = stdout_text
+
+    _write_debug_run(ProcLike(stdout), output_json)
 
 
 def _build_script_error(proc, data=None, json_error=None):
@@ -269,6 +427,170 @@ def _run_script(images_dir: Path, catalog_path: Path, output_json: Path):
         return None, data.get("error") or "El script local devolvió un error."
 
     return data, None
+
+
+def _reader_to_queue(pipe, output_queue):
+    try:
+        while True:
+            chunk = pipe.readline()
+            if not chunk:
+                break
+            output_queue.put(chunk)
+    finally:
+        try:
+            pipe.close()
+        except Exception:
+            pass
+
+
+def _run_script_streaming(images_dir: Path, catalog_path: Path, output_json: Path, job_id: str):
+    script = Path(DEFAULT_SCRIPT).expanduser()
+    if not script.exists():
+        return None, f"No se encontro el script local: {script}"
+
+    cmd = [
+        sys.executable,
+        "-u",
+        str(script),
+        "--images-dir",
+        str(images_dir),
+        "--csv",
+        str(catalog_path),
+        "--json-out",
+        str(output_json),
+        "--no-wait",
+    ]
+
+    _set_process_job(job_id, state="running", percent=5, stage="Preparando ejecucion", detail="Lanzando Selenium y el procesador OCR.")
+
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            cwd=str(script.parent),
+            bufsize=1,
+        )
+    except Exception as exc:
+        return None, f"Error lanzando el script local: {exc}"
+
+    output_queue = queue.Queue()
+    reader = threading.Thread(target=_reader_to_queue, args=(proc.stdout, output_queue), daemon=True)
+    reader.start()
+
+    stdout_parts = []
+    deadline = time.time() + DEFAULT_TIMEOUT
+
+    while True:
+        try:
+            line = output_queue.get(timeout=0.25)
+        except queue.Empty:
+            line = None
+
+        if line is not None:
+            stdout_parts.append(line)
+            _append_process_log(job_id, line)
+            current_job = _get_process_job(job_id) or {}
+            progress = _line_progress(line, int(current_job.get("percent") or 1))
+            if progress:
+                _set_process_job(job_id, **progress)
+
+        if proc.poll() is not None:
+            while True:
+                try:
+                    line = output_queue.get_nowait()
+                except queue.Empty:
+                    break
+                stdout_parts.append(line)
+                _append_process_log(job_id, line)
+                current_job = _get_process_job(job_id) or {}
+                progress = _line_progress(line, int(current_job.get("percent") or 1))
+                if progress:
+                    _set_process_job(job_id, **progress)
+            break
+
+        if time.time() > deadline:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+            return None, f"Tiempo agotado ejecutando el script local ({DEFAULT_TIMEOUT}s)."
+
+    stdout = "".join(stdout_parts)
+    _write_debug_stream(stdout, output_json)
+    data, json_error = _read_result_json(output_json)
+
+    if proc.returncode != 0:
+        class ProcLike:
+            stderr = ""
+
+            def __init__(self, stdout_text, returncode):
+                self.stdout = stdout_text
+                self.returncode = returncode
+
+        detalle = _build_script_error(ProcLike(stdout, proc.returncode), data=data, json_error=json_error)
+        return data, f"El script local fallo: {detalle}"
+
+    if not output_json.exists():
+        return None, "El script termino pero no genero resultado.json"
+
+    if json_error:
+        return None, json_error
+
+    if not data.get("ok"):
+        return data, data.get("error") or "El script local devolvio un error."
+
+    return data, None
+
+
+def _run_inventory_job(job_id: str, images_dir: Path, catalog_path: Path, output_json: Path, base_dir: Path):
+    conservar_debug = False
+    try:
+        data, error = _run_script_streaming(images_dir, catalog_path, output_json, job_id)
+        if error:
+            conservar_debug = True
+            payload = {"success": False}
+            payload.update(data or {})
+            payload["success"] = False
+            payload["error"] = error
+            payload["debug_dir"] = str(DEBUG_DIR)
+            payload["run_dir"] = str(base_dir)
+            _set_process_job(
+                job_id,
+                state="error",
+                percent=max(int((_get_process_job(job_id) or {}).get("percent") or 1), 1),
+                stage="Proceso detenido",
+                detail="El script local devolvio un error.",
+                error=error,
+                result=payload,
+            )
+            return
+
+        payload = {"success": True}
+        payload.update(data or {})
+        _set_process_job(
+            job_id,
+            state="done",
+            percent=100,
+            stage="Resultado listo",
+            detail="Tabla generada. Puedes revisar productos, cantidades y precios.",
+            result=payload,
+        )
+    except Exception as exc:
+        conservar_debug = True
+        _set_process_job(
+            job_id,
+            state="error",
+            stage="Error inesperado",
+            detail=str(exc),
+            error=str(exc),
+        )
+    finally:
+        if not conservar_debug:
+            shutil.rmtree(base_dir, ignore_errors=True)
 
 
 @app.route("/ping", methods=["GET", "OPTIONS"])
@@ -533,6 +855,87 @@ def inventory_process():
     finally:
         if not conservar_debug:
             shutil.rmtree(base_dir, ignore_errors=True)
+
+
+@app.route("/inventory/process/start", methods=["POST", "OPTIONS"])
+def inventory_process_start():
+    if request.method == "OPTIONS":
+        return _options_ok()
+
+    if not _authorized():
+        return jsonify({"success": False, "error": "Token invalido para el agente local."}), 401
+
+    fotos = request.files.getlist("fotos")
+    catalogo = request.files.get("catalogo")
+
+    if not fotos:
+        return jsonify({"success": False, "error": "No se recibieron fotos."}), 400
+    if catalogo is None:
+        return jsonify({"success": False, "error": "No se recibio el catalogo CSV."}), 400
+
+    run_id = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    base_dir = DEBUG_DIR / "runs" / run_id
+    images_dir = base_dir / "imagenes"
+    output_json = base_dir / "resultado.json"
+    catalog_path = base_dir / "catalogo.csv"
+
+    try:
+        _save_uploaded_files(fotos, images_dir)
+        catalogo.save(catalog_path)
+    except Exception as exc:
+        shutil.rmtree(base_dir, ignore_errors=True)
+        return jsonify({"success": False, "error": f"No se pudieron preparar los archivos: {exc}"}), 500
+
+    job = _new_process_job(base_dir)
+    _set_process_job(
+        job["id"],
+        percent=4,
+        stage="Fotos guardadas",
+        detail=f"{len(fotos)} foto(s) y catalogo preparados. Iniciando Selenium.",
+    )
+    worker = threading.Thread(
+        target=_run_inventory_job,
+        args=(job["id"], images_dir, catalog_path, output_json, base_dir),
+        daemon=True,
+    )
+    worker.start()
+
+    return jsonify({
+        "success": True,
+        "job_id": job["id"],
+        "status_url": f"{request.host_url.rstrip('/')}/inventory/process/status/{job['id']}",
+    }), 202
+
+
+@app.route("/inventory/process/status/<job_id>", methods=["GET", "OPTIONS"])
+def inventory_process_status(job_id):
+    if request.method == "OPTIONS":
+        return _options_ok()
+
+    if not _authorized():
+        return jsonify({"success": False, "error": "Token invalido."}), 401
+
+    job = _get_process_job(job_id)
+    if not job:
+        return jsonify({"success": False, "error": "Proceso no encontrado o vencido."}), 404
+
+    elapsed = max(0, int(time.time() - job.get("created_at", time.time())))
+    return jsonify({
+        "success": True,
+        "job_id": job_id,
+        "state": job.get("state"),
+        "percent": int(job.get("percent") or 0),
+        "stage": job.get("stage") or "",
+        "detail": job.get("detail") or "",
+        "remaining_label": job.get("remaining_label") or "",
+        "elapsed_seconds": elapsed,
+        "log_lines": job.get("log_lines") or [],
+        "log_tail": _tail(job.get("stdout") or "", 3000),
+        "result": job.get("result"),
+        "error": job.get("error") or "",
+        "debug_dir": job.get("debug_dir") or "",
+        "run_dir": job.get("run_dir") or "",
+    })
 
 
 if __name__ == "__main__":
