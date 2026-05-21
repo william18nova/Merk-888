@@ -1,7 +1,7 @@
 from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib.auth.decorators import login_required
 from django.contrib import messages
-from .models import Usuario, Sucursal, Categoria, Producto, Inventario, Proveedor, PreciosProveedor, PuntosPago, Rol, Empleado, HorariosNegocio, HorarioCaja, Cliente, Venta, DetalleVenta, PedidoProveedor, DetallePedidoProveedor, CambioDevolucion, Permiso, RolPermiso, UsuarioPermiso, PagoVenta, TurnoCaja, TurnoCajaMedio, NotificacionNequi
+from .models import Usuario, Sucursal, Categoria, Producto, Inventario, Proveedor, PreciosProveedor, PuntosPago, Rol, Empleado, HorariosNegocio, HorarioCaja, Cliente, Venta, DetalleVenta, PedidoProveedor, DetallePedidoProveedor, CambioDevolucion, Permiso, RolPermiso, UsuarioPermiso, PagoVenta, TurnoCaja, TurnoCajaMedio, NotificacionNequi, VentaCarritoAudit
 from django.db.models import Count, Sum, Exists, OuterRef, Q, F, ExpressionWrapper, DecimalField, Value, IntegerField, Case, When, CharField
 from django.http import JsonResponse, HttpResponseBadRequest, HttpResponseForbidden, HttpRequest, HttpResponse
 from django.contrib.auth import authenticate, login as auth_login
@@ -17,6 +17,7 @@ from django.utils import timezone
 from django.utils.http import url_has_allowed_host_and_scheme
 from django.contrib.auth import authenticate
 import logging
+import ipaddress
 from django.utils.dateparse import parse_date, parse_datetime
 from django.db import transaction, connection, IntegrityError
 from django.contrib import messages
@@ -4437,6 +4438,206 @@ class AbrirCajaView(LoginRequiredMixin, View):
             return JsonResponse({"success": True})
         return JsonResponse({"success": False, "error": err}, status=500)
 
+
+def _audit_client_ip(request):
+    raw = request.META.get("HTTP_X_FORWARDED_FOR") or request.META.get("REMOTE_ADDR") or ""
+    raw = str(raw).split(",")[0].strip()
+    try:
+        return str(ipaddress.ip_address(raw))
+    except ValueError:
+        return None
+
+
+def _audit_decimal(value, places="0.01"):
+    try:
+        return Decimal(str(value if value not in (None, "") else "0")).quantize(Decimal(places))
+    except (InvalidOperation, TypeError, ValueError):
+        return Decimal("0").quantize(Decimal(places))
+
+
+def _audit_positive_int(value):
+    try:
+        parsed = int(str(value).strip())
+        return parsed if parsed > 0 else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _audit_text(value, limit):
+    return str(value or "").strip()[:limit]
+
+
+def _audit_user_is_web_master(user):
+    role = getattr(user, "rolid", None)
+    role_name = str(getattr(role, "nombre", "") or "").strip().lower()
+    role_name = re.sub(r"[\s_-]+", " ", role_name)
+    return role_name in {"web master", "webmaster"}
+
+
+@method_decorator(require_POST, name="dispatch")
+class VentaCarritoLimpioAuditView(LoginRequiredMixin, View):
+    """
+    Registra carritos que fueron armados y luego desaparecieron sin venta.
+    No bloquea la caja: si el frontend falla, simplemente vuelve a intentarse en el
+    siguiente evento real de limpieza.
+    """
+
+    MAX_ITEMS = 250
+
+    def _payload(self, request):
+        content_type = request.META.get("CONTENT_TYPE", "")
+        if "application/json" in content_type:
+            return json.loads((request.body or b"{}").decode("utf-8") or "{}")
+
+        raw = request.POST.get("payload") or "{}"
+        return json.loads(raw)
+
+    def _turno_activo(self, request):
+        return (
+            TurnoCaja.objects
+            .select_related("puntopago", "puntopago__sucursalid")
+            .filter(cajero=request.user, estado="ABIERTO")
+            .order_by("-inicio")
+            .first()
+        )
+
+    def post(self, request, *args, **kwargs):
+        if _audit_user_is_web_master(request.user):
+            return JsonResponse({"success": True, "ignored": True, "reason": "web_master"})
+
+        try:
+            payload = self._payload(request)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            return JsonResponse({"success": False, "error": "Payload invalido."}, status=400)
+
+        raw_items = payload.get("items") or payload.get("productos") or []
+        if not isinstance(raw_items, list):
+            return JsonResponse({"success": False, "error": "Lista de productos invalida."}, status=400)
+
+        cleaned_items = []
+        cantidad_unidades = Decimal("0.000")
+        for item in raw_items[: self.MAX_ITEMS]:
+            if not isinstance(item, dict):
+                continue
+
+            pid = _audit_positive_int(item.get("producto_id") or item.get("pid") or item.get("id"))
+            cantidad = _audit_decimal(item.get("cantidad"), "0.001")
+            precio = _audit_decimal(item.get("precio"), "0.01")
+            subtotal = _audit_decimal(item.get("subtotal"), "0.01")
+            nombre = _audit_text(item.get("nombre"), 180)
+            if not pid and not nombre:
+                continue
+
+            cantidad_unidades += cantidad
+            cleaned_items.append({
+                "producto_id": pid,
+                "nombre": nombre,
+                "cantidad": str(cantidad),
+                "precio": str(precio),
+                "subtotal": str(subtotal),
+                "codigo_barras": _audit_text(item.get("codigo_barras") or item.get("barcode"), 120),
+            })
+
+        if not cleaned_items:
+            return JsonResponse({"success": False, "error": "No hay productos para auditar."}, status=400)
+
+        turno = self._turno_activo(request)
+        puntopago = getattr(turno, "puntopago", None) if turno else None
+        sucursal = getattr(puntopago, "sucursalid", None) if puntopago else None
+
+        sucursal_id = getattr(sucursal, "pk", None) or _audit_positive_int(payload.get("sucursal_id"))
+        puntopago_id = getattr(puntopago, "pk", None) or _audit_positive_int(payload.get("puntopago_id"))
+        cliente_id = _audit_positive_int(payload.get("cliente_id"))
+        cliente_nombre = _audit_text(payload.get("cliente_nombre"), 180)
+
+        if cliente_id and not cliente_nombre:
+            cliente = Cliente.objects.filter(pk=cliente_id).only("nombre", "apellido").first()
+            if cliente:
+                cliente_nombre = f"{cliente.nombre or ''} {cliente.apellido or ''}".strip()
+
+        audit = VentaCarritoAudit.objects.create(
+            evento=VentaCarritoAudit.EVENTO_LIMPIADO,
+            usuarioid=getattr(request.user, "pk", None),
+            usuario_nombre=_audit_text(getattr(request.user, "nombreusuario", "") or str(request.user), 160),
+            sucursalid=sucursal_id,
+            sucursal_nombre=_audit_text(getattr(sucursal, "nombre", "") or payload.get("sucursal_nombre"), 120),
+            puntopagoid=puntopago_id,
+            puntopago_nombre=_audit_text(getattr(puntopago, "nombre", "") or payload.get("puntopago_nombre"), 120),
+            turnoid=getattr(turno, "pk", None),
+            clienteid=cliente_id,
+            cliente_nombre=cliente_nombre,
+            subtotal=_audit_decimal(payload.get("subtotal"), "0.01"),
+            descuento=_audit_decimal(payload.get("descuento"), "0.01"),
+            total=_audit_decimal(payload.get("total"), "0.01"),
+            cantidad_productos=len(cleaned_items),
+            cantidad_unidades=cantidad_unidades.quantize(Decimal("0.001")),
+            productos=cleaned_items,
+            user_agent=_audit_text(request.META.get("HTTP_USER_AGENT"), 500),
+            ip=_audit_client_ip(request),
+        )
+
+        return JsonResponse({"success": True, "audit_id": audit.pk})
+
+
+class VentaCarritoAuditListView(LoginRequiredMixin, ListView):
+    model = VentaCarritoAudit
+    template_name = "ventas_no_realizadas.html"
+    context_object_name = "auditorias"
+    paginate_by = 40
+
+    def dispatch(self, request, *args, **kwargs):
+        if not _audit_user_is_web_master(request.user):
+            messages.error(request, "Solo el rol Web Master puede ver ventas no realizadas.")
+            return redirect("home")
+        return super().dispatch(request, *args, **kwargs)
+
+    def get_queryset(self):
+        qs = VentaCarritoAudit.objects.all()
+        request = self.request
+
+        desde = parse_date(request.GET.get("desde") or "")
+        hasta = parse_date(request.GET.get("hasta") or "")
+        busqueda = (request.GET.get("q") or "").strip()
+
+        if desde:
+            qs = qs.filter(creado_en__date__gte=desde)
+        if hasta:
+            qs = qs.filter(creado_en__date__lte=hasta)
+        if busqueda:
+            qs = qs.filter(
+                Q(usuario_nombre__icontains=busqueda)
+                | Q(cliente_nombre__icontains=busqueda)
+                | Q(sucursal_nombre__icontains=busqueda)
+                | Q(puntopago_nombre__icontains=busqueda)
+            )
+
+        return qs.order_by("-creado_en", "-auditoriaid")
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        filtered_qs = self.get_queryset()
+        summary = filtered_qs.aggregate(
+            eventos=Count("auditoriaid"),
+            total=Coalesce(Sum("total"), Decimal("0"), output_field=DecimalField()),
+            productos=Coalesce(Sum("cantidad_productos"), 0, output_field=IntegerField()),
+            unidades=Coalesce(Sum("cantidad_unidades"), Decimal("0"), output_field=DecimalField()),
+        )
+
+        query = self.request.GET.copy()
+        query.pop("page", None)
+
+        context.update({
+            "summary": summary,
+            "filtros": {
+                "desde": self.request.GET.get("desde", ""),
+                "hasta": self.request.GET.get("hasta", ""),
+                "q": self.request.GET.get("q", ""),
+            },
+            "querystring": query.urlencode(),
+        })
+        return context
+
+
 class SucursalAutocompleteView(PaginatedAutocompleteMixin):
     model      = Sucursal
     text_field = "nombre"
@@ -5212,6 +5413,8 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin, View):
         return user_has_permission(user, self.edit_permission)
 
     def _can_print_venta(self, user) -> bool:
+        if self._is_cajero_role(user):
+            return True
         return (
             self._can_view_venta(user)
             or self._can_edit_venta(user)
@@ -8554,6 +8757,21 @@ class TurnoCajaCerrarApi(LoginRequiredMixin, View):
 
 
 
+
+
+class TurnoCajaRetiroActualView(LoginRequiredMixin, View):
+    def get(self, request: HttpRequest):
+        turno = (
+            TurnoCaja.objects
+            .filter(cajero=request.user, estado="CERRADO")
+            .order_by("-fin", "-cierre_iniciado", "-inicio")
+            .first()
+        )
+        if not turno:
+            messages.warning(request, "No tienes un turno cerrado listo para retirar la base.")
+            return redirect("turno_caja")
+
+        return redirect("turno_caja_retiro", turno_id=turno.pk)
 
 
 class TurnoCajaRetiroView(LoginRequiredMixin, View):

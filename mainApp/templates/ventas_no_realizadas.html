@@ -1,0 +1,133 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Ventas no realizadas{% endblock %}
+
+{% block extra_head %}
+  <link rel="stylesheet" href="{% static 'css/ventas_no_realizadas.css' %}?v=1">
+{% endblock %}
+
+{% block content %}
+<section class="audit-page">
+  <header class="audit-hero">
+    <div>
+      <p class="audit-eyebrow">Auditoria Web Master</p>
+      <h1>Ventas no realizadas</h1>
+      <p>Carritos que tuvieron productos y fueron limpiados antes de finalizar una venta.</p>
+    </div>
+    <div class="audit-hero__badge">
+      <span>{{ summary.eventos|default:0 }}</span>
+      eventos
+    </div>
+  </header>
+
+  <section class="audit-summary">
+    <article>
+      <span>Eventos</span>
+      <strong>{{ summary.eventos|default:0 }}</strong>
+    </article>
+    <article>
+      <span>Total estimado</span>
+      <strong>$ {{ summary.total|default:"0.00" }}</strong>
+    </article>
+    <article>
+      <span>Productos</span>
+      <strong>{{ summary.productos|default:0 }}</strong>
+    </article>
+    <article>
+      <span>Unidades</span>
+      <strong>{{ summary.unidades|default:"0.000" }}</strong>
+    </article>
+  </section>
+
+  <form class="audit-filters" method="get">
+    <label>
+      <span>Desde</span>
+      <input type="date" name="desde" value="{{ filtros.desde }}">
+    </label>
+    <label>
+      <span>Hasta</span>
+      <input type="date" name="hasta" value="{{ filtros.hasta }}">
+    </label>
+    <label class="audit-search">
+      <span>Buscar</span>
+      <input type="search" name="q" value="{{ filtros.q }}" placeholder="Usuario, cliente, sucursal o punto">
+    </label>
+    <button type="submit">Filtrar</button>
+    <a href="{% url 'ventas_no_realizadas' %}">Limpiar</a>
+  </form>
+
+  <section class="audit-panel">
+    <div class="audit-panel__head">
+      <div>
+        <p class="audit-eyebrow">Registros</p>
+        <h2>Carritos limpiados</h2>
+      </div>
+    </div>
+
+    <div class="audit-table-wrap">
+      <table class="audit-table">
+        <thead>
+          <tr>
+            <th>Fecha</th>
+            <th>Usuario</th>
+            <th>Sucursal / caja</th>
+            <th>Cliente</th>
+            <th>Total</th>
+            <th>Productos</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for audit in auditorias %}
+            <tr>
+              <td>
+                <strong>{{ audit.creado_en|date:"d/m/Y" }}</strong>
+                <small>{{ audit.creado_en|date:"h:i A" }}</small>
+              </td>
+              <td>
+                {{ audit.usuario_nombre|default:"-" }}
+                {% if audit.usuarioid %}<small>ID {{ audit.usuarioid }}</small>{% endif %}
+              </td>
+              <td>
+                {{ audit.sucursal_nombre|default:"-" }}
+                <small>{{ audit.puntopago_nombre|default:"Sin punto" }}</small>
+              </td>
+              <td>{{ audit.cliente_nombre|default:"-" }}</td>
+              <td class="audit-money">$ {{ audit.total }}</td>
+              <td>
+                <details class="audit-products">
+                  <summary>{{ audit.cantidad_productos }} productos</summary>
+                  <ul>
+                    {% for prod in audit.productos %}
+                      <li>
+                        <span>{{ prod.nombre|default:"Producto" }}</span>
+                        <small>Cant. {{ prod.cantidad }} · $ {{ prod.subtotal }}</small>
+                      </li>
+                    {% endfor %}
+                  </ul>
+                </details>
+              </td>
+            </tr>
+          {% empty %}
+            <tr>
+              <td colspan="6" class="audit-empty">No hay registros con estos filtros.</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    {% if is_paginated %}
+      <nav class="audit-pagination">
+        {% if page_obj.has_previous %}
+          <a href="?{% if querystring %}{{ querystring }}&{% endif %}page={{ page_obj.previous_page_number }}">Anterior</a>
+        {% endif %}
+        <span>Pagina {{ page_obj.number }} de {{ page_obj.paginator.num_pages }}</span>
+        {% if page_obj.has_next %}
+          <a href="?{% if querystring %}{{ querystring }}&{% endif %}page={{ page_obj.next_page_number }}">Siguiente</a>
+        {% endif %}
+      </nav>
+    {% endif %}
+  </section>
+</section>
+{% endblock %}

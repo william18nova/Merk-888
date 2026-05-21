@@ -13,6 +13,8 @@ from .models import Permiso, Rol, RolPermiso
 ADMIN_ROLE_NAMES = {"admin", "administrador", "supervisor"}
 PUBLIC_URL_NAMES = {"login", "logout", "visor_barcode", "visor_barcode_buscar", "visor_barcode_lookup", "macrodroid_nequi_webhook"}
 ALWAYS_ALLOWED_URL_NAMES = {"home"}
+WEB_MASTER_ONLY_URL_NAMES = {"ventas_no_realizadas"}
+CAJERO_PRINT_ONLY_URL_NAMES = {"ver_venta", "ticket_texto", "imprimir_factura"}
 
 PERMISSION_CACHE_SECONDS = 300
 NAV_CACHE_SECONDS = 300
@@ -368,6 +370,12 @@ PERMISSION_DEFINITIONS = [
         "aliases": ["visualizar_ventas", "ver_venta", "ventas_datatable"],
     },
     {
+        "code": "ventas_no_realizadas",
+        "label": "Ventas no realizadas",
+        "description": "Permite ver carritos que fueron armados y luego limpiados sin finalizar venta. Uso exclusivo Web Master.",
+        "aliases": ["ventas_no_realizadas", "ventas no realizadas", "carritos limpiados", "auditoria carritos"],
+    },
+    {
         "code": "ventas_imprimir",
         "label": "Imprimir venta",
         "description": "Permite abrir el detalle de una venta en modo solo lectura e imprimir la factura.",
@@ -451,7 +459,7 @@ PERMISSION_DEFINITIONS = [
         "code": "caja_retiro_base",
         "label": "Retiro base de caja",
         "description": "Permite entrar a la pagina donde se retira dinero para dejar la base de caja.",
-        "aliases": ["turno_caja_retiro", "retiro base de caja", "sacar dinero base caja"],
+        "aliases": ["turno_caja_retiro", "turno_caja_retiro_actual", "retiro base de caja", "sacar dinero base caja"],
     },
     {
         "code": "caja_dashboard",
@@ -590,6 +598,7 @@ ROUTE_PERMISSIONS = {
     "ticket_texto": "ventas_ver",
     "visualizar_ventas": "ventas_ver",
     "ventas_datatable": "ventas_ver",
+    "ventas_no_realizadas": "ventas_no_realizadas",
     "ver_venta": "ventas_ver",
     "visualizar_cambios": "ventas_cambios",
     "ventas_diarias": "ventas_diarias",
@@ -621,6 +630,7 @@ ROUTE_PERMISSIONS = {
     "turno_caja_iniciar": "caja_turno",
     "turno_caja_iniciar_cierre": "caja_turno",
     "turno_caja_cerrar": "caja_turno",
+    "turno_caja_retiro_actual": "caja_retiro_base",
     "turno_caja_retiro": "caja_retiro_base",
     "turnos_caja_dashboard": "caja_dashboard",
     "api_turnos_caja_list": "caja_dashboard",
@@ -750,6 +760,7 @@ NAV_GROUPS = [
         "children": [
             {"label": "Generar venta", "url_name": "generar_venta"},
             {"label": "Visualizar ventas", "url_name": "visualizar_ventas"},
+            {"label": "Ventas no realizadas", "url_name": "ventas_no_realizadas"},
             {"label": "Cambios / Devoluciones", "url_name": "visualizar_cambios"},
             {"label": "Ventas diarias", "url_name": "ventas_diarias"},
             {"label": "Ventas por producto", "url_name": "reporte_ventas_producto"},
@@ -767,6 +778,7 @@ NAV_GROUPS = [
         "label": "Caja",
         "children": [
             {"label": "Turno de caja", "url_name": "turno_caja"},
+            {"label": "Retiro base de caja", "url_name": "turno_caja_retiro_actual"},
             {"label": "Dashboard turnos", "url_name": "turnos_caja_dashboard"},
             {"label": "Admin turnos", "url_name": "turnos_caja_admin"},
             {"label": "Notificaciones Nequi", "url_name": "nequi_notificaciones"},
@@ -893,6 +905,10 @@ def role_name(user) -> str:
         return (getattr(getattr(user, "rolid", None), "nombre", "") or "").strip()
     except Exception:
         return ""
+
+
+def is_web_master_role(user) -> bool:
+    return normalize_permission_key(role_name(user)) == "web_master"
 
 
 def is_permission_admin(user) -> bool:
@@ -1049,6 +1065,10 @@ def user_can_access_url_name(user, url_name: Optional[str]) -> bool:
         return True
     if url_name in ALWAYS_ALLOWED_URL_NAMES:
         return getattr(user, "is_authenticated", False)
+    if url_name in CAJERO_PRINT_ONLY_URL_NAMES and normalize_permission_key(role_name(user)) == "cajero":
+        return True
+    if url_name in WEB_MASTER_ONLY_URL_NAMES and not is_web_master_role(user):
+        return False
     permissions = route_permissions_for_url_name(url_name)
     if not permissions:
         return True

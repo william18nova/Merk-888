@@ -242,6 +242,8 @@
 
   window.imprimirFacturaUrl             = "{% url 'imprimir_factura' %}";
   window.abrirCajaUrl                   = "{% url 'abrir_caja' %}";
+  window.carritoLimpioAuditUrl          = "{% url 'venta_carrito_limpio_audit' %}";
+  window.carritoAuditRoleName           = "{{ request.user.rolid.nombre|default:''|escapejs }}";
   window.nequiNotificacionesDisponiblesUrl = "{% url 'nequi_notificaciones_disponibles' %}";
 </script>
 
@@ -252,5 +254,5 @@
   if (!/^https?:\/\//.test(window.POS_AGENT_URL)) window.POS_AGENT_URL = "http://127.0.0.1:8787";
 </script>
 
-<script src="{% static 'javascript/generar_venta.js' %}?v=18"></script>
+<script src="{% static 'javascript/generar_venta.js' %}?v=20"></script>
 {% endblock %}

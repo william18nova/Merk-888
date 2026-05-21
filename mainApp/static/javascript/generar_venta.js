@@ -15,6 +15,12 @@ $(function () {
   const POR_COD_URL     = window.buscarProductoPorCodigoUrl;
   const SNAPSHOT_URL    = window.productoSnapshotUrl || "/api/productos/snapshot/";
   const NEQUI_DISPONIBLES_URL = window.nequiNotificacionesDisponiblesUrl || "";
+  const CARRITO_LIMPIO_AUDIT_URL = window.carritoLimpioAuditUrl || "";
+  const CARRITO_AUDIT_ROLE = String(window.carritoAuditRoleName || "")
+    .toLowerCase()
+    .replace(/[\s_-]+/g, " ")
+    .trim();
+  const CARRITO_LIMPIO_AUDIT_DISABLED = CARRITO_AUDIT_ROLE === "web master" || CARRITO_AUDIT_ROLE === "webmaster";
 
   /* ================== Agente local ================== */
   const POS_AGENT_URL   = (window.POS_AGENT_URL || "http://127.0.0.1:8787").replace(/\/+$/,'');
@@ -219,6 +225,7 @@ $(function () {
     documento: "",
     employeeHasUser: false
   };
+  const cartAuditSessionItems = new Map();
 
   const PROMO_BAG_21 = "7318";
   const PROMO_BAG_8001 = "8001";
@@ -500,6 +507,120 @@ $(function () {
     } catch (_) {}
   }
 
+  function numericIdFromValue(value) {
+    const match = String(value || "").match(/\d+/);
+    return match ? match[0] : "";
+  }
+
+  function cartAuditItemKey(item) {
+    const pid = String(item?.producto_id || item?.pid || "").trim();
+    if (pid) return `pid:${pid}`;
+    return `name:${String(item?.nombre || "").trim().toLowerCase()}`;
+  }
+
+  function rememberCartAuditItem(item) {
+    if (!item || (!item.producto_id && !item.nombre)) return;
+    const key = cartAuditItemKey(item);
+    if (!key || key === "name:") return;
+    cartAuditSessionItems.set(key, {
+      producto_id: String(item.producto_id || "").trim(),
+      nombre: String(item.nombre || "").trim(),
+      cantidad: Number(item.cantidad) || 0,
+      precio: Number(item.precio) || 0,
+      subtotal: Number(item.subtotal) || 0,
+      codigo_barras: String(item.codigo_barras || item.barcode || "").trim(),
+    });
+  }
+
+  function rememberCartAuditRow($row) {
+    if (!$row || !$row.length) return;
+    const pid = String($row.data("pid") || "").trim();
+    const cached = pid ? (productCache.get(pid) || {}) : {};
+    const qty = Number($row.attr("data-qty")) || Number($row.find(".qty-input").val()) || 0;
+    const price = Number($row.data("price")) || Number(cached.price) || 0;
+    const name = String($row.children("td").eq(0).text() || cached.nombre || cached.name || "").trim();
+    rememberCartAuditItem({
+      producto_id: pid,
+      nombre: name,
+      cantidad: qty,
+      precio: price,
+      subtotal: price * qty,
+      codigo_barras: cached.barcode || cached.codigo_de_barras || "",
+    });
+  }
+
+  function resetCartAuditSession() {
+    cartAuditSessionItems.clear();
+  }
+
+  function buildCartClearAuditPayload() {
+    const rows = $tbody.find("tr").toArray();
+
+    for (const row of rows) {
+      rememberCartAuditRow($(row));
+    }
+
+    const items = Array.from(cartAuditSessionItems.values());
+
+    return {
+      items,
+      subtotal: roundAccountAmount(runningTotal),
+      descuento: employeeDiscountAmount(),
+      total: saleTotalForPayment(),
+      cliente_id: numericIdFromValue($("#cliente_id").val()),
+      cliente_nombre: ($inpCliente.val() || selectedClientLabel || "").trim(),
+      sucursal_id: numericIdFromValue($("#sucursal_id").val() || sucursalID),
+      sucursal_nombre: ($("#sucursal_autocomplete").val() || localStorage.getItem("sucursalName") || "").trim(),
+      puntopago_id: numericIdFromValue($("#puntopago_id").val() || localStorage.getItem("puntopagoID")),
+      puntopago_nombre: ($("#puntopago_autocomplete").val() || localStorage.getItem("puntopagoName") || "").trim(),
+      enviado_en: new Date().toISOString(),
+    };
+  }
+
+  function sendCartClearAudit(payload, options = {}) {
+    if (CARRITO_LIMPIO_AUDIT_DISABLED) return;
+    if (!CARRITO_LIMPIO_AUDIT_URL || !payload || !Array.isArray(payload.items) || !payload.items.length) return;
+
+    const csrf = getCSRF();
+    const body = JSON.stringify(payload);
+
+    if (options.beacon && navigator.sendBeacon && window.FormData) {
+      try {
+        const fd = new FormData();
+        fd.append("csrfmiddlewaretoken", csrf);
+        fd.append("payload", body);
+        if (navigator.sendBeacon(CARRITO_LIMPIO_AUDIT_URL, fd)) return;
+      } catch (_) {}
+    }
+
+    try {
+      fetch(CARRITO_LIMPIO_AUDIT_URL, {
+        method: "POST",
+        credentials: "same-origin",
+        keepalive: !!options.keepalive && body.length < 60000,
+        headers: {
+          "Content-Type": "application/json",
+          "X-Requested-With": "XMLHttpRequest",
+          "X-CSRFToken": csrf,
+        },
+        body,
+      }).catch(() => {});
+    } catch (_) {}
+  }
+
+  function removeRowByPidWithAuditIfEmpty(pid) {
+    const willEmpty = productos.length <= 1;
+    const payload = willEmpty ? buildCartClearAuditPayload() : null;
+    const removed = removeRowByPid(pid);
+
+    if (removed && willEmpty && productos.length === 0 && payload) {
+      sendCartClearAudit(payload);
+      resetCartAuditSession();
+    }
+
+    return removed;
+  }
+
   function clearCartAndTotals() {
     productos.length = 0;
     cantidades.length = 0;
@@ -518,6 +639,7 @@ $(function () {
     $("#cambio").text("");
     closeModal();
     lastAddedPid = null;
+    resetCartAuditSession();
   }
 
   // ✅ LIMPIEZA COMPLETA POST-VENTA (SIN RECARGA)
@@ -580,6 +702,14 @@ $(function () {
     catalogPollTimer = null;
   }
   window.addEventListener("beforeunload", () => {
+    try {
+      if (productos.length) {
+        sendCartClearAudit(buildCartClearAuditPayload(), {
+          beacon: true,
+          keepalive: true,
+        });
+      }
+    } catch (_) {}
     try { clearCartAndTotals(); } catch (_){ }
     try { stopCatalogPolling(); } catch (_){ }
   });
@@ -1073,6 +1203,7 @@ $(function () {
     $row.attr("data-price", price).data("price", price);
     $row.removeClass("pending-price");
     $row.find(".price-cell").text(money(price));
+    rememberCartAuditRow($row);
   }
 
   let repricingMode = false;
@@ -1142,6 +1273,8 @@ $(function () {
     const $r = $tbody.find(`tr[data-pid='${key}']`);
     if (!$r.length) return false;
 
+    rememberCartAuditRow($r);
+
     const idx = productos.indexOf(key);
     const price = Number($r.data("price")) || 0;
     const qty = Number($r.attr("data-qty")) || Number($r.find(".qty-input").val()) || 0;
@@ -1184,6 +1317,7 @@ $(function () {
       } else {
         scheduleVerifyRowPrice($r, 120);
       }
+      rememberCartAuditRow($r);
     } else {
       if (qty === 0) return;
 
@@ -1203,6 +1337,7 @@ $(function () {
       else { $(row).data("counted", false); scheduleVerifyRowPrice($(row), 120); }
 
       enforceTotalIntegritySoft();
+      rememberCartAuditRow($(row));
     }
   }
 
@@ -2887,7 +3022,7 @@ $(function () {
     const wasCounted = !!$row.data("counted");
 
     if (newQty === 0) {
-      removeRowByPid(pid);
+      removeRowByPidWithAuditIfEmpty(pid);
       return;
     }
 
@@ -2912,6 +3047,7 @@ $(function () {
       $row.find(".subtotal-cell").text("…");
       scheduleVerifyRowPrice($row, 140);
     }
+    rememberCartAuditRow($row);
   }
 
   function sanitizeRowQtyInput(el){
@@ -3005,7 +3141,7 @@ $(function () {
   $tbody.on("click", ".eliminar-producto", function () {
     const $row = $(this).closest("tr");
     const pid = String($row.data("pid") || "");
-    removeRowByPid(pid);
+    removeRowByPidWithAuditIfEmpty(pid);
   });
 
   if ($btnAgregarBolsa.length) {
@@ -3038,6 +3174,10 @@ $(function () {
     if (!productos.length) return;
     if (!confirm("¿Vaciar todo el carrito?")) return;
 
+    try {
+      sendCartClearAudit(buildCartClearAuditPayload());
+    } catch (_) {}
+
     productos.length = 0;
     cantidades.length = 0;
     $tbody.empty();
@@ -3046,6 +3186,7 @@ $(function () {
 
     $hidMedioPago.val("");
     $hidPagos.val("");
+    resetCartAuditSession();
   });
 
   $buscarCart.on("keyup", function () {
@@ -4436,7 +4577,7 @@ Total: ${money(totalNum)}${msgCambio}`;
     if (!$first.length) return;
     e.preventDefault(); e.stopPropagation();
     const pid = String($first.data("pid") || "");
-    removeRowByPid(pid);
+    removeRowByPidWithAuditIfEmpty(pid);
   });
 
   /* ================== ✅ SCANNER GUARD: qty-guard => code ================== */

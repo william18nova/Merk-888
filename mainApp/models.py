@@ -275,6 +275,53 @@ class PagoVenta(models.Model):
     def __str__(self):
         return f"Venta {self.ventaid_id} - {self.medio_pago} - {self.monto}"
 
+
+class VentaCarritoAudit(models.Model):
+    EVENTO_LIMPIADO = "carrito_limpiado"
+
+    auditoriaid = models.BigAutoField(primary_key=True, db_column="auditoriaid")
+    evento = models.CharField(max_length=40, default=EVENTO_LIMPIADO)
+    motivo = models.CharField(max_length=80, blank=True, default="")
+
+    usuarioid = models.PositiveIntegerField(null=True, blank=True, db_column="usuarioid")
+    usuario_nombre = models.CharField(max_length=160, blank=True, default="")
+
+    sucursalid = models.PositiveIntegerField(null=True, blank=True, db_column="sucursalid")
+    sucursal_nombre = models.CharField(max_length=120, blank=True, default="")
+
+    puntopagoid = models.PositiveIntegerField(null=True, blank=True, db_column="puntopagoid")
+    puntopago_nombre = models.CharField(max_length=120, blank=True, default="")
+
+    turnoid = models.PositiveIntegerField(null=True, blank=True, db_column="turnoid")
+
+    clienteid = models.PositiveIntegerField(null=True, blank=True, db_column="clienteid")
+    cliente_nombre = models.CharField(max_length=180, blank=True, default="")
+
+    subtotal = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal("0.00"))
+    descuento = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal("0.00"))
+    total = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal("0.00"))
+    cantidad_productos = models.PositiveIntegerField(default=0)
+    cantidad_unidades = models.DecimalField(max_digits=14, decimal_places=3, default=Decimal("0.000"))
+    productos = models.JSONField(default=list, blank=True)
+
+    user_agent = models.TextField(blank=True, default="")
+    ip = models.GenericIPAddressField(null=True, blank=True)
+    creado_en = models.DateTimeField(default=timezone.now, db_index=True)
+
+    class Meta:
+        db_table = "ventas_carrito_auditoria"
+        ordering = ["-creado_en", "-auditoriaid"]
+        indexes = [
+            models.Index(fields=["creado_en"], name="vca_creado_idx"),
+            models.Index(fields=["usuarioid", "creado_en"], name="vca_usuario_fecha_idx"),
+            models.Index(fields=["sucursalid", "creado_en"], name="vca_sucursal_fecha_idx"),
+            models.Index(fields=["motivo", "creado_en"], name="vca_motivo_fecha_idx"),
+        ]
+
+    def __str__(self):
+        return f"{self.evento} #{self.auditoriaid} - {self.usuario_nombre or self.usuarioid}"
+
+
 class PedidoProveedor(models.Model):
     ESTADOS = [
         ('En espera', 'En espera'),

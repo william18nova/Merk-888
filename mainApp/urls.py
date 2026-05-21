@@ -175,6 +175,7 @@ urlpatterns = [
     path("api/productos/snapshot/", views.ProductoSnapshotView.as_view(), name="producto_snapshot"),
     path("ventas/imprimir/", views.ImprimirFacturaView.as_view(), name="imprimir_factura"),
     path("ventas/abrir-caja/", views.AbrirCajaView.as_view(),      name="abrir_caja"),
+    path("ventas/auditoria/carrito-limpiado/", views.VentaCarritoLimpioAuditView.as_view(), name="venta_carrito_limpio_audit"),
 
     # Autocompletes
     path('autocomplete/sucursal/',   views.SucursalAutocompleteView.as_view(),
@@ -198,6 +199,7 @@ urlpatterns = [
 
     path('visualizar_ventas/', views.VentaListView.as_view(), name='visualizar_ventas'),
     path("ventas/data/", views.VentaDataTableView.as_view(), name="ventas_datatable"),
+    path("ventas/no-realizadas/", views.VentaCarritoAuditListView.as_view(), name="ventas_no_realizadas"),
     #  … otras urls …
     path('ver_venta/<int:venta_id>/', views.VentaDetailView.as_view(), name='ver_venta'),
     path("ventas/ticket-texto/", views.TicketTextoView.as_view(), name="ticket_texto"),
@@ -300,6 +302,8 @@ urlpatterns = [
          name="turno_caja_iniciar_cierre"),
     path("turno_caja/api/cerrar/", views.TurnoCajaCerrarApi.as_view(),
          name="turno_caja_cerrar"),
+    path("turno_caja/retiro/", views.TurnoCajaRetiroActualView.as_view(),
+         name="turno_caja_retiro_actual"),
     path("turno_caja/retiro/<int:turno_id>/", views.TurnoCajaRetiroView.as_view(),
          name="turno_caja_retiro"),
      
