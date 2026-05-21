@@ -685,13 +685,19 @@
         `;
       } else {
         const autoConfirmado = num(m.auto_confirmado || 0);
+        const manualCount = Math.max(0, Math.floor(num(m.manual_sin_api_count || 0)));
+        const manualTotal = Math.max(0, num(m.manual_sin_api_total || 0));
         const autoHint = autoConfirmado > 0
           ? `<div class="hint hint-ok">Confirmado por API: ${money2(autoConfirmado)}. Escribe solo lo no asociado.</div>
              <div class="hint" data-auto-total="${escapeHtml(m.metodo)}">Reconocido en cierre: ${money2(autoConfirmado)}</div>`
           : "";
+        const manualHint = m.metodo === "nequi"
+          ? `<div class="hint ${manualCount > 0 ? "hint-warn" : "hint-ok"}">Nequi sin API: ${manualCount} pago${manualCount === 1 ? "" : "s"} por ${money2(manualTotal)}. Ese valor es el que debes escribir.</div>`
+          : "";
         tdC.innerHTML = `
           <input class="in-num no-spin" type="number" step="0.01" min="0"
                  inputmode="decimal" data-in="${escapeHtml(m.metodo)}" placeholder="0.00">
+          ${manualHint}
           ${autoHint}
         `;
       }

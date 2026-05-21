@@ -351,6 +351,9 @@ h2 i{ color:var(--brand); margin-right:8px; }
 .hint-ok{
   color:#0f766e;
 }
+.hint-warn{
+  color:#b45309;
+}
 
 /* métricas */
 .tc-metrics{

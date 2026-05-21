@@ -8111,14 +8111,18 @@ def _turno_identity_payload(turno):
         },
     }
 
-def _medios_payload(turno, auto_confirmados=None):
+def _medios_payload(turno, auto_confirmados=None, manuales_sin_api=None):
     auto_confirmados = auto_confirmados or {}
+    manuales_sin_api = manuales_sin_api or {}
     medios = []
     for m in TurnoCajaMedio.objects.filter(turno=turno).order_by("metodo"):
         metodo = _normalize_metodo(m.metodo)
         if metodo == FACTURAS_PAGADAS_METODO:
             continue
         auto_confirmado = auto_confirmados.get(metodo, Decimal("0.00")) or Decimal("0.00")
+        manual_info = manuales_sin_api.get(metodo) or {}
+        manual_count = int(manual_info.get("cantidad") or 0)
+        manual_total = manual_info.get("total", Decimal("0.00")) or Decimal("0.00")
         medios.append({
             "metodo": metodo,
             "label": DISPLAY_METODO.get(metodo, metodo.replace("_", " ").title()),
@@ -8126,6 +8130,8 @@ def _medios_payload(turno, auto_confirmados=None):
             "contado": float(m.contado) if m.contado is not None else None,
             "diferencia": float(m.diferencia or 0),
             "auto_confirmado": float(auto_confirmado),
+            "manual_sin_api_count": manual_count,
+            "manual_sin_api_total": float(manual_total),
         })
     return medios
 
@@ -8323,9 +8329,83 @@ def _sum_nequi_confirmado_api(turno: TurnoCaja) -> Decimal:
 
     return (total_pagos + total_fallback).quantize(Decimal("0.01"))
 
+
+def _nequi_sin_api_stats(turno: TurnoCaja) -> dict[str, Decimal | int]:
+    """
+    Ventas con pago Nequi dentro del cierre que NO fueron asociadas a una
+    notificacion de MacroDroid. Ese es el valor que el cajero debe digitar.
+    """
+    if not turno.cierre_iniciado:
+        return {"cantidad": 0, "total": Decimal("0.00")}
+
+    start_naive, end_naive = _range_local_naive(turno, turno.cierre_iniciado)
+
+    sql_pagos = """
+        SELECT
+          COUNT(*) as cantidad,
+          COALESCE(SUM(
+            CASE
+              WHEN COALESCE(v.total, 0) <= 0 THEN 0
+              WHEN np.total_nequi > COALESCE(v.total, 0) THEN COALESCE(v.total, 0)
+              ELSE np.total_nequi
+            END
+          ),0) as total
+        FROM (
+            SELECT vp.ventaid, COALESCE(SUM(vp.monto),0) as total_nequi
+            FROM venta_pagos vp
+            WHERE lower(trim(vp.metodo)) = 'nequi'
+            GROUP BY vp.ventaid
+        ) np
+        JOIN ventas v ON v.ventaid = np.ventaid
+        WHERE v.puntopagoid = %s
+          AND (v.fecha + v.hora) >= %s
+          AND (v.fecha + v.hora) <= %s
+          AND NOT EXISTS (
+              SELECT 1
+              FROM notificaciones_nequi nn
+              WHERE nn.ventaid = v.ventaid
+          )
+    """
+    sql_fallback = """
+        SELECT COUNT(*) as cantidad, COALESCE(SUM(v.total),0) as total
+        FROM ventas v
+        WHERE v.puntopagoid = %s
+          AND (v.fecha + v.hora) >= %s
+          AND (v.fecha + v.hora) <= %s
+          AND lower(trim(v.mediopago)) = 'nequi'
+          AND NOT EXISTS (
+              SELECT 1
+              FROM venta_pagos vp
+              WHERE vp.ventaid = v.ventaid
+          )
+          AND NOT EXISTS (
+              SELECT 1
+              FROM notificaciones_nequi nn
+              WHERE nn.ventaid = v.ventaid
+          )
+    """
+
+    with connection.cursor() as cur:
+        cur.execute(sql_pagos, [turno.puntopago_id, start_naive, end_naive])
+        cantidad_pagos, total_pagos = cur.fetchone()
+        cur.execute(sql_fallback, [turno.puntopago_id, start_naive, end_naive])
+        cantidad_fallback, total_fallback = cur.fetchone()
+
+    return {
+        "cantidad": int(cantidad_pagos or 0) + int(cantidad_fallback or 0),
+        "total": (_to_decimal(total_pagos) + _to_decimal(total_fallback)).quantize(Decimal("0.01")),
+    }
+
+
 def _auto_confirmados_por_metodo(turno: TurnoCaja) -> dict[str, Decimal]:
     return {
         "nequi": _sum_nequi_confirmado_api(turno),
+    }
+
+
+def _manuales_sin_api_por_metodo(turno: TurnoCaja) -> dict[str, dict[str, Decimal | int]]:
+    return {
+        "nequi": _nequi_sin_api_stats(turno),
     }
 
 def _expected_por_metodo(turno: TurnoCaja) -> tuple[dict[str, Decimal], Decimal, Decimal, Decimal]:
@@ -8532,6 +8612,7 @@ class TurnoCajaIniciarCierreApi(LoginRequiredMixin, View):
 
         _sync_turno_medios_esperados(turno, expected, reset_contados=reset_contados)
         auto_confirmados = _auto_confirmados_por_metodo(turno)
+        manuales_sin_api = _manuales_sin_api_por_metodo(turno)
 
         return JsonResponse({
             "success": True,
@@ -8544,8 +8625,16 @@ class TurnoCajaIniciarCierreApi(LoginRequiredMixin, View):
             "esperado_no_efectivo": float(esperado_no_efectivo),
             "puntopago": {"id": turno.puntopago_id, "nombre": getattr(turno.puntopago, "nombre", str(turno.puntopago_id))},
             "cajero": {"id": turno.cajero_id, "nombreusuario": _turno_label_usuario(turno.cajero)},
-            "medios": _medios_payload(turno, auto_confirmados=auto_confirmados),
+            "medios": _medios_payload(
+                turno,
+                auto_confirmados=auto_confirmados,
+                manuales_sin_api=manuales_sin_api,
+            ),
             "auto_confirmados": {k: float(v or 0) for k, v in auto_confirmados.items()},
+            "manuales_sin_api": {
+                k: {"cantidad": int(v.get("cantidad") or 0), "total": float(v.get("total") or 0)}
+                for k, v in manuales_sin_api.items()
+            },
 
             # ✅ CLAVE
             "hide_bd_cols": _hide_bd_cols_for_user(request.user),
@@ -8602,6 +8691,7 @@ class TurnoCajaCerrarApi(LoginRequiredMixin, View):
         expected, esperado_total, esperado_efectivo, esperado_no_efectivo = _expected_por_metodo(turno)
         _sync_turno_medios_esperados(turno, expected, reset_contados=False)
         auto_confirmados = _auto_confirmados_por_metodo(turno)
+        manuales_sin_api = _manuales_sin_api_por_metodo(turno)
 
         medios_db = {_normalize_metodo(m.metodo): m for m in turno.medios.select_for_update().all()}
 
@@ -8747,6 +8837,10 @@ class TurnoCajaCerrarApi(LoginRequiredMixin, View):
             "deuda_total": float(turno.deuda_total),
             "facturas_pagadas": float(facturas_pagadas),
             "auto_confirmados": {k: float(v or 0) for k, v in auto_confirmados.items()},
+            "manuales_sin_api": {
+                k: {"cantidad": int(v.get("cantidad") or 0), "total": float(v.get("total") or 0)}
+                for k, v in manuales_sin_api.items()
+            },
             "retiro_url": reverse("turno_caja_retiro", kwargs={"turno_id": turno.id}),
             "msg": msg,
 
@@ -9406,6 +9500,7 @@ class TurnoCajaRecuperarOIniciarView(LoginRequiredMixin, View):
                 expected, esperado_total, esperado_efectivo, esperado_no_efectivo = _expected_por_metodo(turno)
                 _sync_turno_medios_esperados(turno, expected, reset_contados=False)
                 auto_confirmados = _auto_confirmados_por_metodo(turno)
+                manuales_sin_api = _manuales_sin_api_por_metodo(turno)
                 turno.esperado_total = esperado_total
                 turno.ventas_total = esperado_total
                 turno.ventas_efectivo = esperado_efectivo
@@ -9423,8 +9518,16 @@ class TurnoCajaRecuperarOIniciarView(LoginRequiredMixin, View):
                     "puntopago": {"id": turno.puntopago_id, "nombre": getattr(turno.puntopago, "nombre", str(turno.puntopago_id))},
                     "cajero": {"id": turno.cajero_id, "nombreusuario": _turno_label_usuario(turno.cajero)},
                     "esperado_total": float(esperado_total),
-                    "medios": _medios_payload(turno, auto_confirmados=auto_confirmados),
+                    "medios": _medios_payload(
+                        turno,
+                        auto_confirmados=auto_confirmados,
+                        manuales_sin_api=manuales_sin_api,
+                    ),
                     "auto_confirmados": {k: float(v or 0) for k, v in auto_confirmados.items()},
+                    "manuales_sin_api": {
+                        k: {"cantidad": int(v.get("cantidad") or 0), "total": float(v.get("total") or 0)}
+                        for k, v in manuales_sin_api.items()
+                    },
                     "hide_bd_cols": _hide_bd_cols_for_user(request.user),
                 })
 
