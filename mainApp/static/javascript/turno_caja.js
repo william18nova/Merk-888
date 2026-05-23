@@ -809,6 +809,8 @@
         metodo: (x.metodo || "").toLowerCase().trim(),
         contado: x.contado ?? null,
         auto_confirmado: num(x.auto_confirmado || 0),
+        manual_sin_api_count: Math.max(0, Math.floor(num(x.manual_sin_api_count || 0))),
+        manual_sin_api_total: num(x.manual_sin_api_total || 0),
         label:
           x.label ||
           (x.metodo || "").replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()),
@@ -1058,14 +1060,31 @@
   /* ============================================================
      Init
      ============================================================ */
-  showSection("start");
+  function readInitialTurno() {
+    const el = document.getElementById("turno-activo-inicial");
+    if (!el) return null;
+    try {
+      const data = JSON.parse(el.textContent || "null");
+      return data && data.turno_id ? data : null;
+    } catch {
+      return null;
+    }
+  }
+
   buildCloseDenomInputs();
   showCloseSubstep("cash");
   refreshCloseCashTotal();
   refreshStartValidity();
 
-  // auto-foco al primer campo
-  setTimeout(() => ppInp?.focus(), 50);
+  const initialTurno = readInitialTurno();
+  if (initialTurno) {
+    hydrateTurno(initialTurno);
+    ok(initialTurno.estado === "CIERRE" ? "Cierre pendiente recuperado." : "Turno abierto recuperado.");
+  } else {
+    showSection("start");
+    // auto-foco al primer campo
+    setTimeout(() => ppInp?.focus(), 50);
+  }
 
   // limpia contados huérfanos en localStorage (>24h) — pequeño housekeeping
   try {

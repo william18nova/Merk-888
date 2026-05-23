@@ -286,6 +286,7 @@
     </div>
   </div>
 
+  {{ turno_activo_inicial|json_script:"turno-activo-inicial" }}
   <script>
     const PP_AC_URL      = "{% url 'turno_caja_puntopago_ac' %}";
     const CAJERO_AC_URL  = "{% url 'turno_caja_cajero_ac' %}";
@@ -295,5 +296,5 @@
     const API_CERRAR     = "{% url 'turno_caja_cerrar' %}";
   </script>
 
-  <script defer src="{% static 'javascript/turno_caja.js' %}?v=15"></script>
+  <script defer src="{% static 'javascript/turno_caja.js' %}?v=16"></script>
 {% endblock %}

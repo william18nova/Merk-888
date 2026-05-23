@@ -8408,6 +8408,56 @@ def _manuales_sin_api_por_metodo(turno: TurnoCaja) -> dict[str, dict[str, Decima
         "nequi": _nequi_sin_api_stats(turno),
     }
 
+
+def _turno_frontend_payload(turno: TurnoCaja, user=None) -> dict:
+    payload = {
+        "success": True,
+        "modo": "AUTO_RECUPERADO",
+        "turno_id": turno.pk,
+        "estado": turno.estado,
+        "inicio": _iso_dt(turno.inicio),
+        "cierre_iniciado": _iso_dt(turno.cierre_iniciado) if turno.cierre_iniciado else None,
+        "base": float(turno.saldo_apertura_efectivo or 0),
+        "puntopago": {
+            "id": turno.puntopago_id,
+            "nombre": getattr(turno.puntopago, "nombre", str(turno.puntopago_id)),
+        },
+        "cajero": {
+            "id": turno.cajero_id,
+            "nombreusuario": _turno_label_usuario(turno.cajero),
+        },
+        "hide_bd_cols": _hide_bd_cols_for_user(user) if user is not None else False,
+    }
+
+    if turno.estado == "CIERRE":
+        expected, esperado_total, esperado_efectivo, esperado_no_efectivo = _expected_por_metodo(turno)
+        _sync_turno_medios_esperados(turno, expected, reset_contados=False)
+        auto_confirmados = _auto_confirmados_por_metodo(turno)
+        manuales_sin_api = _manuales_sin_api_por_metodo(turno)
+
+        turno.esperado_total = esperado_total
+        turno.ventas_total = esperado_total
+        turno.ventas_efectivo = esperado_efectivo
+        turno.ventas_no_efectivo = esperado_no_efectivo
+        turno.save(update_fields=["esperado_total", "ventas_total", "ventas_efectivo", "ventas_no_efectivo"])
+
+        payload.update({
+            "esperado_total": float(esperado_total),
+            "medios": _medios_payload(
+                turno,
+                auto_confirmados=auto_confirmados,
+                manuales_sin_api=manuales_sin_api,
+            ),
+            "auto_confirmados": {k: float(v or 0) for k, v in auto_confirmados.items()},
+            "manuales_sin_api": {
+                k: {"cantidad": int(v.get("cantidad") or 0), "total": float(v.get("total") or 0)}
+                for k, v in manuales_sin_api.items()
+            },
+        })
+
+    return payload
+
+
 def _expected_por_metodo(turno: TurnoCaja) -> tuple[dict[str, Decimal], Decimal, Decimal, Decimal]:
     """
     Retorna:
@@ -8450,7 +8500,19 @@ class TurnoCajaPageView(LoginRequiredMixin, TemplateView):
         # Opción B: si tienes un campo rol (ej: user.rol)
         # hide_bd = getattr(self.request.user, "rol", "") in ["Cajero", "Auxiliar"]
 
+        turno_activo = (
+            TurnoCaja.objects
+            .select_related("puntopago", "cajero")
+            .filter(cajero=self.request.user, estado__in=["ABIERTO", "CIERRE"])
+            .order_by("-inicio")
+            .first()
+        )
+
         ctx["hide_bd_cols"] = hide_bd
+        ctx["turno_activo_inicial"] = (
+            _turno_frontend_payload(turno_activo, self.request.user)
+            if turno_activo else None
+        )
         return ctx
 
 # =========================
