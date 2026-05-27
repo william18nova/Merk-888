@@ -158,12 +158,13 @@ html, body {
 .nv__dd li { width: 100%; }
 .nv__dd a { display:block; padding:10px 12px; border-radius:10px; color:var(--nv-text-muted); text-decoration:none; font:600 13px/1 "Inter", system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
 .nv__dd a:hover { background: var(--nv-bg-hover); color: var(--nv-text); }
+.nv__item.has-dd.is-hover-open > .nv__dd { display: block; }
 
 @media (hover: hover) and (pointer: fine) {
-  .nv__item.has-dd:hover > .nv__dd,
-  .nv__item.has-dd:focus-within > .nv__dd,
-  .nv__item.has-dd.is-hover-open > .nv__dd { display: block; }
-  .nv__item.has-dd::after { content:""; position:absolute; left:0; right:0; top:100%; height:22px; }
+  .nv__item.has-dd.is-hover-open::after { content:""; position:absolute; left:0; right:0; top:100%; height:22px; }
+  .nv.is-links-wrapped .nv__item.has-dd > a{
+    cursor:pointer;
+  }
 }
 
 .nv__links > li:nth-last-child(-n+4) > .nv__dd { right: auto; }

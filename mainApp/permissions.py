@@ -506,7 +506,6 @@ PERMISSION_IMPLICATIONS = {
     "caja_turnos_editar": ["caja_admin"],
     "caja_retiro_base": ["caja_turno"],
     "inventarios_fotos": ["inventarios_editar"],
-    "metricas_negocio": ["ventas_ver", "ventas_diarias", "reportes_ventas_producto"],
 }
 
 

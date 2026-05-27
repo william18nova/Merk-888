@@ -17,7 +17,7 @@
     {% for item in nav_menu %}
       {% if item.children %}
         <li class="nv__item has-dd {% if item.active %}is-parent-active{% endif %}">
-          <a href="{{ item.url }}">{{ item.label }}</a>
+          <a href="{{ item.url }}" aria-haspopup="true" aria-expanded="false">{{ item.label }}</a>
           <ul class="nv__dd">
             {% for child in item.children %}
               <li>

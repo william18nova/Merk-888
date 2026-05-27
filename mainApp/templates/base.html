@@ -9,7 +9,7 @@
   <link rel="icon" href="{% static 'images/logoNovaAdvance.png' %}">
 
   <!-- Estilos globales y del navbar -->
-  <link rel="stylesheet" href="{% static 'css/navbar.css' %}"/>
+  <link rel="stylesheet" href="{% static 'css/navbar.css' %}?v=3"/>
 
   {% block extra_head %}{% endblock %}
 </head>
@@ -24,7 +24,7 @@
 
   <!-- JS del navbar (menú móvil) -->
   <script defer src="{% static 'javascript/number_input_wheel_guard.js' %}"></script>
-  <script defer src="{% static 'javascript/navbar.js' %}?v=2"></script>
+  <script defer src="{% static 'javascript/navbar.js' %}?v=3"></script>
   <script defer src="{% static 'javascript/page_navigation.js' %}?v=1"></script>
   {% block scripts %}{% endblock %}
 </body>
