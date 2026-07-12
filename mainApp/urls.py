@@ -84,6 +84,11 @@ urlpatterns = [
 
 
     path('agregar_inventario/', InventarioCreateAJAXView.as_view(), name='agregar_inventario'),
+    path(
+        'autocomplete/inventario/sucursal/agregar/',
+        views.sucursal_inventario_agregar_autocomplete,
+        name='sucursal_inventario_agregar_autocomplete',
+    ),
     # Ruta para autocompletar Sucursales sin Inventario
 
     path("sucursal_inventario/", views.sucursal_sin_inventario_autocomplete, name="sucursal_sin_inventario_autocomplete"),

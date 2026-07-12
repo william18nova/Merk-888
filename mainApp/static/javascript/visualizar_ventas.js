@@ -21,6 +21,35 @@ $(function () {
       .replace(/\b\w/g, c => c.toUpperCase());
   }
 
+  function escapeHtml(value){
+    return String(value ?? "").replace(/[&<>"']/g, char => ({
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      '"': "&quot;",
+      "'": "&#039;"
+    })[char]);
+  }
+
+  function renderMedioPago(value, type, row){
+    if (type !== "display") return value ?? "";
+
+    const method = escapeHtml(prettyMedioPago(value));
+    if (!row || !row.nequi_payment) return method;
+
+    const linked = row.nequi_linked === true;
+    const modifier = linked ? "linked" : "unlinked";
+    const icon = linked ? "fa-circle-check" : "fa-triangle-exclamation";
+    const label = linked ? "Nequi vinculado" : "Nequi no vinculado";
+
+    return `<span class="venta-payment-cell">
+      <span class="venta-payment-cell__method">${method}</span>
+      <span class="nequi-link-badge nequi-link-badge--${modifier}">
+        <i class="fas ${icon}" aria-hidden="true"></i>${label}
+      </span>
+    </span>`;
+  }
+
   // ✅ Estado del filtro por producto (id seleccionado o término libre)
   const productoFiltro = { id: "", term: "" };
   const advancedFilterSelector = [
@@ -30,6 +59,7 @@ $(function () {
     "#filtro-hora-hasta",
     "#filtro-puntopago",
     "#filtro-mediopago",
+    "#filtro-nequi-status",
     "#filtro-empleado",
     "#filtro-cliente",
     "#filtro-total-min",
@@ -55,6 +85,7 @@ $(function () {
       sucursal_id: $("#filtro-sucursal").val() || "",
       puntopago_id: $("#filtro-puntopago").val() || "",
       mediopago: $("#filtro-mediopago").val() || "",
+      nequi_status: $("#filtro-nequi-status").val() || "",
       empleado_id: $("#filtro-empleado").val() || "",
       cliente_term: ($("#filtro-cliente").val() || "").trim(),
       total_min: $("#filtro-total-min").val() || "",
@@ -124,11 +155,8 @@ $(function () {
       // ✅ aquí se arregla SOLO VISUALMENTE
       {
         data: "mediopago",
-        render: function (data, type) {
-          // para ordenar/buscar, usa el valor original
-          if (type === "sort" || type === "type") return (data ?? "");
-          // para mostrar/filtrar, usa el bonito
-          return prettyMedioPago(data);
+        render: function (data, type, row) {
+          return renderMedioPago(data, type, row);
         }
       }
     ],

@@ -377,6 +377,11 @@
   const baseInp = $("#base");
   const togglePass = $("#togglePass");
 
+  const defaultCajero = {
+    id: (cajHid?.value || "").trim(),
+    text: (cajInp?.value || "").trim(),
+  };
+
   const btnIniciar   = $("#btnIniciar");
   const btnIniCierre = $("#btnIniciarCierre");
   const btnCerrar    = $("#btnCerrar");
@@ -604,7 +609,10 @@
       if (ck) ck.classList.toggle("on", isOk);
     });
 
-    if (btnIniciar) btnIniciar.disabled = !(okPP && okCaj && okPass) || inflightAction === "iniciar";
+    // Debe seguir siendo clicable para poder mostrar los mensajes de
+    // validación. Los gestores de contraseñas pueden rellenar el texto del
+    // cajero sin actualizar el ID oculto del autocomplete.
+    if (btnIniciar) btnIniciar.disabled = inflightAction === "iniciar";
   }
 
   ppInp?.addEventListener("ac:selected", refreshStartValidity);
@@ -850,11 +858,16 @@
 
     const pp_id = (ppHid?.value || "").trim();
     const cajero_id = (cajHid?.value || "").trim();
+    const cajero_nombre = (cajInp?.value || "").trim();
     const password = passInp?.value || "";
     const base = baseInp?.value || "0";
 
     if (!pp_id)     { warn("Selecciona un punto de pago.");  ppInp?.focus(); return; }
-    if (!cajero_id) { warn("Selecciona un cajero.");          cajInp?.focus(); return; }
+    if (!cajero_id && !cajero_nombre) {
+      warn("Selecciona un cajero.");
+      cajInp?.focus();
+      return;
+    }
     if (!password)  { warn("Ingresa la contraseña.");         passInp?.focus(); return; }
 
     inflightAction = "iniciar";
@@ -867,6 +880,7 @@
         puntopago_id: pp_id,
         usuario_id: cajero_id,
         cajero_id: cajero_id,
+        cajero_nombre,
         password,
         saldo_apertura_efectivo: base,
       });
@@ -1004,8 +1018,8 @@
 
       if (ppInp)  ppInp.value  = "";
       if (ppHid)  ppHid.value  = "";
-      if (cajInp) cajInp.value = "";
-      if (cajHid) cajHid.value = "";
+      if (cajInp) cajInp.value = defaultCajero.text;
+      if (cajHid) cajHid.value = defaultCajero.id;
       if (passInp) passInp.value = "";
       if (baseInp) baseInp.value = "";
       if (efectivoEntregadoInp) efectivoEntregadoInp.value = "";

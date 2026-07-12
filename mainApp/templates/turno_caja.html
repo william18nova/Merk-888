@@ -52,15 +52,17 @@
           <div class="tc-field">
             <i class="fa-solid fa-user" aria-hidden="true"></i>
             <input id="cajero_ac"
+                   name="username"
                    class="tc-input"
                    placeholder="Buscar cajero…"
-                   autocomplete="off"
+                   autocomplete="username"
+                   value="{{ request.user.nombreusuario }}"
                    role="combobox"
                    aria-autocomplete="list"
                    aria-expanded="false"
                    aria-controls="cajero_box"
                    required>
-            <input type="hidden" id="cajero_id">
+            <input type="hidden" id="cajero_id" value="{{ request.user.pk }}">
             <div id="cajero_box" class="ac-box" role="listbox"></div>
             <i class="tc-check" data-target="cajero_id" aria-hidden="true"></i>
           </div>
@@ -69,6 +71,7 @@
           <div class="tc-field">
             <i class="fa-solid fa-key" aria-hidden="true"></i>
             <input id="password"
+                   name="password"
                    class="tc-input"
                    type="password"
                    placeholder="••••••••"
@@ -296,5 +299,5 @@
     const API_CERRAR     = "{% url 'turno_caja_cerrar' %}";
   </script>
 
-  <script defer src="{% static 'javascript/turno_caja.js' %}?v=17"></script>
+  <script defer src="{% static 'javascript/turno_caja.js' %}?v=18"></script>
 {% endblock %}

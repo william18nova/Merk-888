@@ -588,7 +588,9 @@ class EditarEmpleadoForm(forms.ModelForm):
 
     # ─── validaciones de unicidad ───
     def clean_numerodocumento(self):
-        v = self.cleaned_data["numerodocumento"]
+        v = (self.cleaned_data["numerodocumento"] or "").strip()
+        if not re.fullmatch(r"\d{6,10}", v):
+            raise ValidationError("El documento debe contener entre 6 y 10 dígitos.")
         if Empleado.objects.filter(numerodocumento=v).exclude(pk=self.instance.pk).exists():
             raise ValidationError("Número de documento duplicado.")
         return v
@@ -1355,20 +1357,20 @@ class RolEditarForm(forms.ModelForm):
         return nombre
 
 class InventarioForm(forms.Form):
-    """Formulario «liviano»; solo valida datos mínimos."""
+    """Formulario ligero para agregar productos al inventario de una sucursal."""
 
     # visibles
     sucursal_autocomplete = forms.CharField(
         widget=forms.TextInput(attrs={
             "class": "form-control",
-            "placeholder": "Escriba para buscar sucursal…",
+            "placeholder": "Buscar sucursal…",
             "autocomplete": "off",
         }), required=True)
 
     producto_autocomplete = forms.CharField(
         widget=forms.TextInput(attrs={
             "class": "form-control",
-            "placeholder": "Escriba para buscar producto…",
+            "placeholder": "Nombre, código de barras o ID…",
             "autocomplete": "off",
         }), required=False)
 
@@ -1378,6 +1380,8 @@ class InventarioForm(forms.Form):
             "class": "form-control",
             "placeholder": "Cantidad",
             "min": "1",
+            "max": "2147483647",
+            "inputmode": "numeric",
         }), required=False)
 
     # ocultos
@@ -1396,13 +1400,10 @@ class InventarioForm(forms.Form):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
-        sin_inv = Sucursal.objects.annotate(
-            tiene_inv=Exists(
-                Inventario.objects.filter(sucursalid=OuterRef("pk"))
-            )
-        ).filter(tiene_inv=False)
-
-        self.fields["sucursal"].queryset  = sin_inv
+        # La pantalla permite completar el inventario de cualquier sucursal.
+        # Los productos que ya existen allí se excluyen en el autocomplete y
+        # se vuelven a validar de forma atómica en la vista.
+        self.fields["sucursal"].queryset = Sucursal.objects.all()
         self.fields["productoid"].queryset = Producto.objects.all()
 
     # ----------- validación cruzada -----------

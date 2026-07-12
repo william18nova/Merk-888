@@ -535,6 +535,7 @@ ROUTE_PERMISSIONS = {
     "inventario_plaza_whatsapp": "inventario_plaza_whatsapp",
     "inventario_item_ajax": "inventarios_editar",
     "producto_inventario_autocomplete": "inventarios_crear",
+    "sucursal_inventario_agregar_autocomplete": "inventarios_crear",
     "sucursal_sin_inventario_autocomplete": "inventarios_crear",
     "sucursal_con_inventario_autocomplete": "inventarios_ver",
     "sucursal_inventario_autocomplete": "inventarios_editar",

@@ -5,7 +5,7 @@
 
 {% block extra_head %}
   <link rel="stylesheet" href="{% static 'css/generar_venta.css' %}">
-  <link rel="stylesheet" href="{% static 'css/ver_venta.css' %}">
+  <link rel="stylesheet" href="{% static 'css/ver_venta.css' %}?v=2">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"/>
 {% endblock %}
 
@@ -48,6 +48,13 @@
           <option value="mixto" {% if mp == "mixto" %}selected{% endif %}>Mixto</option>
         </select>
         {% endwith %}
+        {% endif %}
+        {% if nequi_payment %}
+          <div class="nequi-detail-status {% if nequi_linked %}nequi-detail-status--linked{% else %}nequi-detail-status--unlinked{% endif %}"
+               title="{% if nequi_linked %}Notificación Nequi #{{ nequi_notification_id }} vinculada{% else %}Esta venta no tiene una notificación Nequi vinculada{% endif %}">
+            <i class="fas {% if nequi_linked %}fa-circle-check{% else %}fa-triangle-exclamation{% endif %}" aria-hidden="true"></i>
+            <span>Nequi {% if nequi_linked %}vinculado{% else %}no vinculado{% endif %}</span>
+          </div>
         {% endif %}
       </div>
 

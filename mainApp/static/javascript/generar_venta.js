@@ -223,7 +223,8 @@ $(function () {
     isEmployee: false,
     employeeName: "",
     documento: "",
-    employeeHasUser: false
+    employeeHasUser: false,
+    employeeIsWebMaster: false
   };
   const cartAuditSessionItems = new Map();
 
@@ -245,9 +246,17 @@ $(function () {
     return !!(selectedEmployeeClient.isEmployee && String($("#cliente_id").val() || "").trim());
   }
 
+  function isWebMasterEmployeeClientSelected() {
+    return !!(
+      isEmployeeClientSelected()
+      && selectedEmployeeClient.employeeIsWebMaster
+    );
+  }
+
   function employeeDiscountAmount() {
     const base = roundAccountAmount(runningTotal);
     if (!isEmployeeClientSelected() || base <= 0) return 0;
+    if (isWebMasterEmployeeClientSelected()) return base;
     return roundAccountAmount(base * 0.10);
   }
 
@@ -265,6 +274,7 @@ $(function () {
     const totalWithDiscount = saleTotalForPayment();
 
     $box.toggle(active);
+    $totalEl.text(money(totalWithDiscount));
     if (!active) {
       $("#employee-password-input").val("");
       $hidEmpleadoPassword.val("");
@@ -272,13 +282,21 @@ $(function () {
     }
 
     const employeeName = selectedEmployeeClient.employeeName || "Empleado";
-    $summary.text(`${employeeName}: descuento 10% (${money(discount)}). Total con descuento: ${money(totalWithDiscount)}.`);
+    const webMasterBenefit = isWebMasterEmployeeClientSelected();
+    $box.find("strong").first().text(
+      webMasterBenefit ? "Beneficio Web Master" : "Descuento de empleado"
+    );
+    if (webMasterBenefit) {
+      $summary.text(`${employeeName}: beneficio Web Master del 100% (${money(discount)}). Total a pagar: ${money(0)}.`);
+    } else {
+      $summary.text(`${employeeName}: descuento 10% (${money(discount)}). Total con descuento: ${money(totalWithDiscount)}.`);
+    }
   }
 
   function setTotal(v) {
     const safe = Number(v);
     runningTotal = Number.isFinite(safe) ? safe : 0;
-    $totalEl.text(money(roundAccountAmount(runningTotal)));
+    $totalEl.text(money(saleTotalForPayment()));
 
     if ($modal && $modal.length && $modal.is(":visible") && $modalTotal && $modalTotal.length) {
       refreshEmployeeDiscountUI();
@@ -652,7 +670,13 @@ $(function () {
     try { $("#cliente_id").val(""); } catch {}
     $inpCliente.val("");
     selectedClientLabel = "";
-    selectedEmployeeClient = { isEmployee: false, employeeName: "", documento: "", employeeHasUser: false };
+    selectedEmployeeClient = {
+      isEmployee: false,
+      employeeName: "",
+      documento: "",
+      employeeHasUser: false,
+      employeeIsWebMaster: false
+    };
     $("#employee-password-input").val("");
     $hidEmpleadoPassword.val("");
     refreshEmployeeDiscountUI();
@@ -2808,7 +2832,10 @@ $(function () {
       documento: c.documento || "",
       isEmployee: !!(c.is_employee || c.isEmployee),
       employeeName: c.employee_name || c.employeeName || "",
-      employeeHasUser: !!(c.employee_has_user || c.employeeHasUser)
+      employeeHasUser: !!(c.employee_has_user || c.employeeHasUser),
+      employeeIsWebMaster: !!(
+        c.employee_is_web_master || c.employeeIsWebMaster
+      )
     };
   }
 
@@ -2916,7 +2943,8 @@ $(function () {
         isEmployee: !!item.isEmployee,
         employeeName: item.employeeName || label,
         documento: item.documento || "",
-        employeeHasUser: !!item.employeeHasUser
+        employeeHasUser: !!item.employeeHasUser,
+        employeeIsWebMaster: !!item.employeeIsWebMaster
       };
       $inpCliente.val(label);
       $("#cliente_id").val(id);
@@ -2929,7 +2957,13 @@ $(function () {
   $inpCliente.on("input.employeeDiscount", function(){
     if (String(this.value || "") !== selectedClientLabel) {
       selectedClientLabel = "";
-      selectedEmployeeClient = { isEmployee: false, employeeName: "", documento: "", employeeHasUser: false };
+      selectedEmployeeClient = {
+        isEmployee: false,
+        employeeName: "",
+        documento: "",
+        employeeHasUser: false,
+        employeeIsWebMaster: false
+      };
       $("#cliente_id").val("");
       $("#employee-password-input").val("");
       $hidEmpleadoPassword.val("");
@@ -4184,7 +4218,10 @@ $(function () {
     if (isEmployeeClientSelected()) {
       const pass = String($("#employee-password-input").val() || "").trim();
       if (!pass) {
-        showMixError("El empleado comprador debe escribir su contrasena para autorizar el descuento.");
+        const benefitName = isWebMasterEmployeeClientSelected()
+          ? "el beneficio Web Master"
+          : "el descuento";
+        showMixError(`El empleado comprador debe escribir su contrasena para autorizar ${benefitName}.`);
         $("#employee-password-input").focus();
         return;
       }
@@ -4389,6 +4426,15 @@ $(function () {
     return m === "mixto";
   }
 
+  function buildSaleSuccessMessage(response, total, changeMessage = ""){
+    const nequiMessage = response && response.nequi_payment
+      ? `\nPago Nequi: ${response.nequi_linked ? "✅ VINCULADO" : "⚠️ NO VINCULADO"}`
+      : "";
+
+    return `✅ Venta registrada
+Total: ${money(total)}${changeMessage}${nequiMessage}`;
+  }
+
   $("#venta-form").off("submit").on("submit", function (e) {
     e.preventDefault();
     if (saleSubmitting) return;
@@ -4437,7 +4483,12 @@ $(function () {
       }
 
       const pagos = readPagosFromHidden();
-      const totalNum = saleTotalForPayment();
+      const hasServerTotal = r.sale_total !== undefined
+        && r.sale_total !== null
+        && String(r.sale_total).trim() !== "";
+      const totalNum = hasServerTotal
+        ? safeNumber(r.sale_total)
+        : (r.web_master_free_sale ? 0 : saleTotalForPayment());
 
       const esMixto = isMixtoFromPagos(pagos);
       const ef = (pagos || []).find(p => String(p.medio_pago || "").toLowerCase() === "efectivo");
@@ -4462,28 +4513,29 @@ $(function () {
         receiptText += `\n\n\n\n\n\n\n\n\n\n\n\n\n`;
       }
 
-      // ✅ Mandar factura y abrir cajón al MISMO MOMENTO.
+      // ✅ Mandar factura y, solo si hay valor por cobrar, abrir el cajón.
       // En modo ultra usa /print-fast y /kick-fast con text/plain + sendBeacon/XHR, sin Promises ni headers personalizados.
       let printJobs = [];
+      const shouldKickCashDrawer = totalNum > 0;
       if (FAST_PRINT_FIRE_AND_FORGET) {
         const useUltra = FAST_POS_ULTRA_ENABLED && (FAST_POS_ULTRA_FORCE || posAgentUltraReady);
 
         if (useUltra) {
           agentPrintUltra(receiptText);
-          agentKickUltra();
+          if (shouldKickCashDrawer) agentKickUltra();
         } else {
           const printJob = agentPrintFast(receiptText);
-          const kickJob = agentKickFast();
-          printJobs.push(printJob, kickJob);
+          printJobs.push(printJob);
+          if (shouldKickCashDrawer) printJobs.push(agentKickFast());
 
           // ✅ Si aún no se detectó el modo ultra, deja la detección corriendo para la próxima venta.
           agentDetectUltraFast();
         }
       } else {
-        printJobs = [
-          agentPrintSafe(receiptText, { timeout: 650 }),
-          agentKickSafe({ timeout: 300 })
-        ];
+        printJobs = [agentPrintSafe(receiptText, { timeout: 650 })];
+        if (shouldKickCashDrawer) {
+          printJobs.push(agentKickSafe({ timeout: 300 }));
+        }
       }
 
       if (printJobs.length) {
@@ -4496,8 +4548,7 @@ $(function () {
 
       const msgCambio = (totalNum > 0 && ef && !esMixto) ? `
 Cambio: ${money(cambio)}` : "";
-      const okMsg = `✅ Venta registrada
-Total: ${money(totalNum)}${msgCambio}`;
+      const okMsg = buildSaleSuccessMessage(r, totalNum, msgCambio);
 
       const finishSaleUi = () => {
         // ✅ SIN RECARGAR: limpiar TODO para la siguiente venta.

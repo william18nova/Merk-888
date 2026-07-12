@@ -92,6 +92,7 @@ import pytz
 from typing import List, Dict, Any
 from urllib.parse import parse_qsl
 from .permissions import clear_permission_cache, permission_catalog, sync_permission_catalog, user_can_access_url_name, user_has_permission
+from .services.employee_client import EmployeeClientSyncError
 
 
 def _round_account_peso(value) -> Decimal:
@@ -903,20 +904,19 @@ class InventarioCreateAJAXView(LoginRequiredMixin, View):
 
     # ----------  GET ----------
     def get(self, request):
-        form  = self.form_class()
-        sucs  = (Sucursal.objects
-                 .annotate(inv_count=Count("inventario"))
-                 .filter(inv_count=0))
-        prods = Producto.objects.all()
+        form = self.form_class(initial={"cantidad": 1})
+        sucursales = Sucursal.objects.order_by("nombre")
+        available_sucursal_count = sucursales.count()
+        product_count = Producto.objects.count()
 
-        if not sucs.exists():
-            messages.error(request,
-                "Todas las sucursales ya tienen inventario activo.")
-        if not prods.exists():
-            messages.error(request,
-                "No hay productos en el sistema. Agrega productos primero.")
-
-        ctx = {"form": form, "sucursales": sucs, "productos": prods}
+        ctx = {
+            "form": form,
+            "sucursales": sucursales,
+            "available_sucursal_count": available_sucursal_count,
+            "product_count": product_count,
+            "has_available_sucursales": available_sucursal_count > 0,
+            "has_products": product_count > 0,
+        }
         return render(request, self.template_name, ctx)
 
     # ----------  POST ----------
@@ -927,68 +927,205 @@ class InventarioCreateAJAXView(LoginRequiredMixin, View):
         if not form.is_valid():
             return JsonResponse({
                 "success": False,
-                "errors" : json.dumps(form.errors.get_json_data(escape_html=True))
-            })
+                "errors": form.errors.get_json_data(escape_html=True),
+            }, status=400)
 
-        sucursal = form.cleaned_data["sucursal"]
+        # Serializa altas concurrentes sobre la misma sucursal. Esto evita que
+        # dos solicitudes creen el mismo producto al mismo tiempo incluso si
+        # la base histórica todavía no tiene una restricción UNIQUE compuesta.
+        sucursal = Sucursal.objects.select_for_update().get(
+            pk=form.cleaned_data["sucursal"].pk
+        )
         raw_list = request.POST.get("inventarios_temp", "[]")
 
         try:
             items = json.loads(raw_list)
-        except json.JSONDecodeError:
-            items = []
+        except (TypeError, json.JSONDecodeError):
+            items = None
 
-        if not items:
+        if not isinstance(items, list) or not items:
             return JsonResponse({
                 "success": False,
-                "errors" : json.dumps({
+                "errors": {
                     "inventarios_temp": [{"message": "Debe agregar al menos un producto."}]
-                })
-            })
+                },
+            }, status=400)
 
-        # 2) Construir lotes
-        batch = []
-        for it in items:
-            pid = it.get("productId")
-            qty = it.get("cantidad")
-            if not (pid and qty):
+        if len(items) > 500:
+            return JsonResponse({
+                "success": False,
+                "errors": {
+                    "inventarios_temp": [{
+                        "message": "Solo se permiten 500 productos por operación."
+                    }]
+                },
+            }, status=400)
+
+        # 2) Normalizar y validar el lote completo. Nunca se guarda un lote
+        # parcial: cualquier fila inválida devuelve un error visible.
+        normalized = []
+        seen_ids = set()
+        row_errors = []
+
+        for index, item in enumerate(items, start=1):
+            if not isinstance(item, dict):
+                row_errors.append(f"La fila {index} no tiene un formato válido.")
                 continue
 
-            producto = get_object_or_404(Producto, pk=pid)
+            raw_pid = item.get("productId")
+            raw_qty = item.get("cantidad")
 
-            # evitar duplicados
-            if Inventario.objects.filter(productoid=producto,
-                                         sucursalid=sucursal).exists():
+            try:
+                if isinstance(raw_pid, bool):
+                    raise ValueError
+                product_id_text = str(raw_pid).strip()
+                if not re.fullmatch(r"[0-9]{1,10}", product_id_text):
+                    raise ValueError
+                product_id = int(product_id_text)
+                if product_id <= 0 or product_id > 2147483647:
+                    raise ValueError
+            except (TypeError, ValueError):
+                row_errors.append(f"La fila {index} no tiene un producto válido.")
                 continue
 
             try:
-                qty_int = int(qty)
-                if qty_int <= 0:
+                if isinstance(raw_qty, bool):
                     raise ValueError
-            except ValueError:
+                quantity_text = str(raw_qty).strip()
+                if not re.fullmatch(r"[0-9]{1,10}", quantity_text):
+                    raise ValueError
+                quantity = int(quantity_text)
+                if quantity < 1 or quantity > 2147483647:
+                    raise ValueError
+            except (TypeError, ValueError):
+                row_errors.append(
+                    f"La cantidad de la fila {index} debe ser un entero mayor que cero."
+                )
                 continue
 
-            batch.append(Inventario(
-                productoid = producto,
-                sucursalid = sucursal,
-                cantidad   = qty_int
-            ))
+            if product_id in seen_ids:
+                row_errors.append(f"El producto de la fila {index} está repetido.")
+                continue
 
-        if not batch:
+            seen_ids.add(product_id)
+            normalized.append((product_id, quantity))
+
+        if row_errors:
             return JsonResponse({
                 "success": False,
-                "errors" : json.dumps({
-                    "__all__": [{"message": "Nada que guardar."}]
-                })
-            })
+                "errors": {
+                    "inventarios_temp": [{"message": message} for message in row_errors[:8]]
+                },
+            }, status=400)
 
-        # 3) Guardar
-        Inventario.objects.bulk_create(batch)
+        products_by_id = Producto.objects.in_bulk(seen_ids)
+        missing_ids = sorted(seen_ids.difference(products_by_id))
+        if missing_ids:
+            return JsonResponse({
+                "success": False,
+                "errors": {
+                    "inventarios_temp": [{
+                        "message": "Uno o más productos ya no existen. Actualiza la lista e inténtalo de nuevo."
+                    }]
+                },
+            }, status=400)
 
-        # ► ¡Ya NO se añade messages.success aquí! ◄
-        # messages.success(request, self.success_msg)
+        existing_ids = set(
+            Inventario.objects.filter(
+                sucursalid=sucursal,
+                productoid_id__in=seen_ids,
+            ).values_list("productoid_id", flat=True)
+        )
+        if existing_ids:
+            existing_names = [products_by_id[pid].nombre for pid in sorted(existing_ids)]
+            preview = ", ".join(existing_names[:3])
+            suffix = "…" if len(existing_names) > 3 else ""
+            return JsonResponse({
+                "success": False,
+                "errors": {
+                    "inventarios_temp": [{
+                        "message": (
+                            f"Ya existe inventario para: {preview}{suffix}. "
+                            "Retíralos de la lista o actualiza la búsqueda."
+                        )
+                    }]
+                },
+            }, status=409)
 
-        return JsonResponse({"success": True})
+        batch = [
+            Inventario(
+                productoid=products_by_id[product_id],
+                sucursalid=sucursal,
+                cantidad=quantity,
+            )
+            for product_id, quantity in normalized
+        ]
+
+        # 3) Guardar todo el lote de una sola vez. La restricción única de la
+        # base cubre también carreras con otros flujos que crean inventario.
+        try:
+            with transaction.atomic():
+                Inventario.objects.bulk_create(batch)
+        except IntegrityError:
+            return JsonResponse({
+                "success": False,
+                "errors": {
+                    "inventarios_temp": [{
+                        "message": (
+                            "Otro proceso agregó uno de estos productos mientras trabajabas. "
+                            "Actualiza la búsqueda e inténtalo de nuevo."
+                        )
+                    }]
+                },
+            }, status=409)
+
+        item_count = len(batch)
+        return JsonResponse({
+            "success": True,
+            "message": (
+                f"Se agregaron {item_count} producto"
+                f"{'s' if item_count != 1 else ''} al inventario de {sucursal.nombre}."
+            ),
+            "item_count": item_count,
+            "branch_name": sucursal.nombre,
+            "redirect_url": reverse("visualizar_inventarios"),
+        })
+
+
+# ---------- autocompletado: todas las sucursales para agregar inventario ----------
+@login_required
+def sucursal_inventario_agregar_autocomplete(request):
+    term = (request.GET.get("term") or "").strip()[:120]
+    try:
+        page = max(int(request.GET.get("page") or 1), 1)
+    except (TypeError, ValueError):
+        page = 1
+
+    qs = Sucursal.objects.annotate(
+        inventory_items=Count("inventario__productoid", distinct=True)
+    )
+    if term:
+        qs = qs.filter(
+            Q(nombre__icontains=term)
+            | Q(direccion__icontains=term)
+            | Q(telefono__icontains=term)
+        )
+
+    paginator = Paginator(qs.order_by("nombre", "sucursalid"), 20)
+    page_obj = paginator.get_page(page)
+    results = [{
+        "id": branch.pk,
+        "text": branch.nombre,
+        "address": branch.direccion or "",
+        "phone": branch.telefono or "",
+        "inventory_count": branch.inventory_items,
+    } for branch in page_obj.object_list]
+
+    return JsonResponse({
+        "results": results,
+        "has_more": page_obj.has_next(),
+        "total": paginator.count,
+    })
 
 
 # ---------- autocompletado ①: sucursales sin inventario ----------
@@ -1058,15 +1195,82 @@ def sucursal_sin_inventario_autocomplete(request):
         "has_more": end < total
     })
 
-# ---------- autocompletado ②: productos (excluye IDs recibidos) ----------
-class ProductoAutocomplete(PaginatedAutocompleteMixin):
-    model = Producto
-    id_field = "productoid"
+# ---------- autocompletado ②: productos disponibles en la sucursal ----------
+class ProductoAutocomplete(LoginRequiredMixin, View):
+    page_size = 25
 
-    def extra_filter(self, qs, request):
-        excluded = request.GET.get("excluded", "")
-        ids      = [int(x) for x in excluded.split(",") if x.isdigit()]
-        return qs.exclude(productoid__in=ids) if ids else qs
+    def get(self, request):
+        term = (request.GET.get("term") or "").strip()[:120]
+        branch_id = (request.GET.get("sucursal_id") or "").strip()
+
+        try:
+            page = max(int(request.GET.get("page") or 1), 1)
+        except (TypeError, ValueError):
+            page = 1
+
+        if not re.fullmatch(r"[0-9]{1,10}", branch_id):
+            return JsonResponse({"results": [], "has_more": False, "total": 0})
+
+        branch_id_value = int(branch_id)
+        if branch_id_value < 1 or branch_id_value > 2147483647:
+            return JsonResponse({"results": [], "has_more": False, "total": 0})
+
+        if not Sucursal.objects.filter(pk=branch_id_value).exists():
+            return JsonResponse({"results": [], "has_more": False, "total": 0})
+
+        excluded_ids = set()
+        for value in (request.GET.get("excluded") or "").split(",")[:500]:
+            clean_value = value.strip()
+            if not re.fullmatch(r"[0-9]{1,10}", clean_value):
+                continue
+            parsed_value = int(clean_value)
+            if 0 < parsed_value <= 2147483647:
+                excluded_ids.add(parsed_value)
+
+        # Formato compacto usado por la pantalla nueva: IDs ordenados como
+        # deltas en base36 (p. ej. "a.2.1z"). Mantiene la URL muy por debajo
+        # de los límites habituales de navegadores y proxies.
+        compact_excluded = (request.GET.get("excluded_compact") or "")[:4000]
+        running_id = 0
+        for value in compact_excluded.split(".")[:500]:
+            if not re.fullmatch(r"[0-9a-z]{1,7}", value):
+                continue
+            running_id += int(value, 36)
+            if running_id < 1 or running_id > 2147483647:
+                break
+            excluded_ids.add(running_id)
+
+        qs = (
+            Producto.objects
+            .select_related("categoria")
+            .exclude(inventario__sucursalid_id=branch_id_value)
+        )
+        if excluded_ids:
+            qs = qs.exclude(productoid__in=excluded_ids)
+
+        for token in term.split():
+            token_filter = (
+                Q(nombre__icontains=token)
+                | Q(codigo_de_barras__icontains=token)
+            )
+            if re.fullmatch(r"[0-9]{1,10}", token) and int(token) <= 2147483647:
+                token_filter |= Q(productoid=int(token))
+            qs = qs.filter(token_filter)
+
+        paginator = Paginator(qs.order_by("nombre", "productoid"), self.page_size)
+        page_obj = paginator.get_page(page)
+        results = [{
+            "id": product.productoid,
+            "text": product.nombre,
+            "barcode": product.codigo_de_barras or "",
+            "category": product.categoria.nombre if product.categoria_id else "Sin categoría",
+        } for product in page_obj.object_list]
+
+        return JsonResponse({
+            "results": results,
+            "has_more": page_obj.has_next(),
+            "total": paginator.count,
+        })
 
 class InventarioListView(LoginRequiredMixin, View):
     """Renderiza y filtra inventarios por sucursal (o modo global)."""
@@ -1324,10 +1528,10 @@ class EditarInventarioView(LoginRequiredMixin, View):
                 inv.cantidad = cant_int
                 inv.save(update_fields=["cantidad"])
             else:
-                Inventario.objects.create(
+                Inventario.objects.update_or_create(
                     productoid_id=int(pid_str),
                     sucursalid=sucursal_destino,
-                    cantidad=cant_int
+                    defaults={"cantidad": cant_int},
                 )
 
         messages.success(
@@ -2502,6 +2706,14 @@ class EmpleadoCreateAJAXView(LoginRequiredMixin, View):
         try:
             emp = form.save()
             logger.info("Empleado creado %s", emp.pk)
+        except EmployeeClientSyncError as exc:
+            form.add_error("numerodocumento", str(exc))
+            return JsonResponse({
+                "success": False,
+                "errors": json.dumps(
+                    form.errors.get_json_data(escape_html=True)
+                ),
+            }, status=400)
         except Exception as exc:
             logger.exception("Error al guardar empleado")
             return JsonResponse({
@@ -2594,7 +2806,11 @@ class EmpleadoUpdateAJAXView(LoginRequiredMixin, UpdateView):
 
     # ---------- POST ----------
     def form_valid(self, form):
-        emp = form.save()
+        try:
+            emp = form.save()
+        except EmployeeClientSyncError as exc:
+            form.add_error("numerodocumento", str(exc))
+            return self.form_invalid(form)
 
         if self._is_ajax(self.request):
             return JsonResponse({
@@ -2607,7 +2823,7 @@ class EmpleadoUpdateAJAXView(LoginRequiredMixin, UpdateView):
             self.request,
             f'Empleado «{emp.nombre} {emp.apellido}» actualizado correctamente.',
         )
-        return super().form_valid(form)
+        return redirect(self.get_success_url())
 
     def form_invalid(self, form):
         if self._is_ajax(self.request):
@@ -3296,6 +3512,7 @@ class GenerarVentaView(LoginRequiredMixin, View):
     template_name = "generar_venta.html"
     success_url   = reverse_lazy("generar_venta")
     EMPLOYEE_DISCOUNT_RATE = Decimal("0.10")
+    WEB_MASTER_DISCOUNT_RATE = Decimal("1.00")
 
     # =========================
     # Helpers TURNO / LOCK
@@ -3334,25 +3551,57 @@ class GenerarVentaView(LoginRequiredMixin, View):
     def _normalize_document(value):
         return re.sub(r"[^0-9A-Za-z]+", "", str(value or "")).lower()
 
+    @staticmethod
+    def _normalize_role_name(value):
+        return re.sub(r"[\s_-]+", " ", str(value or "").strip().lower())
+
+    @classmethod
+    def _empleado_es_web_master(cls, empleado):
+        usuario = getattr(empleado, "usuarioid", None)
+        rol = getattr(usuario, "rolid", None) if usuario else None
+        role_name = cls._normalize_role_name(getattr(rol, "nombre", ""))
+        return role_name in {"web master", "webmaster"}
+
+    @classmethod
+    def _employee_sale_pricing(cls, empleado_comprador, total_cuenta):
+        total_cuenta = _round_account_peso(total_cuenta)
+        web_master_free = bool(
+            empleado_comprador
+            and total_cuenta > 0
+            and cls._empleado_es_web_master(empleado_comprador)
+        )
+        if not empleado_comprador or total_cuenta <= 0:
+            return Decimal("0"), total_cuenta, False
+        if web_master_free:
+            descuento = _round_account_peso(
+                total_cuenta * cls.WEB_MASTER_DISCOUNT_RATE
+            )
+            return descuento, _round_account_peso(total_cuenta - descuento), True
+
+        descuento = _round_account_peso(
+            total_cuenta * cls.EMPLOYEE_DISCOUNT_RATE
+        )
+        total = _round_account_peso(total_cuenta - descuento)
+        return descuento, total, False
+
     @classmethod
     def _empleado_por_documento_cliente(cls, cliente):
         doc = cls._normalize_document(getattr(cliente, "numerodocumento", ""))
         if not doc:
             return None
 
-        exact = (
-            Empleado.objects
-            .select_related("usuarioid")
-            .filter(numerodocumento__iexact=str(getattr(cliente, "numerodocumento", "") or "").strip())
-            .first()
-        )
-        if exact:
-            return exact
-
-        for empleado in Empleado.objects.select_related("usuarioid").all():
+        matches = []
+        for empleado in Empleado.objects.select_related(
+            "usuarioid__rolid"
+        ).all():
             if cls._normalize_document(empleado.numerodocumento) == doc:
-                return empleado
-        return None
+                matches.append(empleado)
+                if len(matches) == 2:
+                    raise ValueError(
+                        "Hay varios empleados con el mismo documento; "
+                        "corrige los registros antes de autorizar el descuento."
+                    )
+        return matches[0] if matches else None
 
     @classmethod
     def _validar_compra_empleado(cls, *, cajero_user, cliente, empleado_password):
@@ -3512,6 +3761,7 @@ class GenerarVentaView(LoginRequiredMixin, View):
         cliente_inst = Cliente.objects.filter(pk=cliente_id).first() if cliente_id else None
         empleado_comprador = None
         descuento_empleado = Decimal("0")
+        beneficio_web_master = False
 
         try:
             empleado_comprador = self._validar_compra_empleado(
@@ -3522,12 +3772,10 @@ class GenerarVentaView(LoginRequiredMixin, View):
         except ValueError as exc:
             return JsonResponse({'success': False, 'error': str(exc)})
 
-        total_cuenta = _round_account_peso(total)
-        if empleado_comprador and total_cuenta > 0:
-            descuento_empleado = _round_account_peso(total_cuenta * self.EMPLOYEE_DISCOUNT_RATE)
-            total = _round_account_peso(total_cuenta - descuento_empleado)
-        else:
-            total = total_cuenta
+        descuento_empleado, total, beneficio_web_master = self._employee_sale_pricing(
+            empleado_comprador,
+            total,
+        )
 
         # pagos puede llegar como LISTA o como STRING JSON
         pagos = data.get("pagos") or []
@@ -3571,6 +3819,7 @@ class GenerarVentaView(LoginRequiredMixin, View):
             cliente_inst=cliente_inst,
             empleado_comprador=empleado_comprador,
             descuento_empleado=descuento_empleado,
+            beneficio_web_master=beneficio_web_master,
             nequi_notificacion_id=nequi_notificacion_id,
         )
 
@@ -3586,6 +3835,18 @@ class GenerarVentaView(LoginRequiredMixin, View):
             return Decimal(str(x))
         except Exception:
             return Decimal("0")
+
+    @staticmethod
+    def _nequi_sale_status(nequi_pago_total, nequi_notification):
+        has_nequi_payment = GenerarVentaView._to_decimal(nequi_pago_total) > 0
+        is_linked = has_nequi_payment and nequi_notification is not None
+        return {
+            "nequi_payment": has_nequi_payment,
+            "nequi_linked": is_linked,
+            "nequi_notification_id": (
+                getattr(nequi_notification, "pk", None) if is_linked else None
+            ),
+        }
 
     @staticmethod
     def _normalize_payments(pagos_list, total, medio_pago_simple=""):
@@ -3754,6 +4015,9 @@ class GenerarVentaView(LoginRequiredMixin, View):
         cambio        = Decimal((venta_data or {}).get("cambio", 0) or 0)
         descuento_empleado = Decimal((venta_data or {}).get("descuento_empleado", 0) or 0)
         empleado_comprador = (venta_data or {}).get("empleado_comprador", "") or ""
+        beneficio_web_master = bool(
+            (venta_data or {}).get("beneficio_web_master", False)
+        )
         venta_id      = (venta_data or {}).get("venta_id", "")
         total_dec = Decimal(total or 0)
         subtotal_factura_raw = sum(
@@ -3804,7 +4068,10 @@ class GenerarVentaView(LoginRequiredMixin, View):
             foot.append(lr("DEVUELTO:", money(refund_total)))
         if descuento_total > 0:
             foot.append(lr("SUBTOTAL:", money(subtotal_factura)))
-            descuento_label = "DESC. EMPLEADO:" if descuento_empleado > 0 else "DESCUENTO:"
+            if beneficio_web_master:
+                descuento_label = "BENEFICIO WEB MASTER:"
+            else:
+                descuento_label = "DESC. EMPLEADO:" if descuento_empleado > 0 else "DESCUENTO:"
             foot.append(lr(descuento_label, f"-{money(descuento_total)}"))
             foot.append(lr("USTED AHORRA:", money(descuento_total)))
             if empleado_comprador:
@@ -3827,7 +4094,7 @@ class GenerarVentaView(LoginRequiredMixin, View):
     def _crear_venta_ultra_fast(
         user, suc_inst, pp_inst, cliente_id, pagos, detalles, total, efectivo_recibido,
         cliente_inst=None, empleado_comprador=None, descuento_empleado=Decimal("0"),
-        nequi_notificacion_id=None
+        beneficio_web_master=False, nequi_notificacion_id=None
     ):
         """
         ULTRA FAST:
@@ -3992,14 +4259,23 @@ class GenerarVentaView(LoginRequiredMixin, View):
                     "venta_id": venta.pk,
                     "descuento_empleado": descuento_empleado,
                     "empleado_comprador": str(empleado_comprador or ""),
+                    "beneficio_web_master": beneficio_web_master,
                 },
                 detalles, total, pagos
+            )
+
+            nequi_status = GenerarVentaView._nequi_sale_status(
+                nequi_pago_total,
+                nequi_notification,
             )
 
             return JsonResponse({
                 "success": True,
                 "venta_id": venta.pk,
                 "receipt_text": receipt_text,
+                "sale_total": str(total),
+                "web_master_free_sale": bool(beneficio_web_master),
+                **nequi_status,
             })
 
         except Exception as e:
@@ -4803,16 +5079,34 @@ class ClienteAutocompleteView(PaginatedAutocompleteMixin):
         }
 
         empleados_por_doc = {}
-        empleados_qs = Empleado.objects.select_related("usuarioid")
+        empleados_qs = Empleado.objects.select_related("usuarioid__rolid")
         if documentos:
             empleados_qs = empleados_qs.filter(numerodocumento__in=documentos)
         else:
             empleados_qs = Empleado.objects.none()
 
+        exact_employee_ids = set()
         for empleado in empleados_qs:
             doc_norm = GenerarVentaView._normalize_document(empleado.numerodocumento)
             if doc_norm:
                 empleados_por_doc[doc_norm] = empleado
+                exact_employee_ids.add(empleado.pk)
+
+        missing_documents = {
+            GenerarVentaView._normalize_document(document)
+            for document in documentos
+            if GenerarVentaView._normalize_document(document) not in empleados_por_doc
+        }
+        if missing_documents:
+            fallback_qs = (
+                Empleado.objects
+                .select_related("usuarioid__rolid")
+                .exclude(pk__in=exact_employee_ids)
+            )
+            for empleado in fallback_qs:
+                doc_norm = GenerarVentaView._normalize_document(empleado.numerodocumento)
+                if doc_norm in missing_documents:
+                    empleados_por_doc[doc_norm] = empleado
 
         results = []
         for c in clientes:
@@ -4827,6 +5121,7 @@ class ClienteAutocompleteView(PaginatedAutocompleteMixin):
               "is_employee": bool(empleado),
               "employee_name": str(empleado or "") if empleado else "",
               "employee_has_user": bool(getattr(empleado, "usuarioid", None)) if empleado else False,
+              "employee_is_web_master": GenerarVentaView._empleado_es_web_master(empleado) if empleado else False,
             })
         return JsonResponse({"results": results, "has_more": has_more})
 
@@ -5155,6 +5450,26 @@ def _to_q2(x: Decimal) -> Decimal:
     return (x or Decimal("0.00")).quantize(Q2)
 
 
+def _venta_nequi_status(
+    mediopago,
+    has_payment_rows,
+    has_nequi_payment_row,
+    nequi_notification_id,
+):
+    medio = (mediopago or "").strip().lower()
+    nequi_payment = bool(has_nequi_payment_row) or (
+        not bool(has_payment_rows) and medio == "nequi"
+    )
+    nequi_linked = nequi_payment and nequi_notification_id is not None
+    return {
+        "nequi_payment": nequi_payment,
+        "nequi_linked": nequi_linked,
+        "nequi_notification_id": (
+            nequi_notification_id if nequi_linked else None
+        ),
+    }
+
+
 class VentaListView(LoginRequiredMixin, ListView):
     """
     Todas las ventas con la MÁS RECIENTE primero.
@@ -5219,16 +5534,42 @@ class VentaDataTableView(LoginRequiredMixin, View):
         empleado_id   = (request.GET.get("empleado_id", "") or "").strip()
         cliente_term  = (request.GET.get("cliente_term", "") or "").strip()
         mediopago     = (request.GET.get("mediopago", "") or "").strip().lower()
+        nequi_status  = (request.GET.get("nequi_status", "") or "").strip().lower()
         total_min_raw = (request.GET.get("total_min", "") or "").strip().replace(",", ".")
         total_max_raw = (request.GET.get("total_max", "") or "").strip().replace(",", ".")
         devoluciones  = (request.GET.get("devoluciones", "") or "").strip().lower()
 
-        base_qs = Venta.objects.select_related(
-            "clienteid", "empleadoid", "sucursalid", "puntopagoid"
+        payment_rows = PagoVenta.objects.filter(
+            ventaid_id=OuterRef("ventaid")
+        )
+        nequi_payment_rows = payment_rows.filter(
+            medio_pago__iexact="nequi",
+            monto__gt=0,
+        )
+        nequi_links = (
+            NotificacionNequi.objects
+            .filter(venta_id=OuterRef("ventaid"))
+            .order_by("notificacionid")
+        )
+
+        base_qs = (
+            Venta.objects
+            .select_related("clienteid", "empleadoid", "sucursalid", "puntopagoid")
+            .annotate(
+                has_payment_rows=Exists(payment_rows),
+                has_nequi_payment_row=Exists(nequi_payment_rows),
+                nequi_notification_id=Subquery(
+                    nequi_links.values("notificacionid")[:1]
+                ),
+            )
         )
 
         records_total = base_qs.count()
         qs = base_qs
+        nequi_payment_filter = (
+            Q(has_nequi_payment_row=True)
+            | Q(has_payment_rows=False, mediopago__iexact="nequi")
+        )
 
         if venta_id.isdigit():
             qs = qs.filter(ventaid=int(venta_id))
@@ -5257,7 +5598,21 @@ class VentaDataTableView(LoginRequiredMixin, View):
             qs = qs.filter(empleadoid_id=int(empleado_id))
 
         if mediopago:
-            qs = qs.filter(mediopago__iexact=mediopago)
+            if mediopago == "nequi":
+                qs = qs.filter(nequi_payment_filter)
+            else:
+                qs = qs.filter(mediopago__iexact=mediopago)
+
+        if nequi_status == "linked":
+            qs = qs.filter(
+                nequi_payment_filter,
+                nequi_notification_id__isnull=False,
+            )
+        elif nequi_status == "unlinked":
+            qs = qs.filter(
+                nequi_payment_filter,
+                nequi_notification_id__isnull=True,
+            )
 
         if cliente_term:
             cliente_q = (
@@ -5351,6 +5706,9 @@ class VentaDataTableView(LoginRequiredMixin, View):
                   "empleadoid__apellido",
                   "sucursalid__nombre",
                   "puntopagoid__nombre",
+                  "has_payment_rows",
+                  "has_nequi_payment_row",
+                  "nequi_notification_id",
               )
         )
         qs_page = qs_values[start:] if length == -1 else qs_values[start:start + length]
@@ -5369,6 +5727,12 @@ class VentaDataTableView(LoginRequiredMixin, View):
 
             fecha_str = v["fecha"].strftime("%d/%m/%Y") if v["fecha"] else ""
             hora_str  = v["hora"].strftime("%H:%M") if v["hora"] else ""
+            nequi_status = _venta_nequi_status(
+                v["mediopago"],
+                v["has_payment_rows"],
+                v["has_nequi_payment_row"],
+                v["nequi_notification_id"],
+            )
 
             data.append({
                 "ventaid"   : v["ventaid"],
@@ -5380,6 +5744,7 @@ class VentaDataTableView(LoginRequiredMixin, View):
                 "puntopago" : punto,
                 "total"     : f"${v['total']:.2f}",
                 "mediopago" : medio,
+                **nequi_status,
             })
 
         return JsonResponse({
@@ -5754,6 +6119,27 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin, View):
             prefix="reint"
         )
 
+        payment_flags = PagoVenta.objects.filter(ventaid=venta).aggregate(
+            payment_count=Count("pk"),
+            nequi_payment_count=Count(
+                "pk",
+                filter=Q(medio_pago__iexact="nequi", monto__gt=0),
+            ),
+        )
+        nequi_notification_id = (
+            NotificacionNequi.objects
+            .filter(venta=venta)
+            .order_by("notificacionid")
+            .values_list("notificacionid", flat=True)
+            .first()
+        )
+        nequi_status = _venta_nequi_status(
+            venta.mediopago,
+            payment_flags["payment_count"] > 0,
+            payment_flags["nequi_payment_count"] > 0,
+            nequi_notification_id,
+        )
+
         venta_url = f"https://merk888.pythonanywhere.com{reverse('ver_venta', args=[venta.pk])}"
         solicitud_texto = (
             f"Hola, solicito revisar un cambio/devolución para la venta #{venta.pk}: "
@@ -5772,6 +6158,7 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin, View):
             "venta_total": (venta.total or Decimal("0.00")).quantize(Q2),
             "venta_print_only": self._is_print_only(request.user),
             "venta_solicitud_cambio_whatsapp_url": solicitud_whatsapp_url,
+            **nequi_status,
         })
 
     # -------------------------
@@ -9509,6 +9896,30 @@ class TurnoCajaCerrarAPI(View):
 # =========================
 # Recuperar o iniciar (tu endpoint actual)
 # =========================
+def _resolve_turno_cajero(usuario_id, usuario_nombre):
+    """Resuelve el cajero aunque el gestor de contraseñas omita el ID oculto."""
+    usuario_id = (usuario_id or "").strip()
+    usuario_nombre = (usuario_nombre or "").strip()
+
+    if not usuario_id and not usuario_nombre:
+        return None, "Selecciona un cajero."
+
+    if usuario_id:
+        if not usuario_id.isdigit():
+            return None, "El cajero seleccionado no es válido."
+        cajero = Usuario.objects.filter(pk=int(usuario_id)).first()
+    else:
+        cajero = Usuario.objects.filter(nombreusuario=usuario_nombre).first()
+
+    if cajero is None:
+        return None, "El cajero seleccionado no existe."
+
+    if usuario_nombre and usuario_nombre != str(cajero.nombreusuario).strip():
+        return None, "El cajero seleccionado no coincide con el usuario mostrado."
+
+    return cajero, None
+
+
 class TurnoCajaRecuperarOIniciarView(LoginRequiredMixin, View):
     @transaction.atomic
     def post(self, request: HttpRequest):
@@ -9518,20 +9929,21 @@ class TurnoCajaRecuperarOIniciarView(LoginRequiredMixin, View):
 
         puntopago_id = (request.POST.get("puntopago_id") or "").strip()
         usuario_id   = (request.POST.get("usuario_id") or request.POST.get("cajero_id") or "").strip()
+        usuario_nombre = (request.POST.get("cajero_nombre") or "").strip()
         password     = request.POST.get("password", "")
         base_str     = (request.POST.get("saldo_apertura_efectivo") or "0").strip()
 
         if not puntopago_id.isdigit():
             return JsonResponse({"success": False, "error": "Falta puntopago_id."}, status=400)
-        if not usuario_id.isdigit():
-            return JsonResponse({"success": False, "error": "Falta usuario_id/cajero_id."}, status=400)
+        cajero, cajero_error = _resolve_turno_cajero(usuario_id, usuario_nombre)
+        if cajero_error:
+            return JsonResponse({"success": False, "error": cajero_error}, status=400)
 
         base = _to_dec(base_str, Decimal("0.00"))
         if base < 0:
             base = Decimal("0.00")
 
         pp = get_object_or_404(PuntosPago.objects.select_for_update(), pk=int(puntopago_id))
-        cajero = get_object_or_404(Usuario, pk=int(usuario_id))
 
         if not _can_operate_cajero(request.user, cajero):
             return JsonResponse({"success": False, "error": "No puedes iniciar o retomar turno para otro cajero."}, status=403)

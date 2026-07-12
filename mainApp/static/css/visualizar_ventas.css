@@ -371,6 +371,36 @@ table.dataTable tbody tr:hover{ background:#eef5ff; }
   font-weight:700;
 }
 
+.venta-payment-cell{
+  display:inline-flex;
+  flex-direction:column;
+  align-items:center;
+  gap:5px;
+}
+.venta-payment-cell__method{font-weight:700}
+.nequi-link-badge{
+  display:inline-flex;
+  align-items:center;
+  gap:5px;
+  padding:4px 8px;
+  border:1px solid transparent;
+  border-radius:999px;
+  font-size:11px;
+  font-weight:900;
+  line-height:1.15;
+  white-space:nowrap;
+}
+.nequi-link-badge--linked{
+  color:#166534;
+  background:#dcfce7;
+  border-color:#86efac;
+}
+.nequi-link-badge--unlinked{
+  color:#92400e;
+  background:#fef3c7;
+  border-color:#fbbf24;
+}
+
 /* Orden (iconos FA) */
 table.dataTable thead th.sorting,
 table.dataTable thead th.sorting_asc,
@@ -498,6 +528,10 @@ table.dataTable thead th.sorting_desc::after{
   /* Accesibilidad visual del total en móvil */
   #ventasTable tbody td[data-label="Total"]{
     font-weight:800; color:#2a4f9a; text-align:left !important;
+  }
+  .venta-payment-cell{
+    align-items:flex-end;
+    text-align:right;
   }
 }
 

@@ -141,6 +141,15 @@
               </label>
 
               <label class="ventas-filter-field">
+                <span>Estado Nequi</span>
+                <select id="filtro-nequi-status" class="ventas-filter-control">
+                  <option value="">Todos</option>
+                  <option value="linked">Vinculados</option>
+                  <option value="unlinked">No vinculados</option>
+                </select>
+              </label>
+
+              <label class="ventas-filter-field ventas-filter-field--wide">
                 <span>Empleado</span>
                 <select id="filtro-empleado" class="ventas-filter-control">
                   <option value="">Todos</option>
@@ -223,7 +232,7 @@
 {# ——— Estilos base (igual a listar_pedidos.css) ——— #}
 <link rel="stylesheet" href="{% static 'css/visualizar_pedidos.css' %}">
 {# ——— Overrides específicos de ventas (muestra los alerts) ——— #}
-<link rel="stylesheet" href="{% static 'css/visualizar_ventas.css' %}?v=3">
+<link rel="stylesheet" href="{% static 'css/visualizar_ventas.css' %}?v=4">
 
 {# URL base para navegar al ver_venta/id y URL de datos para DataTables #}
 <script>
@@ -233,5 +242,5 @@
 </script>
 
 {# ——— Lógica JS ——— #}
-<script src="{% static 'javascript/visualizar_ventas.js' %}?v=3" defer></script>
+<script src="{% static 'javascript/visualizar_ventas.js' %}?v=5" defer></script>
 {% endblock %}

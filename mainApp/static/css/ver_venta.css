@@ -117,6 +117,29 @@
   border-color: rgba(77,166,255,.55);
 }
 
+.nequi-detail-status{
+  display:inline-flex;
+  align-items:center;
+  gap:7px;
+  margin-top:9px;
+  padding:6px 10px;
+  border:1px solid transparent;
+  border-radius:999px;
+  font-size:.78rem;
+  font-weight:900;
+  line-height:1.2;
+}
+.nequi-detail-status--linked{
+  color:#14532d;
+  background:#dcfce7;
+  border-color:#86efac;
+}
+.nequi-detail-status--unlinked{
+  color:#78350f;
+  background:#fef3c7;
+  border-color:#fbbf24;
+}
+
 /* ---------------- Tabla productos ---------------- */
 .table-responsive{
   border-radius: 14px;

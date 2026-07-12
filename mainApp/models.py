@@ -68,6 +68,12 @@ class Inventario(models.Model):
 
     class Meta:
         db_table = 'inventario'
+        constraints = [
+            models.UniqueConstraint(
+                fields=['sucursalid', 'productoid'],
+                name='uniq_inventario_sucursal_producto',
+            ),
+        ]
 
     def __str__(self):
         return f"Inventario de {self.productoid.nombre} en {self.sucursalid.nombre}"
@@ -179,6 +185,40 @@ class Empleado(models.Model):
 
     class Meta:
         db_table = 'empleados'
+
+    def save(self, *args, **kwargs):
+        """Guarda el empleado y garantiza su perfil de cliente en una transacción."""
+        with transaction.atomic():
+            previous_document = None
+            if self.pk:
+                previous_document = (
+                    type(self).objects
+                    .select_for_update()
+                    .filter(pk=self.pk)
+                    .values_list("numerodocumento", flat=True)
+                    .first()
+                )
+
+            result = super().save(*args, **kwargs)
+
+            persisted_employee = (
+                type(self).objects
+                .only(
+                    "empleadoid",
+                    "numerodocumento",
+                    "nombre",
+                    "apellido",
+                    "telefono",
+                    "email",
+                )
+                .get(pk=self.pk)
+            )
+            from .services.employee_client import sync_employee_client
+            sync_employee_client(
+                persisted_employee,
+                previous_document=previous_document,
+            )
+            return result
 
     def __str__(self):
         return f'{self.nombre} {self.apellido}'
@@ -585,20 +625,13 @@ class CambioDevolucion(models.Model):
         """
         from .models import Inventario
 
-        inv = (
-            Inventario.objects
-            .select_for_update()
-            .filter(sucursalid_id=sucursal_id, productoid_id=product_id)
-            .first()
+        inv, created = Inventario.objects.select_for_update().get_or_create(
+            sucursalid_id=sucursal_id,
+            productoid_id=product_id,
+            defaults={"cantidad": int(delta_cantidad)},
         )
-        if inv:
+        if not created:
             Inventario.objects.filter(pk=inv.pk).update(cantidad=F("cantidad") + int(delta_cantidad))
-        else:
-            Inventario.objects.create(
-                sucursalid_id=sucursal_id,
-                productoid_id=product_id,
-                cantidad=int(delta_cantidad)
-            )
 
     @staticmethod
     def _upsert_turno_medio_delta(turno, metodo: str, delta):
@@ -734,10 +767,16 @@ class CambioDevolucion(models.Model):
 
         reintegro_map = reintegro_map or {}
 
-        # 1) calcular total devolución
-        total_dev = cls.calcular_total_devolucion(venta, devoluciones)
-        if total_dev <= 0:
+        hay_devolucion_fisica = any(
+            int(item.get("cantidad") or 0) > 0
+            for item in (devoluciones or [])
+        )
+        if not hay_devolucion_fisica:
             return
+
+        # 1) calcular total devolución. Una venta gratuita devuelve $0,
+        # pero igualmente debe restaurar inventario y registrar el movimiento.
+        total_dev = cls.calcular_total_devolucion(venta, devoluciones)
 
         venta.refresh_from_db()
         nuevo_total = _to_q2((venta.total or Decimal("0.00")) - total_dev)
@@ -788,6 +827,10 @@ class CambioDevolucion(models.Model):
         # 3) venta.total baja
         venta.total = nuevo_total
         venta.save(update_fields=["total"])
+
+        # En ventas gratuitas no hay caja, pago ni turno que ajustar.
+        if total_dev <= 0:
+            return
 
         # 4) ajustar turno
         turno = cls._turno_abierto_para_venta_locked(venta)

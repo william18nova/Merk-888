@@ -407,3 +407,312 @@ table.dataTable tbody td{
   .btn-agregar-precio,.btn-guardar-precio{ transition:none !important; }
   .btn-scan{ transition:none !important; }
 }
+
+/* ========================================================================
+   Alta de inventario — apariencia clásica
+   Conserva la tarjeta original; sólo adapta los componentes funcionales
+   nuevos (autocomplete vanilla y tabla sin dependencia de DataTables).
+======================================================================== */
+.container-inventario.inventory-create-page [hidden]{display:none!important}
+.container-inventario.inventory-create-page .sr-only{
+  position:absolute!important;
+  width:1px!important;
+  height:1px!important;
+  padding:0!important;
+  margin:-1px!important;
+  overflow:hidden!important;
+  clip:rect(0,0,0,0)!important;
+  white-space:nowrap!important;
+  border:0!important;
+}
+.container-inventario.inventory-create-page{
+  width:min(95vw,600px);
+  margin-inline:auto;
+  margin-block:clamp(12px,5vh,32px);
+  padding:clamp(26px,4vw,38px);
+  color:var(--text);
+  background:var(--glass-bg);
+  border:1px solid var(--glass-brd);
+  border-radius:var(--radius);
+  box-shadow:var(--glass-sh);
+  text-align:center;
+  overflow:visible;
+  backdrop-filter:blur(10px);
+  -webkit-backdrop-filter:blur(10px);
+}
+
+.container-inventario.inventory-create-page .obligatorio-texto{
+  margin:0 0 22px;
+  color:var(--text-muted);
+  font-size:13px;
+  font-style:italic;
+}
+.container-inventario.inventory-create-page .required{color:var(--brand)}
+
+.container-inventario.inventory-create-page .alert{
+  display:none;
+  width:100%;
+  margin:0 0 14px;
+  padding:12px 14px;
+  border:1px solid transparent;
+  border-radius:var(--radius-sm);
+  font-size:14px;
+  line-height:1.45;
+  text-align:center;
+}
+.container-inventario.inventory-create-page .alert:not([hidden]),
+.container-inventario.inventory-create-page .alert.is-visible{display:block}
+.container-inventario.inventory-create-page .alert i{margin:0 6px 0 0}
+.container-inventario.inventory-create-page .alert-success{
+  color:#064e1a;
+  background:color-mix(in srgb,var(--ok) 18%,#fff);
+  border-color:color-mix(in srgb,var(--ok) 40%,#fff);
+}
+.container-inventario.inventory-create-page .alert-error{
+  color:#ffdce1;
+  background:rgba(255,77,95,.17);
+  border-color:rgba(255,140,150,.55);
+}
+.container-inventario.inventory-create-page .alert-info{
+  color:#e5f3ff;
+  background:rgba(77,166,255,.17);
+  border-color:rgba(139,204,255,.42);
+}
+.container-inventario.inventory-create-page .alert-warning{
+  color:#fff0c2;
+  background:rgba(153,105,15,.25);
+  border-color:rgba(255,200,87,.48);
+}
+.container-inventario.inventory-create-page .alert a{color:inherit;font-weight:800}
+.container-inventario.inventory-create-page .alert-action{
+  margin-left:8px;
+  border:0;
+  border-bottom:1px solid currentColor;
+  background:transparent;
+  color:inherit;
+  font:inherit;
+  font-weight:800;
+  cursor:pointer;
+}
+
+.container-inventario.inventory-create-page .form-group-precio{margin-bottom:18px}
+.container-inventario.inventory-create-page .field-error{
+  display:none;
+  min-height:0;
+  margin-top:6px;
+  color:#ff8996;
+  font-size:13.5px;
+  font-weight:700;
+  line-height:1.35;
+}
+.container-inventario.inventory-create-page .field-error.visible{
+  display:flex;
+  align-items:flex-start;
+  gap:6px;
+}
+.container-inventario.inventory-create-page .input-error{
+  border-color:var(--err)!important;
+  background:rgba(255,77,95,.12)!important;
+  box-shadow:0 0 0 3px rgba(255,77,95,.22)!important;
+}
+
+.container-inventario.inventory-create-page .autocomplete-anchor{position:relative}
+.container-inventario.inventory-create-page .autocomplete-results{
+  position:absolute;
+  top:calc(100% + 6px);
+  right:0;
+  left:0;
+  z-index:120;
+  max-height:240px;
+  padding:5px;
+  overflow-y:auto;
+  border:1px solid var(--slate-200);
+  border-radius:var(--radius-sm);
+  background:#fff;
+  color:#0b1220;
+  box-shadow:0 16px 30px rgba(0,0,0,.22);
+  text-align:left;
+}
+.container-inventario.inventory-create-page .autocomplete-option{
+  display:grid;
+  grid-template-columns:auto minmax(0,1fr);
+  align-items:center;
+  min-height:46px;
+  padding:8px 10px;
+  gap:9px;
+  border-radius:9px;
+  color:#0b1220;
+  cursor:pointer;
+}
+.container-inventario.inventory-create-page .autocomplete-option:hover,
+.container-inventario.inventory-create-page .autocomplete-option.is-active{
+  color:#0b4f8c;
+  background:#eaf3ff;
+}
+.container-inventario.inventory-create-page .autocomplete-option__icon{
+  display:grid;
+  width:30px;
+  height:30px;
+  place-items:center;
+  border-radius:8px;
+  background:#eaf3ff;
+  color:#318bd8;
+}
+.container-inventario.inventory-create-page .autocomplete-option__copy{min-width:0}
+.container-inventario.inventory-create-page .autocomplete-option__title{
+  display:block;
+  overflow:hidden;
+  font-size:13.5px;
+  font-weight:800;
+  line-height:1.3;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+.container-inventario.inventory-create-page .autocomplete-option__meta{
+  display:flex;
+  flex-wrap:wrap;
+  gap:3px 9px;
+  margin-top:2px;
+  color:#647b92;
+  font-size:10.5px;
+}
+.container-inventario.inventory-create-page .autocomplete-option__hint{display:none}
+.container-inventario.inventory-create-page .autocomplete-state{
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  gap:8px;
+  min-height:54px;
+  padding:10px;
+  color:#647b92;
+  font-size:12px;
+  text-align:center;
+}
+.container-inventario.inventory-create-page .autocomplete-state--error{
+  flex-direction:column;
+  color:#a12f43;
+}
+.container-inventario.inventory-create-page .autocomplete-retry{
+  padding:6px 10px;
+  border:1px solid #e4a8b2;
+  border-radius:8px;
+  background:#fff5f6;
+  color:#8d2739;
+  font-size:11px;
+  font-weight:800;
+  cursor:pointer;
+}
+.container-inventario.inventory-create-page .autocomplete-load-more{
+  padding:7px;
+  color:#6c8298;
+  font-size:10.5px;
+  text-align:center;
+}
+
+.container-inventario.inventory-create-page .table-wrap{
+  display:block;
+  margin:20px 0;
+  overflow:visible;
+}
+.container-inventario.inventory-create-page table.dataTable{
+  display:table;
+  width:100%!important;
+  min-width:0;
+  border-collapse:separate;
+  border-spacing:0;
+}
+.container-inventario.inventory-create-page .inventory-product-cell{display:block}
+.container-inventario.inventory-create-page .inventory-product-cell__icon,
+.container-inventario.inventory-create-page .inventory-product-cell small{display:none}
+.container-inventario.inventory-create-page .inventory-product-cell strong{
+  color:#0b1220;
+  font-size:14px;
+  font-weight:600;
+  white-space:normal;
+}
+.container-inventario.inventory-create-page .inventory-row-quantity{
+  display:block;
+  width:90px;
+  height:34px;
+  margin:0 auto;
+  padding:6px;
+  border:1px solid var(--slate-200);
+  border-radius:8px;
+  background:#fff;
+  color:#0b1220;
+  font-size:14px;
+  font-weight:600;
+  text-align:center;
+}
+.container-inventario.inventory-create-page .inventory-remove-button{
+  display:inline-flex;
+  width:34px;
+  height:34px;
+  margin:0;
+  align-items:center;
+  justify-content:center;
+  border:0;
+  border-radius:8px;
+  background:#e74c3c;
+  color:#fff;
+  cursor:pointer;
+}
+.container-inventario.inventory-create-page .inventory-remove-button:hover{background:#c0392b}
+.container-inventario.inventory-create-page .inventory-empty-row td,
+.container-inventario.inventory-create-page .inventory-no-match td{
+  padding:18px 12px;
+  color:#64748b;
+  text-align:center;
+}
+.container-inventario.inventory-create-page .btn-agregar-precio:disabled,
+.container-inventario.inventory-create-page .btn-guardar-precio:disabled{
+  cursor:not-allowed;
+  opacity:.5;
+  filter:saturate(.65);
+  box-shadow:none;
+}
+
+@media(max-width:768px){
+  .container-inventario.inventory-create-page{
+    position:relative;
+    left:50%;
+    width:calc(100vw - 24px);
+    max-width:600px;
+    margin:0 auto!important;
+    padding:22px 16px;
+    transform:translateX(-50%);
+  }
+  .container-inventario.inventory-create-page table.dataTable{display:block;background:transparent;box-shadow:none}
+  .container-inventario.inventory-create-page table.dataTable tbody{display:block}
+  .container-inventario.inventory-create-page table.dataTable tbody tr{
+    display:block;
+    margin-bottom:12px;
+    overflow:hidden;
+    border:1px solid var(--slate-200);
+    border-radius:12px;
+    background:#fff;
+  }
+  .container-inventario.inventory-create-page table.dataTable tbody td{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:12px;
+    text-align:right;
+  }
+  .container-inventario.inventory-create-page table.dataTable tbody td::before{
+    content:attr(data-label);
+    flex:0 0 auto;
+    color:#2a4f9a;
+    font-weight:800;
+    text-align:left;
+  }
+  .container-inventario.inventory-create-page .inventory-product-cell{text-align:right}
+  .container-inventario.inventory-create-page .inventory-row-quantity{margin-left:auto}
+  .container-inventario.inventory-create-page .inventory-empty-row td,
+  .container-inventario.inventory-create-page .inventory-no-match td{
+    display:block;
+    text-align:center;
+  }
+  .container-inventario.inventory-create-page .inventory-empty-row td::before,
+  .container-inventario.inventory-create-page .inventory-no-match td::before{display:none}
+}

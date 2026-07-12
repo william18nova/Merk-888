@@ -72,7 +72,10 @@ DATABASES = {
         "HOST": "merk-888-merk888.c.aivencloud.com",
         "PORT": "24553",
         "OPTIONS": {"sslmode": "require"},
-        "CONN_MAX_AGE": int(os.getenv("DB_CONN_MAX_AGE", "60")),
+        # `runserver` crea un hilo por solicitud. Mantener conexiones abiertas
+        # en esos hilos agota rápidamente los cupos de la base remota.
+        # Producción puede habilitar persistencia explícitamente con la variable.
+        "CONN_MAX_AGE": int(os.getenv("DB_CONN_MAX_AGE", "0")),
         "CONN_HEALTH_CHECKS": True,
     }
 }
