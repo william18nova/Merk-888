@@ -21,6 +21,8 @@ from .views import (
     _looks_like_nequi_payment,
     _parse_nequi_amount,
     _parse_nequi_sender_plain,
+    _aplicar_reintegros_a_esperados,
+    _reintegro_ledger_ready,
     _resolve_turno_cajero,
     _venta_nequi_status,
 )
@@ -544,6 +546,117 @@ class EmployeeDiscountAuthorizationTests(SimpleTestCase):
         )
 
         self.assertEqual(payments, [])
+
+
+class RefundPaymentMethodTests(SimpleTestCase):
+    @patch("mainApp.views.connection.introspection.table_names", return_value=[])
+    def test_sale_page_can_detect_pending_refund_migration(self, _table_names):
+        self.assertFalse(_reintegro_ledger_ready())
+
+    def test_cash_refund_is_subtracted_from_cash_not_original_nequi_payment(self):
+        expected = {
+            "nequi": Decimal("1000.00"),
+            "efectivo": Decimal("0.00"),
+        }
+
+        result = _aplicar_reintegros_a_esperados(
+            expected,
+            {"efectivo": Decimal("500.00")},
+        )
+
+        self.assertEqual(result["nequi"], Decimal("1000.00"))
+        self.assertEqual(result["efectivo"], Decimal("-500.00"))
+        self.assertEqual(sum(result.values()), Decimal("500.00"))
+
+    def test_refund_distribution_requires_exact_total_and_valid_method(self):
+        with self.assertRaisesMessage(ValueError, "igual al total"):
+            CambioDevolucion._normalizar_reintegro_map(
+                {"efectivo": Decimal("499.00")},
+                Decimal("500.00"),
+            )
+
+        with self.assertRaisesMessage(ValueError, "no válido"):
+            CambioDevolucion._normalizar_reintegro_map(
+                {"cripto": Decimal("500.00")},
+                Decimal("500.00"),
+            )
+
+    @patch("mainApp.models.TurnoCaja.objects.filter")
+    @patch("mainApp.models.ReintegroVenta.objects.create")
+    @patch("mainApp.models.CambioDevolucion.objects.create")
+    @patch("mainApp.models.DetalleVenta.objects.filter")
+    @patch.object(CambioDevolucion, "_upsert_inventario_delta")
+    @patch.object(CambioDevolucion, "_upsert_turno_medio_delta")
+    @patch.object(CambioDevolucion, "_turno_abierto_para_venta_locked")
+    @patch.object(
+        CambioDevolucion,
+        "calcular_total_devolucion",
+        return_value=Decimal("500.00"),
+    )
+    def test_paid_refund_creates_cash_outflow_ledger(
+        self,
+        _calculate,
+        active_shift,
+        update_shift_method,
+        inventory_delta,
+        detail_filter,
+        create_change,
+        create_refund,
+        shift_filter,
+    ):
+        shift = SimpleNamespace(pk=77)
+        active_shift.return_value = shift
+        sale = MagicMock(
+            total=Decimal("1000.00"),
+            mediopago="nequi",
+            sucursalid_id=5,
+            puntopagoid_id=9,
+        )
+        detail = SimpleNamespace(pk=31, productoid_id=12)
+        actor = SimpleNamespace(pk=1)
+
+        CambioDevolucion.registrar_devolucion(
+            sale,
+            [{"detalle": detail, "cantidad": 1}],
+            reintegro_map={"efectivo": Decimal("500.00")},
+            registrado_por=actor,
+        )
+
+        create_refund.assert_called_once_with(
+            venta=sale,
+            turno=shift,
+            medio_pago="efectivo",
+            monto=Decimal("500.00"),
+            registrado_por=actor,
+        )
+        update_shift_method.assert_called_once_with(
+            shift,
+            "efectivo",
+            Decimal("-500.00"),
+        )
+        sale.save.assert_called_once_with(update_fields=["total"])
+        self.assertEqual(sale.total, Decimal("500.00"))
+        inventory_delta.assert_called_once_with(5, 12, 1)
+        create_change.assert_called_once()
+        shift_filter.assert_called()
+
+    def test_sale_detail_ui_collects_refund_method_for_every_sale(self):
+        base_dir = settings.BASE_DIR / "mainApp"
+        template = (base_dir / "templates" / "ver_venta.html").read_text(
+            encoding="utf-8"
+        )
+        script = (
+            base_dir / "static" / "javascript" / "ver_venta.js"
+        ).read_text(encoding="utf-8")
+        close_script = (
+            base_dir / "static" / "javascript" / "turno_caja.js"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("¿Por qué medio entregaste el dinero?", template)
+        self.assertIn('data-reintegro-target=', template)
+        self.assertIn("VENTA_TOTAL_COBRADO", script)
+        self.assertIn("const reintegrado", close_script)
+        self.assertIn("efectivoEntregado - BASE", close_script)
 
 
 class FreeSaleReturnTests(SimpleTestCase):

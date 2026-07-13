@@ -33,6 +33,7 @@
   const errReintEl = document.getElementById("mixto-error-reintegro");
 
   const btnPrint = document.getElementById("btn-imprimir-factura");
+  const reintegroLedgerReady = window.REINTEGRO_LEDGER_READY !== false;
 
   /* =========================
      Mixto UI
@@ -79,31 +80,39 @@
       i.disabled = !enabled;
       if (!enabled) i.value = "";
     });
+    bloqueReint.querySelectorAll(".reintegro-todo").forEach((button) => {
+      button.disabled = !enabled;
+    });
   }
 
   function validateUI() {
     const mixto = esMixto();
 
     if (bloquePagos) bloquePagos.style.display = mixto ? "" : "none";
-    if (!mixto) {
-      if (bloqueReint) bloqueReint.style.display = "none";
-      return;
-    }
 
-    const totalVenta = parseMoney(window.VENTA_TOTAL || (totalVentaEl ? totalVentaEl.textContent : "0"));
-    if (totalVentaEl) totalVentaEl.textContent = to2(totalVenta);
+    if (mixto) {
+      const totalCobrado = parseMoney(
+        window.VENTA_TOTAL_COBRADO ||
+        window.VENTA_TOTAL ||
+        (totalVentaEl ? totalVentaEl.textContent : "0")
+      );
+      if (totalVentaEl) totalVentaEl.textContent = to2(totalCobrado);
 
-    const sumaPagos = sumInputsWithin(bloquePagos);
-    if (sumaPagosEl) sumaPagosEl.textContent = to2(sumaPagos);
+      const sumaPagos = sumInputsWithin(bloquePagos);
+      if (sumaPagosEl) sumaPagosEl.textContent = to2(sumaPagos);
 
-    if (errPagosEl) {
-      if (Math.abs(sumaPagos - totalVenta) > 0.009) {
-        errPagosEl.style.display = "";
-        errPagosEl.textContent = `La suma de pagos (${to2(sumaPagos)}) debe ser igual al total (${to2(totalVenta)}).`;
-      } else {
-        errPagosEl.style.display = "none";
-        errPagosEl.textContent = "";
+      if (errPagosEl) {
+        if (Math.abs(sumaPagos - totalCobrado) > 0.009) {
+          errPagosEl.style.display = "";
+          errPagosEl.textContent = `La suma de pagos (${to2(sumaPagos)}) debe ser igual al total originalmente pagado (${to2(totalCobrado)}).`;
+        } else {
+          errPagosEl.style.display = "none";
+          errPagosEl.textContent = "";
+        }
       }
+    } else if (errPagosEl) {
+      errPagosEl.style.display = "none";
+      errPagosEl.textContent = "";
     }
 
     const totalDev = calcTotalDevolucion();
@@ -138,7 +147,7 @@
     const nowMixto = esMixto();
 
     if (nowMixto && !prevMixto && bloquePagos) {
-      const totalVenta = parseMoney(window.VENTA_TOTAL || "0");
+      const totalVenta = parseMoney(window.VENTA_TOTAL_COBRADO || window.VENTA_TOTAL || "0");
       const inputs = bloquePagos.querySelectorAll("input[name$='-monto']");
 
       let sum = 0;
@@ -163,15 +172,17 @@
   });
 
   form?.addEventListener("submit", (e) => {
-    if (!esMixto()) return;
+    if (e.submitter?.value === "volver_lista") return;
 
-    const totalVenta = parseMoney(window.VENTA_TOTAL || "0");
-    const sumaPagos = sumInputsWithin(bloquePagos);
+    if (esMixto()) {
+      const totalCobrado = parseMoney(window.VENTA_TOTAL_COBRADO || window.VENTA_TOTAL || "0");
+      const sumaPagos = sumInputsWithin(bloquePagos);
 
-    if (Math.abs(sumaPagos - totalVenta) > 0.009) {
-      e.preventDefault();
-      alert(`⚠️ La suma de pagos (${to2(sumaPagos)}) debe ser igual al total (${to2(totalVenta)}).`);
-      return;
+      if (Math.abs(sumaPagos - totalCobrado) > 0.009) {
+        e.preventDefault();
+        alert(`⚠️ La suma de pagos (${to2(sumaPagos)}) debe ser igual al total originalmente pagado (${to2(totalCobrado)}).`);
+        return;
+      }
     }
 
     const totalDev = calcTotalDevolucion();
@@ -183,6 +194,19 @@
         return;
       }
     }
+  });
+
+  bloqueReint?.addEventListener("click", (event) => {
+    const button = event.target.closest(".reintegro-todo");
+    if (!button || button.disabled) return;
+
+    const totalDev = calcTotalDevolucion();
+    const targetId = button.getAttribute("data-reintegro-target");
+    const inputs = bloqueReint.querySelectorAll("input[name$='-monto']");
+    inputs.forEach((input) => {
+      input.value = input.id === targetId ? to2(totalDev) : "0.00";
+    });
+    validateUI();
   });
 
   /* =========================================================================
@@ -297,5 +321,11 @@
   });
 
   // Init
+  if (!reintegroLedgerReady) {
+    document.querySelectorAll("input[name^='dev-'][name$='-devolver']").forEach((input) => {
+      input.disabled = true;
+      input.title = "Falta aplicar la migración 0021 para habilitar devoluciones.";
+    });
+  }
   validateUI();
 })();

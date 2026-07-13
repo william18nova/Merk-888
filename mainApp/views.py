@@ -1,7 +1,7 @@
 from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib.auth.decorators import login_required
 from django.contrib import messages
-from .models import Usuario, Sucursal, Categoria, Producto, Inventario, Proveedor, PreciosProveedor, PuntosPago, Rol, Empleado, HorariosNegocio, HorarioCaja, Cliente, Venta, DetalleVenta, PedidoProveedor, DetallePedidoProveedor, CambioDevolucion, Permiso, RolPermiso, UsuarioPermiso, PagoVenta, TurnoCaja, TurnoCajaMedio, NotificacionNequi, VentaCarritoAudit
+from .models import Usuario, Sucursal, Categoria, Producto, Inventario, Proveedor, PreciosProveedor, PuntosPago, Rol, Empleado, HorariosNegocio, HorarioCaja, Cliente, Venta, DetalleVenta, PedidoProveedor, DetallePedidoProveedor, CambioDevolucion, ReintegroVenta, Permiso, RolPermiso, UsuarioPermiso, PagoVenta, TurnoCaja, TurnoCajaMedio, NotificacionNequi, VentaCarritoAudit
 from django.db.models import Count, Sum, Exists, OuterRef, Q, F, ExpressionWrapper, DecimalField, Value, IntegerField, Case, When, CharField
 from django.http import JsonResponse, HttpResponseBadRequest, HttpResponseForbidden, HttpRequest, HttpResponse
 from django.contrib.auth import authenticate, login as auth_login
@@ -5862,6 +5862,18 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin, View):
     def _calcular_total_reintegro(self, venta, devoluciones) -> Decimal:
         return CambioDevolucion.calcular_total_devolucion(venta, devoluciones).quantize(Q2)
 
+    def _venta_total_cobrado(self, venta) -> Decimal:
+        """Total ingresado originalmente: saldo actual + devoluciones financieras."""
+        if not _reintegro_ledger_ready():
+            return _to_q2(venta.total or Decimal("0.00"))
+        reintegrado = (
+            ReintegroVenta.objects
+            .filter(venta=venta)
+            .aggregate(total=Coalesce(Sum("monto"), Decimal("0.00")))["total"]
+            or Decimal("0.00")
+        )
+        return _to_q2((venta.total or Decimal("0.00")) + reintegrado)
+
     def _sum_formset_montos(self, formset) -> Decimal:
         s = Decimal("0.00")
         for row in (formset.cleaned_data or []):
@@ -5900,7 +5912,7 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin, View):
 
         pagos = []
         medio = (venta.mediopago or "").strip().lower()
-        total = (venta.total or Decimal("0.00")).quantize(Q2)
+        total = self._venta_total_cobrado(venta)
         subtotal_factura, descuento_total = _ticket_subtotal_discount(detalles, total)
 
         if medio == "mixto":
@@ -5989,15 +6001,7 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin, View):
             return False, "Montos de reintegro invalidos.", {}
 
         total_reintegro = _to_q2(total_reintegro)
-        pagos_actuales = {
-            (row["medio_pago"] or "").strip().lower(): _to_q2(row["total"] or Decimal("0.00"))
-            for row in (
-                PagoVenta.objects
-                .filter(ventaid=venta)
-                .values("medio_pago")
-                .annotate(total=Sum("monto"))
-            )
-        }
+        medios_validos = {key for key, _label in MEDIOS_PAGO}
 
         reintegro_map = {}
         suma = Decimal("0.00")
@@ -6010,10 +6014,8 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin, View):
                 return False, "No puedes poner montos negativos en el reintegro.", {}
             if not medio or monto <= 0:
                 continue
-
-            pagado = pagos_actuales.get(medio, Decimal("0.00"))
-            if monto > pagado:
-                return False, f"No puedes reintegrar {monto} por {medio}; la venta solo tiene {pagado} en ese medio.", {}
+            if medio not in medios_validos:
+                return False, f"Medio de devolución no válido: {medio}.", {}
 
             reintegro_map[medio] = (reintegro_map.get(medio, Decimal("0.00")) + monto).quantize(Q2)
             suma += monto
@@ -6023,39 +6025,6 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin, View):
             return False, f"Reintegro mixto ({suma}) debe ser igual al total a devolver ({total_reintegro}).", {}
 
         return True, None, reintegro_map
-
-    def _restar_reintegro_de_pagos(self, venta, reintegro_map):
-        for medio, monto in (reintegro_map or {}).items():
-            medio = (medio or "").strip().lower()
-            restante = _to_q2(monto)
-            if not medio or restante <= 0:
-                continue
-
-            pagos = (
-                PagoVenta.objects
-                .select_for_update()
-                .filter(ventaid=venta, medio_pago__iexact=medio)
-                .order_by("-monto", "pk")
-            )
-
-            for pago in pagos:
-                if restante <= 0:
-                    break
-
-                actual = _to_q2(pago.monto)
-                delta = min(actual, restante)
-                nuevo = _to_q2(actual - delta)
-
-                if nuevo <= 0:
-                    pago.delete()
-                else:
-                    pago.monto = nuevo
-                    pago.save(update_fields=["monto"])
-
-                restante = _to_q2(restante - delta)
-
-            if restante > 0:
-                raise ValueError(f"No se pudo descontar {restante} del pago {medio}.")
 
     def _guardar_pagos_mixtos(self, venta, pagos_formset):
         PagoVenta.objects.filter(ventaid=venta).delete()
@@ -6074,7 +6043,7 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin, View):
         PagoVenta.objects.filter(ventaid=venta).delete()
 
         medio = (venta.mediopago or "").strip().lower()
-        total = _to_q2(venta.total)
+        total = self._venta_total_cobrado(venta)
 
         if total > 0 and medio:
             PagoVenta.objects.create(
@@ -6146,6 +6115,15 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin, View):
             f"{venta_url}"
         )
         solicitud_whatsapp_url = f"https://wa.me/573054622892?text={quote(solicitud_texto)}"
+        reintegro_ledger_ready = _reintegro_ledger_ready()
+        reintegros = []
+        if reintegro_ledger_ready:
+            reintegros = list(
+                ReintegroVenta.objects
+                .filter(venta=venta)
+                .select_related("turno", "registrado_por")
+                .order_by("-creado_en", "-reintegroid")
+            )
 
         return render(request, self.template_name, {
             "venta": venta,
@@ -6156,6 +6134,9 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin, View):
             "es_mixto": self._venta_es_mixta(venta),
             "medios_pago": MEDIOS_PAGO,
             "venta_total": (venta.total or Decimal("0.00")).quantize(Q2),
+            "venta_total_cobrado": self._venta_total_cobrado(venta),
+            "reintegros": reintegros,
+            "reintegro_ledger_ready": reintegro_ledger_ready,
             "venta_print_only": self._is_print_only(request.user),
             "venta_solicitud_cambio_whatsapp_url": solicitud_whatsapp_url,
             **nequi_status,
@@ -6200,6 +6181,13 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin, View):
 
         # ✅ clave: detectar si realmente hay devoluciones
         hay_devolucion = self._hay_devolucion_en_post(request)
+
+        if hay_devolucion and not _reintegro_ledger_ready():
+            messages.error(
+                request,
+                "Las devoluciones están temporalmente bloqueadas: falta aplicar la migración 0021.",
+            )
+            return redirect(reverse_lazy("ver_venta", kwargs={"venta_id": venta_id}))
 
         # 0) Cambio de medio (si cambió)
         if nuevo_mediopago and nuevo_mediopago != metodo_old:
@@ -6260,19 +6248,25 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin, View):
 
         total_reintegro = self._calcular_total_reintegro(venta, devoluciones)
 
-        if self._venta_es_mixta(venta):
-            ok, err, reintegro_map = self._validar_reintegro_mixto(venta, reintegro_formset, total_reintegro)
-            if not ok:
-                messages.error(request, f"⚠️ {err}")
-                return redirect(reverse_lazy("ver_venta", kwargs={"venta_id": venta_id}))
+        ok, err, reintegro_map = self._validar_reintegro_mixto(
+            venta,
+            reintegro_formset,
+            total_reintegro,
+        )
+        if not ok:
+            messages.error(request, f"⚠️ {err}")
+            return redirect(reverse_lazy("ver_venta", kwargs={"venta_id": venta_id}))
 
-            CambioDevolucion.registrar_devolucion(venta, devoluciones, reintegro_map=reintegro_map)
-            self._restar_reintegro_de_pagos(venta, reintegro_map)
-
-        else:
-            CambioDevolucion.registrar_devolucion(venta, devoluciones)
-            venta.refresh_from_db()
-            self._guardar_pago_unico(venta)
+        try:
+            CambioDevolucion.registrar_devolucion(
+                venta,
+                devoluciones,
+                reintegro_map=reintegro_map,
+                registrado_por=request.user,
+            )
+        except ValueError as exc:
+            messages.error(request, f"⚠️ {exc}")
+            return redirect(reverse_lazy("ver_venta", kwargs={"venta_id": venta_id}))
 
         messages.success(request, "✅ Devolución registrada correctamente.")
         return redirect(reverse_lazy("visualizar_ventas"))
@@ -8481,6 +8475,43 @@ def _can_operate_cajero(user, cajero) -> bool:
 def _can_operate_turno(user, turno) -> bool:
     return _require_admin(user) or getattr(user, "pk", None) == getattr(turno, "cajero_id", None)
 
+
+def _reintegro_ledger_ready() -> bool:
+    """Permite que la aplicación siga operativa mientras 0021 está pendiente."""
+    try:
+        return ReintegroVenta._meta.db_table in connection.introspection.table_names()
+    except Exception:
+        return False
+
+
+def _sum_reintegros_por_metodo(turno: TurnoCaja) -> dict[str, Decimal]:
+    if not _reintegro_ledger_ready():
+        return {}
+    out = {}
+    rows = (
+        ReintegroVenta.objects
+        .filter(turno=turno)
+        .values("medio_pago")
+        .annotate(total=Coalesce(Sum("monto"), Decimal("0.00")))
+    )
+    for row in rows:
+        metodo = _normalize_metodo(row["medio_pago"])
+        out[metodo] = _to_decimal(row["total"])
+    return out
+
+
+def _aplicar_reintegros_a_esperados(expected, reintegros):
+    resultado = {
+        _normalize_metodo(metodo): _to_decimal(total)
+        for metodo, total in (expected or {}).items()
+    }
+    for metodo, total in (reintegros or {}).items():
+        metodo = _normalize_metodo(metodo)
+        resultado[metodo] = (
+            resultado.get(metodo, Decimal("0.00")) - _to_decimal(total)
+        ).quantize(Decimal("0.01"))
+    return resultado
+
 def _turno_identity_payload(turno):
     return {
         "id": turno.id,
@@ -8498,9 +8529,10 @@ def _turno_identity_payload(turno):
         },
     }
 
-def _medios_payload(turno, auto_confirmados=None, manuales_sin_api=None):
+def _medios_payload(turno, auto_confirmados=None, manuales_sin_api=None, reintegros=None):
     auto_confirmados = auto_confirmados or {}
     manuales_sin_api = manuales_sin_api or {}
+    reintegros = _sum_reintegros_por_metodo(turno) if reintegros is None else reintegros
     medios = []
     for m in TurnoCajaMedio.objects.filter(turno=turno).order_by("metodo"):
         metodo = _normalize_metodo(m.metodo)
@@ -8508,6 +8540,7 @@ def _medios_payload(turno, auto_confirmados=None, manuales_sin_api=None):
             continue
         auto_confirmado = auto_confirmados.get(metodo, Decimal("0.00")) or Decimal("0.00")
         manual_info = manuales_sin_api.get(metodo) or {}
+        reintegrado = reintegros.get(metodo, Decimal("0.00")) or Decimal("0.00")
         manual_count = int(manual_info.get("cantidad") or 0)
         manual_total = manual_info.get("total", Decimal("0.00")) or Decimal("0.00")
         medios.append({
@@ -8519,6 +8552,7 @@ def _medios_payload(turno, auto_confirmados=None, manuales_sin_api=None):
             "auto_confirmado": float(auto_confirmado),
             "manual_sin_api_count": manual_count,
             "manual_sin_api_total": float(manual_total),
+            "reintegrado": float(reintegrado),
         })
     return medios
 
@@ -8666,13 +8700,7 @@ def _sum_nequi_confirmado_api(turno: TurnoCaja) -> Decimal:
     start_naive, end_naive = _range_local_naive(turno, turno.cierre_iniciado)
 
     sql_pagos = """
-        SELECT COALESCE(SUM(
-            CASE
-              WHEN COALESCE(v.total, 0) <= 0 THEN 0
-              WHEN np.total_nequi > COALESCE(v.total, 0) THEN COALESCE(v.total, 0)
-              ELSE np.total_nequi
-            END
-        ),0) as total
+        SELECT COALESCE(SUM(np.total_nequi),0) as total
         FROM (
             SELECT vp.ventaid, COALESCE(SUM(vp.monto),0) as total_nequi
             FROM venta_pagos vp
@@ -8730,13 +8758,7 @@ def _nequi_sin_api_stats(turno: TurnoCaja) -> dict[str, Decimal | int]:
     sql_pagos = """
         SELECT
           COUNT(*) as cantidad,
-          COALESCE(SUM(
-            CASE
-              WHEN COALESCE(v.total, 0) <= 0 THEN 0
-              WHEN np.total_nequi > COALESCE(v.total, 0) THEN COALESCE(v.total, 0)
-              ELSE np.total_nequi
-            END
-          ),0) as total
+          COALESCE(SUM(np.total_nequi),0) as total
         FROM (
             SELECT vp.ventaid, COALESCE(SUM(vp.monto),0) as total_nequi
             FROM venta_pagos vp
@@ -8821,6 +8843,7 @@ def _turno_frontend_payload(turno: TurnoCaja, user=None) -> dict:
         _sync_turno_medios_esperados(turno, expected, reset_contados=False)
         auto_confirmados = _auto_confirmados_por_metodo(turno)
         manuales_sin_api = _manuales_sin_api_por_metodo(turno)
+        reintegros = _sum_reintegros_por_metodo(turno)
 
         turno.esperado_total = esperado_total
         turno.ventas_total = esperado_total
@@ -8834,6 +8857,7 @@ def _turno_frontend_payload(turno: TurnoCaja, user=None) -> dict:
                 turno,
                 auto_confirmados=auto_confirmados,
                 manuales_sin_api=manuales_sin_api,
+                reintegros=reintegros,
             ),
             "auto_confirmados": {k: float(v or 0) for k, v in auto_confirmados.items()},
             "manuales_sin_api": {
@@ -8859,6 +8883,11 @@ def _expected_por_metodo(turno: TurnoCaja) -> tuple[dict[str, Decimal], Decimal,
     fallback = _sum_ventas_por_mediopago_fallback(turno.puntopago_id, start_naive, end_naive)
     for metodo, total in fallback.items():
         expected[metodo] = expected.get(metodo, Decimal("0.00")) + total
+
+    expected = _aplicar_reintegros_a_esperados(
+        expected,
+        _sum_reintegros_por_metodo(turno),
+    )
 
     # aseguro llaves default
     for m in DEFAULT_METODOS:
@@ -9123,8 +9152,6 @@ class TurnoCajaCerrarApi(LoginRequiredMixin, View):
 
         base = turno.saldo_apertura_efectivo or Decimal("0.00")
         efectivo_contado = (efectivo_entregado - base).quantize(Decimal("0.01"))
-        if efectivo_contado < 0:
-            efectivo_contado = Decimal("0.00")
         efectivo_para_cuadre = (efectivo_contado + facturas_pagadas).quantize(Decimal("0.01"))
 
         import json
@@ -9142,6 +9169,7 @@ class TurnoCajaCerrarApi(LoginRequiredMixin, View):
         auto_confirmados = _auto_confirmados_por_metodo(turno)
         manuales_sin_api = _manuales_sin_api_por_metodo(turno)
 
+        reintegros = _sum_reintegros_por_metodo(turno)
         medios_db = {_normalize_metodo(m.metodo): m for m in turno.medios.select_for_update().all()}
 
         if "efectivo" not in medios_db:
@@ -9167,6 +9195,17 @@ class TurnoCajaCerrarApi(LoginRequiredMixin, View):
             confirmado = (confirmado or Decimal("0.00")).quantize(Decimal("0.01"))
             if confirmado > 0:
                 contados[metodo] = (contados.get(metodo, Decimal("0.00")) + confirmado).quantize(Decimal("0.01"))
+
+        # Los inputs representan ingresos. Las salidas electrónicas por
+        # devolución se descuentan automáticamente del medio correspondiente.
+        # Efectivo no se descuenta aquí porque ya está reflejado físicamente en
+        # efectivo_entregado - base.
+        for metodo, reintegrado in reintegros.items():
+            if metodo == "efectivo":
+                continue
+            contados[metodo] = (
+                contados.get(metodo, Decimal("0.00")) - reintegrado
+            ).quantize(Decimal("0.01"))
 
         missing_methods = [
             metodo for metodo in contados
@@ -9409,7 +9448,7 @@ def _canon_metodo(raw: str) -> str:
 CANON_ORDER = ["efectivo", "nequi", "daviplata", "tarjeta", "banco_caja_social"]
 
 
-def _calcular_esperados_por_metodo(pp_id, start_dt, end_dt):
+def _calcular_esperados_por_metodo(pp_id, start_dt, end_dt, turno=None):
     """
     Devuelve:
       - esperado_total (suma ventas.total)
@@ -9467,6 +9506,14 @@ def _calcular_esperados_por_metodo(pp_id, start_dt, end_dt):
     # asegurar keys fijas
     for k in CANON_ORDER:
         esperado_por.setdefault(k, Decimal("0"))
+
+    if turno is not None:
+        esperado_por = _aplicar_reintegros_a_esperados(
+            esperado_por,
+            _sum_reintegros_por_metodo(turno),
+        )
+
+    esperado_total = sum(esperado_por.values(), Decimal("0.00")).quantize(Decimal("0.01"))
 
     return esperado_total, esperado_por
 
@@ -9714,6 +9761,7 @@ class TurnoCajaIniciarCierreAPI(View):
             pp_id=turno.puntopago_id,
             start_dt=turno.inicio,
             end_dt=turno.cierre_iniciado,
+            turno=turno,
         )
 
         for metodo in CANON_ORDER:
@@ -9823,8 +9871,6 @@ class TurnoCajaCerrarAPI(View):
 
         base = turno.saldo_apertura_efectivo or Decimal("0.00")
         efectivo_contado = (efectivo_entregado - base).quantize(Decimal("0.01"))
-        if efectivo_contado < 0:
-            efectivo_contado = Decimal("0.00")
 
         for metodo in CANON_ORDER:
             TurnoCajaMedio.objects.get_or_create(turno=turno, metodo=metodo, defaults={"esperado": Decimal("0.00")})
@@ -9849,6 +9895,7 @@ class TurnoCajaCerrarAPI(View):
             pp_id=turno.puntopago_id,
             start_dt=turno.inicio,
             end_dt=turno.cierre_iniciado,
+            turno=turno,
         )
 
         ventas_total_real = (ventas_no_efectivo_real + efectivo_contado).quantize(Decimal("0.01"))
@@ -10128,6 +10175,7 @@ class TurnoCajaDashboardDetailAPI(View):
                 pp_id=turno.puntopago_id,
                 start_dt=turno.inicio,
                 end_dt=end_dt,
+                turno=turno,
             )
 
         medios_qs = TurnoCajaMedio.objects.filter(turno=turno)

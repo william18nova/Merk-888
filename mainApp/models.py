@@ -673,10 +673,6 @@ class CambioDevolucion(models.Model):
         actual = _to_q2(obj.esperado)
         nuevo = (actual + delta).quantize(Q2)
 
-        # clamp a 0 si queda negativo
-        if nuevo < 0:
-            nuevo = Decimal("0.00").quantize(Q2)
-
         obj.esperado = nuevo
 
         # mantener diferencia coherente si ya existe contado
@@ -750,11 +746,45 @@ class CambioDevolucion(models.Model):
 
         return _to_q2(total_dev)
 
+    @classmethod
+    def _normalizar_reintegro_map(cls, reintegro_map, total_dev):
+        medios_validos = {
+            "efectivo", "nequi", "daviplata", "tarjeta", "banco_caja_social"
+        }
+        normalizado = {}
+        for metodo, monto in (reintegro_map or {}).items():
+            metodo = (metodo or "").strip().lower()
+            monto = _to_q2(monto)
+            if monto < 0:
+                raise ValueError("Los montos de devolución no pueden ser negativos.")
+            if monto == 0:
+                continue
+            if metodo not in medios_validos:
+                raise ValueError(f"Medio de devolución no válido: {metodo or 'vacío'}.")
+            normalizado[metodo] = _to_q2(
+                normalizado.get(metodo, Decimal("0.00")) + monto
+            )
+
+        suma = _to_q2(sum(normalizado.values(), Decimal("0.00")))
+        total_dev = _to_q2(total_dev)
+        if suma != total_dev:
+            raise ValueError(
+                f"La distribución de la devolución ({suma}) debe ser igual "
+                f"al total a devolver ({total_dev})."
+            )
+        return normalizado
+
     # -------------------------
     # ✅ Método principal
     # -------------------------
     @classmethod
-    def registrar_devolucion(cls, venta, devoluciones, reintegro_map: dict | None = None):
+    def registrar_devolucion(
+        cls,
+        venta,
+        devoluciones,
+        reintegro_map: dict | None = None,
+        registrado_por=None,
+    ):
         """
         ✅ Hace TODO:
         - Registra en cambiosdevoluciones
@@ -763,7 +793,7 @@ class CambioDevolucion(models.Model):
         - venta.total -= total devuelto
         - Ajusta turno (ventas_total / ventas_efectivo / ventas_no_efectivo + turno_caja_medios.esperado)
         """
-        from .models import DetalleVenta, TurnoCaja
+        from .models import DetalleVenta, ReintegroVenta, TurnoCaja
 
         reintegro_map = reintegro_map or {}
 
@@ -783,16 +813,14 @@ class CambioDevolucion(models.Model):
         if nuevo_total < 0:
             raise ValueError(f"La devolución ({total_dev}) deja el total negativo ({nuevo_total}).")
 
-        medio_venta = (venta.mediopago or "").strip().lower()
-        if medio_venta == "mixto":
-            suma_reintegro = Decimal("0.00")
-            for monto in reintegro_map.values():
-                monto = _to_q2(monto)
-                if monto > 0:
-                    suma_reintegro += monto
-            suma_reintegro = _to_q2(suma_reintegro)
-            if suma_reintegro != total_dev:
-                raise ValueError(f"Reintegro mixto ({suma_reintegro}) != total devolución ({total_dev}).")
+        turno = None
+        if total_dev > 0:
+            reintegro_map = cls._normalizar_reintegro_map(reintegro_map, total_dev)
+            turno = cls._turno_abierto_para_venta_locked(venta)
+            if turno is None:
+                raise ValueError(
+                    "No hay un turno de caja activo para registrar la salida de esta devolución."
+                )
 
         now = timezone.localdate()
 
@@ -832,43 +860,69 @@ class CambioDevolucion(models.Model):
         if total_dev <= 0:
             return
 
-        # 4) ajustar turno
-        turno = cls._turno_abierto_para_venta_locked(venta)
-        if not turno:
-            return
+        # 4) registrar cada salida sin modificar el pago original de la venta.
+        for metodo, monto in reintegro_map.items():
+            ReintegroVenta.objects.create(
+                venta=venta,
+                turno=turno,
+                medio_pago=metodo,
+                monto=monto,
+                registrado_por=registrado_por,
+            )
 
-        # ventas_total siempre baja
+        # 5) ajustar el snapshot del turno. El cierre vuelve a calcularlo desde
+        # ingresos originales menos este ledger de reintegros.
         TurnoCaja.objects.filter(pk=turno.pk).update(ventas_total=F("ventas_total") - total_dev)
 
-        # 4A) no mixto => por el mismo medio
-        if medio_venta != "mixto":
-            cls._upsert_turno_medio_delta(turno, medio_venta, -total_dev)
-
-            if medio_venta == "efectivo":
-                TurnoCaja.objects.filter(pk=turno.pk).update(ventas_efectivo=F("ventas_efectivo") - total_dev)
-            else:
-                TurnoCaja.objects.filter(pk=turno.pk).update(ventas_no_efectivo=F("ventas_no_efectivo") - total_dev)
-            return
-
-        # 4B) mixto => usar reintegro_map
-        suma = Decimal("0.00")
-
         for metodo, monto in reintegro_map.items():
-            monto = _to_q2(monto)
-            if monto <= 0:
-                continue
-            suma += monto
-
             cls._upsert_turno_medio_delta(turno, metodo, -monto)
 
-            if (metodo or "").strip().lower() == "efectivo":
+            if metodo == "efectivo":
                 TurnoCaja.objects.filter(pk=turno.pk).update(ventas_efectivo=F("ventas_efectivo") - monto)
             else:
                 TurnoCaja.objects.filter(pk=turno.pk).update(ventas_no_efectivo=F("ventas_no_efectivo") - monto)
 
-        suma = _to_q2(suma)
-        if suma != total_dev:
-            raise ValueError(f"Reintegro mixto ({suma}) != total devolución ({total_dev}).")
+
+class ReintegroVenta(models.Model):
+    """Salida de dinero por una devolución, registrada en el turno real."""
+
+    reintegroid = models.BigAutoField(primary_key=True, db_column="reintegroid")
+    venta = models.ForeignKey(
+        "Venta",
+        on_delete=models.CASCADE,
+        db_column="ventaid",
+        related_name="reintegros",
+    )
+    turno = models.ForeignKey(
+        "TurnoCaja",
+        on_delete=models.PROTECT,
+        db_column="turno_id",
+        related_name="reintegros",
+    )
+    medio_pago = models.CharField(max_length=50, db_column="medio_pago")
+    monto = models.DecimalField(max_digits=12, decimal_places=2)
+    registrado_por = models.ForeignKey(
+        "Usuario",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        db_column="registrado_por_id",
+        related_name="reintegros_registrados",
+    )
+    creado_en = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        db_table = "venta_reintegros"
+        ordering = ["-creado_en", "-reintegroid"]
+        constraints = [
+            models.CheckConstraint(
+                condition=Q(monto__gt=0),
+                name="venta_reintegros_monto_positivo",
+            )
+        ]
+
+    def __str__(self):
+        return f"Venta {self.venta_id} - {self.medio_pago} - {self.monto}"
 
 
 class NotificacionNequi(models.Model):

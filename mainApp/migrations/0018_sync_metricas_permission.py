@@ -12,7 +12,6 @@ def _normalize(value):
 def sync_metricas_permission(apps, schema_editor):
     Permiso = apps.get_model("mainApp", "Permiso")
     Rol = apps.get_model("mainApp", "Rol")
-    RolPermiso = apps.get_model("mainApp", "RolPermiso")
 
     permission = None
     permission_names = {
@@ -43,7 +42,26 @@ def sync_metricas_permission(apps, schema_editor):
             break
 
     if web_master:
-        RolPermiso.objects.get_or_create(rol=web_master, permiso=permission)
+        # El estado histórico de RolPermiso solo expone su PK porque la tabla
+        # es managed=False. Usamos SQL parametrizado contra la tabla existente
+        # para que esta migración siga siendo reproducible.
+        with schema_editor.connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT 1
+                FROM rolespermisos
+                WHERE rolid = %s AND permisoid = %s
+                """,
+                [web_master.pk, permission.pk],
+            )
+            if cursor.fetchone() is None:
+                cursor.execute(
+                    """
+                    INSERT INTO rolespermisos (rolid, permisoid)
+                    VALUES (%s, %s)
+                    """,
+                    [web_master.pk, permission.pk],
+                )
 
 
 class Migration(migrations.Migration):

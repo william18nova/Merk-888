@@ -643,7 +643,7 @@
   function recalc() {
     if (!efectivoEntregadoInp) return;
     const efectivoEntregado = num(efectivoEntregadoInp.value);
-    const efectivoContado = Math.max(0, efectivoEntregado - BASE);
+    const efectivoContado = efectivoEntregado - BASE;
     const facturasPagadas = Math.max(0, num(facturasPagadasInp?.value || 0));
     const efectivoParaCuadre = efectivoContado + facturasPagadas;
 
@@ -654,8 +654,9 @@
     for (const m of MEDIOS) {
       const metodo = m.metodo;
       const autoConfirmado = metodo === "efectivo" ? 0 : num(m.auto_confirmado || 0);
+      const reintegrado = metodo === "efectivo" ? 0 : num(m.reintegrado || 0);
       const contadoUsuario = metodo === "efectivo" ? efectivoParaCuadre : num(CONTADOS[metodo] || 0);
-      const contado = contadoUsuario + autoConfirmado;
+      const contado = contadoUsuario + autoConfirmado - reintegrado;
       sumContado += contado;
 
       if (metodo === "efectivo") {
@@ -693,6 +694,7 @@
         `;
       } else {
         const autoConfirmado = num(m.auto_confirmado || 0);
+        const reintegrado = num(m.reintegrado || 0);
         const manualCount = Math.max(0, Math.floor(num(m.manual_sin_api_count || 0)));
         const autoHint = autoConfirmado > 0
           ? `<div class="hint hint-ok">Confirmado por API: ${money2(autoConfirmado)}. Escribe solo lo no asociado.</div>
@@ -701,11 +703,15 @@
         const manualHint = m.metodo === "nequi"
           ? `<div class="hint ${manualCount > 0 ? "hint-warn" : "hint-ok"}">Nequi sin API: ${manualCount} venta${manualCount === 1 ? "" : "s"} cerrada${manualCount === 1 ? "" : "s"} sin vincular a un pago por API.</div>`
           : "";
+        const reintegroHint = reintegrado > 0
+          ? `<div class="hint hint-warn">Devoluciones descontadas: -${money2(reintegrado)}</div>`
+          : "";
         tdC.innerHTML = `
           <input class="in-num no-spin" type="number" step="0.01" min="0"
                  inputmode="decimal" data-in="${escapeHtml(m.metodo)}" placeholder="0.00">
           ${manualHint}
           ${autoHint}
+          ${reintegroHint}
         `;
       }
       tr.appendChild(tdC);
@@ -816,6 +822,7 @@
         metodo: (x.metodo || "").toLowerCase().trim(),
         contado: x.contado ?? null,
         auto_confirmado: num(x.auto_confirmado || 0),
+        reintegrado: num(x.reintegrado || 0),
         manual_sin_api_count: Math.max(0, Math.floor(num(x.manual_sin_api_count || 0))),
         manual_sin_api_total: num(x.manual_sin_api_total || 0),
         label:
@@ -833,7 +840,10 @@
       buildTable();
       MEDIOS.forEach((m) => {
         if (m.metodo === "efectivo" || m.contado === null || typeof m.contado === "undefined") return;
-        CONTADOS[m.metodo] = Math.max(0, num(m.contado) - num(m.auto_confirmado || 0));
+        CONTADOS[m.metodo] = Math.max(
+          0,
+          num(m.contado) - num(m.auto_confirmado || 0) + num(m.reintegrado || 0)
+        );
         const inp = mediosBody?.querySelector(`[data-in='${m.metodo}']`);
         if (inp) inp.value = CONTADOS[m.metodo].toFixed(2);
       });

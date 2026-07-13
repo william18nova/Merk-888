@@ -5,7 +5,7 @@
 
 {% block extra_head %}
   <link rel="stylesheet" href="{% static 'css/generar_venta.css' %}">
-  <link rel="stylesheet" href="{% static 'css/ver_venta.css' %}?v=2">
+  <link rel="stylesheet" href="{% static 'css/ver_venta.css' %}?v=3">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"/>
 {% endblock %}
 
@@ -22,6 +22,16 @@
     {{ dev_formset.management_form }}
     {{ pagos_formset.management_form }}
     {{ reintegro_formset.management_form }}
+
+    {% if not reintegro_ledger_ready and not venta_print_only %}
+    <div class="reintegro-maintenance" role="alert">
+      <i class="fas fa-triangle-exclamation" aria-hidden="true"></i>
+      <span>
+        Las devoluciones están temporalmente bloqueadas hasta aplicar la migración 0021.
+        Puedes consultar e imprimir la venta normalmente.
+      </span>
+    </div>
+    {% endif %}
 
     <div class="venta-grid">
       <div>
@@ -103,7 +113,7 @@
       </div>
 
       <div class="mixto-summary">
-        Total venta: <strong>$<span id="mixto-total-venta">{{ venta.total|floatformat:2 }}</span></strong>
+        Total pagado originalmente: <strong>$<span id="mixto-total-venta">{{ venta_total_cobrado|floatformat:2 }}</span></strong>
         &nbsp;|&nbsp;
         Suma pagos: <strong>$<span id="mixto-suma-pagos">0.00</span></strong>
       </div>
@@ -155,15 +165,20 @@
     <!-- ===================== REINTEGRO MIXTO: CON QUE MEDIOS SE DEVUELVE ===================== -->
     <div id="bloque-mixto-reintegro"
          class="mixto-card"
-         style="{% if es_mixto %}display:block;{% else %}display:none;{% endif %}">
+         style="display:none;">
       <h2 class="mixto-title">
-        <i class="fas fa-undo me-2"></i> Devolución por medio de pago (mixto)
+        <i class="fas fa-money-bill-transfer me-2"></i> ¿Por qué medio entregaste el dinero?
       </h2>
+
+      <p class="reintegro-explanation">
+        Registra de dónde salió realmente el dinero. Puede ser un medio diferente
+        al que utilizó el cliente al pagar.
+      </p>
 
       <div class="mixto-summary">
         Total a devolver: <strong>$<span id="reintegro-total">0.00</span></strong>
         &nbsp;|&nbsp;
-        Suma inputs: <strong>$<span id="reintegro-suma">0.00</span></strong>
+        Suma distribuida: <strong>$<span id="reintegro-suma">0.00</span></strong>
       </div>
 
       <div class="mixto-grid">
@@ -175,18 +190,40 @@
             <div class="mixto-input">
               {{ f.monto }}
               {{ f.medio_pago }}
+              <button type="button"
+                      class="reintegro-todo"
+                      data-reintegro-target="{{ f.monto.id_for_label }}">
+                Todo aquí
+              </button>
             </div>
           </div>
         {% endfor %}
       </div>
 
       <small class="mixto-hint">
-        Si devuelves productos, debes repartir el valor entre uno o varios medios.
-        La suma debe ser EXACTA al total a devolver.
+        Puedes usar un solo medio o repartir la devolución entre varios. La suma
+        debe ser exactamente igual al total a devolver.
       </small>
 
       <div class="mixto-error" id="mixto-error-reintegro" style="display:none;"></div>
     </div>
+    {% endif %}
+
+    {% if reintegros %}
+    <section class="reintegro-history" aria-labelledby="reintegro-history-title">
+      <h2 id="reintegro-history-title" class="mixto-title">
+        <i class="fas fa-clock-rotate-left me-2"></i> Dinero devuelto anteriormente
+      </h2>
+      <div class="reintegro-history__list">
+        {% for reintegro in reintegros %}
+        <div class="reintegro-history__item">
+          <span>{{ reintegro.medio_pago|cut:"_"|title }}</span>
+          <strong>-${{ reintegro.monto|floatformat:2 }}</strong>
+          <small>Turno #{{ reintegro.turno_id }} · {{ reintegro.creado_en|date:"d/m/Y H:i" }}</small>
+        </div>
+        {% endfor %}
+      </div>
+    </section>
     {% endif %}
 
     <div class="venta-footer">
@@ -247,6 +284,8 @@
 
 <script>
   window.VENTA_TOTAL = "{{ venta.total|floatformat:2 }}";
+  window.VENTA_TOTAL_COBRADO = "{{ venta_total_cobrado|floatformat:2 }}";
+  window.REINTEGRO_LEDGER_READY = {% if reintegro_ledger_ready %}true{% else %}false{% endif %};
   window.ticketTextoUrl = "{% url 'ticket_texto' %}";
 </script>
 
@@ -257,5 +296,5 @@
   if (!/^https?:\/\//.test(window.POS_AGENT_URL)) window.POS_AGENT_URL = "http://127.0.0.1:8787";
 </script>
 
-<script src="{% static 'javascript/ver_venta.js' %}"></script>
+<script src="{% static 'javascript/ver_venta.js' %}?v=2"></script>
 {% endblock %}
