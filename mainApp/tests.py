@@ -4,10 +4,11 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from django.conf import settings
+from django.db import IntegrityError
 from django.test import RequestFactory, SimpleTestCase
 from django.urls import resolve, reverse
 
-from .models import CambioDevolucion
+from .models import CambioDevolucion, TurnoCajaMedio
 from .permissions import route_permission_for_url_name
 from .services.employee_client import (
     EmployeeClientSyncError,
@@ -567,6 +568,94 @@ class RefundPaymentMethodTests(SimpleTestCase):
         self.assertEqual(result["nequi"], Decimal("1000.00"))
         self.assertEqual(result["efectivo"], Decimal("-500.00"))
         self.assertEqual(sum(result.values()), Decimal("500.00"))
+
+    def test_turno_payment_method_accepts_negative_expected_balance(self):
+        medio = SimpleNamespace(
+            esperado=Decimal("0.00"),
+            contado=Decimal("0.00"),
+            diferencia=Decimal("0.00"),
+            save=MagicMock(),
+        )
+        locked = MagicMock()
+        locked.filter.return_value.first.return_value = medio
+
+        with patch.object(
+            TurnoCajaMedio.objects,
+            "select_for_update",
+            return_value=locked,
+        ):
+            CambioDevolucion._upsert_turno_medio_delta(
+                SimpleNamespace(pk=1288),
+                "efectivo",
+                Decimal("-1600.00"),
+            )
+
+        self.assertEqual(medio.esperado, Decimal("-1600.00"))
+        self.assertEqual(medio.diferencia, Decimal("1600.00"))
+        medio.save.assert_called_once_with(
+            update_fields=["esperado", "diferencia"]
+        )
+
+    def test_turno_payment_method_with_no_count_does_not_retry_save(self):
+        medio = SimpleNamespace(
+            esperado=Decimal("0.00"),
+            contado=None,
+            diferencia=Decimal("0.00"),
+            save=MagicMock(),
+        )
+        locked = MagicMock()
+        locked.filter.return_value.first.return_value = medio
+
+        with patch.object(
+            TurnoCajaMedio.objects,
+            "select_for_update",
+            return_value=locked,
+        ):
+            CambioDevolucion._upsert_turno_medio_delta(
+                SimpleNamespace(pk=1288),
+                "efectivo",
+                Decimal("-1600.00"),
+            )
+
+        self.assertEqual(medio.esperado, Decimal("-1600.00"))
+        medio.save.assert_called_once_with(update_fields=["esperado"])
+
+    def test_turno_payment_method_propagates_database_error_without_retry(self):
+        medio = SimpleNamespace(
+            esperado=Decimal("0.00"),
+            contado=Decimal("0.00"),
+            diferencia=Decimal("0.00"),
+            save=MagicMock(side_effect=IntegrityError("check constraint")),
+        )
+        locked = MagicMock()
+        locked.filter.return_value.first.return_value = medio
+
+        with patch.object(
+            TurnoCajaMedio.objects,
+            "select_for_update",
+            return_value=locked,
+        ):
+            with self.assertRaises(IntegrityError):
+                CambioDevolucion._upsert_turno_medio_delta(
+                    SimpleNamespace(pk=1288),
+                    "efectivo",
+                    Decimal("-1600.00"),
+                )
+
+        self.assertEqual(medio.save.call_count, 1)
+
+    def test_refund_balance_migration_removes_legacy_nonnegative_checks(self):
+        migration = (
+            settings.BASE_DIR
+            / "mainApp"
+            / "migrations"
+            / "0022_allow_negative_turno_medio_balances.py"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("turno_caja_medios_esperado_check", migration)
+        self.assertIn("turno_caja_medios_contado_check", migration)
+        self.assertIn("DROP CONSTRAINT IF EXISTS", migration)
+        self.assertIn("reverse_sql=migrations.RunSQL.noop", migration)
 
     def test_refund_distribution_requires_exact_total_and_valid_method(self):
         with self.assertRaisesMessage(ValueError, "igual al total"):

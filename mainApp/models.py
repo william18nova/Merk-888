@@ -636,11 +636,12 @@ class CambioDevolucion(models.Model):
     @staticmethod
     def _upsert_turno_medio_delta(turno, metodo: str, delta):
         """
-        ✅ Nunca revienta si el medio no existe:
+        Ajusta el saldo neto esperado de un medio de pago:
         - Tu FK real se llama TURNO (no turnocaja)
         - Si no existe TurnoCajaMedio para ese metodo, lo crea en 0
         - Aplica delta en esperado
-        - Si queda negativo, lo deja en 0 (no explota)
+        - Permite negativos cuando una devolución sale por un medio que no
+          tuvo ingresos suficientes durante el turno.
         """
         from mainApp.models import TurnoCajaMedio  # evita ciclos
 
@@ -675,12 +676,15 @@ class CambioDevolucion(models.Model):
 
         obj.esperado = nuevo
 
-        # mantener diferencia coherente si ya existe contado
-        try:
-            obj.diferencia = (obj.contado - obj.esperado).quantize(Q2)
-            obj.save(update_fields=["esperado", "diferencia"])
-        except Exception:
-            obj.save(update_fields=["esperado"])
+        # Mantener diferencia coherente solo cuando ya existe un conteo. No
+        # usamos excepciones como flujo de control: capturar un IntegrityError
+        # aquí e intentar otro query deja roto el bloque atomic del llamador.
+        update_fields = ["esperado"]
+        if obj.contado is not None:
+            obj.diferencia = (_to_q2(obj.contado) - obj.esperado).quantize(Q2)
+            update_fields.append("diferencia")
+
+        obj.save(update_fields=update_fields)
 
     @staticmethod
     def _turno_abierto_para_venta_locked(venta):

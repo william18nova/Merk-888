@@ -19,7 +19,7 @@ from django.contrib.auth import authenticate
 import logging
 import ipaddress
 from django.utils.dateparse import parse_date, parse_datetime
-from django.db import transaction, connection, IntegrityError
+from django.db import transaction, connection, DatabaseError, IntegrityError
 from django.contrib import messages
 from zoneinfo import ZoneInfo
 from django.core.exceptions import FieldDoesNotExist
@@ -6145,8 +6145,26 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin, View):
     # -------------------------
     # POST
     # -------------------------
-    @transaction.atomic
     def post(self, request, venta_id):
+        try:
+            with transaction.atomic():
+                return self._post_atomic(request, venta_id)
+        except DatabaseError:
+            # Este bloque se ejecuta después de que atomic hizo rollback. Así
+            # podemos usar mensajes sin provocar un TransactionManagementError
+            # ni dejar una devolución aplicada parcialmente.
+            logger.exception(
+                "Error de base de datos registrando cambios de la venta %s",
+                venta_id,
+            )
+            messages.error(
+                request,
+                "No se pudo registrar la devolución. No se aplicó ningún cambio; "
+                "intenta nuevamente.",
+            )
+            return redirect(reverse_lazy("ver_venta", kwargs={"venta_id": venta_id}))
+
+    def _post_atomic(self, request, venta_id):
         venta = Venta.objects.select_for_update().get(pk=venta_id)
 
         accion = (request.POST.get("accion") or "").strip()
