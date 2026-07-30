@@ -171,3 +171,30 @@ INVENTARIO_AGENT_TOKEN = os.getenv(
 INVENTARIO_FOTOS_ALLOW_SERVER_PROCESS = os.getenv("INVENTARIO_FOTOS_ALLOW_SERVER_PROCESS", "0") == "1"
 INVENTARIO_FOTOS_SCRIPT = os.getenv("INVENTARIO_FOTOS_SCRIPT", str(BASE_DIR / "gemini_selenium_cli.py"))
 INVENTARIO_FOTOS_TIMEOUT = int(os.getenv("INVENTARIO_FOTOS_TIMEOUT", "900"))
+
+# ========= Sincronización de precios desde el catálogo Plaza =========
+# Las credenciales reales deben existir únicamente en el entorno del servidor.
+PRICE_SYNC_SOURCE_HOST = os.getenv("PRICE_SYNC_SOURCE_HOST", "").strip()
+PRICE_SYNC_SOURCE_PORT = os.getenv("PRICE_SYNC_SOURCE_PORT", "5432").strip()
+PRICE_SYNC_SOURCE_NAME = os.getenv("PRICE_SYNC_SOURCE_NAME", "").strip()
+PRICE_SYNC_SOURCE_USER = os.getenv("PRICE_SYNC_SOURCE_USER", "").strip()
+PRICE_SYNC_SOURCE_PASSWORD = os.getenv("PRICE_SYNC_SOURCE_PASSWORD", "")
+PRICE_SYNC_SOURCE_SSLMODE = os.getenv(
+    "PRICE_SYNC_SOURCE_SSLMODE",
+    "require",
+).strip()
+PRICE_SYNC_SOURCE_SSLROOTCERT = os.getenv(
+    "PRICE_SYNC_SOURCE_SSLROOTCERT",
+    "",
+).strip()
+PRICE_SYNC_MAPPING_FILE = os.getenv(
+    "PRICE_SYNC_MAPPING_FILE",
+    str(BASE_DIR / "mainApp" / "data" / "price_sync_plaza_map.json"),
+)
+PRICE_SYNC_CONNECT_TIMEOUT = os.getenv("PRICE_SYNC_CONNECT_TIMEOUT", "10")
+PRICE_SYNC_STATEMENT_TIMEOUT_MS = os.getenv(
+    "PRICE_SYNC_STATEMENT_TIMEOUT_MS",
+    "30000",
+)
+# Bloquea saltos extremos (por ejemplo, confundir precio por gramo y unidad).
+PRICE_SYNC_MAX_PRICE_FACTOR = os.getenv("PRICE_SYNC_MAX_PRICE_FACTOR", "5")

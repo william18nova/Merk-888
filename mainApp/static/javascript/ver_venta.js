@@ -85,6 +85,41 @@
     });
   }
 
+  function refundRows() {
+    if (!bloqueReint) return [];
+    return Array.from(bloqueReint.querySelectorAll(".mixto-row")).map((row) => ({
+      medio: (row.querySelector("input[name$='-medio_pago']")?.value || "").trim().toLowerCase(),
+      monto: row.querySelector("input[name$='-monto']"),
+    })).filter((row) => row.monto);
+  }
+
+  function applyDefaultCashRefund(totalDev, previousTotalDev) {
+    if (totalDev <= 0) return;
+
+    const rows = refundRows();
+    const cash = rows.find((row) => row.medio === "efectivo");
+    if (!cash) return;
+
+    const currentCash = parseMoney(cash.monto.value);
+    const nonCashTotal = rows
+      .filter((row) => row.medio !== "efectivo")
+      .reduce((sum, row) => sum + parseMoney(row.monto.value), 0);
+    const currentTotal = currentCash + nonCashTotal;
+
+    const isEmpty = currentTotal < 0.009;
+    const wasAllCashForPreviousTotal = (
+      previousTotalDev > 0 &&
+      nonCashTotal < 0.009 &&
+      Math.abs(currentCash - previousTotalDev) < 0.009
+    );
+
+    if (!isEmpty && !wasAllCashForPreviousTotal) return;
+
+    rows.forEach((row) => {
+      row.monto.value = row.medio === "efectivo" ? to2(totalDev) : "0.00";
+    });
+  }
+
   function validateUI() {
     const mixto = esMixto();
 
@@ -163,11 +198,18 @@
     validateUI();
   });
 
+  let previousRefundTotal = calcTotalDevolucion();
+
   document.addEventListener("input", (e) => {
     const t = e.target;
     if (!t) return;
 
-    if (t.matches("input[name^='dev-'][name$='-devolver']")) validateUI();
+    if (t.matches("input[name^='dev-'][name$='-devolver']")) {
+      const totalDev = calcTotalDevolucion();
+      applyDefaultCashRefund(totalDev, previousRefundTotal);
+      previousRefundTotal = totalDev;
+      validateUI();
+    }
     if (t.matches("input[name$='-monto']")) validateUI();
   });
 

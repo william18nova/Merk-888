@@ -6021,6 +6021,12 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin, View):
             suma += monto
 
         suma = _to_q2(suma)
+
+        # Si no se indicó ningún monto, tomar todo el reintegro como efectivo.
+        # Cualquier distribución explícita continúa validándose exactamente.
+        if total_reintegro > 0 and not reintegro_map:
+            return True, None, {"efectivo": total_reintegro}
+
         if suma != total_reintegro:
             return False, f"Reintegro mixto ({suma}) debe ser igual al total a devolver ({total_reintegro}).", {}
 

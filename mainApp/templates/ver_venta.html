@@ -171,8 +171,8 @@
       </h2>
 
       <p class="reintegro-explanation">
-        Registra de dónde salió realmente el dinero. Puede ser un medio diferente
-        al que utilizó el cliente al pagar.
+        Por defecto, todo el dinero se asigna a Efectivo. Cámbialo solamente si
+        la devolución salió por otro medio o si necesitas repartirla.
       </p>
 
       <div class="mixto-summary">
@@ -296,5 +296,5 @@
   if (!/^https?:\/\//.test(window.POS_AGENT_URL)) window.POS_AGENT_URL = "http://127.0.0.1:8787";
 </script>
 
-<script src="{% static 'javascript/ver_venta.js' %}?v=2"></script>
+<script src="{% static 'javascript/ver_venta.js' %}?v=3"></script>
 {% endblock %}

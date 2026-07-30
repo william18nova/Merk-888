@@ -1,11 +1,18 @@
 from decimal import Decimal
+from contextlib import nullcontext
+from datetime import date
+from io import StringIO
 import json
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from django.conf import settings
+from django.core.management import call_command
+from django.core.management.base import CommandError
 from django.db import IntegrityError
-from django.test import RequestFactory, SimpleTestCase
+from django.test import RequestFactory, SimpleTestCase, override_settings
 from django.urls import resolve, reverse
 
 from .models import CambioDevolucion, TurnoCajaMedio
@@ -15,10 +22,21 @@ from .services.employee_client import (
     _matching_clients,
     sync_employee_client,
 )
+from .services.product_price_sync import (
+    PriceMapping,
+    ProductPriceSyncError,
+    SourceProduct,
+    _validate_source_rows,
+    fetch_source_products,
+    load_price_mappings,
+    normalize_product_name,
+    sync_product_prices,
+)
 from .views import (
     GenerarVentaView,
     NequiNotificationWebhookView,
     ProductoAutocomplete,
+    VentaDetailView,
     _looks_like_nequi_payment,
     _parse_nequi_amount,
     _parse_nequi_sender_plain,
@@ -658,6 +676,15 @@ class RefundPaymentMethodTests(SimpleTestCase):
         self.assertIn("reverse_sql=migrations.RunSQL.noop", migration)
 
     def test_refund_distribution_requires_exact_total_and_valid_method(self):
+        self.assertEqual(
+            CambioDevolucion._normalizar_reintegro_map({}, Decimal("500.00")),
+            {"efectivo": Decimal("500.00")},
+        )
+        self.assertEqual(
+            CambioDevolucion._normalizar_reintegro_map({}, Decimal("0.00")),
+            {},
+        )
+
         with self.assertRaisesMessage(ValueError, "igual al total"):
             CambioDevolucion._normalizar_reintegro_map(
                 {"efectivo": Decimal("499.00")},
@@ -669,6 +696,43 @@ class RefundPaymentMethodTests(SimpleTestCase):
                 {"cripto": Decimal("500.00")},
                 Decimal("500.00"),
             )
+
+    def test_empty_refund_form_defaults_to_cash_without_overwriting_choice(self):
+        view = VentaDetailView()
+        empty_formset = SimpleNamespace(
+            is_valid=lambda: True,
+            cleaned_data=[
+                {"medio_pago": medio, "monto": Decimal("0.00")}
+                for medio in ("efectivo", "nequi", "daviplata", "tarjeta", "banco_caja_social")
+            ],
+        )
+
+        ok, error, refund_map = view._validar_reintegro_mixto(
+            SimpleNamespace(),
+            empty_formset,
+            Decimal("500.00"),
+        )
+
+        self.assertTrue(ok)
+        self.assertIsNone(error)
+        self.assertEqual(refund_map, {"efectivo": Decimal("500.00")})
+
+        nequi_formset = SimpleNamespace(
+            is_valid=lambda: True,
+            cleaned_data=[
+                {"medio_pago": "efectivo", "monto": Decimal("0.00")},
+                {"medio_pago": "nequi", "monto": Decimal("500.00")},
+            ],
+        )
+        ok, error, refund_map = view._validar_reintegro_mixto(
+            SimpleNamespace(),
+            nequi_formset,
+            Decimal("500.00"),
+        )
+
+        self.assertTrue(ok)
+        self.assertIsNone(error)
+        self.assertEqual(refund_map, {"nequi": Decimal("500.00")})
 
     @patch("mainApp.models.TurnoCaja.objects.filter")
     @patch("mainApp.models.ReintegroVenta.objects.create")
@@ -742,8 +806,11 @@ class RefundPaymentMethodTests(SimpleTestCase):
         ).read_text(encoding="utf-8")
 
         self.assertIn("¿Por qué medio entregaste el dinero?", template)
+        self.assertIn("Por defecto, todo el dinero se asigna a Efectivo", template)
         self.assertIn('data-reintegro-target=', template)
         self.assertIn("VENTA_TOTAL_COBRADO", script)
+        self.assertIn("applyDefaultCashRefund", script)
+        self.assertIn('row.medio === "efectivo" ? to2(totalDev)', script)
         self.assertIn("const reintegrado", close_script)
         self.assertIn("efectivoEntregado - BASE", close_script)
 
@@ -785,3 +852,371 @@ class FreeSaleReturnTests(SimpleTestCase):
         self.assertEqual(sale.total, Decimal("0.00"))
         sale.save.assert_called_once_with(update_fields=["total"])
         open_shift.assert_not_called()
+
+
+class ProductPriceMappingTests(SimpleTestCase):
+    def test_repository_mapping_preserves_one_to_many_relations(self):
+        mapping_path = (
+            settings.BASE_DIR
+            / "mainApp"
+            / "data"
+            / "price_sync_plaza_map.json"
+        )
+        payload = json.loads(mapping_path.read_text(encoding="utf-8"))
+        mappings = load_price_mappings(mapping_path)
+
+        self.assertEqual(len(payload["mappings"]), 76)
+        self.assertEqual(
+            len([item for item in payload["mappings"] if not item["active"]]),
+            6,
+        )
+        self.assertEqual(len(mappings), 70)
+        self.assertEqual(len({item.source_id for item in mappings}), 66)
+        self.assertEqual(len({item.destination_id for item in mappings}), 70)
+        self.assertEqual(
+            sorted(
+                item.destination_id
+                for item in mappings
+                if item.source_id == 1768
+            ),
+            [25062319, 25062320, 25062321],
+        )
+        self.assertEqual(
+            next(item for item in mappings if item.source_id == 383).expected_source_name,
+            "Piña x gr",
+        )
+        self.assertEqual(
+            next(item for item in mappings if item.source_id == 359).expected_source_name,
+            "Champiñones Bandeja",
+        )
+        maximum_factor = Decimal(settings.PRICE_SYNC_MAX_PRICE_FACTOR)
+        for item in payload["mappings"]:
+            if not item["active"]:
+                continue
+            source = Decimal(item["source_snapshot_price"])
+            destination = Decimal(item["destination_snapshot_price"])
+            factor = max(source / destination, destination / source)
+            self.assertLessEqual(
+                factor,
+                maximum_factor,
+                msg=f"Mapeo extremo activo: {item['source_id']} -> {item['destination_id']}",
+            )
+
+    def test_mapping_rejects_destination_linked_to_two_sources(self):
+        payload = {
+            "version": 1,
+            "mappings": [
+                {
+                    "source_id": 1,
+                    "expected_source_name": "Origen A",
+                    "destination_id": 10,
+                    "expected_destination_name": "Destino",
+                },
+                {
+                    "source_id": 2,
+                    "expected_source_name": "Origen B",
+                    "destination_id": 10,
+                    "expected_destination_name": "Destino",
+                },
+            ],
+        }
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "mapping.json"
+            path.write_text(json.dumps(payload), encoding="utf-8")
+
+            with self.assertRaisesMessage(
+                ProductPriceSyncError,
+                "dos productos de origen",
+            ):
+                load_price_mappings(path)
+
+    def test_product_name_normalization_is_strict_but_accent_insensitive(self):
+        self.assertEqual(
+            normalize_product_name("  PIÑA   X-KG "),
+            normalize_product_name("piña x kg"),
+        )
+        self.assertNotEqual(
+            normalize_product_name("Piña x kg"),
+            normalize_product_name("Papaya x kg"),
+        )
+
+
+class ProductPriceSourceValidationTests(SimpleTestCase):
+    mapping = PriceMapping(
+        source_id=7,
+        expected_source_name="Piña x kg",
+        destination_id=70,
+        expected_destination_name="FR PIÑA XKG",
+    )
+
+    def test_source_rows_require_id_and_expected_name(self):
+        products = _validate_source_rows(
+            [(7, "PIÑA X KG", Decimal("3.845"))],
+            (self.mapping,),
+        )
+        self.assertEqual(products[7].price, Decimal("3.85"))
+
+        with self.assertRaisesMessage(
+            ProductPriceSyncError,
+            "no corresponden al catálogo",
+        ):
+            _validate_source_rows(
+                [(7, "Aceite x 500 ml", Decimal("3000"))],
+                (self.mapping,),
+            )
+
+        with self.assertRaisesMessage(
+            ProductPriceSyncError,
+            "menor a un centavo",
+        ):
+            _validate_source_rows(
+                [(7, "Piña x kg", Decimal("0.004"))],
+                (self.mapping,),
+            )
+
+    @override_settings(
+        PRICE_SYNC_SOURCE_HOST="source.example",
+        PRICE_SYNC_SOURCE_PORT="5432",
+        PRICE_SYNC_SOURCE_NAME="catalog",
+        PRICE_SYNC_SOURCE_USER="reader",
+        PRICE_SYNC_SOURCE_PASSWORD="secret",
+        PRICE_SYNC_SOURCE_SSLMODE="require",
+        PRICE_SYNC_CONNECT_TIMEOUT="3",
+        PRICE_SYNC_STATEMENT_TIMEOUT_MS="1000",
+    )
+    def test_external_connection_is_read_only_and_always_closed(self):
+        class FakeCursor:
+            def __init__(self):
+                self.executed = []
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, traceback):
+                return False
+
+            def execute(self, sql, params=None):
+                self.executed.append((sql, params))
+
+            def fetchone(self):
+                return ("on",)
+
+            def fetchall(self):
+                return [(7, "Piña x kg", Decimal("3.80"))]
+
+        class FakeConnection:
+            def __init__(self):
+                self.fake_cursor = FakeCursor()
+                self.set_session = MagicMock()
+                self.rollback = MagicMock()
+                self.close = MagicMock()
+
+            def cursor(self):
+                return self.fake_cursor
+
+        connection = FakeConnection()
+        connect = MagicMock(return_value=connection)
+
+        products = fetch_source_products((self.mapping,), connect=connect)
+
+        self.assertEqual(products[7].price, Decimal("3.80"))
+        connection.set_session.assert_called_once_with(
+            readonly=True,
+            autocommit=False,
+        )
+        self.assertIn(
+            "FROM public.productos",
+            connection.fake_cursor.executed[-1][0],
+        )
+        connection.rollback.assert_called_once()
+        connection.close.assert_called_once()
+
+
+class ProductPriceSyncServiceTests(SimpleTestCase):
+    mapping = PriceMapping(
+        source_id=7,
+        expected_source_name="Piña x kg",
+        destination_id=70,
+        expected_destination_name="FR PIÑA XKG",
+    )
+
+    def _source(self, price):
+        return {
+            7: SourceProduct(
+                product_id=7,
+                name="Piña x kg",
+                price=Decimal(price),
+            )
+        }
+
+    @patch("mainApp.services.product_price_sync.Producto.objects.bulk_update")
+    @patch("mainApp.services.product_price_sync._load_destination_products")
+    @patch("mainApp.services.product_price_sync.fetch_source_products")
+    def test_dry_run_never_writes(
+        self,
+        fetch_source,
+        load_destination,
+        bulk_update,
+    ):
+        fetch_source.return_value = self._source("12.00")
+        load_destination.return_value = {
+            70: SimpleNamespace(
+                nombre="FR PIÑA XKG",
+                precio=Decimal("10.00"),
+                precio_anterior=None,
+            )
+        }
+
+        report = sync_product_prices(
+            apply=False,
+            mappings=(self.mapping,),
+        )
+
+        self.assertFalse(report.applied)
+        self.assertEqual(len(report.changes), 1)
+        bulk_update.assert_not_called()
+
+    @override_settings(PRICE_SYNC_MAX_PRICE_FACTOR="5")
+    @patch(
+        "mainApp.services.product_price_sync._exclusive_sync_lock",
+        return_value=nullcontext(),
+    )
+    @patch(
+        "mainApp.services.product_price_sync.transaction.atomic",
+        return_value=nullcontext(),
+    )
+    @patch("mainApp.services.product_price_sync.Producto.objects.bulk_update")
+    @patch("mainApp.services.product_price_sync._load_destination_products")
+    @patch("mainApp.services.product_price_sync.fetch_source_products")
+    def test_apply_preserves_previous_price(
+        self,
+        fetch_source,
+        load_destination,
+        bulk_update,
+        _atomic,
+        _sync_lock,
+    ):
+        product = SimpleNamespace(
+            nombre="FR PIÑA XKG",
+            precio=Decimal("10.00"),
+            precio_anterior=None,
+        )
+        fetch_source.return_value = self._source("12.00")
+        load_destination.return_value = {70: product}
+
+        report = sync_product_prices(
+            apply=True,
+            mappings=(self.mapping,),
+        )
+
+        self.assertTrue(report.applied)
+        self.assertEqual(product.precio_anterior, Decimal("10.00"))
+        self.assertEqual(product.precio, Decimal("12.00"))
+        bulk_update.assert_called_once_with(
+            [product],
+            ["precio_anterior", "precio"],
+            batch_size=100,
+        )
+
+    @override_settings(PRICE_SYNC_MAX_PRICE_FACTOR="5")
+    @patch(
+        "mainApp.services.product_price_sync._exclusive_sync_lock",
+        return_value=nullcontext(),
+    )
+    @patch(
+        "mainApp.services.product_price_sync.transaction.atomic",
+        return_value=nullcontext(),
+    )
+    @patch("mainApp.services.product_price_sync.Producto.objects.bulk_update")
+    @patch("mainApp.services.product_price_sync._load_destination_products")
+    @patch("mainApp.services.product_price_sync.fetch_source_products")
+    def test_apply_blocks_extreme_unit_mismatch(
+        self,
+        fetch_source,
+        load_destination,
+        bulk_update,
+        _atomic,
+        _sync_lock,
+    ):
+        fetch_source.return_value = self._source("3.00")
+        load_destination.return_value = {
+            70: SimpleNamespace(
+                nombre="FR PIÑA XKG",
+                precio=Decimal("3000.00"),
+                precio_anterior=None,
+            )
+        }
+
+        with self.assertRaisesMessage(
+            ProductPriceSyncError,
+            "variación superior",
+        ):
+            sync_product_prices(
+                apply=True,
+                mappings=(self.mapping,),
+            )
+        bulk_update.assert_not_called()
+
+    @patch("mainApp.services.product_price_sync.fetch_source_products")
+    def test_empty_explicit_mapping_never_falls_back_to_full_catalog(
+        self,
+        fetch_source,
+    ):
+        with self.assertRaisesMessage(
+            ProductPriceSyncError,
+            "No hay productos configurados",
+        ):
+            sync_product_prices(apply=False, mappings=())
+        fetch_source.assert_not_called()
+
+
+class ProductPriceScheduleTests(SimpleTestCase):
+    def test_schedule_uses_colombia_weekdays(self):
+        from mainApp.management.commands.actualizar_precios_plaza import (
+            should_run_today,
+        )
+
+        self.assertTrue(should_run_today(date(2026, 7, 28)))  # martes
+        self.assertTrue(should_run_today(date(2026, 7, 31)))  # viernes
+        self.assertTrue(should_run_today(date(2026, 8, 1)))  # sábado
+        self.assertFalse(should_run_today(date(2026, 7, 29)))  # miércoles
+
+    @patch(
+        "mainApp.management.commands.actualizar_precios_plaza.sync_product_prices"
+    )
+    def test_command_defaults_to_dry_run(self, sync_prices):
+        sync_prices.return_value = SimpleNamespace(
+            applied=False,
+            mapping_count=70,
+            source_product_count=66,
+            destination_product_count=70,
+            changes=(),
+            unchanged_count=70,
+            suspicious_changes=(),
+        )
+        output = StringIO()
+
+        call_command(
+            "actualizar_precios_plaza",
+            "--force",
+            stdout=output,
+        )
+
+        sync_prices.assert_called_once_with(apply=False)
+        self.assertIn("SIMULACIÓN", output.getvalue())
+        self.assertIn("No se modificó ningún precio", output.getvalue())
+
+    @patch(
+        "mainApp.management.commands.actualizar_precios_plaza.sync_product_prices",
+        side_effect=ProductPriceSyncError("catálogo incorrecto"),
+    )
+    def test_command_converts_safe_validation_error_to_command_error(
+        self,
+        _sync_prices,
+    ):
+        with self.assertRaisesMessage(CommandError, "catálogo incorrecto"):
+            call_command(
+                "actualizar_precios_plaza",
+                "--apply",
+                "--force",
+            )

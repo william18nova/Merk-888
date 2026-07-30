@@ -771,6 +771,12 @@ class CambioDevolucion(models.Model):
 
         suma = _to_q2(sum(normalizado.values(), Decimal("0.00")))
         total_dev = _to_q2(total_dev)
+
+        # Efectivo es el medio predeterminado. Esto también protege llamadas
+        # al método de dominio que no pasan por la interfaz web.
+        if total_dev > 0 and not normalizado:
+            return {"efectivo": total_dev}
+
         if suma != total_dev:
             raise ValueError(
                 f"La distribución de la devolución ({suma}) debe ser igual "
