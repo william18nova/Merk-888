@@ -270,6 +270,10 @@ body.modal-open{
 #myModal .employee-discount-auth small{
   display:block;
 }
+#myModal .merk2888-discount-auth{
+  background:rgba(124,58,237,.18);
+  border-color:rgba(167,139,250,.48);
+}
 #myModal .employee-discount-auth strong{
   font-weight:950;
   margin-bottom:4px;

@@ -40,13 +40,19 @@
       <tbody>
         {% for c in clientes %}
           <tr>
-            <td data-label="Nombre">{{ c.nombre }}</td>
+            <td data-label="Nombre">
+              {{ c.nombre }}
+              {% if c.es_merk2888 %}
+                <span title="Cliente especial protegido">★ Especial</span>
+              {% endif %}
+            </td>
             <td data-label="Apellido">{{ c.apellido }}</td>
             <td data-label="Teléfono">{{ c.telefono }}</td>
             <td data-label="Email">{{ c.email|default:"—" }}</td>
             <td data-label="N.º Documento">{{ c.numerodocumento }}</td>
             <td data-label="Acciones" class="actions-cell">
               <div class="btn-container">
+                {% if not c.es_merk2888 %}
                 <a class="btn editar"
                    href="{% url 'editar_cliente' c.pk %}"
                    title="Editar">
@@ -59,15 +65,22 @@
                         title="Eliminar">
                   <i class="fas fa-trash-alt"></i>
                 </button>
+                {% else %}
+                  <span title="Este cliente no puede editarse ni eliminarse">
+                    <i class="fas fa-lock"></i>
+                  </span>
+                {% endif %}
               </div>
 
               <!-- form oculto -->
+              {% if not c.es_merk2888 %}
               <form id="eliminar-form-{{ c.pk }}"
                     action="{% url 'eliminar_cliente' c.pk %}"
                     method="post"
                     style="display:none;">
                 {% csrf_token %}
               </form>
+              {% endif %}
             </td>
           </tr>
         {% endfor %}

@@ -1,13 +1,14 @@
 from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib.auth.decorators import login_required
 from django.contrib import messages
-from .models import Usuario, Sucursal, Categoria, Producto, Inventario, Proveedor, PreciosProveedor, PuntosPago, Rol, Empleado, HorariosNegocio, HorarioCaja, Cliente, Venta, DetalleVenta, PedidoProveedor, DetallePedidoProveedor, CambioDevolucion, ReintegroVenta, Permiso, RolPermiso, UsuarioPermiso, PagoVenta, TurnoCaja, TurnoCajaMedio, NotificacionNequi, VentaCarritoAudit
+from .models import Usuario, Sucursal, Categoria, Producto, Inventario, Proveedor, PreciosProveedor, PuntosPago, Rol, Empleado, HorariosNegocio, HorarioCaja, Cliente, Venta, DetalleVenta, PedidoProveedor, DetallePedidoProveedor, CambioDevolucion, ReintegroVenta, Permiso, RolPermiso, UsuarioPermiso, PagoVenta, TurnoCaja, TurnoCajaMedio, NotificacionNequi, VentaCarritoAudit, ClienteEspecial, AutorizacionDescuentoEspecial
 from django.db.models import Count, Sum, Exists, OuterRef, Q, F, ExpressionWrapper, DecimalField, Value, IntegerField, Case, When, CharField
 from django.http import JsonResponse, HttpResponseBadRequest, HttpResponseForbidden, HttpRequest, HttpResponse
 from django.contrib.auth import authenticate, login as auth_login
 import json
 import csv
 import re
+import secrets
 import unicodedata
 import hashlib
 import hmac
@@ -20,6 +21,7 @@ import logging
 import ipaddress
 from django.utils.dateparse import parse_date, parse_datetime
 from django.db import transaction, connection, DatabaseError, IntegrityError
+from django.db.models.deletion import ProtectedError
 from django.contrib import messages
 from zoneinfo import ZoneInfo
 from django.core.exceptions import FieldDoesNotExist
@@ -86,14 +88,24 @@ import os, io, textwrap, subprocess
 from django.views.decorators.http import require_POST
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.cache import never_cache
+from django.views.decorators.debug import sensitive_post_parameters
 from django.conf import settings
 from datetime import timedelta
 import pytz
 from typing import List, Dict, Any
 from urllib.parse import parse_qsl
-from .permissions import clear_permission_cache, permission_catalog, sync_permission_catalog, user_can_access_url_name, user_has_permission
+from .permissions import clear_permission_cache, permission_catalog, sync_permission_catalog, user_can_access_url_name, user_has_permission, is_web_master_role
 from .services.employee_client import EmployeeClientSyncError
-
+from .services.special_discount import (
+    SPECIAL_CLIENT_KEY,
+    SpecialDiscountError,
+    consume_one_time_code,
+    generate_one_time_code,
+    get_special_client_profile,
+    is_special_client,
+    lock_one_time_code,
+    preview_one_time_code,
+)
 
 def _round_account_peso(value) -> Decimal:
     try:
@@ -106,6 +118,33 @@ def _round_account_peso(value) -> Decimal:
     if amount < 0:
         return amount.quantize(Decimal("1"), rounding=ROUND_FLOOR)
     return Decimal("0")
+
+
+def _sale_line_revenue_expr(
+    *,
+    quantity_field="cantidad",
+    price_field="preciounitario",
+    subtotal_field=None,
+    max_digits=18,
+):
+    """Ingreso de línea; una venta gratuita aporta unidades, pero no ingresos."""
+    output = DecimalField(max_digits=max_digits, decimal_places=2)
+    raw_total = (
+        F(subtotal_field)
+        if subtotal_field
+        else ExpressionWrapper(
+            F(quantity_field) * F(price_field),
+            output_field=output,
+        )
+    )
+    return Case(
+        When(
+            ventaid__total=Decimal("0.00"),
+            then=Value(Decimal("0.00")),
+        ),
+        default=raw_total,
+        output_field=output,
+    )
 
 
 CO_TZ = ZoneInfo("America/Bogota")
@@ -3465,10 +3504,30 @@ class ClienteListView(LoginRequiredMixin, ListView):
     context_object_name = "clientes"
     ordering            = ["nombre", "apellido"]   # opcional
 
+    def get_queryset(self):
+        return (
+            Cliente.objects
+            .annotate(
+                es_merk2888=Exists(
+                    ClienteEspecial.objects.filter(
+                        cliente_id=OuterRef("pk"),
+                        clave=SPECIAL_CLIENT_KEY,
+                    )
+                )
+            )
+            .order_by("nombre", "apellido")
+        )
+
 
 @login_required
 def eliminar_cliente(request, clienteid):
     cliente = get_object_or_404(Cliente, clienteid=clienteid)
+    if ClienteEspecial.objects.filter(cliente=cliente, clave=SPECIAL_CLIENT_KEY).exists():
+        messages.error(
+            request,
+            "El cliente especial merk2888 está protegido y no puede eliminarse.",
+        )
+        return redirect("visualizar_clientes")
     cliente.delete()
     messages.success(request, 'Cliente eliminado exitosamente.')
     return redirect('visualizar_clientes')
@@ -3480,6 +3539,26 @@ class ClienteUpdateAJAXView(LoginRequiredMixin, UpdateView):
     form_class    = EditarClienteForm
     template_name = "editar_cliente.html"
     success_url   = reverse_lazy("visualizar_clientes")
+
+    def dispatch(self, request, *args, **kwargs):
+        if getattr(request.user, "is_authenticated", False):
+            cliente_id = kwargs.get(self.pk_url_kwarg)
+            if ClienteEspecial.objects.filter(
+                cliente_id=cliente_id,
+                clave=SPECIAL_CLIENT_KEY,
+            ).exists():
+                message = (
+                    "El cliente especial merk2888 es un registro protegido "
+                    "y no puede editarse."
+                )
+                if request.headers.get("x-requested-with") == "XMLHttpRequest":
+                    return JsonResponse(
+                        {"success": False, "error": message},
+                        status=403,
+                    )
+                messages.error(request, message)
+                return redirect("visualizar_clientes")
+        return super().dispatch(request, *args, **kwargs)
 
     def form_valid(self, form):
         self.object = form.save()
@@ -3508,6 +3587,151 @@ class ClienteUpdateAJAXView(LoginRequiredMixin, UpdateView):
         return super().form_invalid(form)
 
 
+@method_decorator(never_cache, name="dispatch")
+@method_decorator(
+    sensitive_post_parameters("password_web_master"),
+    name="dispatch",
+)
+class ClavesDescuentoMerk2888View(LoginRequiredMixin, View):
+    """Genera y revoca claves de un solo uso, exclusivamente para Web Master."""
+
+    template_name = "claves_descuento_merk2888.html"
+
+    def dispatch(self, request, *args, **kwargs):
+        if getattr(request.user, "is_authenticated", False) and not is_web_master_role(request.user):
+            return HttpResponseForbidden(
+                "Solo el rol Web Master puede administrar las claves merk2888."
+            )
+        return super().dispatch(request, *args, **kwargs)
+
+    @staticmethod
+    def _no_store(response):
+        response["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        response["Pragma"] = "no-cache"
+        return response
+
+    def _context(self, *, nueva_clave="", error=""):
+        try:
+            perfil = get_special_client_profile()
+        except SpecialDiscountError:
+            perfil = None
+
+        autorizaciones = list(
+            AutorizacionDescuentoEspecial.objects
+            .select_related(
+                "generada_por",
+                "revocada_por",
+                "usada_por",
+                "ultimo_intento_fallido_por",
+                "venta",
+            )
+            .filter(cliente_especial=perfil)
+            .order_by("-generada_en")[:30]
+        ) if perfil else []
+        return {
+            "cliente_especial": getattr(perfil, "cliente", None),
+            "nueva_clave": nueva_clave,
+            "autorizaciones": autorizaciones,
+            "clave_vigente": next(
+                (
+                    autorizacion
+                    for autorizacion in autorizaciones
+                    if autorizacion.estado == "activa"
+                ),
+                None,
+            ),
+            "error": error,
+            "ttl_minutos": 15,
+            "solicitud_id": secrets.token_hex(16),
+        }
+
+    def _render(self, request, *, nueva_clave="", error="", status=200):
+        response = render(
+            request,
+            self.template_name,
+            self._context(nueva_clave=nueva_clave, error=error),
+            status=status,
+        )
+        return self._no_store(response)
+
+    def get(self, request, *args, **kwargs):
+        return self._render(request)
+
+    def post(self, request, *args, **kwargs):
+        if not is_web_master_role(request.user):
+            return HttpResponseForbidden(
+                "Solo el rol Web Master puede administrar las claves merk2888."
+            )
+
+        password = request.POST.get("password_web_master") or ""
+        if not request.user.check_password(password):
+            return self._render(
+                request,
+                error="La contraseña del Web Master no es correcta.",
+                status=400,
+            )
+
+        action = (request.POST.get("action") or "generar").strip().lower()
+        try:
+            if action == "generar":
+                _autorizacion, codigo = generate_one_time_code(
+                    request.user,
+                    request.POST.get("solicitud_id"),
+                )
+                return self._render(request, nueva_clave=codigo)
+
+            if action == "revocar":
+                raw_id = (request.POST.get("autorizacion_id") or "").strip()
+                if not raw_id.isdigit():
+                    raise SpecialDiscountError("No se encontró la autorización.")
+
+                with transaction.atomic():
+                    perfil = get_special_client_profile(for_update=True)
+                    autorizacion = (
+                        AutorizacionDescuentoEspecial.objects
+                        .select_for_update()
+                        .filter(
+                            pk=int(raw_id),
+                            cliente_especial=perfil,
+                            usada_en__isnull=True,
+                            revocada_en__isnull=True,
+                        )
+                        .first()
+                    )
+                    if not autorizacion:
+                        raise SpecialDiscountError(
+                            "La clave ya no está disponible para revocar."
+                        )
+                    autorizacion.revocada_en = timezone.now()
+                    autorizacion.revocada_por = request.user
+                    autorizacion.revocada_por_nombre = (
+                        getattr(request.user, "nombreusuario", "")
+                        or str(request.user)
+                    )[:160]
+                    autorizacion.save(
+                        update_fields=[
+                            "revocada_en",
+                            "revocada_por",
+                            "revocada_por_nombre",
+                        ]
+                    )
+
+                messages.success(request, "La clave fue revocada correctamente.")
+                response = redirect("claves_descuento_merk2888")
+                return self._no_store(response)
+
+            raise SpecialDiscountError("Acción no válida.")
+        except SpecialDiscountError as exc:
+            return self._render(request, error=str(exc), status=400)
+
+
+@method_decorator(
+    sensitive_post_parameters(
+        "empleado_password",
+        "codigo_descuento_merk2888",
+    ),
+    name="dispatch",
+)
 class GenerarVentaView(LoginRequiredMixin, View):
     template_name = "generar_venta.html"
     success_url   = reverse_lazy("generar_venta")
@@ -3762,20 +3986,50 @@ class GenerarVentaView(LoginRequiredMixin, View):
         empleado_comprador = None
         descuento_empleado = Decimal("0")
         beneficio_web_master = False
+        beneficio_merk2888 = False
+        autorizacion_descuento_id = None
+        codigo_descuento_merk2888 = (
+            data.get("codigo_descuento_merk2888") or ""
+        ).strip()
+        subtotal_original = _round_account_peso(total)
 
         try:
-            empleado_comprador = self._validar_compra_empleado(
-                cajero_user=request.user,
-                cliente=cliente_inst,
-                empleado_password=data.get("empleado_password"),
-            )
+            beneficio_merk2888 = is_special_client(cliente_inst)
+            if beneficio_merk2888:
+                autorizacion = preview_one_time_code(
+                    cliente_inst,
+                    codigo_descuento_merk2888,
+                    actor=request.user,
+                    ip_address=request.META.get("REMOTE_ADDR"),
+                )
+                autorizacion_descuento_id = autorizacion.pk
+                descuento_empleado = subtotal_original
+                total = Decimal("0")
+            else:
+                if codigo_descuento_merk2888:
+                    raise SpecialDiscountError(
+                        "La clave es inválida, venció o ya fue utilizada."
+                    )
+                empleado_comprador = self._validar_compra_empleado(
+                    cajero_user=request.user,
+                    cliente=cliente_inst,
+                    empleado_password=data.get("empleado_password"),
+                )
+                (
+                    descuento_empleado,
+                    total,
+                    beneficio_web_master,
+                ) = self._employee_sale_pricing(
+                    empleado_comprador,
+                    total,
+                )
+        except SpecialDiscountError:
+            return JsonResponse({
+                "success": False,
+                "error": "La clave es inválida, venció o ya fue utilizada.",
+            })
         except ValueError as exc:
             return JsonResponse({'success': False, 'error': str(exc)})
-
-        descuento_empleado, total, beneficio_web_master = self._employee_sale_pricing(
-            empleado_comprador,
-            total,
-        )
 
         # pagos puede llegar como LISTA o como STRING JSON
         pagos = data.get("pagos") or []
@@ -3820,6 +4074,11 @@ class GenerarVentaView(LoginRequiredMixin, View):
             empleado_comprador=empleado_comprador,
             descuento_empleado=descuento_empleado,
             beneficio_web_master=beneficio_web_master,
+            beneficio_merk2888=beneficio_merk2888,
+            autorizacion_descuento_id=autorizacion_descuento_id,
+            codigo_descuento_merk2888=codigo_descuento_merk2888,
+            subtotal_original=subtotal_original,
+            turno=turno,
             nequi_notificacion_id=nequi_notificacion_id,
         )
 
@@ -4018,6 +4277,9 @@ class GenerarVentaView(LoginRequiredMixin, View):
         beneficio_web_master = bool(
             (venta_data or {}).get("beneficio_web_master", False)
         )
+        beneficio_merk2888 = bool(
+            (venta_data or {}).get("beneficio_merk2888", False)
+        )
         venta_id      = (venta_data or {}).get("venta_id", "")
         total_dec = Decimal(total or 0)
         subtotal_factura_raw = sum(
@@ -4058,17 +4320,23 @@ class GenerarVentaView(LoginRequiredMixin, View):
             body.append(line(nom))
             body.append(lr(f" x{qty}  @ {money(pu)}", money(sub)))
 
-        pay_lines = ["-" * WIDTH, line("PAGOS:")]
-        for p in pagos or []:
-            mp = (p.get("medio_pago") or "").upper().replace("_", " ")
-            pay_lines.append(lr(mp[:18], money(p.get("monto", 0))))
+        pay_lines = ["-" * WIDTH]
+        if pagos:
+            pay_lines.append(line("PAGOS:"))
+            for p in pagos:
+                mp = (p.get("medio_pago") or "").upper().replace("_", " ")
+                pay_lines.append(lr(mp[:18], money(p.get("monto", 0))))
+        elif beneficio_merk2888:
+            pay_lines.append(line("SIN PAGO - BENEFICIO 100%"))
 
         foot = ["-" * WIDTH]
         if refund_total > 0:
             foot.append(lr("DEVUELTO:", money(refund_total)))
         if descuento_total > 0:
             foot.append(lr("SUBTOTAL:", money(subtotal_factura)))
-            if beneficio_web_master:
+            if beneficio_merk2888:
+                descuento_label = "BENEFICIO MERK2888:"
+            elif beneficio_web_master:
                 descuento_label = "BENEFICIO WEB MASTER:"
             else:
                 descuento_label = "DESC. EMPLEADO:" if descuento_empleado > 0 else "DESCUENTO:"
@@ -4094,7 +4362,9 @@ class GenerarVentaView(LoginRequiredMixin, View):
     def _crear_venta_ultra_fast(
         user, suc_inst, pp_inst, cliente_id, pagos, detalles, total, efectivo_recibido,
         cliente_inst=None, empleado_comprador=None, descuento_empleado=Decimal("0"),
-        beneficio_web_master=False, nequi_notificacion_id=None
+        beneficio_web_master=False, beneficio_merk2888=False,
+        autorizacion_descuento_id=None, codigo_descuento_merk2888="",
+        subtotal_original=Decimal("0"), turno=None, nequi_notificacion_id=None
     ):
         """
         ULTRA FAST:
@@ -4128,7 +4398,29 @@ class GenerarVentaView(LoginRequiredMixin, View):
             prod_ids = list(qty_map.keys())
 
             with transaction.atomic():
+                turno_id = getattr(turno, "pk", turno)
+                turno = (
+                    TurnoCaja.objects
+                    .select_for_update()
+                    .filter(
+                        pk=turno_id,
+                        cajero=user,
+                        puntopago=pp_inst,
+                        estado="ABIERTO",
+                    )
+                    .first()
+                )
+                if not turno:
+                    return JsonResponse({
+                        "success": False,
+                        "error": (
+                            "El turno de caja cambió o ya fue cerrado. "
+                            "Actualiza la página antes de intentar otra venta."
+                        ),
+                    })
+
                 nequi_notification = None
+                autorizacion_descuento = None
                 nequi_pago_total = sum(
                     (
                         GenerarVentaView._to_decimal(p.get("monto", 0))
@@ -4168,6 +4460,21 @@ class GenerarVentaView(LoginRequiredMixin, View):
                         })
 
                 cliente_inst = cliente_inst or (Cliente.objects.filter(pk=cliente_id).first() if cliente_id else None)
+                if beneficio_merk2888:
+                    if not autorizacion_descuento_id:
+                        raise SpecialDiscountError(
+                            "La clave es inválida, venció o ya fue utilizada."
+                        )
+                    autorizacion_descuento = lock_one_time_code(
+                        cliente_inst,
+                        codigo_descuento_merk2888,
+                        autorizacion_descuento_id,
+                    )
+                elif autorizacion_descuento_id:
+                    raise SpecialDiscountError(
+                        "La clave no corresponde al cliente seleccionado."
+                    )
+
                 mediopago = "mixto" if len(pagos) >= 2 else (pagos[0]["medio_pago"] if pagos else "sin_pago").lower()
 
                 venta = Venta.objects.create(
@@ -4243,6 +4550,17 @@ class GenerarVentaView(LoginRequiredMixin, View):
                         usado_en=timezone.now(),
                     )
 
+                if autorizacion_descuento:
+                    consume_one_time_code(
+                        autorizacion_descuento,
+                        venta=venta,
+                        usada_por=user,
+                        turno=turno,
+                        sucursal=suc_inst,
+                        subtotal=subtotal_original,
+                        descuento=descuento_empleado,
+                    )
+
             # CAMBIO: solo pago simple en efectivo
             efectivo_recibido = GenerarVentaView._to_decimal(efectivo_recibido)
             cambio = Decimal("0")
@@ -4250,24 +4568,46 @@ class GenerarVentaView(LoginRequiredMixin, View):
                 if efectivo_recibido > total:
                     cambio = efectivo_recibido - total
 
-            receipt_text = GenerarVentaView._build_receipt_text(
-                {
-                    "sucursal_nombre": getattr(suc_inst, "nombre", str(suc_inst)),
-                    "cajero_nombre": cajero_nombre,
-                    "refund_total": refund_total,
-                    "cambio": cambio,
-                    "venta_id": venta.pk,
-                    "descuento_empleado": descuento_empleado,
-                    "empleado_comprador": str(empleado_comprador or ""),
-                    "beneficio_web_master": beneficio_web_master,
-                },
-                detalles, total, pagos
-            )
-
-            nequi_status = GenerarVentaView._nequi_sale_status(
-                nequi_pago_total,
-                nequi_notification,
-            )
+            try:
+                receipt_text = GenerarVentaView._build_receipt_text(
+                    {
+                        "sucursal_nombre": getattr(suc_inst, "nombre", str(suc_inst)),
+                        "cajero_nombre": cajero_nombre,
+                        "refund_total": refund_total,
+                        "cambio": cambio,
+                        "venta_id": venta.pk,
+                        "descuento_empleado": descuento_empleado,
+                        "empleado_comprador": str(empleado_comprador or ""),
+                        "beneficio_web_master": beneficio_web_master,
+                        "beneficio_merk2888": beneficio_merk2888,
+                    },
+                    detalles, total, pagos
+                )
+                nequi_status = GenerarVentaView._nequi_sale_status(
+                    nequi_pago_total,
+                    nequi_notification,
+                )
+            except Exception:
+                # La venta ya quedó confirmada. Nunca responder como fallo y
+                # provocar un reintento/duplicado solo porque falló el ticket.
+                logger.exception(
+                    "Venta %s creada, pero no se pudo construir el recibo.",
+                    venta.pk,
+                )
+                receipt_text = (
+                    f"VENTA #{venta.pk}\n"
+                    f"TOTAL: {_format_money_cop(total)}\n"
+                    "Consulta el detalle para reimprimir la factura.\n"
+                )
+                nequi_status = {
+                    "nequi_payment": nequi_pago_total > 0,
+                    "nequi_linked": bool(nequi_notification),
+                    "nequi_notification_id": (
+                        getattr(nequi_notification, "pk", None)
+                        if nequi_notification
+                        else None
+                    ),
+                }
 
             return JsonResponse({
                 "success": True,
@@ -4275,9 +4615,15 @@ class GenerarVentaView(LoginRequiredMixin, View):
                 "receipt_text": receipt_text,
                 "sale_total": str(total),
                 "web_master_free_sale": bool(beneficio_web_master),
+                "merk2888_free_sale": bool(beneficio_merk2888),
                 **nequi_status,
             })
 
+        except SpecialDiscountError:
+            return JsonResponse({
+                "success": False,
+                "error": "La clave es inválida, venció o ya fue utilizada.",
+            })
         except Exception as e:
             if getattr(settings, "DEBUG", False):
                 return JsonResponse({'success': False, 'error': f'Error al crear la venta: {e!s}'})
@@ -4490,6 +4836,16 @@ def _ticket_amount_line(label: str, amount: Decimal, width: int = TICKET_WIDTH_C
     return f"{label:<{width-len(right)}}{right}"
 
 
+def _venta_tiene_beneficio_merk2888(venta) -> bool:
+    venta_id = getattr(venta, "pk", venta)
+    if not venta_id:
+        return False
+    return AutorizacionDescuentoEspecial.objects.filter(
+        venta_id=venta_id,
+        usada_en__isnull=False,
+    ).exists()
+
+
 def _build_ticket_lines(venta: Venta) -> list[str]:
     """
     Devuelve líneas ya formateadas a 48 columnas (80mm).
@@ -4526,6 +4882,7 @@ def _build_ticket_lines(venta: Venta) -> list[str]:
         .select_related("productoid")
     )
     subtotal_factura, descuento_total = _ticket_subtotal_discount(detalles, venta.total)
+    beneficio_merk2888 = _venta_tiene_beneficio_merk2888(venta)
 
     # ✅ calcular devuelto (sumatoria de qty<0 en positivo)
     refund_total = Decimal("0")
@@ -4557,12 +4914,16 @@ def _build_ticket_lines(venta: Venta) -> list[str]:
 
     if descuento_total > 0:
         out.append(_ticket_amount_line("SUBTOTAL", subtotal_factura))
-        out.append(_ticket_amount_line("DESCUENTO", -descuento_total))
+        discount_label = "BENEFICIO MERK2888" if beneficio_merk2888 else "DESCUENTO"
+        out.append(_ticket_amount_line(discount_label, -descuento_total))
         out.append(_ticket_amount_line("USTED AHORRA", descuento_total))
 
     out.append(_ticket_amount_line("TOTAL", venta.total))
     out.append(_line())
-    out += _wrap(f"Medio de pago: {str(venta.mediopago or '').upper()}")
+    if beneficio_merk2888:
+        out += _wrap("Medio de pago: SIN PAGO - BENEFICIO 100%")
+    else:
+        out += _wrap(f"Medio de pago: {str(venta.mediopago or '').upper()}")
     out.append("")
     out += _wrap("¡Gracias por su compra!")
     out.append("")
@@ -5057,7 +5418,15 @@ class ClienteAutocompleteView(PaginatedAutocompleteMixin):
             limit = self.per_page
         start, end = (page - 1) * limit, page * limit
 
-        qs = Cliente.objects.all()
+        qs = Cliente.objects.annotate(
+            is_merk2888=Exists(
+                ClienteEspecial.objects.filter(
+                    cliente_id=OuterRef("pk"),
+                    clave=SPECIAL_CLIENT_KEY,
+                    activo=True,
+                )
+            )
+        )
         if term:
             qs = qs.filter(
                 Q(nombre__icontains=term)  |
@@ -5067,7 +5436,13 @@ class ClienteAutocompleteView(PaginatedAutocompleteMixin):
 
         clientes = list(
             qs.order_by("nombre", "apellido")
-            .values("clienteid", "nombre", "apellido", "numerodocumento")[start:end + 1]
+            .values(
+                "clienteid",
+                "nombre",
+                "apellido",
+                "numerodocumento",
+                "is_merk2888",
+            )[start:end + 1]
         )
         has_more = len(clientes) > limit
         clientes = clientes[:limit]
@@ -5122,6 +5497,7 @@ class ClienteAutocompleteView(PaginatedAutocompleteMixin):
               "employee_name": str(empleado or "") if empleado else "",
               "employee_has_user": bool(getattr(empleado, "usuarioid", None)) if empleado else False,
               "employee_is_web_master": GenerarVentaView._empleado_es_web_master(empleado) if empleado else False,
+              "is_merk2888": bool(c["is_merk2888"]),
             })
         return JsonResponse({"results": results, "has_more": has_more})
 
@@ -5914,6 +6290,7 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin, View):
         medio = (venta.mediopago or "").strip().lower()
         total = self._venta_total_cobrado(venta)
         subtotal_factura, descuento_total = _ticket_subtotal_discount(detalles, total)
+        beneficio_merk2888 = _venta_tiene_beneficio_merk2888(venta)
 
         if medio == "mixto":
             rows = (
@@ -5960,7 +6337,10 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin, View):
         out.append(line("-" * WIDTH))
         if descuento_total > 0:
             out.append(lr("SUBTOTAL", cls._money(subtotal_factura)))
-            out.append(lr("DESCUENTO", f"-{cls._money(descuento_total)}"))
+            discount_label = (
+                "BENEFICIO MERK2888" if beneficio_merk2888 else "DESCUENTO"
+            )
+            out.append(lr(discount_label, f"-{cls._money(descuento_total)}"))
             out.append(lr("USTED AHORRA", cls._money(descuento_total)))
         out.append(lr("TOTAL", cls._money(total)))
         out.append(line("-" * WIDTH))
@@ -5969,6 +6349,8 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin, View):
             out.append(line("PAGOS:"))
             for mp, mt in pagos:
                 out.append(lr(f"- {mp.upper()}", cls._money(mt)))
+        elif beneficio_merk2888:
+            out.append(line("SIN PAGO - BENEFICIO 100%"))
 
         out.append(line("-" * WIDTH))
         out.append(line("Gracias por su compra"))
@@ -6122,6 +6504,12 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin, View):
         )
         solicitud_whatsapp_url = f"https://wa.me/573054622892?text={quote(solicitud_texto)}"
         reintegro_ledger_ready = _reintegro_ledger_ready()
+        autorizacion_merk2888 = (
+            AutorizacionDescuentoEspecial.objects
+            .select_related("generada_por", "usada_por")
+            .filter(venta=venta, usada_en__isnull=False)
+            .first()
+        )
         reintegros = []
         if reintegro_ledger_ready:
             reintegros = list(
@@ -6145,6 +6533,8 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin, View):
             "reintegro_ledger_ready": reintegro_ledger_ready,
             "venta_print_only": self._is_print_only(request.user),
             "venta_solicitud_cambio_whatsapp_url": solicitud_whatsapp_url,
+            "autorizacion_merk2888": autorizacion_merk2888,
+            "beneficio_merk2888": bool(autorizacion_merk2888),
             **nequi_status,
         })
 
@@ -8034,10 +8424,7 @@ class MetricasNegocioDataView(LoginRequiredMixin, View):
         if puntopago_id:
             cambios_qs = cambios_qs.filter(Q(venta__puntopagoid_id=puntopago_id) | Q(venta__isnull=True))
 
-        line_total = ExpressionWrapper(
-            F("cantidad") * F("preciounitario"),
-            output_field=DecimalField(max_digits=18, decimal_places=2),
-        )
+        line_total = _sale_line_revenue_expr()
 
         daily_map = {
             row["fecha"].isoformat(): row
@@ -10393,8 +10780,23 @@ class TurnoCajaAdminDeleteAPI(LoginRequiredMixin, View):
             return JsonResponse({"success": False, "error": "No tienes permiso para eliminar turnos."}, status=403)
         turno = get_object_or_404(TurnoCaja.objects.select_for_update(), pk=turno_id)
 
-        TurnoCajaMedio.objects.filter(turno=turno).delete()
-        turno.delete()
+        try:
+            # El savepoint evita que queden borrados los medios si una
+            # autorización/reintegro protegido impide eliminar el turno.
+            with transaction.atomic():
+                TurnoCajaMedio.objects.filter(turno=turno).delete()
+                turno.delete()
+        except ProtectedError:
+            return JsonResponse(
+                {
+                    "success": False,
+                    "error": (
+                        "Este turno tiene ventas, devoluciones o autorizaciones "
+                        "auditables y no puede eliminarse."
+                    ),
+                },
+                status=409,
+            )
 
         return JsonResponse({"success": True, "msg": f"Turno #{turno_id} eliminado."})
 
@@ -11053,6 +11455,10 @@ class VentasProductoRangoDataView(LoginRequiredMixin, View):
         dv_cant = _pick_existing_field(DetalleVenta, ["cantidad", "cant", "qty"]) or "cantidad"
         dv_subt = _pick_existing_field(DetalleVenta, ["subtotal", "total", "importe"])
 
+        revenue_expr = _sale_line_revenue_expr(
+            quantity_field=dv_cant,
+            subtotal_field=dv_subt,
+        )
         base = (
             DetalleVenta.objects
             .filter(
@@ -11065,10 +11471,7 @@ class VentasProductoRangoDataView(LoginRequiredMixin, View):
             .values("productoid_id", "productoid__nombre")
             .annotate(
                 unidades=Sum(dv_cant),
-                total_ventas=Sum(dv_subt) if dv_subt else Sum(ExpressionWrapper(
-                    F(dv_cant) * F("preciounitario"),
-                    output_field=DecimalField(max_digits=18, decimal_places=2)
-                )),
+                total_ventas=Sum(revenue_expr),
                 num_ventas=Count("ventaid_id", distinct=True),
             )
         )
@@ -11168,14 +11571,12 @@ class ProductoVentasStatsAjaxView(LoginRequiredMixin, View):
         ventas_distintas = qs.values("ventaid_id").distinct().count()
         unidades = qs.aggregate(u=Sum(dv_cant))["u"] or 0
 
-        if dv_subt:
-            ingresos = qs.aggregate(x=Sum(dv_subt))["x"] or 0
-        else:
-            ingresos_expr = ExpressionWrapper(
-                F(dv_cant) * F(dv_price),
-                output_field=DecimalField(max_digits=18, decimal_places=2),
-            )
-            ingresos = qs.aggregate(x=Sum(ingresos_expr))["x"] or 0
+        ingresos_expr = _sale_line_revenue_expr(
+            quantity_field=dv_cant,
+            price_field=dv_price,
+            subtotal_field=dv_subt,
+        )
+        ingresos = qs.aggregate(x=Sum(ingresos_expr))["x"] or 0
 
         daily = list(
             qs.annotate(dia=TruncDate(f"ventaid__{venta_fecha}"))

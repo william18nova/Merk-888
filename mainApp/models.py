@@ -258,7 +258,7 @@ class Cliente(models.Model):
         db_table = 'clientes'
 
     def __str__(self):
-        return f'{self.nombre} {self.apellido}'
+        return f'{self.nombre} {self.apellido}'.strip()
 
 
 class Venta(models.Model):
@@ -314,6 +314,188 @@ class PagoVenta(models.Model):
 
     def __str__(self):
         return f"Venta {self.ventaid_id} - {self.medio_pago} - {self.monto}"
+
+
+class ClienteEspecial(models.Model):
+    id = models.BigAutoField(primary_key=True)
+    cliente = models.OneToOneField(
+        Cliente,
+        on_delete=models.PROTECT,
+        related_name="perfil_especial",
+    )
+    clave = models.CharField(max_length=50, unique=True, default="merk2888")
+    activo = models.BooleanField(default=True)
+    creado_en = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        db_table = "clientes_especiales"
+        ordering = ["clave"]
+
+    def __str__(self):
+        return f"{self.clave}: {self.cliente}"
+
+
+class AutorizacionDescuentoEspecial(models.Model):
+    id = models.BigAutoField(primary_key=True)
+    cliente_especial = models.ForeignKey(
+        ClienteEspecial,
+        on_delete=models.PROTECT,
+        related_name="autorizaciones",
+    )
+    selector = models.CharField(max_length=64, unique=True, editable=False)
+    referencia = models.CharField(max_length=32, unique=True, editable=False)
+    solicitud_id = models.CharField(max_length=64, unique=True, editable=False)
+    secreto_hash = models.CharField(max_length=128, editable=False)
+
+    generada_por = models.ForeignKey(
+        Usuario,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="descuentos_especiales_generados",
+    )
+    generada_por_nombre = models.CharField(max_length=160)
+    generada_en = models.DateTimeField(default=timezone.now, db_index=True)
+    expira_en = models.DateTimeField(db_index=True)
+
+    revocada_en = models.DateTimeField(null=True, blank=True)
+    revocada_por = models.ForeignKey(
+        Usuario,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="descuentos_especiales_revocados",
+    )
+    revocada_por_nombre = models.CharField(
+        max_length=160,
+        blank=True,
+        default="",
+    )
+    usada_en = models.DateTimeField(null=True, blank=True)
+    bloqueada_en = models.DateTimeField(null=True, blank=True)
+    intentos_fallidos = models.PositiveSmallIntegerField(default=0)
+    ultimo_intento_fallido_en = models.DateTimeField(null=True, blank=True)
+    ultimo_intento_fallido_por = models.ForeignKey(
+        Usuario,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="intentos_descuento_especial_fallidos",
+    )
+    ultimo_intento_fallido_por_nombre = models.CharField(
+        max_length=160,
+        blank=True,
+        default="",
+    )
+    ultimo_intento_fallido_ip = models.GenericIPAddressField(
+        null=True,
+        blank=True,
+    )
+
+    usada_por = models.ForeignKey(
+        Usuario,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="descuentos_especiales_usados",
+    )
+    usada_por_nombre = models.CharField(max_length=160, blank=True, default="")
+    venta = models.OneToOneField(
+        Venta,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="autorizacion_descuento_especial",
+    )
+    turno = models.ForeignKey(
+        "TurnoCaja",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="autorizaciones_descuento_especial",
+    )
+    sucursal = models.ForeignKey(
+        Sucursal,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="autorizaciones_descuento_especial",
+    )
+    subtotal_aplicado = models.DecimalField(
+        max_digits=15,
+        decimal_places=2,
+        null=True,
+        blank=True,
+    )
+    descuento_aplicado = models.DecimalField(
+        max_digits=15,
+        decimal_places=2,
+        null=True,
+        blank=True,
+    )
+
+    class Meta:
+        db_table = "autorizaciones_descuento_especial"
+        ordering = ["-generada_en", "-id"]
+        indexes = [
+            models.Index(
+                fields=[
+                    "cliente_especial",
+                    "usada_en",
+                    "revocada_en",
+                    "bloqueada_en",
+                ],
+                name="ade_estado_cliente_idx",
+            ),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["cliente_especial"],
+                condition=Q(
+                    usada_en__isnull=True,
+                    revocada_en__isnull=True,
+                    bloqueada_en__isnull=True,
+                ),
+                name="uniq_ade_activa_cliente",
+            ),
+            models.CheckConstraint(
+                condition=Q(intentos_fallidos__gte=0)
+                & Q(intentos_fallidos__lte=5),
+                name="ade_intentos_0_5_check",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    Q(usada_en__isnull=True, venta__isnull=True)
+                    | Q(usada_en__isnull=False, venta__isnull=False)
+                ),
+                name="ade_uso_venta_check",
+            ),
+            models.CheckConstraint(
+                condition=Q(descuento_aplicado__isnull=True)
+                | Q(descuento_aplicado__gte=0),
+                name="ade_descuento_no_neg_check",
+            ),
+            models.CheckConstraint(
+                condition=Q(subtotal_aplicado__isnull=True)
+                | Q(subtotal_aplicado__gte=0),
+                name="ade_subtotal_no_neg_check",
+            ),
+        ]
+
+    @property
+    def estado(self):
+        if self.usada_en:
+            return "usada"
+        if self.revocada_en:
+            return "revocada"
+        if self.bloqueada_en:
+            return "bloqueada"
+        if self.expira_en <= timezone.now():
+            return "expirada"
+        return "activa"
+
+    def __str__(self):
+        return f"{self.referencia} ({self.estado})"
 
 
 class VentaCarritoAudit(models.Model):

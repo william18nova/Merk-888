@@ -45,8 +45,8 @@
 
       <div>
         <label for="id_mediopago">Medio de Pago</label>
-        {% if venta_print_only %}
-          <input readonly value="{{ venta.mediopago|cut:'_'|title }}">
+        {% if venta_print_only or beneficio_merk2888 %}
+          <input readonly value="{% if beneficio_merk2888 %}Sin pago · beneficio 100%{% else %}{{ venta.mediopago|cut:'_'|title }}{% endif %}">
         {% else %}
         {% with mp=venta.mediopago|lower %}
         <select name="mediopago" id="id_mediopago">
@@ -206,6 +206,18 @@
       </small>
 
       <div class="mixto-error" id="mixto-error-reintegro" style="display:none;"></div>
+    </div>
+    {% endif %}
+
+    {% if beneficio_merk2888 %}
+    <div class="reintegro-maintenance" role="status">
+      <i class="fas fa-gift" aria-hidden="true"></i>
+      <span>
+        Beneficio merk2888 del 100% aplicado con una clave de un solo uso.
+        {% if autorizacion_merk2888.usada_en %}
+          Autorizado el {{ autorizacion_merk2888.usada_en|date:"d/m/Y H:i" }}.
+        {% endif %}
+      </span>
     </div>
     {% endif %}
 

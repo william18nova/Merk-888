@@ -1,6 +1,6 @@
 from decimal import Decimal
 from contextlib import nullcontext
-from datetime import date
+from datetime import date, datetime, timedelta, timezone as dt_timezone
 from io import StringIO
 import json
 from pathlib import Path
@@ -12,11 +12,13 @@ from django.conf import settings
 from django.core.management import call_command
 from django.core.management.base import CommandError
 from django.db import IntegrityError
+from django.http import HttpResponse
 from django.test import RequestFactory, SimpleTestCase, override_settings
 from django.urls import resolve, reverse
 
+from .forms import GenerarVentaForm
 from .models import CambioDevolucion, TurnoCajaMedio
-from .permissions import route_permission_for_url_name
+from .permissions import WEB_MASTER_ONLY_URL_NAMES, route_permission_for_url_name
 from .services.employee_client import (
     EmployeeClientSyncError,
     _matching_clients,
@@ -32,7 +34,15 @@ from .services.product_price_sync import (
     normalize_product_name,
     sync_product_prices,
 )
+from .services.special_discount import (
+    SpecialDiscountError,
+    generate_one_time_code,
+    is_special_client,
+    lock_one_time_code,
+    preview_one_time_code,
+)
 from .views import (
+    ClavesDescuentoMerk2888View,
     GenerarVentaView,
     NequiNotificationWebhookView,
     ProductoAutocomplete,
@@ -531,7 +541,10 @@ class EmployeeDiscountAuthorizationTests(SimpleTestCase):
         self.assertIn("BENEFICIO WEB MASTER:", view_source)
         self.assertIn("employeeIsWebMaster", script)
         self.assertIn("beneficio Web Master del 100%", script)
-        self.assertIn("r.web_master_free_sale ? 0", script)
+        self.assertIn(
+            "r.web_master_free_sale || r.merk2888_free_sale",
+            script,
+        )
         self.assertIn("shouldKickCashDrawer = totalNum > 0", script)
 
     def test_web_master_receipt_shows_full_benefit_and_zero_total(self):
@@ -1221,3 +1234,488 @@ class ProductPriceScheduleTests(SimpleTestCase):
                 "--apply",
                 "--force",
             )
+
+
+class SpecialMerk2888DiscountSecurityTests(SimpleTestCase):
+    def setUp(self):
+        self.factory = RequestFactory()
+        self.fixed_now = datetime(
+            2026,
+            7,
+            29,
+            15,
+            0,
+            tzinfo=dt_timezone.utc,
+        )
+
+    def _authorization(self, **overrides):
+        values = {
+            "pk": 41,
+            "usada_en": None,
+            "venta_id": None,
+            "revocada_en": None,
+            "bloqueada_en": None,
+            "intentos_fallidos": 0,
+            "expira_en": self.fixed_now + timedelta(minutes=15),
+            "selector": "selector-seguro",
+            "secreto_hash": "hash-seguro",
+            "save": MagicMock(),
+        }
+        values.update(overrides)
+        return SimpleNamespace(**values)
+
+    def test_key_route_is_mapped_and_strictly_web_master_only(self):
+        url = reverse("claves_descuento_merk2888")
+
+        self.assertEqual(resolve(url).url_name, "claves_descuento_merk2888")
+        self.assertEqual(
+            route_permission_for_url_name("claves_descuento_merk2888"),
+            "descuentos_especiales_generar",
+        )
+        self.assertIn(
+            "claves_descuento_merk2888",
+            WEB_MASTER_ONLY_URL_NAMES,
+        )
+
+        denied_request = self.factory.get(url)
+        denied_request.user = SimpleNamespace(
+            is_authenticated=True,
+            is_active=True,
+        )
+        with patch("mainApp.views.is_web_master_role", return_value=False):
+            denied = ClavesDescuentoMerk2888View.as_view()(denied_request)
+        self.assertEqual(denied.status_code, 403)
+
+        allowed_request = self.factory.get(url)
+        allowed_request.user = SimpleNamespace(
+            is_authenticated=True,
+            is_active=True,
+        )
+        with (
+            patch("mainApp.views.is_web_master_role", return_value=True),
+            patch.object(
+                ClavesDescuentoMerk2888View,
+                "get",
+                return_value=HttpResponse("ok"),
+            ),
+        ):
+            allowed = ClavesDescuentoMerk2888View.as_view()(allowed_request)
+        self.assertEqual(allowed.status_code, 200)
+
+    @patch(
+        "mainApp.services.special_discount.get_special_client_profile",
+        return_value=None,
+    )
+    def test_client_named_merk2888_is_not_special_without_canonical_profile(
+        self,
+        get_profile,
+    ):
+        impostor = SimpleNamespace(
+            pk=987,
+            nombre="merk2888",
+            apellido="",
+            numerodocumento="DOCUMENTO-CUALQUIERA",
+        )
+
+        self.assertFalse(is_special_client(impostor))
+        get_profile.assert_called_once_with(cliente=impostor)
+
+    def test_generated_code_is_hashed_and_plaintext_is_never_persisted(self):
+        manager = MagicMock()
+        manager.select_for_update.return_value.filter.return_value.update.return_value = 1
+        manager.filter.return_value.exists.return_value = False
+        stored_authorization = SimpleNamespace(pk=88)
+        manager.create.return_value = stored_authorization
+        fake_model = SimpleNamespace(objects=manager)
+        profile = SimpleNamespace(pk=5, cliente_id=10)
+        web_master = SimpleNamespace(
+            pk=3,
+            nombreusuario="webmaster",
+            is_authenticated=True,
+            is_active=True,
+        )
+
+        with (
+            patch(
+                "mainApp.services.special_discount.AutorizacionDescuentoEspecial",
+                fake_model,
+            ),
+            patch(
+                "mainApp.services.special_discount.transaction.atomic",
+                return_value=nullcontext(),
+            ),
+            patch(
+                "mainApp.services.special_discount.get_special_client_profile",
+                return_value=profile,
+            ),
+            patch(
+                "mainApp.services.special_discount.is_web_master_role",
+                return_value=True,
+            ),
+            patch(
+                "mainApp.services.special_discount.timezone.now",
+                return_value=self.fixed_now,
+            ),
+            patch(
+                "mainApp.services.special_discount.secrets.randbelow",
+                return_value=1234567,
+            ),
+            patch(
+                "mainApp.services.special_discount.secrets.token_hex",
+                side_effect=lambda size: (
+                    "a" * 64 if size == 32 else "b" * 8
+                ),
+            ),
+            patch(
+                "mainApp.services.special_discount.make_password",
+                return_value="pbkdf2_sha256$hash-no-reversible",
+            ) as make_password,
+        ):
+            authorization, plain_code = generate_one_time_code(
+                web_master,
+                "c" * 32,
+            )
+
+        self.assertIs(authorization, stored_authorization)
+        self.assertEqual(plain_code, "01234567")
+        make_password.assert_called_once_with(plain_code)
+
+        create_kwargs = manager.create.call_args.kwargs
+        self.assertEqual(
+            create_kwargs["secreto_hash"],
+            "pbkdf2_sha256$hash-no-reversible",
+        )
+        self.assertEqual(create_kwargs["solicitud_id"], "c" * 32)
+        self.assertNotEqual(create_kwargs["selector"], plain_code)
+        self.assertEqual(len(create_kwargs["selector"]), 64)
+        self.assertNotIn(plain_code, repr(create_kwargs))
+
+    def test_preview_blocks_code_on_fifth_failed_attempt(self):
+        authorization = self._authorization(intentos_fallidos=4)
+        manager = MagicMock()
+        (
+            manager.select_for_update.return_value
+            .filter.return_value
+            .order_by.return_value
+            .first.return_value
+        ) = authorization
+        fake_model = SimpleNamespace(objects=manager)
+        profile = SimpleNamespace(pk=9)
+        client = SimpleNamespace(pk=77)
+        actor = SimpleNamespace(pk=12, nombreusuario="cajero-prueba")
+
+        with (
+            patch(
+                "mainApp.services.special_discount.AutorizacionDescuentoEspecial",
+                fake_model,
+            ),
+            patch(
+                "mainApp.services.special_discount.transaction.atomic",
+                return_value=nullcontext(),
+            ),
+            patch(
+                "mainApp.services.special_discount.get_special_client_profile",
+                return_value=profile,
+            ),
+            patch(
+                "mainApp.services.special_discount.timezone.now",
+                return_value=self.fixed_now,
+            ),
+            patch(
+                "mainApp.services.special_discount.check_password",
+                return_value=False,
+            ),
+        ):
+            with self.assertRaises(SpecialDiscountError) as raised:
+                preview_one_time_code(
+                    client,
+                    "11111111",
+                    actor=actor,
+                    ip_address="192.0.2.15",
+                )
+
+            self.assertEqual(raised.exception.code, "blocked")
+            self.assertEqual(authorization.intentos_fallidos, 5)
+            self.assertEqual(authorization.bloqueada_en, self.fixed_now)
+            self.assertEqual(
+                authorization.ultimo_intento_fallido_por,
+                actor,
+            )
+            self.assertEqual(
+                authorization.ultimo_intento_fallido_ip,
+                "192.0.2.15",
+            )
+            authorization.save.assert_called_once_with(
+                update_fields=[
+                    "intentos_fallidos",
+                    "ultimo_intento_fallido_en",
+                    "ultimo_intento_fallido_por",
+                    "ultimo_intento_fallido_por_nombre",
+                    "ultimo_intento_fallido_ip",
+                    "bloqueada_en",
+                ],
+            )
+
+            with self.assertRaises(SpecialDiscountError) as blocked_again:
+                preview_one_time_code(client, "11111111")
+            self.assertEqual(blocked_again.exception.code, "blocked")
+            self.assertEqual(authorization.save.call_count, 1)
+
+    def test_duplicate_generation_request_never_revokes_active_code(self):
+        manager = MagicMock()
+        manager.filter.return_value.exists.return_value = True
+        fake_model = SimpleNamespace(objects=manager)
+        profile = SimpleNamespace(pk=5, cliente_id=10)
+        web_master = SimpleNamespace(
+            pk=3,
+            nombreusuario="webmaster",
+            is_authenticated=True,
+            is_active=True,
+        )
+
+        with (
+            patch(
+                "mainApp.services.special_discount.AutorizacionDescuentoEspecial",
+                fake_model,
+            ),
+            patch(
+                "mainApp.services.special_discount.transaction.atomic",
+                return_value=nullcontext(),
+            ),
+            patch(
+                "mainApp.services.special_discount.get_special_client_profile",
+                return_value=profile,
+            ),
+            patch(
+                "mainApp.services.special_discount.is_web_master_role",
+                return_value=True,
+            ),
+        ):
+            with self.assertRaises(SpecialDiscountError) as raised:
+                generate_one_time_code(web_master, "d" * 32)
+
+        self.assertEqual(raised.exception.code, "duplicate_request")
+        manager.select_for_update.assert_not_called()
+        manager.create.assert_not_called()
+
+    def test_new_generation_never_silently_replaces_valid_code(self):
+        manager = MagicMock()
+        duplicate_query = MagicMock()
+        duplicate_query.exists.return_value = False
+        active_query = MagicMock()
+        active_query.exists.return_value = True
+        manager.filter.side_effect = [duplicate_query, active_query]
+        fake_model = SimpleNamespace(objects=manager)
+        profile = SimpleNamespace(pk=5, cliente_id=10)
+        web_master = SimpleNamespace(
+            pk=3,
+            nombreusuario="webmaster",
+            is_authenticated=True,
+            is_active=True,
+        )
+
+        with (
+            patch(
+                "mainApp.services.special_discount.AutorizacionDescuentoEspecial",
+                fake_model,
+            ),
+            patch(
+                "mainApp.services.special_discount.transaction.atomic",
+                return_value=nullcontext(),
+            ),
+            patch(
+                "mainApp.services.special_discount.get_special_client_profile",
+                return_value=profile,
+            ),
+            patch(
+                "mainApp.services.special_discount.is_web_master_role",
+                return_value=True,
+            ),
+            patch(
+                "mainApp.services.special_discount.timezone.now",
+                return_value=self.fixed_now,
+            ),
+        ):
+            with self.assertRaises(SpecialDiscountError) as raised:
+                generate_one_time_code(web_master, "e" * 32)
+
+        self.assertEqual(raised.exception.code, "active_code_exists")
+        manager.select_for_update.assert_not_called()
+        manager.create.assert_not_called()
+
+    def test_lock_requires_atomic_block_and_uses_select_for_update(self):
+        client = SimpleNamespace(pk=77)
+        with patch(
+            "mainApp.services.special_discount.transaction.get_connection",
+            return_value=SimpleNamespace(in_atomic_block=False),
+        ):
+            with self.assertRaises(SpecialDiscountError) as raised:
+                lock_one_time_code(client, "12345678", 41)
+        self.assertEqual(raised.exception.code, "atomic_required")
+
+        authorization = self._authorization()
+        manager = MagicMock()
+        (
+            manager.select_for_update.return_value
+            .filter.return_value
+            .first.return_value
+        ) = authorization
+        fake_model = SimpleNamespace(objects=manager)
+        profile = SimpleNamespace(pk=9)
+
+        with (
+            patch(
+                "mainApp.services.special_discount.AutorizacionDescuentoEspecial",
+                fake_model,
+            ),
+            patch(
+                "mainApp.services.special_discount.transaction.get_connection",
+                return_value=SimpleNamespace(in_atomic_block=True),
+            ),
+            patch(
+                "mainApp.services.special_discount.get_special_client_profile",
+                return_value=profile,
+            ) as get_profile,
+            patch(
+                "mainApp.services.special_discount.timezone.now",
+                return_value=self.fixed_now,
+            ),
+            patch(
+                "mainApp.services.special_discount.check_password",
+                return_value=True,
+            ),
+        ):
+            locked = lock_one_time_code(client, "12345678", 41)
+
+        self.assertIs(locked, authorization)
+        get_profile.assert_called_once_with(
+            cliente=client,
+            for_update=True,
+        )
+        manager.select_for_update.assert_called_once_with()
+        manager.select_for_update.return_value.filter.assert_called_once_with(
+            pk=41,
+            cliente_especial=profile,
+        )
+
+    def test_form_ui_and_backend_keep_special_code_separate(self):
+        form = GenerarVentaForm()
+        self.assertIn("empleado_password", form.fields)
+        self.assertIn("codigo_descuento_merk2888", form.fields)
+        self.assertIsNot(
+            form.fields["empleado_password"],
+            form.fields["codigo_descuento_merk2888"],
+        )
+
+        base_dir = settings.BASE_DIR / "mainApp"
+        page = (base_dir / "templates" / "generar_venta.html").read_text(
+            encoding="utf-8",
+        )
+        modal = (base_dir / "templates" / "modal_venta.html").read_text(
+            encoding="utf-8",
+        )
+        script = (
+            base_dir / "static" / "javascript" / "generar_venta.js"
+        ).read_text(encoding="utf-8")
+        view_source = (base_dir / "views.py").read_text(encoding="utf-8")
+
+        self.assertIn('name="codigo_descuento_merk2888"', page)
+        self.assertIn('id="merk2888-password-input"', modal)
+        self.assertIn('autocomplete="one-time-code"', modal)
+        self.assertIn("$hidMerk2888Password", script)
+        self.assertIn('data.get("codigo_descuento_merk2888")', view_source)
+        self.assertIn("preview_one_time_code(", view_source)
+        self.assertIn("lock_one_time_code(", view_source)
+        self.assertIn("consume_one_time_code(", view_source)
+
+        receipt = GenerarVentaView._build_receipt_text(
+            {
+                "cajero_nombre": "Cajero",
+                "descuento_empleado": Decimal("5000"),
+                "beneficio_merk2888": True,
+            },
+            [{
+                "producto": "Producto",
+                "cantidad": 1,
+                "precio_unitario": Decimal("5000"),
+                "subtotal": Decimal("5000"),
+            }],
+            Decimal("0"),
+            [],
+        )
+        self.assertIn("BENEFICIO MERK2888:", receipt)
+        self.assertNotIn("BENEFICIO WEB MASTER:", receipt)
+
+    def test_employee_discount_regressions_remain_unchanged(self):
+        regular_employee = SimpleNamespace(
+            usuarioid=SimpleNamespace(
+                rolid=SimpleNamespace(nombre="Vendedor"),
+            ),
+        )
+        web_master_employee = SimpleNamespace(
+            usuarioid=SimpleNamespace(
+                rolid=SimpleNamespace(nombre="Web Master"),
+            ),
+        )
+
+        regular_discount, regular_total, regular_free = (
+            GenerarVentaView._employee_sale_pricing(
+                regular_employee,
+                Decimal("10000"),
+            )
+        )
+        web_discount, web_total, web_free = (
+            GenerarVentaView._employee_sale_pricing(
+                web_master_employee,
+                Decimal("10000"),
+            )
+        )
+
+        self.assertEqual(regular_discount, Decimal("1000"))
+        self.assertEqual(regular_total, Decimal("9000"))
+        self.assertFalse(regular_free)
+        self.assertEqual(web_discount, Decimal("10000"))
+        self.assertEqual(web_total, Decimal("0"))
+        self.assertTrue(web_free)
+
+    def test_migration_0023_is_scoped_and_seeds_canonical_client(self):
+        migration_path = (
+            settings.BASE_DIR
+            / "mainApp"
+            / "migrations"
+            / "0023_special_merk2888_discount.py"
+        )
+        source = migration_path.read_text(encoding="utf-8")
+
+        self.assertIn(
+            '("mainApp", "0022_allow_negative_turno_medio_balances")',
+            source,
+        )
+        self.assertEqual(source.count("migrations.CreateModel("), 2)
+        self.assertEqual(source.count("migrations.AddIndex("), 1)
+        self.assertEqual(source.count("migrations.AddConstraint("), 5)
+        self.assertEqual(source.count("migrations.RunPython("), 1)
+        self.assertNotIn("migrations.AlterField(", source)
+        self.assertNotIn("migrations.RemoveField(", source)
+        self.assertNotIn("migrations.DeleteModel(", source)
+        self.assertNotIn("migrations.RunSQL(", source)
+
+        self.assertIn('SPECIAL_CLIENT_KEY = "merk2888"', source)
+        self.assertIn('SPECIAL_CLIENT_DOCUMENT = "MERK2888"', source)
+        self.assertIn(
+            ".filter(numerodocumento__iexact=SPECIAL_CLIENT_DOCUMENT)",
+            source,
+        )
+        self.assertIn("if len(matching_clients) > 1:", source)
+        self.assertIn("client = Cliente.objects.create(", source)
+        self.assertIn(
+            "profile, created = ClienteEspecial.objects.get_or_create(",
+            source,
+        )
+        self.assertIn('"cliente_id": client.pk', source)
+        self.assertIn('"activo": True', source)
+        self.assertIn("if not profile.activo:", source)
+        self.assertIn(
+            "if _normalize_key(role.nombre) == \"web_master\"",
+            source,
+        )

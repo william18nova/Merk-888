@@ -31,7 +31,29 @@
       <small>El cajero no puede usar su propio documento para autofacturarse.</small>
     </div>
 
-    <p style="margin:.6rem 0 1rem; opacity:.9">
+    <div id="merk2888-discount-auth"
+         class="employee-discount-auth merk2888-discount-auth"
+         style="display:none;">
+      <div>
+        <strong>Beneficio especial merk2888</strong>
+        <span id="merk2888-discount-summary">
+          Esta compra tendrá 100% de descuento cuando se valide una clave vigente de un solo uso.
+        </span>
+      </div>
+      <label for="merk2888-password-input">Clave de un solo uso</label>
+      <input
+        type="password"
+        id="merk2888-password-input"
+        inputmode="numeric"
+        maxlength="8"
+        pattern="[0-9]{8}"
+        autocomplete="one-time-code"
+        placeholder="Escribe los 8 dígitos"
+      >
+      <small>La clave se consume solamente cuando la venta queda registrada.</small>
+    </div>
+
+    <p class="payment-help" style="margin:.6rem 0 1rem; opacity:.9">
       ✅ Si marcas <b>Pago mixto</b>, puedes seleccionar varios medios y escribir el monto de cada uno (la suma debe dar el total).
       <br>
       ➜ Si <b>NO</b> marcas Pago mixto, selecciona <b>solo un</b> medio y se tomará el <b>total completo</b> automáticamente.

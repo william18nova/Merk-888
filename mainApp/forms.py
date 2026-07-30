@@ -1945,6 +1945,10 @@ class GenerarVentaForm(forms.Form):
     # ✅ NUEVO: efectivo recibido para calcular cambio (hidden)
     efectivo_recibido = forms.CharField(widget=forms.HiddenInput(), required=False)
     empleado_password = forms.CharField(widget=forms.HiddenInput(), required=False)
+    codigo_descuento_merk2888 = forms.CharField(
+        widget=forms.HiddenInput(),
+        required=False,
+    )
     nequi_notificacion_id = forms.IntegerField(widget=forms.HiddenInput(), required=False)
 
     # ───── helpers JSON ─────
@@ -2006,6 +2010,9 @@ class GenerarVentaForm(forms.Form):
 
     def clean_empleado_password(self):
         return (self.cleaned_data.get("empleado_password") or "").strip()
+
+    def clean_codigo_descuento_merk2888(self):
+        return (self.cleaned_data.get("codigo_descuento_merk2888") or "").strip()
 
     def clean_nequi_notificacion_id(self):
         value = self.cleaned_data.get("nequi_notificacion_id")

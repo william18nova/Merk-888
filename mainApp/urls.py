@@ -176,6 +176,11 @@ urlpatterns = [
 
 
     path("generar_venta/", views.GenerarVentaView.as_view(), name="generar_venta"),
+    path(
+        "ventas/merk2888/claves/",
+        views.ClavesDescuentoMerk2888View.as_view(),
+        name="claves_descuento_merk2888",
+    ),
     path("autocomplete/producto-id/", views.ProductoIdAutocompleteView.as_view(), name="producto_autocomplete_id"),
     path("api/productos/snapshot/", views.ProductoSnapshotView.as_view(), name="producto_snapshot"),
     path("ventas/imprimir/", views.ImprimirFacturaView.as_view(), name="imprimir_factura"),

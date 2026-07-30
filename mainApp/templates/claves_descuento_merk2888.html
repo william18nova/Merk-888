@@ -1,0 +1,430 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Claves de descuento merk2888{% endblock %}
+
+{% block extra_head %}
+  <link rel="stylesheet" href="{% static 'css/claves_descuento_merk2888.css' %}?v=2">
+{% endblock %}
+
+{% block content %}
+<section class="merk-keys">
+  <header class="merk-keys__hero">
+    <div class="merk-keys__hero-copy">
+      <p class="merk-keys__eyebrow">Control Web Master</p>
+      <h1>Claves de descuento merk2888</h1>
+      <p class="merk-keys__hero-text">
+        Genera autorizaciones de un solo uso para aplicar el 100% de descuento
+        en una compra del cliente especial.
+      </p>
+      <div class="merk-keys__hero-meta" aria-label="Condiciones de las claves">
+        <span>
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M12 7v5l3 2M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"/>
+          </svg>
+          Vigencia de 15 minutos
+        </span>
+        <span>
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M7 10V7a5 5 0 0 1 10 0v3M6 10h12a2 2 0 0 1 2 2v7H4v-7a2 2 0 0 1 2-2Z"/>
+          </svg>
+          Una sola compra
+        </span>
+      </div>
+    </div>
+
+    <aside class="merk-keys__client" aria-label="Cliente beneficiario">
+      <span class="merk-keys__client-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24">
+          <path d="M20 21a8 8 0 0 0-16 0M12 13a5 5 0 1 0 0-10 5 5 0 0 0 0 10Z"/>
+        </svg>
+      </span>
+      <div>
+        <small>Cliente beneficiario</small>
+        <strong>
+          {% firstof cliente_especial.nombre "merk2888" %}
+          {% if cliente_especial.apellido %}{{ cliente_especial.apellido }}{% endif %}
+        </strong>
+        {% if cliente_especial.numerodocumento %}
+          <span>Documento {{ cliente_especial.numerodocumento }}</span>
+        {% else %}
+          <span>Cliente especial merk2888</span>
+        {% endif %}
+      </div>
+    </aside>
+  </header>
+
+  {% if messages %}
+    <div class="merk-keys__messages" aria-live="polite">
+      {% for message in messages %}
+        <div class="merk-flash merk-flash--{{ message.tags|default:'info' }}">
+          <span aria-hidden="true"></span>
+          <p>{{ message }}</p>
+        </div>
+      {% endfor %}
+    </div>
+  {% endif %}
+  {% if error %}
+    <div class="merk-keys__messages" aria-live="assertive">
+      <div class="merk-flash merk-flash--error">
+        <span aria-hidden="true"></span>
+        <p>{{ error }}</p>
+      </div>
+    </div>
+  {% endif %}
+
+  {% if nueva_clave %}
+    <section class="merk-secret" data-merk-secret-panel aria-labelledby="merk-secret-title">
+      <div class="merk-secret__icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24">
+          <path d="M15 7a5 5 0 1 0-4.6 7H12l2 2h2v2h2v2h3v-4.2l-6.1-6.1A5 5 0 0 0 15 7Z"/>
+          <path d="M7 7h.01"/>
+        </svg>
+      </div>
+      <div class="merk-secret__content">
+        <p class="merk-keys__eyebrow">Clave creada correctamente</p>
+        <h2 id="merk-secret-title">Cópiala ahora: solo se mostrará esta vez</h2>
+        <p>
+          Entrégala únicamente a la persona que autorizará la compra. Caduca en
+          15 minutos y deja de funcionar inmediatamente después de usarse.
+        </p>
+        <div class="merk-secret__value-row">
+          <code class="merk-secret__value" data-secret-value>{{ nueva_clave }}</code>
+          <button type="button" class="merk-secret__copy" data-copy-secret>
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M8 8h11v11H8z"/>
+              <path d="M5 16H4V5h11v1"/>
+            </svg>
+            <span>Copiar clave</span>
+          </button>
+          <button type="button" class="merk-secret__hide" data-hide-secret>
+            Ocultar
+          </button>
+        </div>
+        <p class="merk-secret__feedback" data-copy-feedback aria-live="polite"></p>
+      </div>
+    </section>
+  {% endif %}
+
+  <div class="merk-keys__workspace">
+    <section class="merk-card merk-card--generator" aria-labelledby="merk-generate-title">
+      <div class="merk-card__heading">
+        <span class="merk-card__heading-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24">
+            <path d="M12 15v2M8 10V7a4 4 0 0 1 8 0v3M5 10h14v11H5z"/>
+          </svg>
+        </span>
+        <div>
+          <p class="merk-keys__eyebrow">Nueva autorización</p>
+          <h2 id="merk-generate-title">Generar clave temporal</h2>
+        </div>
+      </div>
+
+      <p class="merk-card__lead">
+        Confirma tu identidad de Web Master. La clave resultante habilitará una
+        sola compra con total a pagar de $0.
+      </p>
+
+      {% if clave_vigente %}
+        <div class="merk-warning" role="status">
+          <strong>Ya existe una clave vigente ({{ clave_vigente.referencia }}).</strong>
+          <p>Úsala o revócala en el historial antes de generar otra.</p>
+        </div>
+      {% endif %}
+
+      <form method="post" class="merk-generate-form" autocomplete="off">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="generar">
+        <input type="hidden" name="solicitud_id" value="{{ solicitud_id }}">
+
+        <label for="merk-web-master-password">
+          <span>Tu contraseña de Web Master</span>
+          <div class="merk-password-field">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M7 10V7a5 5 0 0 1 10 0v3M5 10h14v11H5z"/>
+            </svg>
+            <input
+              id="merk-web-master-password"
+              type="password"
+              name="password_web_master"
+              required
+              autocomplete="current-password"
+              autocapitalize="none"
+              spellcheck="false"
+              placeholder="Escribe tu contraseña"
+              {% if clave_vigente %}disabled{% endif %}
+            >
+          </div>
+        </label>
+
+        <button type="submit" class="merk-primary-button" {% if clave_vigente %}disabled{% endif %}>
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M15 7a5 5 0 1 0-4.6 7H12l2 2h2v2h2v2h3v-4.2l-6.1-6.1A5 5 0 0 0 15 7Z"/>
+          </svg>
+          {% if clave_vigente %}Revoca la clave vigente para continuar{% else %}Generar clave de un solo uso{% endif %}
+        </button>
+      </form>
+
+      <div class="merk-card__footnote">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M12 8v4m0 4h.01M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"/>
+        </svg>
+        <p>
+          La contraseña de tu usuario se valida para cada generación y no se
+          conserva en esta página.
+        </p>
+      </div>
+    </section>
+
+    <aside class="merk-card merk-card--guide" aria-labelledby="merk-guide-title">
+      <div class="merk-card__heading">
+        <span class="merk-card__heading-icon merk-card__heading-icon--soft" aria-hidden="true">
+          <svg viewBox="0 0 24 24">
+            <path d="M9 11l2 2 4-4M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20Z"/>
+          </svg>
+        </span>
+        <div>
+          <p class="merk-keys__eyebrow">Uso responsable</p>
+          <h2 id="merk-guide-title">Cómo funciona</h2>
+        </div>
+      </div>
+
+      <ol class="merk-guide">
+        <li>
+          <span>1</span>
+          <div>
+            <strong>Genera la autorización</strong>
+            <p>Escribe tu contraseña y copia la clave que aparecerá una sola vez.</p>
+          </div>
+        </li>
+        <li>
+          <span>2</span>
+          <div>
+            <strong>Selecciona el cliente merk2888</strong>
+            <p>En Generar venta, agrega los productos y selecciona el cliente especial.</p>
+          </div>
+        </li>
+        <li>
+          <span>3</span>
+          <div>
+            <strong>Autoriza la compra</strong>
+            <p>Digita la clave vigente para aplicar el descuento completo.</p>
+          </div>
+        </li>
+      </ol>
+
+      <div class="merk-warning">
+        <strong>No envíes capturas de la clave.</strong>
+        <p>Si ya no será utilizada, revócala desde el historial.</p>
+      </div>
+    </aside>
+  </div>
+
+  <section class="merk-history" aria-labelledby="merk-history-title">
+    <header class="merk-history__head">
+      <div>
+        <p class="merk-keys__eyebrow">Trazabilidad</p>
+        <h2 id="merk-history-title">Historial de autorizaciones</h2>
+        <p>Consulta quién creó cada clave, su vencimiento y dónde fue utilizada.</p>
+      </div>
+      <span class="merk-history__count">
+        {{ autorizaciones|length|default:0 }}
+        <small>registros</small>
+      </span>
+    </header>
+
+    <div class="merk-auth-list">
+      {% for auth in autorizaciones %}
+        <article class="merk-auth">
+          <div class="merk-auth__status-column">
+            <span class="merk-status merk-status--{{ auth.estado|slugify }}">
+              <span aria-hidden="true"></span>
+              {{ auth.estado|default:"Sin estado" }}
+            </span>
+            <span class="merk-auth__reference">
+              Ref. {{ auth.referencia|default:"-" }}
+            </span>
+          </div>
+
+          <div class="merk-auth__identity">
+            <small>Protección de la clave</small>
+            <strong>Clave no recuperable</strong>
+            <span>Solo se conserva una huella protegida, nunca la clave completa.</span>
+          </div>
+
+          <dl class="merk-auth__dates">
+            <div>
+              <dt>Generada</dt>
+              <dd>
+                {{ auth.generada_en|date:"d/m/Y" }}
+                <span>{{ auth.generada_en|date:"h:i A" }}</span>
+              </dd>
+            </div>
+            <div>
+              <dt>Expira</dt>
+              <dd>
+                {{ auth.expira_en|date:"d/m/Y" }}
+                <span>{{ auth.expira_en|date:"h:i A" }}</span>
+              </dd>
+            </div>
+          </dl>
+
+          <div class="merk-auth__people">
+            <small>Generada por</small>
+            <strong>{{ auth.generada_por_nombre|default:"-" }}</strong>
+            {% if auth.usada_en %}
+              <span>
+                Usada {{ auth.usada_en|date:"d/m/Y h:i A" }}
+                {% if auth.venta_id %}en venta #{{ auth.venta_id }}{% endif %}
+              </span>
+            {% elif auth.revocada_en %}
+              <span>
+                Revocada {{ auth.revocada_en|date:"d/m/Y h:i A" }}
+                {% if auth.revocada_por_nombre %}por {{ auth.revocada_por_nombre }}{% endif %}
+              </span>
+            {% elif auth.bloqueada_en %}
+              <span>
+                Bloqueada después de {{ auth.intentos_fallidos }} intentos.
+                {% if auth.ultimo_intento_fallido_por_nombre %}
+                  Último intento: {{ auth.ultimo_intento_fallido_por_nombre }}
+                  {% if auth.ultimo_intento_fallido_ip %}({{ auth.ultimo_intento_fallido_ip }}){% endif %}.
+                {% endif %}
+              </span>
+            {% elif auth.venta_id %}
+              <span>Utilizada en venta #{{ auth.venta_id }}</span>
+            {% else %}
+              <span>Aún no ha sido utilizada</span>
+            {% endif %}
+          </div>
+
+          <div class="merk-auth__actions">
+            {% if not auth.usada_en and not auth.venta_id %}
+              {% if auth.estado == "ACTIVA" or auth.estado == "Activa" or auth.estado == "activa" or auth.estado == "VIGENTE" or auth.estado == "Vigente" or auth.estado == "vigente" %}
+                <details class="merk-revoke">
+                  <summary>Revocar</summary>
+                  <form method="post" autocomplete="off">
+                    {% csrf_token %}
+                    <input type="hidden" name="action" value="revocar">
+                    <input type="hidden" name="autorizacion_id" value="{{ auth.pk }}">
+                    <label for="revoke-password-{{ auth.pk }}">
+                      Confirma tu contraseña
+                    </label>
+                    <input
+                      id="revoke-password-{{ auth.pk }}"
+                      type="password"
+                      name="password_web_master"
+                      required
+                      autocomplete="current-password"
+                      autocapitalize="none"
+                      spellcheck="false"
+                      placeholder="Contraseña Web Master"
+                    >
+                    <button type="submit">Confirmar revocación</button>
+                  </form>
+                </details>
+              {% else %}
+                <span class="merk-auth__closed">Sin acciones</span>
+              {% endif %}
+            {% else %}
+              <span class="merk-auth__closed">Consumida</span>
+            {% endif %}
+          </div>
+        </article>
+      {% empty %}
+        <div class="merk-history__empty">
+          <span aria-hidden="true">
+            <svg viewBox="0 0 24 24">
+              <path d="M7 10V7a5 5 0 0 1 10 0v3M5 10h14v11H5z"/>
+            </svg>
+          </span>
+          <h3>Todavía no hay autorizaciones</h3>
+          <p>La primera clave que generes aparecerá aquí con su estado y vigencia.</p>
+        </div>
+      {% endfor %}
+    </div>
+  </section>
+</section>
+{% endblock %}
+
+{% block scripts %}
+  {{ block.super }}
+  <script>
+    (() => {
+      "use strict";
+
+      const panel = document.querySelector("[data-merk-secret-panel]");
+      document.querySelectorAll(".merk-generate-form, .merk-revoke form").forEach((form) => {
+        form.addEventListener("submit", (event) => {
+          if (form.dataset.submitted === "1") {
+            event.preventDefault();
+            return;
+          }
+          form.dataset.submitted = "1";
+          const button = form.querySelector("button[type='submit']");
+          if (button) {
+            button.disabled = true;
+            button.setAttribute("aria-busy", "true");
+          }
+        });
+      });
+
+      if (!panel) return;
+
+      const secretNode = panel.querySelector("[data-secret-value]");
+      const copyButton = panel.querySelector("[data-copy-secret]");
+      const hideButton = panel.querySelector("[data-hide-secret]");
+      const feedback = panel.querySelector("[data-copy-feedback]");
+
+      const setFeedback = (message, isError) => {
+        if (!feedback) return;
+        feedback.textContent = message;
+        feedback.classList.toggle("is-error", Boolean(isError));
+      };
+
+      const fallbackCopy = (value) => {
+        const temporary = document.createElement("textarea");
+        temporary.value = value;
+        temporary.setAttribute("readonly", "");
+        temporary.setAttribute("aria-hidden", "true");
+        temporary.style.position = "fixed";
+        temporary.style.opacity = "0";
+        document.body.appendChild(temporary);
+        temporary.select();
+        const copied = document.execCommand("copy");
+        temporary.value = "";
+        temporary.remove();
+        if (!copied) throw new Error("copy_failed");
+      };
+
+      copyButton?.addEventListener("click", async () => {
+        let value = String(secretNode?.textContent || "").trim();
+        if (!value) {
+          setFeedback("La clave ya fue ocultada.", true);
+          return;
+        }
+
+        try {
+          if (navigator.clipboard && window.isSecureContext) {
+            await navigator.clipboard.writeText(value);
+          } else {
+            fallbackCopy(value);
+          }
+          copyButton.classList.add("is-copied");
+          copyButton.querySelector("span").textContent = "Clave copiada";
+          setFeedback("Copiada al portapapeles. La página no guardó una copia adicional.", false);
+        } catch (_) {
+          setFeedback("No se pudo copiar automáticamente. Selecciona la clave y cópiala manualmente.", true);
+        } finally {
+          value = "";
+        }
+      });
+
+      hideButton?.addEventListener("click", () => {
+        if (secretNode) secretNode.textContent = "";
+        panel.classList.add("is-hiding");
+        window.setTimeout(() => panel.remove(), 180);
+      });
+
+    })();
+  </script>
+{% endblock %}

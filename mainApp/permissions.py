@@ -13,7 +13,10 @@ from .models import Permiso, Rol, RolPermiso
 ADMIN_ROLE_NAMES = {"admin", "administrador", "supervisor"}
 PUBLIC_URL_NAMES = {"login", "logout", "visor_barcode", "visor_barcode_buscar", "visor_barcode_lookup", "macrodroid_nequi_webhook"}
 ALWAYS_ALLOWED_URL_NAMES = {"home"}
-WEB_MASTER_ONLY_URL_NAMES = {"ventas_no_realizadas"}
+WEB_MASTER_ONLY_URL_NAMES = {
+    "ventas_no_realizadas",
+    "claves_descuento_merk2888",
+}
 CAJERO_PRINT_ONLY_URL_NAMES = {"ver_venta", "ticket_texto", "imprimir_factura"}
 
 PERMISSION_CACHE_SECONDS = 300
@@ -364,6 +367,19 @@ PERMISSION_DEFINITIONS = [
         "aliases": ["generar_venta", "abrir_caja"],
     },
     {
+        "code": "descuentos_especiales_generar",
+        "label": "Generar códigos de descuento especial",
+        "description": (
+            "Permite generar y revocar claves de un solo uso para el "
+            "beneficio especial merk2888. Uso exclusivo Web Master."
+        ),
+        "aliases": [
+            "claves_descuento_merk2888",
+            "claves merk2888",
+            "descuento especial merk2888",
+        ],
+    },
+    {
         "code": "ventas_ver",
         "label": "Visualizar ventas",
         "description": "Permite ver ventas y facturas.",
@@ -584,6 +600,7 @@ ROUTE_PERMISSIONS = {
     "editar_cliente": "clientes_editar",
     "eliminar_cliente": "clientes_eliminar",
     "generar_venta": "ventas_generar",
+    "claves_descuento_merk2888": "descuentos_especiales_generar",
     "cliente_autocomplete": "ventas_generar",
     "producto_autocomplete": "ventas_generar",
     "producto_autocomplete_id": "ventas_generar",
@@ -759,6 +776,7 @@ NAV_GROUPS = [
         "label": "Ventas",
         "children": [
             {"label": "Generar venta", "url_name": "generar_venta"},
+            {"label": "Claves merk2888", "url_name": "claves_descuento_merk2888"},
             {"label": "Visualizar ventas", "url_name": "visualizar_ventas"},
             {"label": "Ventas no realizadas", "url_name": "ventas_no_realizadas"},
             {"label": "Cambios / Devoluciones", "url_name": "visualizar_cambios"},

@@ -48,6 +48,7 @@ $(function () {
   const $hidPagos     = $("#pagos");      // hidden input name="pagos"
   const $hidMedioPago = $("#medio_pago"); // compat (efectivo/tarjeta/transferencia/mixto)
   const $hidEmpleadoPassword = $("#empleado_password");
+  const $hidMerk2888Password = $("#codigo_descuento_merk2888");
   const $hidNequiNotification = $("#nequi_notificacion_id");
 
   function isClienteBusquedaElement(el) {
@@ -224,7 +225,8 @@ $(function () {
     employeeName: "",
     documento: "",
     employeeHasUser: false,
-    employeeIsWebMaster: false
+    employeeIsWebMaster: false,
+    isMerk2888: false
   };
   const cartAuditSessionItems = new Map();
 
@@ -253,9 +255,18 @@ $(function () {
     );
   }
 
+  function isMerk2888ClientSelected() {
+    return !!(
+      selectedEmployeeClient.isMerk2888
+      && String($("#cliente_id").val() || "").trim()
+    );
+  }
+
   function employeeDiscountAmount() {
     const base = roundAccountAmount(runningTotal);
-    if (!isEmployeeClientSelected() || base <= 0) return 0;
+    if (base <= 0) return 0;
+    if (isMerk2888ClientSelected()) return base;
+    if (!isEmployeeClientSelected()) return 0;
     if (isWebMasterEmployeeClientSelected()) return base;
     return roundAccountAmount(base * 0.10);
   }
@@ -268,18 +279,30 @@ $(function () {
 
   function refreshEmployeeDiscountUI() {
     const active = isEmployeeClientSelected();
+    const merk2888Active = isMerk2888ClientSelected();
     const $box = $("#employee-discount-auth");
+    const $merkBox = $("#merk2888-discount-auth");
     const $summary = $("#employee-discount-summary");
     const discount = employeeDiscountAmount();
     const totalWithDiscount = saleTotalForPayment();
 
-    $box.toggle(active);
+    $box.toggle(active && !merk2888Active);
+    $merkBox.toggle(merk2888Active);
     $totalEl.text(money(totalWithDiscount));
     if (!active) {
       $("#employee-password-input").val("");
       $hidEmpleadoPassword.val("");
-      return;
     }
+    if (!merk2888Active) {
+      $("#merk2888-password-input").val("");
+      $hidMerk2888Password.val("");
+    } else {
+      $("#merk2888-discount-summary").text(
+        `Beneficio del 100% (${money(discount)}). Total a pagar: ${money(0)}.`
+      );
+    }
+
+    if (!active || merk2888Active) return;
 
     const employeeName = selectedEmployeeClient.employeeName || "Empleado";
     const webMasterBenefit = isWebMasterEmployeeClientSelected();
@@ -480,6 +503,10 @@ $(function () {
   }
   function closeModal(){
     try { stopNequiAutoRefresh(); } catch (_) {}
+    $("#employee-password-input").val("");
+    $hidEmpleadoPassword.val("");
+    $("#merk2888-password-input").val("");
+    $hidMerk2888Password.val("");
     $modal.removeClass("is-open").hide();
     $("body").removeClass("modal-open");
   }
@@ -650,6 +677,8 @@ $(function () {
     // ✅ limpiar pagos SIEMPRE
     $hidMedioPago.val("");
     $hidPagos.val("");
+    $hidMerk2888Password.val("");
+    $("#merk2888-password-input").val("");
     $hidNequiNotification.val("");
     resetNequiPaymentState({ clearCache: false });
 
@@ -675,10 +704,13 @@ $(function () {
       employeeName: "",
       documento: "",
       employeeHasUser: false,
-      employeeIsWebMaster: false
+      employeeIsWebMaster: false,
+      isMerk2888: false
     };
     $("#employee-password-input").val("");
     $hidEmpleadoPassword.val("");
+    $("#merk2888-password-input").val("");
+    $hidMerk2888Password.val("");
     refreshEmployeeDiscountUI();
 
     // producto inputs + pid
@@ -2835,7 +2867,8 @@ $(function () {
       employeeHasUser: !!(c.employee_has_user || c.employeeHasUser),
       employeeIsWebMaster: !!(
         c.employee_is_web_master || c.employeeIsWebMaster
-      )
+      ),
+      isMerk2888: !!(c.is_merk2888 || c.isMerk2888)
     };
   }
 
@@ -2944,12 +2977,15 @@ $(function () {
         employeeName: item.employeeName || label,
         documento: item.documento || "",
         employeeHasUser: !!item.employeeHasUser,
-        employeeIsWebMaster: !!item.employeeIsWebMaster
+        employeeIsWebMaster: !!item.employeeIsWebMaster,
+        isMerk2888: !!item.isMerk2888
       };
       $inpCliente.val(label);
       $("#cliente_id").val(id);
       $("#employee-password-input").val("");
       $hidEmpleadoPassword.val("");
+      $("#merk2888-password-input").val("");
+      $hidMerk2888Password.val("");
       refreshEmployeeDiscountUI();
     }
   });
@@ -2962,11 +2998,14 @@ $(function () {
         employeeName: "",
         documento: "",
         employeeHasUser: false,
-        employeeIsWebMaster: false
+        employeeIsWebMaster: false,
+        isMerk2888: false
       };
       $("#cliente_id").val("");
       $("#employee-password-input").val("");
       $hidEmpleadoPassword.val("");
+      $("#merk2888-password-input").val("");
+      $hidMerk2888Password.val("");
       refreshEmployeeDiscountUI();
     }
   });
@@ -3849,10 +3888,15 @@ $(function () {
 
     enforceTotalIntegrity();
 
-    if (safeNumber(runningTotal) <= 0 && !isEmployeeClientSelected()) {
+    if (
+      safeNumber(runningTotal) <= 0
+      && !isEmployeeClientSelected()
+      && !isMerk2888ClientSelected()
+    ) {
       $hidPagos.val("[]");
       $hidMedioPago.val("");
       $hidEmpleadoPassword.val("");
+      $hidMerk2888Password.val("");
       $("#venta-form").trigger("submit");
       return;
     }
@@ -3877,10 +3921,28 @@ $(function () {
     if ($mixMode.length) $mixMode.prop("checked", false);
     $modal.attr("data-mixto","0");
 
-    $modal.find(".pm-check[value='efectivo']").prop("checked", true);
+    const specialMerk2888Mode = isMerk2888ClientSelected();
+    $modal.toggleClass("is-merk2888-sale", specialMerk2888Mode);
+    $modal.find(".pending-banner, .payment-help, .mix-grid")
+      .toggle(!specialMerk2888Mode);
+    $modal.find(".pm-check").prop("disabled", specialMerk2888Mode);
+    $mixMode.prop("disabled", specialMerk2888Mode);
+    $amountIn.prop("disabled", specialMerk2888Mode);
+    $("#mpago-title").text(
+      specialMerk2888Mode ? "Autorizar beneficio" : "Pagos"
+    );
+
+    if (!specialMerk2888Mode) {
+      $modal.find(".pm-check[value='efectivo']").prop("checked", true);
+    }
 
     confirmSubmitting = false;
     const $btnConfirm = $("#confirmar-pago");
+    $btnConfirm.text(
+      specialMerk2888Mode
+        ? "APLICAR BENEFICIO Y REGISTRAR"
+        : "CONFIRMAR PAGO"
+    );
     $modal.attr("data-loading-prices","0");
     $btnConfirm.prop("disabled", false);
 
@@ -3895,7 +3957,12 @@ $(function () {
     agentPingFast();
 
     queueMicrotask(() => {
-      if (!isMixtoUI() && $amountIn.is(":visible")) { $amountIn.focus(); $amountIn[0]?.select?.(); }
+      if (specialMerk2888Mode) {
+        $("#merk2888-password-input").focus();
+      } else if (!isMixtoUI() && $amountIn.is(":visible")) {
+        $amountIn.focus();
+        $amountIn[0]?.select?.();
+      }
     });
 
     if (REPRICE_ON_MODAL) {
@@ -3914,7 +3981,12 @@ $(function () {
             $modal.attr("data-loading-prices","0");
             $btnConfirm.prop("disabled", false);
             queueMicrotask(() => {
-              if (!isMixtoUI() && $amountIn.is(":visible")) { $amountIn.focus(); $amountIn[0]?.select?.(); }
+              if (specialMerk2888Mode) {
+                $("#merk2888-password-input").focus();
+              } else if (!isMixtoUI() && $amountIn.is(":visible")) {
+                $amountIn.focus();
+                $amountIn[0]?.select?.();
+              }
             });
           });
       });
@@ -4215,7 +4287,16 @@ $(function () {
     showMixError("");
     if (REPRICE_ON_MODAL && $modal.attr("data-loading-prices") === "1") return;
 
-    if (isEmployeeClientSelected()) {
+    if (isMerk2888ClientSelected()) {
+      const code = String($("#merk2888-password-input").val() || "").trim();
+      if (!/^\d{8}$/.test(code)) {
+        showMixError("Escribe la clave vigente de 8 dígitos para aplicar el beneficio merk2888.");
+        $("#merk2888-password-input").focus();
+        return;
+      }
+      $hidMerk2888Password.val(code);
+      $hidEmpleadoPassword.val("");
+    } else if (isEmployeeClientSelected()) {
       const pass = String($("#employee-password-input").val() || "").trim();
       if (!pass) {
         const benefitName = isWebMasterEmployeeClientSelected()
@@ -4226,8 +4307,10 @@ $(function () {
         return;
       }
       $hidEmpleadoPassword.val(pass);
+      $hidMerk2888Password.val("");
     } else {
       $hidEmpleadoPassword.val("");
+      $hidMerk2888Password.val("");
     }
 
     const built = buildPagosJSONOrError();
@@ -4430,9 +4513,12 @@ $(function () {
     const nequiMessage = response && response.nequi_payment
       ? `\nPago Nequi: ${response.nequi_linked ? "✅ VINCULADO" : "⚠️ NO VINCULADO"}`
       : "";
+    const specialMessage = response && response.merk2888_free_sale
+      ? "\nBeneficio merk2888: 100% aplicado. La clave quedó consumida."
+      : "";
 
     return `✅ Venta registrada
-Total: ${money(total)}${changeMessage}${nequiMessage}`;
+Total: ${money(total)}${changeMessage}${specialMessage}${nequiMessage}`;
   }
 
   $("#venta-form").off("submit").on("submit", function (e) {
@@ -4453,6 +4539,9 @@ Total: ${money(total)}${changeMessage}${nequiMessage}`;
     syncHiddenFieldsNow();
     if (!isEmployeeClientSelected()) {
       $hidEmpleadoPassword.val("");
+    }
+    if (!isMerk2888ClientSelected()) {
+      $hidMerk2888Password.val("");
     }
 
     const form = this;
@@ -4477,6 +4566,8 @@ Total: ${money(total)}${changeMessage}${nequiMessage}`;
       if (!r || !r.success) {
         saleSubmitting = false;
         confirmSubmitting = false;
+        $hidMerk2888Password.val("");
+        $("#merk2888-password-input").val("");
         if ($submitBtn.length) $submitBtn.prop("disabled", false);
         alert((r && r.error) || "Error");
         return;
@@ -4488,7 +4579,7 @@ Total: ${money(total)}${changeMessage}${nequiMessage}`;
         && String(r.sale_total).trim() !== "";
       const totalNum = hasServerTotal
         ? safeNumber(r.sale_total)
-        : (r.web_master_free_sale ? 0 : saleTotalForPayment());
+        : ((r.web_master_free_sale || r.merk2888_free_sale) ? 0 : saleTotalForPayment());
 
       const esMixto = isMixtoFromPagos(pagos);
       const ef = (pagos || []).find(p => String(p.medio_pago || "").toLowerCase() === "efectivo");
@@ -4581,8 +4672,14 @@ Cambio: ${money(cambio)}` : "";
     .catch(() => {
       saleSubmitting = false;
       confirmSubmitting = false;
+      $hidMerk2888Password.val("");
+      $("#merk2888-password-input").val("");
       if ($submitBtn.length) $submitBtn.prop("disabled", false);
-      alert("Error de red");
+      alert(
+        isMerk2888ClientSelected()
+          ? "No se recibió la confirmación de la venta. Antes de reintentar, revisa Visualizar ventas: la clave pudo haberse consumido correctamente."
+          : "Error de red"
+      );
     });
   });
 
