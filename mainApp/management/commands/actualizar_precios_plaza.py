@@ -7,7 +7,7 @@ from mainApp.services.product_price_sync import (
 )
 
 
-SCHEDULED_WEEKDAYS = {1, 4, 5}  # martes, viernes y sábado
+SCHEDULED_WEEKDAYS = {1, 4, 6}  # martes, viernes y domingo
 
 
 def should_run_today(day=None):
@@ -43,7 +43,7 @@ class Command(BaseCommand):
         local_day = timezone.localdate()
         if not options["force"] and not should_run_today(local_day):
             self.stdout.write(
-                "Sincronización omitida: hoy no es martes, viernes ni sábado "
+                "Sincronización omitida: hoy no es martes, viernes ni domingo "
                 f"en Colombia ({local_day.isoformat()})."
             )
             return

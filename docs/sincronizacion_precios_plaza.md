@@ -116,7 +116,7 @@ source /home/Merk888/.price_sync.env && cd /home/Merk888/Merk-888 && /home/Merk8
 ```
 
 El comando usa la zona `America/Bogota` del proyecto y se omite internamente
-salvo los martes, viernes y sábados. Las credenciales pueden cargarse desde un
+salvo los martes, viernes y domingos. Las credenciales pueden cargarse desde un
 archivo privado fuera del repositorio o desde el entorno de la cuenta antes de
 ejecutar el comando.
 

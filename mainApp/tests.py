@@ -1178,7 +1178,8 @@ class ProductPriceScheduleTests(SimpleTestCase):
 
         self.assertTrue(should_run_today(date(2026, 7, 28)))  # martes
         self.assertTrue(should_run_today(date(2026, 7, 31)))  # viernes
-        self.assertTrue(should_run_today(date(2026, 8, 1)))  # sábado
+        self.assertTrue(should_run_today(date(2026, 8, 2)))  # domingo
+        self.assertFalse(should_run_today(date(2026, 8, 1)))  # sábado
         self.assertFalse(should_run_today(date(2026, 7, 29)))  # miércoles
 
     @patch(
