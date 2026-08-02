@@ -27,6 +27,7 @@ $(function () {
   /* ================== Agente local ================== */
   const POS_AGENT_URL   = (window.POS_AGENT_URL || "http://127.0.0.1:8787").replace(/\/+$/,'');
   const POS_AGENT_TOKEN = (window.POS_AGENT_TOKEN || "").trim();
+  const IMPRIMIR_FACTURA_URL = String(window.imprimirFacturaUrl || "").trim();
 
   /* ================== Selectores ================== */
   const $inpCliente = $("#cliente_busqueda");
@@ -4381,6 +4382,55 @@ $(function () {
     }
   }
 
+  function normalizePrintOperatingSystem(value) {
+    return String(value || "").trim().toLowerCase() === "linux"
+      ? "linux"
+      : "windows";
+  }
+
+  function normalizePrintPaperSize(value) {
+    return String(value || "").trim().toLowerCase() === "pequena"
+      ? "pequena"
+      : "grande";
+  }
+
+  async function printViaLinuxServer(ventaId, paperSize, { openDrawer = false, printToken = "" } = {}) {
+    if (!IMPRIMIR_FACTURA_URL) {
+      throw new Error("La ruta de impresion Linux no esta configurada.");
+    }
+    if (!ventaId) {
+      throw new Error("No se recibio el ID de la venta para imprimir.");
+    }
+
+    const csrf = getCSRF()
+      || document.querySelector("input[name='csrfmiddlewaretoken']")?.value
+      || "";
+    const body = new URLSearchParams({
+      csrfmiddlewaretoken: csrf,
+      venta_id: String(ventaId),
+      paper_size: normalizePrintPaperSize(paperSize),
+      open_drawer: openDrawer ? "1" : "0"
+    });
+    if (printToken) body.set("print_token", String(printToken));
+
+    const response = await fetch(IMPRIMIR_FACTURA_URL, {
+      method: "POST",
+      credentials: "same-origin",
+      keepalive: true,
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+        "X-CSRFToken": csrf,
+        "X-Requested-With": "XMLHttpRequest"
+      },
+      body
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data.success) {
+      throw new Error(data.error || "No se pudo imprimir la factura en Linux.");
+    }
+    return data;
+  }
+
   let posAgentUltraReady = !!FAST_POS_ULTRA_FORCE;
   let posAgentUltraDetecting = false;
 
@@ -4618,32 +4668,46 @@ Total: ${money(total)}${changeMessage}${specialMessage}${nequiMessage}`;
 
       const esMixto = isMixtoFromPagos(pagos);
       const ef = (pagos || []).find(p => String(p.medio_pago || "").toLowerCase() === "efectivo");
-
-      // ✅ capturar recibido ANTES de limpiar inputs
       let recibidoEfectivo = totalNum;
       if (totalNum > 0 && ef && !esMixto) {
         const raw = ($("#monto-recibido").val() || "").trim();
-        recibidoEfectivo = (raw === "" ? totalNum : parseAmt(raw));
-        if (raw === "") $("#monto-recibido").val(to2(totalNum));
+        recibidoEfectivo = raw === "" ? totalNum : parseAmt(raw);
       }
-
       const cambio = (totalNum > 0 && ef && !esMixto)
         ? Math.max(0, recibidoEfectivo - totalNum)
         : 0;
 
-      let receiptText = (r.receipt_text || "Factura\n\n");
-
-      if (totalNum > 0 && ef && !esMixto) {
-        receiptText += `\nRecibido: ${money(recibidoEfectivo)}\nCambio:   ${money(cambio)}\n\n\n\n\n\n\n\n\n\n\n\n\n`;
-      } else {
-        receiptText += `\n\n\n\n\n\n\n\n\n\n\n\n\n`;
-      }
-
       // ✅ Mandar factura y, solo si hay valor por cobrar, abrir el cajón.
       // En modo ultra usa /print-fast y /kick-fast con text/plain + sendBeacon/XHR, sin Promises ni headers personalizados.
       let printJobs = [];
-      const shouldKickCashDrawer = totalNum > 0;
-      if (FAST_PRINT_FIRE_AND_FORGET) {
+      const printOperatingSystem = normalizePrintOperatingSystem(r.print_operating_system);
+      const printPaperSize = normalizePrintPaperSize(r.print_paper_size);
+      const feedLines = printPaperSize === "pequena" ? 4 : 13;
+      const receiptText = (r.receipt_text || "Factura\n\n") + "\n".repeat(feedLines);
+      const shouldKickCashDrawer = (
+        totalNum > 0
+        && !!ef
+        && safeNumber(ef.monto) > 0
+      );
+
+      if (printOperatingSystem === "linux") {
+        const printJob = printViaLinuxServer(r.venta_id, printPaperSize, {
+          openDrawer: shouldKickCashDrawer && !!r.print_token,
+          printToken: r.print_token || ""
+        });
+        printJobs.push(printJob);
+        printJob.catch((error) => {
+          // La venta ya fue confirmada: un fallo de impresion nunca debe
+          // provocar que se envie nuevamente el formulario de venta.
+          console.error("[IMPRESION_LINUX]", error);
+          window.setTimeout(() => {
+            showFastSaleToast(
+              `Venta #${r.venta_id} registrada, pero no se pudo imprimir: ${error?.message || "error desconocido"}`,
+              5000
+            );
+          }, 0);
+        });
+      } else if (FAST_PRINT_FIRE_AND_FORGET) {
         const useUltra = FAST_POS_ULTRA_ENABLED && (FAST_POS_ULTRA_FORCE || posAgentUltraReady);
 
         if (useUltra) {

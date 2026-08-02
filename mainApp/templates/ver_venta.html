@@ -306,6 +306,7 @@
   window.VENTA_TOTAL_COBRADO = "{{ venta_total_cobrado|floatformat:2 }}";
   window.REINTEGRO_LEDGER_READY = {% if reintegro_ledger_ready %}true{% else %}false{% endif %};
   window.ticketTextoUrl = "{% url 'ticket_texto' %}";
+  window.imprimirFacturaUrl = "{% url 'imprimir_factura' %}";
 </script>
 
 <!-- POS Agent (mismo método que generar_venta) -->
@@ -315,5 +316,5 @@
   if (!/^https?:\/\//.test(window.POS_AGENT_URL)) window.POS_AGENT_URL = "http://127.0.0.1:8787";
 </script>
 
-<script src="{% static 'javascript/ver_venta.js' %}?v=3"></script>
+<script src="{% static 'javascript/ver_venta.js' %}?v=5"></script>
 {% endblock %}

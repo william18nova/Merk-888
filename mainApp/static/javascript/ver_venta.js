@@ -252,52 +252,75 @@
   });
 
   /* =========================================================================
-     ✅ IMPRIMIR — MISMO MÉTODO que generar_venta.js
-     - Header X-Pos-Agent-Token (no Authorization: Bearer)
-     - kick + print en paralelo
-     - keepalive + AbortController con timeouts
-     - Padding de 13 saltos al final del ticket (paper feed)
-     - settleWithDeadline(250ms) para no bloquear la UI
+     IMPRESION SEGUN EL PERFIL AUTORITATIVO DEL SERVIDOR
+     - Windows: POS Agent local, kick + print en paralelo.
+     - Linux: endpoint Django/CUPS; nunca duplica print/kick en el agente.
      ========================================================================= */
   const POS_AGENT_URL   = (window.POS_AGENT_URL || "http://127.0.0.1:8787").replace(/\/+$/,'');
   const POS_AGENT_TOKEN = (window.POS_AGENT_TOKEN || "").trim();
+  const IMPRIMIR_FACTURA_URL = String(window.imprimirFacturaUrl || "").trim();
+
+  function normalizePrintOperatingSystem(value) {
+    return String(value || "").trim().toLowerCase() === "linux"
+      ? "linux"
+      : "windows";
+  }
+
+  function normalizePrintPaperSize(value) {
+    return String(value || "").trim().toLowerCase() === "pequena"
+      ? "pequena"
+      : "grande";
+  }
 
   async function agentPrintSafe(text, { timeout = 700 } = {}) {
-    if (!POS_AGENT_TOKEN) return;
+    if (!POS_AGENT_TOKEN) {
+      throw new Error("POS Agent no configurado (token vacio).");
+    }
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), timeout);
     try {
-      await fetch(POS_AGENT_URL + "/print", {
+      const response = await fetch(POS_AGENT_URL + "/print", {
         method: "POST",
         keepalive: true,
         headers: { "Content-Type": "application/json", "X-Pos-Agent-Token": POS_AGENT_TOKEN },
         body: JSON.stringify({ text }),
         signal: ctrl.signal
       });
-    } catch (_) {}
+      if (!response.ok) {
+        throw new Error(`El POS Agent rechazo la impresion (HTTP ${response.status}).`);
+      }
+    } catch (error) {
+      if (error?.name === "AbortError") {
+        throw new Error("El POS Agent no respondio a tiempo al imprimir.");
+      }
+      throw error;
+    }
     finally { clearTimeout(t); }
   }
 
   async function agentKickSafe({ timeout = 450 } = {}) {
-    if (!POS_AGENT_TOKEN) return;
+    if (!POS_AGENT_TOKEN) {
+      throw new Error("POS Agent no configurado (token vacio).");
+    }
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), timeout);
     try {
-      await fetch(POS_AGENT_URL + "/kick", {
+      const response = await fetch(POS_AGENT_URL + "/kick", {
         method: "POST",
         keepalive: true,
         headers: { "X-Pos-Agent-Token": POS_AGENT_TOKEN },
         signal: ctrl.signal
       });
-    } catch (_) {}
+      if (!response.ok) {
+        throw new Error(`El POS Agent rechazo la apertura de caja (HTTP ${response.status}).`);
+      }
+    } catch (error) {
+      if (error?.name === "AbortError") {
+        throw new Error("El POS Agent no respondio a tiempo al abrir la caja.");
+      }
+      throw error;
+    }
     finally { clearTimeout(t); }
-  }
-
-  function settleWithDeadline(proms, maxWaitMs = 250) {
-    return Promise.race([
-      Promise.allSettled(proms),
-      new Promise(res => setTimeout(res, maxWaitMs))
-    ]);
   }
 
   // Warmup del agente al cargar la página (igual que generar_venta)
@@ -309,6 +332,35 @@
       headers: { "X-Pos-Agent-Token": POS_AGENT_TOKEN }
     }).catch(()=>{});
   })();
+
+  async function printViaLinuxServer(ventaId, paperSize, { openDrawer = false } = {}) {
+    if (!IMPRIMIR_FACTURA_URL) {
+      throw new Error("La ruta de impresion Linux no esta configurada.");
+    }
+
+    const csrf = getCSRFToken();
+    const body = new URLSearchParams({
+      csrfmiddlewaretoken: csrf,
+      venta_id: String(ventaId),
+      paper_size: normalizePrintPaperSize(paperSize),
+      open_drawer: openDrawer ? "1" : "0"
+    });
+    const response = await fetch(IMPRIMIR_FACTURA_URL, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+        "X-CSRFToken": csrf,
+        "X-Requested-With": "XMLHttpRequest"
+      },
+      body
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data.success) {
+      throw new Error(data.error || "No se pudo imprimir la factura en Linux.");
+    }
+    return data;
+  }
 
   async function fetchTicketText(ventaId) {
     const csrf = getCSRFToken();
@@ -326,7 +378,11 @@
     if (!r.ok || !data.success) {
       throw new Error(data.error || "No se pudo generar el texto del ticket.");
     }
-    return String(data.receipt_text || "");
+    return {
+      receiptText: String(data.receipt_text || ""),
+      operatingSystem: normalizePrintOperatingSystem(data.print_operating_system),
+      paperSize: normalizePrintPaperSize(data.print_paper_size)
+    };
   }
 
   btnPrint?.addEventListener("click", async (e) => {
@@ -334,25 +390,31 @@
 
     const ventaId = btnPrint.getAttribute("data-venta-id");
 
-    if (!POS_AGENT_TOKEN) {
-      alert("⚠️ POS Agent no configurado (token vacío). Configura POS_AGENT_TOKEN para imprimir.");
-      return;
-    }
-
     try {
       btnPrint.disabled = true;
       if (!ventaId) throw new Error("No encontré el ID de la venta.");
 
       // 1) Pedir el texto del ticket al servidor
-      const baseText = await fetchTicketText(ventaId);
+      const ticket = await fetchTicketText(ventaId);
 
-      // 2) Agregar padding al final (idéntico a generar_venta)
-      const receiptText = (baseText || "Factura\n\n") + `\n\n\n\n\n\n\n\n\n\n\n\n\n`;
+      // 2) Linux imprime desde Django/CUPS. El endpoint también controla la
+      // gaveta, por lo que aquí no se llama /print ni /kick del POS Agent.
+      if (ticket.operatingSystem === "linux") {
+        await printViaLinuxServer(ventaId, ticket.paperSize, {
+          openDrawer: false
+        });
+        return;
+      }
 
-      // 3) Kick + print en paralelo, con deadline (idéntico a generar_venta)
-      const p1 = agentKickSafe({ timeout: 450 });
-      const p2 = agentPrintSafe(receiptText, { timeout: 850 });
-      await settleWithDeadline([p1, p2], 250);
+      if (!POS_AGENT_TOKEN) {
+        throw new Error("POS Agent no configurado (token vacío). Configura POS_AGENT_TOKEN para imprimir.");
+      }
+
+      // 3) La reimpresión no abre la gaveta. El papel pequeño usa una cola
+      // corta para no desperdiciar rollo; el perfil grande conserva la actual.
+      const feedLines = ticket.paperSize === "pequena" ? 4 : 13;
+      const receiptText = (ticket.receiptText || "Factura\n\n") + "\n".repeat(feedLines);
+      await agentPrintSafe(receiptText, { timeout: 850 });
 
     } catch (err) {
       alert("⚠️ " + (err?.message || "Error al imprimir."));

@@ -715,6 +715,79 @@ class ConfiguracionFuncionalidad(models.Model):
         return f"{self.clave}: {estado}"
 
 
+class ConfiguracionImpresion(models.Model):
+    """Perfil de impresión asignado a un punto de pago."""
+
+    SISTEMA_WINDOWS = "windows"
+    SISTEMA_LINUX = "linux"
+    SISTEMAS_OPERATIVOS = (
+        (SISTEMA_WINDOWS, "Windows"),
+        (SISTEMA_LINUX, "Linux"),
+    )
+
+    TAMANO_GRANDE = "grande"
+    TAMANO_PEQUENA = "pequena"
+    TAMANOS_FACTURA = (
+        (TAMANO_GRANDE, "Grande (80 mm)"),
+        (TAMANO_PEQUENA, "Pequeña (58 mm)"),
+    )
+
+    punto_pago = models.OneToOneField(
+        PuntosPago,
+        on_delete=models.CASCADE,
+        db_column="puntopagoid",
+        related_name="configuracion_impresion",
+    )
+    sistema_operativo = models.CharField(
+        max_length=10,
+        choices=SISTEMAS_OPERATIVOS,
+        default=SISTEMA_WINDOWS,
+    )
+    tamano_factura = models.CharField(
+        max_length=10,
+        choices=TAMANOS_FACTURA,
+        default=TAMANO_GRANDE,
+    )
+    version = models.PositiveBigIntegerField(default=1)
+    actualizada_en = models.DateTimeField(auto_now=True)
+    actualizada_por = models.ForeignKey(
+        Usuario,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="configuraciones_impresion_actualizadas",
+    )
+    actualizada_por_nombre = models.CharField(
+        max_length=160,
+        blank=True,
+        default="",
+    )
+
+    class Meta:
+        db_table = "configuracion_impresion"
+        ordering = ["punto_pago_id"]
+        constraints = [
+            models.CheckConstraint(
+                condition=Q(sistema_operativo__in=["windows", "linux"]),
+                name="config_impresion_so_valido",
+            ),
+            models.CheckConstraint(
+                condition=Q(tamano_factura__in=["grande", "pequena"]),
+                name="config_impresion_tamano_valido",
+            ),
+            models.CheckConstraint(
+                condition=Q(version__gte=1),
+                name="config_impresion_version_positiva",
+            ),
+        ]
+
+    def __str__(self):
+        return (
+            f"{self.punto_pago}: {self.get_sistema_operativo_display()} / "
+            f"{self.get_tamano_factura_display()}"
+        )
+
+
 class CambioConfiguracionFuncionalidad(models.Model):
     """Auditoría inmutable de cada cambio de una funcionalidad."""
 

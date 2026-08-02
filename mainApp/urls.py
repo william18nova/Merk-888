@@ -69,6 +69,11 @@ urlpatterns = [
         views.ConfiguracionFuncionalidadesView.as_view(),
         name="configuracion_funcionalidades",
     ),
+    path(
+        "configuracion/impresion/",
+        views.ConfiguracionImpresionView.as_view(),
+        name="configuracion_impresion",
+    ),
 
     path('agregar_sucursal/', SucursalCreateAJAXView.as_view(), name='agregar_sucursal'),
     path("visualizar_sucursales/", SucursalListView.as_view(), name="visualizar_sucursales"),

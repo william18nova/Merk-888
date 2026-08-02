@@ -1,7 +1,7 @@
 from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib.auth.decorators import login_required
 from django.contrib import messages
-from .models import Usuario, Sucursal, Categoria, Producto, Inventario, Proveedor, PreciosProveedor, PuntosPago, Rol, Empleado, HorariosNegocio, HorarioCaja, Cliente, Venta, DetalleVenta, PedidoProveedor, DetallePedidoProveedor, CambioDevolucion, ReintegroVenta, Permiso, RolPermiso, UsuarioPermiso, PagoVenta, TurnoCaja, TurnoCajaMedio, NotificacionNequi, VentaCarritoAudit, ClienteEspecial, AutorizacionDescuentoEspecial, CambioConfiguracionFuncionalidad
+from .models import Usuario, Sucursal, Categoria, Producto, Inventario, Proveedor, PreciosProveedor, PuntosPago, Rol, Empleado, HorariosNegocio, HorarioCaja, Cliente, Venta, DetalleVenta, PedidoProveedor, DetallePedidoProveedor, CambioDevolucion, ReintegroVenta, Permiso, RolPermiso, UsuarioPermiso, PagoVenta, TurnoCaja, TurnoCajaMedio, NotificacionNequi, VentaCarritoAudit, ClienteEspecial, AutorizacionDescuentoEspecial, CambioConfiguracionFuncionalidad, ConfiguracionImpresion
 from django.db.models import Count, Sum, Exists, OuterRef, Q, F, ExpressionWrapper, DecimalField, Value, IntegerField, Case, When, CharField
 from django.http import JsonResponse, HttpResponseBadRequest, HttpResponseForbidden, HttpRequest, HttpResponse
 from django.contrib.auth import authenticate, login as auth_login
@@ -26,6 +26,8 @@ from django.db.models.deletion import ProtectedError
 from django.contrib import messages
 from zoneinfo import ZoneInfo
 from django.core.exceptions import FieldDoesNotExist
+from django.core import signing
+from django.core.signing import BadSignature, SignatureExpired
 from django.views.generic import DetailView
 from .forms import (
     CategoriaForm,
@@ -115,6 +117,18 @@ from .services.feature_flags import (
     is_feature_enabled,
     locked_feature_enabled,
     set_feature_enabled,
+)
+from .services.printing import (
+    DEFAULT_PRINT_PROFILE,
+    SISTEMA_LINUX,
+    SISTEMA_WINDOWS,
+    TAMANO_GRANDE,
+    TAMANO_PEQUENA,
+    clear_print_profile_cache,
+    get_print_profile,
+    normalize_sistema_operativo,
+    normalize_tamano_factura,
+    resolve_print_profile,
 )
 
 def _round_account_peso(value) -> Decimal:
@@ -3890,6 +3904,285 @@ class ConfiguracionFuncionalidadesView(LoginRequiredMixin, View):
         return self._no_store(response)
 
 
+@method_decorator(never_cache, name="dispatch")
+@method_decorator(
+    sensitive_post_parameters("password_web_master"),
+    name="dispatch",
+)
+class ConfiguracionImpresionView(LoginRequiredMixin, View):
+    """Configura el transporte y ancho de factura de cada punto de pago."""
+
+    template_name = "configuracion_impresion.html"
+
+    def dispatch(self, request, *args, **kwargs):
+        if (
+            getattr(request.user, "is_authenticated", False)
+            and not is_web_master_role(request.user)
+        ):
+            return HttpResponseForbidden(
+                "Solo el rol Web Master puede configurar la impresión."
+            )
+        return super().dispatch(request, *args, **kwargs)
+
+    @staticmethod
+    def _no_store(response):
+        response["Cache-Control"] = (
+            "no-store, no-cache, must-revalidate, max-age=0"
+        )
+        response["Pragma"] = "no-cache"
+        return response
+
+    @staticmethod
+    def _actor_name(user):
+        return (
+            getattr(user, "nombreusuario", "")
+            or getattr(user, "username", "")
+            or str(user)
+        )[:160]
+
+    def _context(self, *, selected_point_id=None, error=""):
+        points = list(
+            PuntosPago.objects
+            .select_related("sucursalid")
+            .order_by("sucursalid__nombre", "nombre", "puntopagoid")
+        )
+        point_ids = [point.pk for point in points]
+        migration_ready = True
+        try:
+            configurations = {
+                row.punto_pago_id: row
+                for row in ConfiguracionImpresion.objects.filter(
+                    punto_pago_id__in=point_ids,
+                )
+            }
+        except DatabaseError:
+            configurations = {}
+            migration_ready = False
+
+        rows = []
+        for point in points:
+            configuration = configurations.get(point.pk)
+            try:
+                profile = (
+                    resolve_print_profile(
+                        configuration.sistema_operativo,
+                        configuration.tamano_factura,
+                    )
+                    if configuration is not None
+                    else DEFAULT_PRINT_PROFILE
+                )
+            except ValueError:
+                profile = DEFAULT_PRINT_PROFILE
+
+            branch_name = str(
+                getattr(getattr(point, "sucursalid", None), "nombre", "")
+                or "Sin sucursal"
+            )
+            rows.append({
+                "id": point.pk,
+                "label": f"{branch_name} · {point.nombre}",
+                "operating_system": profile.sistema_operativo,
+                "paper_size": profile.tamano_factura,
+                "version": int(getattr(configuration, "version", 0) or 0),
+                "updated_at": getattr(configuration, "actualizada_en", None),
+                "updated_by": (
+                    getattr(configuration, "actualizada_por_nombre", "")
+                    if configuration is not None
+                    else ""
+                ),
+            })
+
+        valid_ids = {str(row["id"]) for row in rows}
+        selected = str(selected_point_id or "")
+        if selected not in valid_ids:
+            selected = str(rows[0]["id"]) if rows else ""
+
+        migration_error = ""
+        if not migration_ready:
+            migration_error = (
+                "Falta aplicar la migración 0026 para guardar la configuración "
+                "de impresión. Mientras tanto se conserva Windows con factura grande."
+            )
+
+        return {
+            "print_points": rows,
+            "selected_point_id": int(selected) if selected else "",
+            "migration_ready": migration_ready,
+            "error": error or migration_error,
+        }
+
+    def _render(self, request, *, selected_point_id=None, error="", status=200):
+        response = render(
+            request,
+            self.template_name,
+            self._context(
+                selected_point_id=selected_point_id,
+                error=error,
+            ),
+            status=status,
+        )
+        return self._no_store(response)
+
+    def get(self, request, *args, **kwargs):
+        return self._render(
+            request,
+            selected_point_id=request.GET.get("punto_pago_id"),
+        )
+
+    def post(self, request, *args, **kwargs):
+        point_id = str(request.POST.get("punto_pago_id") or "").strip()
+        if not point_id.isdigit():
+            return self._render(
+                request,
+                error="Selecciona un punto de pago válido.",
+                status=400,
+            )
+
+        password = request.POST.get("password_web_master") or ""
+        if not request.user.check_password(password):
+            return self._render(
+                request,
+                selected_point_id=point_id,
+                error="La contraseña del Web Master no es correcta.",
+                status=400,
+            )
+
+        try:
+            sistema_operativo = normalize_sistema_operativo(
+                request.POST.get("operating_system"),
+            )
+            tamano_factura = normalize_tamano_factura(
+                request.POST.get("paper_size"),
+            )
+        except ValueError as exc:
+            return self._render(
+                request,
+                selected_point_id=point_id,
+                error=str(exc),
+                status=400,
+            )
+
+        raw_version = str(request.POST.get("version") or "0").strip()
+        if not raw_version.isdigit():
+            return self._render(
+                request,
+                selected_point_id=point_id,
+                error="La versión de la configuración no es válida. Recarga la página.",
+                status=400,
+            )
+        expected_version = int(raw_version)
+
+        class _DeferredConfigResponse(Exception):
+            def __init__(self, message, status):
+                self.message = message
+                self.status = status
+                super().__init__(message)
+
+        try:
+            with transaction.atomic():
+                point = (
+                    PuntosPago.objects
+                    .select_for_update()
+                    .filter(pk=int(point_id))
+                    .first()
+                )
+                if point is None:
+                    raise _DeferredConfigResponse(
+                        "El punto de pago ya no existe.",
+                        404,
+                    )
+
+                configuration = (
+                    ConfiguracionImpresion.objects
+                    .select_for_update()
+                    .filter(punto_pago=point)
+                    .first()
+                )
+                current_version = int(
+                    getattr(configuration, "version", 0) or 0
+                )
+                if expected_version != current_version:
+                    raise _DeferredConfigResponse(
+                        (
+                            "La configuración cambió en otra sesión. Recarga la "
+                            "página antes de guardar nuevamente."
+                        ),
+                        409,
+                    )
+
+                changed = (
+                    configuration is None
+                    or configuration.sistema_operativo != sistema_operativo
+                    or configuration.tamano_factura != tamano_factura
+                )
+                if configuration is None:
+                    configuration = ConfiguracionImpresion.objects.create(
+                        punto_pago=point,
+                        sistema_operativo=sistema_operativo,
+                        tamano_factura=tamano_factura,
+                        version=1,
+                        actualizada_por=request.user,
+                        actualizada_por_nombre=self._actor_name(request.user),
+                    )
+                elif changed:
+                    configuration.sistema_operativo = sistema_operativo
+                    configuration.tamano_factura = tamano_factura
+                    configuration.version = current_version + 1
+                    configuration.actualizada_por = request.user
+                    configuration.actualizada_por_nombre = self._actor_name(
+                        request.user,
+                    )
+                    configuration.save(update_fields=[
+                        "sistema_operativo",
+                        "tamano_factura",
+                        "version",
+                        "actualizada_por",
+                        "actualizada_por_nombre",
+                        "actualizada_en",
+                    ])
+        except _DeferredConfigResponse as exc:
+            # El render ocurre después de salir de ``atomic``. Así los context
+            # processors nunca consultan sobre una transacción marcada como rota.
+            return self._render(
+                request,
+                selected_point_id=point_id,
+                error=exc.message,
+                status=exc.status,
+            )
+        except DatabaseError:
+            logger.exception(
+                "No se pudo guardar la configuración de impresión del punto %s",
+                point_id,
+            )
+            return self._render(
+                request,
+                selected_point_id=point_id,
+                error=(
+                    "No se pudo guardar la configuración. Verifica que la "
+                    "migración 0026 esté aplicada e inténtalo nuevamente."
+                ),
+                status=503,
+            )
+
+        if changed:
+            clear_print_profile_cache(point_id)
+
+        if changed:
+            messages.success(
+                request,
+                "La configuración de impresión fue actualizada correctamente.",
+            )
+        else:
+            messages.info(
+                request,
+                "Ese punto de pago ya tenía la configuración seleccionada.",
+            )
+        response = redirect(
+            f"{reverse('configuracion_impresion')}?punto_pago_id={point_id}",
+        )
+        return self._no_store(response)
+
+
 @method_decorator(
     sensitive_post_parameters(
         "empleado_password",
@@ -4492,27 +4785,53 @@ class GenerarVentaView(LoginRequiredMixin, View):
     # Receipt
     # =========================
     @staticmethod
-    def _build_receipt_text(venta_data: Dict[str, Any], detalles: list[dict], total, pagos: list[dict]):
+    def _build_receipt_text(
+        venta_data: Dict[str, Any],
+        detalles: list[dict],
+        total,
+        pagos: list[dict],
+        paper_size=TAMANO_GRANDE,
+    ):
         def money(n):
             return _format_money_cop(n)
 
-        WIDTH = 48
+        try:
+            WIDTH = resolve_print_profile(
+                SISTEMA_WINDOWS,
+                paper_size,
+            ).width_chars
+        except ValueError:
+            WIDTH = DEFAULT_PRINT_PROFILE.width_chars
 
         def line(txt=""):
             t = str(txt or "")
             return t[:WIDTH]
 
+        def wrapped(txt=""):
+            return textwrap.wrap(
+                str(txt or ""),
+                width=WIDTH,
+                break_long_words=True,
+                break_on_hyphens=False,
+            ) or [""]
+
         def lr(left, right):
             left = str(left or "")
             right = str(right or "")
+            if len(right) >= WIDTH:
+                return right[-WIDTH:]
+            left = left[:max(0, WIDTH - len(right) - 1)]
             space = max(1, WIDTH - len(left) - len(right))
             return left + (" " * space) + right
 
-        ahora = timezone.localtime()
+        ahora = (venta_data or {}).get("fecha_hora") or timezone.localtime()
 
         cajero_nombre = (venta_data or {}).get("cajero_nombre", "") or "—"
         refund_total  = Decimal((venta_data or {}).get("refund_total", 0) or 0)
         cambio        = Decimal((venta_data or {}).get("cambio", 0) or 0)
+        efectivo_recibido = Decimal(
+            (venta_data or {}).get("efectivo_recibido", 0) or 0
+        )
         descuento_empleado = Decimal((venta_data or {}).get("descuento_empleado", 0) or 0)
         empleado_comprador = (venta_data or {}).get("empleado_comprador", "") or ""
         beneficio_web_master = bool(
@@ -4545,20 +4864,25 @@ class GenerarVentaView(LoginRequiredMixin, View):
         ]
         if venta_id not in (None, ""):
             head.append(line(f"Factura #{venta_id}"))
-        head += [
-            lr("Fecha:", ahora.strftime("%Y-%m-%d %H:%M")),
-            lr("Sucursal:", (venta_data or {}).get("sucursal_nombre", "")),
-            lr("Cajero:", cajero_nombre),
-            "-" * WIDTH,
-        ]
+        head.append(lr("Fecha:", ahora.strftime("%Y-%m-%d %H:%M")))
+        head.extend(wrapped(
+            f"Sucursal: {(venta_data or {}).get('sucursal_nombre', '')}"
+        ))
+        head.extend(wrapped(f"Cajero: {cajero_nombre}"))
+        head.append("-" * WIDTH)
 
         body = []
         for d in detalles:
-            nom = str(d.get("producto", ""))[:WIDTH]
+            product_lines = textwrap.wrap(
+                str(d.get("producto", "") or "(Producto)"),
+                width=WIDTH,
+                break_long_words=True,
+                break_on_hyphens=False,
+            ) or ["(Producto)"]
             qty = d.get("cantidad", 1)
             pu  = d.get("precio_unitario", Decimal("0"))
             sub = d.get("subtotal", Decimal("0"))
-            body.append(line(nom))
+            body.extend(line(product_line) for product_line in product_lines)
             body.append(lr(f" x{qty}  @ {money(pu)}", money(sub)))
 
         pay_lines = ["-" * WIDTH]
@@ -4586,12 +4910,15 @@ class GenerarVentaView(LoginRequiredMixin, View):
             if empleado_comprador:
                 foot.append(line(f"Empleado: {empleado_comprador}"))
 
+        foot.append(lr("TOTAL:", money(total)))
+        if efectivo_recibido > 0:
+            foot.append(lr("RECIBIDO:", money(efectivo_recibido)))
+        if cambio > 0:
+            foot.append(lr("CAMBIO:", money(cambio)))
         foot += [
-            lr("TOTAL:", money(total)),
-            *( [lr("CAMBIO:", money(cambio))] if cambio > 0 else [] ),
             "",
             line("¡Gracias por su compra! :) "),
-            ""
+            "",
         ]
 
         return "\n".join(head + body + pay_lines + foot)
@@ -4842,9 +5169,23 @@ class GenerarVentaView(LoginRequiredMixin, View):
             # CAMBIO: solo pago simple en efectivo
             efectivo_recibido = GenerarVentaView._to_decimal(efectivo_recibido)
             cambio = Decimal("0")
-            if total > 0 and pagos and len(pagos) == 1 and (pagos[0].get("medio_pago") or "").lower() == "efectivo":
+            pago_unico_efectivo = bool(
+                total > 0
+                and pagos
+                and len(pagos) == 1
+                and (pagos[0].get("medio_pago") or "").lower() == "efectivo"
+            )
+            if pago_unico_efectivo:
+                if efectivo_recibido <= 0:
+                    efectivo_recibido = total
                 if efectivo_recibido > total:
                     cambio = efectivo_recibido - total
+            else:
+                efectivo_recibido = Decimal("0")
+
+            # Esta decisión controla hardware; se consulta fresca para que un
+            # cambio Windows/Linux se aplique incluso entre distintos workers.
+            print_profile = get_print_profile(pp_inst, fresh=True)
 
             try:
                 receipt_text = GenerarVentaView._build_receipt_text(
@@ -4852,6 +5193,8 @@ class GenerarVentaView(LoginRequiredMixin, View):
                         "sucursal_nombre": getattr(suc_inst, "nombre", str(suc_inst)),
                         "cajero_nombre": cajero_nombre,
                         "refund_total": refund_total,
+                        "fecha_hora": ahora,
+                        "efectivo_recibido": efectivo_recibido,
                         "cambio": cambio,
                         "venta_id": venta.pk,
                         "descuento_empleado": descuento_empleado,
@@ -4859,7 +5202,10 @@ class GenerarVentaView(LoginRequiredMixin, View):
                         "beneficio_web_master": beneficio_web_master,
                         "beneficio_merk2888": beneficio_merk2888,
                     },
-                    detalles, total, pagos
+                    detalles,
+                    total,
+                    pagos,
+                    paper_size=print_profile.tamano_factura,
                 )
                 nequi_status = GenerarVentaView._nequi_sale_status(
                     nequi_pago_total,
@@ -4887,10 +5233,30 @@ class GenerarVentaView(LoginRequiredMixin, View):
                     ),
                 }
 
+            print_token = ""
+            if print_profile.sistema_operativo == SISTEMA_LINUX:
+                try:
+                    print_token = _build_sale_print_token(
+                        venta,
+                        user,
+                        print_profile,
+                        receipt_text,
+                    )
+                except Exception:
+                    # La venta ya está confirmada. Un fallo excepcional al
+                    # firmar el ticket no puede convertirla en un POST fallido.
+                    logger.exception(
+                        "Venta %s creada, pero no se pudo firmar su ticket Linux.",
+                        venta.pk,
+                    )
+
             return JsonResponse({
                 "success": True,
                 "venta_id": venta.pk,
                 "receipt_text": receipt_text,
+                "print_operating_system": print_profile.sistema_operativo,
+                "print_paper_size": print_profile.tamano_factura,
+                "print_token": print_token,
                 "sale_total": str(total),
                 "web_master_free_sale": bool(beneficio_web_master),
                 "merk2888_free_sale": bool(beneficio_merk2888),
@@ -5013,11 +5379,11 @@ class ProductoSnapshotView(View):
 
 
 # ============================================================================
-# 4) TICKET 80mm x 60mm (LABEL) — ESC/POS
-#    - 80mm ancho: 48 columnas (Font A)
-#    - 60mm alto: rellenamos con feed por DOTS y cortamos
+# 4) TICKETS 80mm / 58mm — ESC/POS
+#    - Grande: 80mm, 48 columnas, etiqueta objetivo de 60mm.
+#    - Pequeña: 58mm, 32 columnas, rollo continuo.
 # ============================================================================
-TICKET_WIDTH_CHARS = 48      # ✅ 80mm típico (Font A)
+TICKET_WIDTH_CHARS = 48
 LABEL_HEIGHT_MM    = 60      # ✅ alto objetivo (label)
 DOTS_PER_MM        = 8       # 203dpi ~ 8 dots/mm
 LABEL_HEIGHT_DOTS  = int(LABEL_HEIGHT_MM * DOTS_PER_MM)  # 60mm => 480 dots aprox
@@ -5050,34 +5416,20 @@ def _fmt_money(x: Decimal) -> str:
 
 def _wrap(text: str, width: int = TICKET_WIDTH_CHARS) -> List[str]:
     """
-    Wrap simple por palabras, recorta a width.
+    Ajusta por palabras y conserva también palabras mayores que el papel.
     """
     s = str(text or "").strip()
     if not s:
         return [""]
+    return textwrap.wrap(
+        s,
+        width=width,
+        break_long_words=True,
+        break_on_hyphens=False,
+    ) or [""]
 
-    words = s.split()
-    lines: List[str] = []
-    cur = ""
-
-    for w in words:
-        if not cur:
-            cur = w
-            continue
-
-        if len(cur) + 1 + len(w) <= width:
-            cur = cur + " " + w
-        else:
-            lines.append(cur[:width])
-            cur = w
-
-    if cur:
-        lines.append(cur[:width])
-
-    return lines or [""]
-
-def _line() -> str:
-    return "-" * TICKET_WIDTH_CHARS
+def _line(width: int = TICKET_WIDTH_CHARS) -> str:
+    return "-" * width
 
 
 def _ticket_subtotal_discount(detalles, total) -> tuple[Decimal, Decimal]:
@@ -5111,7 +5463,17 @@ def _ticket_amount_line(label: str, amount: Decimal, width: int = TICKET_WIDTH_C
     except Exception:
         amount_dec = Decimal("0")
     right = f"-{_fmt_money(amount_dec.copy_abs())}" if amount_dec < 0 else _fmt_money(amount_dec)
-    return f"{label:<{width-len(right)}}{right}"
+    return _ticket_lr(label, right, width)
+
+
+def _ticket_lr(left, right, width: int) -> str:
+    """Alinea dos columnas sin producir líneas más anchas que el papel."""
+    left = str(left or "")
+    right = str(right or "")
+    if len(right) >= width:
+        return right[-width:]
+    left = left[:max(0, width - len(right) - 1)]
+    return left + (" " * (width - len(left) - len(right))) + right
 
 
 def _venta_tiene_beneficio_merk2888(venta) -> bool:
@@ -5124,94 +5486,83 @@ def _venta_tiene_beneficio_merk2888(venta) -> bool:
     ).exists()
 
 
-def _build_ticket_lines(venta: Venta) -> list[str]:
-    """
-    Devuelve líneas ya formateadas a 48 columnas (80mm).
-    Incluye: CAJERO + DEVUELTO (si aplica)
-    """
-    out: list[str] = []
-
-    # --- helpers locales ---
-    def _to_dec(x):
-        try:
-            return Decimal(x)
-        except Exception:
-            return Decimal("0")
-
-    out += _wrap("NOVA ADVANCE")
-    out += _wrap("NIT: 900.000.000-1")
-    out.append(_line())
-    out += _wrap(f"Factura #{venta.pk}")
-    out += _wrap(f"Fecha: {venta.fecha}  {venta.hora.strftime('%H:%M')}")
-    out += _wrap(f"Sucursal: {venta.sucursalid.nombre}")
-
-    # ✅ CAJERO
-    emp = getattr(venta, "empleadoid", None)
-    cajero = f"{getattr(emp, 'nombre', '')} {getattr(emp, 'apellido', '')}".strip() if emp else ""
-    out += _wrap(f"Cajero: {cajero or '—'}")
-
-    if getattr(venta, "clienteid", None):
-        out += _wrap(f"Cliente: {venta.clienteid.nombre}")
-    out.append(_line())
-
-    detalles = list(
+def _build_ticket_lines(venta: Venta, paper_size=TAMANO_GRANDE) -> list[str]:
+    """Construye el mismo contenido para Windows y Linux desde la venta guardada."""
+    detalles_db = list(
         DetalleVenta.objects
         .filter(ventaid=venta)
         .select_related("productoid")
     )
-    subtotal_factura, descuento_total = _ticket_subtotal_discount(detalles, venta.total)
-    beneficio_merk2888 = _venta_tiene_beneficio_merk2888(venta)
-
-    # ✅ calcular devuelto (sumatoria de qty<0 en positivo)
+    detalles = []
     refund_total = Decimal("0")
+    for detalle in detalles_db:
+        cantidad = int(getattr(detalle, "cantidad", 0) or 0)
+        precio = Decimal(getattr(detalle, "preciounitario", 0) or 0)
+        subtotal = precio * Decimal(cantidad)
+        if cantidad < 0:
+            refund_total += -subtotal
+        detalles.append({
+            "producto": (
+                getattr(getattr(detalle, "productoid", None), "nombre", "")
+                or "(Producto)"
+            ),
+            "cantidad": cantidad,
+            "precio_unitario": precio,
+            "subtotal": subtotal,
+        })
 
-    for det in detalles:
-        nombre = (det.productoid.nombre or "").strip() or "(Producto)"
-        pu     = _to_dec(det.preciounitario or 0)
-        qty    = int(det.cantidad or 0)
-        subtotal = pu * Decimal(qty)
+    pagos = []
+    # Los objetos de prueba y ventas legadas sin filas de PagoVenta conservan
+    # un fallback seguro al medio principal de la venta.
+    if isinstance(venta, Venta):
+        payment_rows = (
+            PagoVenta.objects
+            .filter(ventaid=venta)
+            .values("medio_pago")
+            .annotate(total=Sum("monto"))
+            .order_by("medio_pago")
+        )
+        for row in payment_rows:
+            amount = Decimal(row.get("total") or 0)
+            if amount > 0:
+                pagos.append({
+                    "medio_pago": row.get("medio_pago") or "",
+                    "monto": amount,
+                })
 
-        if qty < 0:
-            refund_total += (-subtotal)  # positivo
+    medio = str(getattr(venta, "mediopago", "") or "").strip().lower()
+    total = Decimal(getattr(venta, "total", 0) or 0)
+    if not pagos and total > 0 and medio and medio != "mixto":
+        pagos = [{"medio_pago": medio, "monto": total}]
 
-        lines = _wrap(nombre)
-        out.append(lines[0])
+    empleado = getattr(venta, "empleadoid", None)
+    cajero = (
+        f"{getattr(empleado, 'nombre', '')} "
+        f"{getattr(empleado, 'apellido', '')}"
+    ).strip() or "—"
+    sale_datetime = datetime.combine(venta.fecha, venta.hora)
 
-        left  = f"{qty} x {_fmt_money(pu)}"
-        right = _fmt_money(subtotal)
+    receipt = GenerarVentaView._build_receipt_text(
+        {
+            "venta_id": venta.pk,
+            "fecha_hora": sale_datetime,
+            "sucursal_nombre": getattr(venta.sucursalid, "nombre", ""),
+            "cajero_nombre": cajero,
+            "refund_total": refund_total,
+            "beneficio_merk2888": _venta_tiene_beneficio_merk2888(venta),
+        },
+        detalles,
+        total,
+        pagos,
+        paper_size=paper_size,
+    )
+    return receipt.splitlines()
 
-        out.append(f"{left:<{TICKET_WIDTH_CHARS-len(right)}}{right}")
-
-        for extra in lines[1:]:
-            out.append(extra)
-
-    out.append(_line())
-
-    if refund_total > 0:
-        out.append(f"{'DEVUELTO':<{TICKET_WIDTH_CHARS-10}}{_fmt_money(refund_total):>10}")
-
-    if descuento_total > 0:
-        out.append(_ticket_amount_line("SUBTOTAL", subtotal_factura))
-        discount_label = "BENEFICIO MERK2888" if beneficio_merk2888 else "DESCUENTO"
-        out.append(_ticket_amount_line(discount_label, -descuento_total))
-        out.append(_ticket_amount_line("USTED AHORRA", descuento_total))
-
-    out.append(_ticket_amount_line("TOTAL", venta.total))
-    out.append(_line())
-    if beneficio_merk2888:
-        out += _wrap("Medio de pago: SIN PAGO - BENEFICIO 100%")
-    else:
-        out += _wrap(f"Medio de pago: {str(venta.mediopago or '').upper()}")
-    out.append("")
-    out += _wrap("¡Gracias por su compra!")
-    out.append("")
-    return out
-
-def _build_ticket_text(venta: Venta) -> str:
+def _build_ticket_text(venta: Venta, paper_size=TAMANO_GRANDE) -> str:
     """
     Texto (para POS Agent / JSON).
     """
-    lines = _build_ticket_lines(venta)
+    lines = _build_ticket_lines(venta, paper_size=paper_size)
     return "\n".join(lines) + "\n\n\n"
 
 def _escpos_feed_dots(dots: int) -> bytes:
@@ -5228,30 +5579,41 @@ def _escpos_feed_dots(dots: int) -> bytes:
         remaining -= n
     return out
 
-def _build_label_80x60_payload_from_lines(lines: list[str], open_drawer=True, cut=True) -> bytes:
-    """
-    ✅ Formato “80mm x 60mm” como label:
-    - imprime líneas normales
-    - rellena con feed hasta aprox 60mm de alto
-    - corta
-    - (opcional) abre caja
-    """
+def _build_escpos_payload_from_lines(
+    lines: list[str],
+    *,
+    paper_size=TAMANO_GRANDE,
+    open_drawer=True,
+    cut=True,
+) -> bytes:
+    """Genera ESC/POS para 80mm fijo o para rollo continuo de 58mm."""
+    try:
+        profile = resolve_print_profile(SISTEMA_LINUX, paper_size)
+    except ValueError:
+        profile = DEFAULT_PRINT_PROFILE
+
     init      = b"\x1B\x40"          # ESC @
     codepage  = b"\x1B\x74\x00"      # ESC t 0  (CP437 en muchos modelos)
     drawer    = b"\x1B\x70\x00\x32\x32"  # ESC p m t1 t2
     full_cut  = b"\x1D\x56\x41\x00"  # GS V A 0  (full cut; si no soporta, no pasa nada)
 
     # cuerpo
-    body = b"".join((str(ln).encode("cp437", errors="ignore") + b"\n") for ln in (lines or []))
+    body = b"".join(
+        (
+            str(line)[:profile.width_chars].encode("cp437", errors="ignore")
+            + b"\n"
+        )
+        for line in (lines or [])
+    )
     body += b"\n\n\n"  # margen final
 
-    # altura estimada consumida por líneas
-    printed_lines = max(0, len(lines) + 3)
-    used_dots = printed_lines * LINE_HEIGHT_DOTS
-    remaining = max(0, LABEL_HEIGHT_DOTS - used_dots)
-
     payload = init + codepage + body
-    payload += _escpos_feed_dots(remaining)
+    if profile.tamano_factura == TAMANO_GRANDE:
+        # El perfil grande conserva la etiqueta 80x60 existente.
+        printed_lines = max(0, len(lines) + 3)
+        used_dots = printed_lines * LINE_HEIGHT_DOTS
+        remaining = max(0, LABEL_HEIGHT_DOTS - used_dots)
+        payload += _escpos_feed_dots(remaining)
 
     if open_drawer:
         payload += drawer
@@ -5260,23 +5622,72 @@ def _build_label_80x60_payload_from_lines(lines: list[str], open_drawer=True, cu
 
     return payload
 
+
+def _build_label_80x60_payload_from_lines(
+    lines: list[str],
+    open_drawer=True,
+    cut=True,
+) -> bytes:
+    """Compatibilidad con el nombre histórico del perfil grande."""
+    return _build_escpos_payload_from_lines(
+        lines,
+        paper_size=TAMANO_GRANDE,
+        open_drawer=open_drawer,
+        cut=cut,
+    )
+
+
+def _build_ticket_payload(
+    venta: Venta,
+    *,
+    paper_size=TAMANO_GRANDE,
+    open_drawer=True,
+    cut=True,
+) -> bytes:
+    lines = _build_ticket_lines(venta, paper_size=paper_size)
+    return _build_escpos_payload_from_lines(
+        lines,
+        paper_size=paper_size,
+        open_drawer=open_drawer,
+        cut=cut,
+    )
+
+
 def _build_ticket_payload_80x60(venta: Venta) -> bytes:
-    """
-    ✅ ESTE es el que usarás para imprimir “80mm x 60mm”.
-    """
-    lines = _build_ticket_lines(venta)
-    return _build_label_80x60_payload_from_lines(lines, open_drawer=True, cut=True)
+    """Compatibilidad con llamadas existentes al perfil grande."""
+    return _build_ticket_payload(
+        venta,
+        paper_size=TAMANO_GRANDE,
+        open_drawer=True,
+        cut=True,
+    )
 
 def _just_open_drawer() -> bytes:
     # init + pulso
     return b"\x1B\x40" + b"\n" + b"\x1B\x70\x00\x32\x32"
 
-def _send_to_printer(payload: bytes) -> tuple[bool, str]:
+def _send_to_printer(
+    payload: bytes,
+    *,
+    paper_size=TAMANO_GRANDE,
+    punto_pago=None,
+) -> tuple[bool, str]:
     """
     Intenta enviar a /dev/usb/lp0; si no existe, intenta CUPS (lp raw).
     Devuelve (ok, error_message).
     """
-    device = os.environ.get("PRINTER_DEVICE", "/dev/usb/lp0")
+    try:
+        profile = resolve_print_profile(SISTEMA_LINUX, paper_size)
+    except ValueError:
+        return False, "El tamaño de factura solicitado no es válido."
+
+    point_id = getattr(punto_pago, "pk", punto_pago)
+    point_suffix = str(point_id).strip() if point_id not in (None, "") else ""
+    device = (
+        os.environ.get(f"PRINTER_DEVICE_{point_suffix}")
+        if point_suffix.isdigit()
+        else None
+    ) or os.environ.get("PRINTER_DEVICE", "/dev/usb/lp0")
 
     # 1) /dev/usb/lp0
     try:
@@ -5284,23 +5695,121 @@ def _send_to_printer(payload: bytes) -> tuple[bool, str]:
             with open(device, "wb") as f:
                 f.write(payload)
             return True, ""
-    except Exception as e:
-        last_err = f"lp0 error: {e}"
+    except Exception:
+        logger.exception("No se pudo escribir el ticket en %s", device)
+        last_err = "el dispositivo USB no está disponible"
     else:
         last_err = "lp0 no encontrado"
 
     # 2) CUPS RAW
     try:
-        printer = os.environ.get("PRINTER", "")
-        # ✅ “80mm x 60mm” como media custom
-        media = os.environ.get("CUPS_MEDIA", "Custom.80x60mm")
+        printer = (
+            os.environ.get(f"PRINTER_{point_suffix}")
+            if point_suffix.isdigit()
+            else None
+        ) or os.environ.get("PRINTER", "")
+        if profile.tamano_factura == TAMANO_PEQUENA:
+            media = os.environ.get("CUPS_MEDIA_SMALL", profile.cups_media)
+        else:
+            media = os.environ.get(
+                "CUPS_MEDIA_LARGE",
+                os.environ.get("CUPS_MEDIA", profile.cups_media),
+            )
         cmd = ["lp", "-o", f"media={media}", "-o", "raw"]
         if printer:
             cmd.extend(["-d", printer])
-        subprocess.run(cmd, input=payload, check=True)
+        raw_timeout = os.environ.get("PRINTER_COMMAND_TIMEOUT_SECONDS", "8")
+        try:
+            command_timeout = max(1.0, min(float(raw_timeout), 30.0))
+        except (TypeError, ValueError):
+            command_timeout = 8.0
+        subprocess.run(
+            cmd,
+            input=payload,
+            check=True,
+            timeout=command_timeout,
+        )
         return True, ""
-    except Exception as e:
-        return False, f"{last_err} ; CUPS error: {e}"
+    except Exception:
+        logger.exception(
+            "No se pudo imprimir mediante CUPS (%s, %s)",
+            profile.tamano_factura,
+            profile.cups_media,
+        )
+        return False, (
+            "No se pudo acceder a la impresora Linux: "
+            f"{last_err} y CUPS no completó el trabajo."
+        )
+
+
+SALE_PRINT_TOKEN_SALT = "mainApp.sale-print.v1"
+SALE_PRINT_TOKEN_MAX_AGE_SECONDS = 5 * 60
+
+
+def _user_can_print_venta(user, venta: Venta) -> bool:
+    """Limita el acceso directo por ID para el rol Cajero a su sucursal."""
+    if not getattr(user, "is_authenticated", False):
+        return False
+    role = str(
+        getattr(getattr(user, "rolid", None), "nombre", "") or ""
+    ).strip().lower()
+    if role != "cajero":
+        # Los demás roles ya fueron autorizados por el middleware de permisos.
+        return True
+    user_branch_id = _cajero_sucursal_id(user)
+    sale_branch_id = getattr(venta, "sucursalid_id", None)
+    if sale_branch_id is None:
+        sale_branch_id = getattr(getattr(venta, "sucursalid", None), "pk", None)
+    return bool(
+        user_branch_id
+        and sale_branch_id
+        and str(user_branch_id) == str(sale_branch_id)
+    )
+
+
+def _build_sale_print_token(venta, user, profile, receipt_text: str) -> str:
+    """Firma el ticket inmediato para imprimirlo sin aceptar texto del cliente."""
+    return signing.dumps(
+        {
+            "venta_id": int(getattr(venta, "pk", venta)),
+            "user_id": int(getattr(user, "pk", 0) or 0),
+            "punto_pago_id": int(
+                getattr(getattr(venta, "puntopagoid", None), "pk", 0)
+                or getattr(venta, "puntopagoid_id", 0)
+                or 0
+            ),
+            "paper_size": profile.tamano_factura,
+            "receipt_text": str(receipt_text or ""),
+        },
+        key=settings.SECRET_KEY,
+        salt=SALE_PRINT_TOKEN_SALT,
+        compress=True,
+    )
+
+
+def _load_sale_print_token(token: str, venta, user, profile) -> dict:
+    payload = signing.loads(
+        str(token or ""),
+        key=settings.SECRET_KEY,
+        salt=SALE_PRINT_TOKEN_SALT,
+        max_age=SALE_PRINT_TOKEN_MAX_AGE_SECONDS,
+    )
+    expected = {
+        "venta_id": int(getattr(venta, "pk", venta)),
+        "user_id": int(getattr(user, "pk", 0) or 0),
+        "punto_pago_id": int(
+            getattr(getattr(venta, "puntopagoid", None), "pk", 0)
+            or getattr(venta, "puntopagoid_id", 0)
+            or 0
+        ),
+        "paper_size": profile.tamano_factura,
+    }
+    if any(payload.get(key) != value for key, value in expected.items()):
+        raise BadSignature("El token no corresponde a esta venta.")
+    receipt_text = payload.get("receipt_text")
+    if not isinstance(receipt_text, str) or not receipt_text or len(receipt_text) > 20000:
+        raise BadSignature("El contenido firmado no es válido.")
+    return payload
 
 
 # ============================================================================
@@ -5315,29 +5824,157 @@ class TicketTextoView(LoginRequiredMixin, View):
         venta_id = request.POST.get("venta_id")
         if not venta_id or not str(venta_id).isdigit():
             return HttpResponseBadRequest("venta_id inválido")
-        venta = get_object_or_404(Venta, pk=int(venta_id))
-        text = _build_ticket_text(venta)
-        return JsonResponse({"success": True, "receipt_text": text})
+        venta = get_object_or_404(
+            Venta.objects.select_related(
+                "sucursalid",
+                "empleadoid",
+                "clienteid",
+                "puntopagoid",
+            ),
+            pk=int(venta_id),
+        )
+        if not _user_can_print_venta(request.user, venta):
+            return JsonResponse(
+                {"success": False, "error": "No puedes imprimir esta venta."},
+                status=403,
+            )
+        profile = get_print_profile(venta.puntopagoid, fresh=True)
+        text = _build_ticket_text(
+            venta,
+            paper_size=profile.tamano_factura,
+        )
+        return JsonResponse({
+            "success": True,
+            "receipt_text": text,
+            "print_operating_system": profile.sistema_operativo,
+            "print_paper_size": profile.tamano_factura,
+        })
 
 
 @method_decorator(require_POST, name="dispatch")
 class ImprimirFacturaView(LoginRequiredMixin, View):
     """
-    POST: {venta_id} → imprime en formato ✅ 80mm x 60mm y abre la caja.
+    Imprime por USB/CUPS cuando el punto de pago está configurado para Linux.
     """
     def post(self, request, *args, **kwargs):
         venta_id = request.POST.get("venta_id")
         if not venta_id or not str(venta_id).isdigit():
             return HttpResponseBadRequest("venta_id inválido")
 
-        venta = get_object_or_404(Venta, pk=int(venta_id))
+        venta = get_object_or_404(
+            Venta.objects.select_related(
+                "sucursalid",
+                "empleadoid",
+                "clienteid",
+                "puntopagoid",
+            ),
+            pk=int(venta_id),
+        )
+        if not _user_can_print_venta(request.user, venta):
+            return JsonResponse(
+                {"success": False, "error": "No puedes imprimir esta venta."},
+                status=403,
+            )
+        profile = get_print_profile(venta.puntopagoid, fresh=True)
+        if profile.sistema_operativo != SISTEMA_LINUX:
+            return JsonResponse({
+                "success": False,
+                "error": (
+                    "Este punto de pago está configurado para Windows. "
+                    "La factura debe enviarse mediante el POS Agent local."
+                ),
+                "print_operating_system": profile.sistema_operativo,
+                "print_paper_size": profile.tamano_factura,
+            }, status=409)
 
-        # ✅ CAMBIO CLAVE: ahora imprimimos como “80mm x 60mm”
-        payload = _build_ticket_payload_80x60(venta)
+        requested_size = str(request.POST.get("paper_size") or "").strip()
+        if requested_size:
+            try:
+                requested_size = normalize_tamano_factura(requested_size)
+            except ValueError as exc:
+                return JsonResponse(
+                    {"success": False, "error": str(exc)},
+                    status=400,
+                )
+            if requested_size != profile.tamano_factura:
+                return JsonResponse({
+                    "success": False,
+                    "error": (
+                        "La configuración de impresión cambió. Actualiza la "
+                        "página antes de volver a imprimir."
+                    ),
+                    "configuration_changed": True,
+                    "print_operating_system": profile.sistema_operativo,
+                    "print_paper_size": profile.tamano_factura,
+                }, status=409)
 
-        ok, err = _send_to_printer(payload)
+        raw_open_drawer = str(
+            request.POST.get("open_drawer", "0")
+        ).strip().lower()
+        if raw_open_drawer not in {"0", "1", "false", "true"}:
+            return JsonResponse(
+                {"success": False, "error": "La opción de gaveta no es válida."},
+                status=400,
+            )
+        open_drawer = raw_open_drawer in {"1", "true"}
+
+        signed_payload = None
+        print_token = str(request.POST.get("print_token") or "").strip()
+        if print_token:
+            try:
+                signed_payload = _load_sale_print_token(
+                    print_token,
+                    venta,
+                    request.user,
+                    profile,
+                )
+            except (BadSignature, SignatureExpired, ValueError, TypeError):
+                return JsonResponse(
+                    {
+                        "success": False,
+                        "error": "La autorización de impresión venció o no corresponde a esta venta.",
+                    },
+                    status=403,
+                )
+
+        if open_drawer and signed_payload is None:
+            return JsonResponse(
+                {
+                    "success": False,
+                    "error": (
+                        "Por seguridad, una reimpresión no abre la gaveta. "
+                        "Usa la opción autorizada de apertura de caja."
+                    ),
+                },
+                status=403,
+            )
+
+        if signed_payload is not None:
+            payload = _build_escpos_payload_from_lines(
+                signed_payload["receipt_text"].splitlines(),
+                paper_size=profile.tamano_factura,
+                open_drawer=open_drawer,
+                cut=True,
+            )
+        else:
+            payload = _build_ticket_payload(
+                venta,
+                paper_size=profile.tamano_factura,
+                open_drawer=False,
+                cut=True,
+            )
+
+        ok, err = _send_to_printer(
+            payload,
+            paper_size=profile.tamano_factura,
+            punto_pago=venta.puntopagoid,
+        )
         if ok:
-            return JsonResponse({"success": True})
+            return JsonResponse({
+                "success": True,
+                "print_operating_system": profile.sistema_operativo,
+                "print_paper_size": profile.tamano_factura,
+            })
         return JsonResponse({"success": False, "error": err}, status=500)
 
 
@@ -6697,98 +7334,11 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin, View):
 
     @classmethod
     def _build_ticket_text_from_venta(cls, venta) -> str:
-        WIDTH = 48
-
-        def line(txt=""):
-            t = str(txt or "")
-            return t[:WIDTH]
-
-        def lr(left, right):
-            left = str(left or "")
-            right = str(right or "")
-            space = max(1, WIDTH - len(left) - len(right))
-            return left + (" " * space) + right
-
-        ahora = timezone.localtime(venta.fechaventa) if getattr(venta, "fechaventa", None) else timezone.localtime()
-
-        detalles = list(
-            DetalleVenta.objects
-            .filter(ventaid=venta)
-            .select_related("productoid")
-            .order_by("pk")
+        profile = get_print_profile(venta.puntopagoid, fresh=True)
+        return _build_ticket_text(
+            venta,
+            paper_size=profile.tamano_factura,
         )
-
-        pagos = []
-        medio = (venta.mediopago or "").strip().lower()
-        total = self._venta_total_cobrado(venta)
-        subtotal_factura, descuento_total = _ticket_subtotal_discount(detalles, total)
-        beneficio_merk2888 = _venta_tiene_beneficio_merk2888(venta)
-
-        if medio == "mixto":
-            rows = (
-                PagoVenta.objects
-                .filter(ventaid=venta)
-                .values("medio_pago")
-                .annotate(total=Sum("monto"))
-            )
-            for r in rows:
-                mp = (r["medio_pago"] or "").strip().lower()
-                mt = (r["total"] or Decimal("0.00")).quantize(Q2)
-                if mt > 0:
-                    pagos.append((mp, mt))
-        else:
-            if total > 0 and medio:
-                pagos.append((medio, total))
-
-        if getattr(venta, "empleadoid", None):
-            cajero = str(venta.empleadoid)
-        elif getattr(venta, "cajeroid", None):
-            cajero = str(venta.cajeroid)
-        else:
-            cajero = "—"
-
-        cliente = str(venta.clienteid) if getattr(venta, "clienteid", None) else "—"
-
-        out = []
-        out.append(line("MERK888"))
-        out.append(line("FACTURA / TICKET"))
-        out.append(line("-" * WIDTH))
-        out.append(line(f"Venta #{venta.pk}"))
-        out.append(line(f"Fecha: {ahora.strftime('%Y-%m-%d %H:%M')}"))
-        out.append(line(f"Cajero: {cajero}"))
-        out.append(line(f"Cliente: {cliente}"))
-        out.append(line("-" * WIDTH))
-        out.append(line("ITEM                         CANT   SUBT"))
-
-        for d in detalles:
-            nombre = (getattr(d.productoid, "nombre", "") or "Producto")[:28]
-            cant = int(d.cantidad or 0)
-            sub = (Decimal(cant) * (d.preciounitario or Decimal("0.00"))).quantize(Q2)
-            out.append(line(f"{nombre:<28} {cant:>4} {cls._money(sub):>7}"))
-
-        out.append(line("-" * WIDTH))
-        if descuento_total > 0:
-            out.append(lr("SUBTOTAL", cls._money(subtotal_factura)))
-            discount_label = (
-                "BENEFICIO MERK2888" if beneficio_merk2888 else "DESCUENTO"
-            )
-            out.append(lr(discount_label, f"-{cls._money(descuento_total)}"))
-            out.append(lr("USTED AHORRA", cls._money(descuento_total)))
-        out.append(lr("TOTAL", cls._money(total)))
-        out.append(line("-" * WIDTH))
-
-        if pagos:
-            out.append(line("PAGOS:"))
-            for mp, mt in pagos:
-                out.append(lr(f"- {mp.upper()}", cls._money(mt)))
-        elif beneficio_merk2888:
-            out.append(line("SIN PAGO - BENEFICIO 100%"))
-
-        out.append(line("-" * WIDTH))
-        out.append(line("Gracias por su compra"))
-        out.append(line("\n\n"))
-
-        return "\n".join(out)
 
     # -------------------------
     # Pagos mixtos: validar/guardar
@@ -7009,6 +7559,11 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin, View):
 
         # ✅ 0) IMPRIMIR FACTURA (no toca devoluciones/pagos)
         if accion == "imprimir_factura":
+            if not _user_can_print_venta(request.user, venta):
+                return JsonResponse(
+                    {"ok": False, "error": "No puedes imprimir esta venta."},
+                    status=403,
+                )
             try:
                 text = self._build_ticket_text_from_venta(venta)
                 return JsonResponse({"ok": True, "text": text, "venta_id": venta.pk})

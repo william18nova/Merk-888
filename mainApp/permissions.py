@@ -22,6 +22,7 @@ WEB_MASTER_ONLY_URL_NAMES = {
     "ventas_no_realizadas",
     "claves_descuento_merk2888",
     "configuracion_funcionalidades",
+    "configuracion_impresion",
 }
 CAJERO_PRINT_ONLY_URL_NAMES = {"ver_venta", "ticket_texto", "imprimir_factura"}
 
@@ -526,6 +527,19 @@ PERMISSION_DEFINITIONS = [
         ],
     },
     {
+        "code": "configuracion_impresion",
+        "label": "Configurar impresión",
+        "description": (
+            "Permite definir el sistema operativo y el tamaño de factura "
+            "de cada punto de pago. Uso exclusivo Web Master."
+        ),
+        "aliases": [
+            "configuracion_impresion",
+            "configuración de impresión",
+            "configurar impresora",
+        ],
+    },
+    {
         "code": "visor_barcode",
         "label": "Visor Barcode",
         "description": "Permite usar el visor de codigos de barras.",
@@ -713,6 +727,7 @@ ROUTE_PERMISSIONS = {
     "eliminar_rol_permiso": "seguridad_permisos",
     "usuarios_permisos": "seguridad_permisos",
     "configuracion_funcionalidades": "configuracion_funcionalidades",
+    "configuracion_impresion": "configuracion_impresion",
     "visor_barcode": "visor_barcode",
     "visor_barcode_buscar": "visor_barcode",
     "visor_barcode_lookup": "visor_barcode",
@@ -722,7 +737,7 @@ ROUTE_PERMISSIONS = {
 ROUTE_PERMISSION_ALTERNATIVES = {
     "ver_venta": ["ventas_ver", "ventas_imprimir", "ventas_cambios"],
     "ticket_texto": ["ventas_ver", "ventas_imprimir", "ventas_cambios"],
-    "imprimir_factura": ["ventas_ver", "ventas_imprimir", "ventas_cambios"],
+    "imprimir_factura": ["ventas_generar", "ventas_ver", "ventas_imprimir", "ventas_cambios"],
     "proveedor_precios_autocomplete": ["precios_proveedor_crear", "precios_proveedor_editar"],
     "producto_precios_autocomplete": ["precios_proveedor_crear", "precios_proveedor_editar"],
     "proveedor_con_productos_autocomplete": [
@@ -876,6 +891,7 @@ NAV_GROUPS = [
             {"label": "Visualizar relaciones", "url_name": "visualizar_roles_permisos"},
             {"label": "Permisos por usuario", "url_name": "usuarios_permisos"},
             {"label": "Funcionalidades del sistema", "url_name": "configuracion_funcionalidades"},
+            {"label": "Configuración de impresión", "url_name": "configuracion_impresion"},
         ],
     },
     {"label": "Visor Barcode", "url_name": "visor_barcode"},

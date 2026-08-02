@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, mock_open, patch
 from uuid import uuid4
 
 from django.conf import settings
@@ -47,6 +47,14 @@ from .services.product_price_sync import (
     normalize_product_name,
     sync_product_prices,
 )
+from .services.printing import (
+    SISTEMA_LINUX,
+    SISTEMA_WINDOWS,
+    TAMANO_GRANDE,
+    TAMANO_PEQUENA,
+    get_print_profile,
+    resolve_print_profile,
+)
 from .services.special_discount import (
     SpecialDiscountError,
     consume_one_time_code,
@@ -58,10 +66,13 @@ from .services.special_discount import (
 from .views import (
     ClavesDescuentoMerk2888View,
     ConfiguracionFuncionalidadesView,
+    ConfiguracionImpresionView,
     GenerarVentaView,
+    ImprimirFacturaView,
     NequiNotificacionesDisponiblesView,
     NequiNotificationWebhookView,
     ProductoAutocomplete,
+    TicketTextoView,
     TurnoCajaIniciarApi,
     TurnoCajaRecuperarOIniciarView,
     VentaDetailView,
@@ -69,8 +80,11 @@ from .views import (
     _parse_nequi_amount,
     _parse_nequi_sender_plain,
     _aplicar_reintegros_a_esperados,
+    _build_escpos_payload_from_lines,
+    _build_ticket_lines,
     _reintegro_ledger_ready,
     _resolve_turno_cajero,
+    _send_to_printer,
     _venta_nequi_status,
 )
 
@@ -692,7 +706,10 @@ class EmployeeDiscountAuthorizationTests(SimpleTestCase):
             "r.web_master_free_sale || r.merk2888_free_sale",
             script,
         )
-        self.assertIn("shouldKickCashDrawer = totalNum > 0", script)
+        self.assertIn("const shouldKickCashDrawer = (", script)
+        self.assertIn("&& !!ef", script)
+        self.assertIn("&& safeNumber(ef.monto) > 0", script)
+        self.assertIn('printToken: r.print_token || ""', script)
 
     def test_web_master_receipt_shows_full_benefit_and_zero_total(self):
         receipt = GenerarVentaView._build_receipt_text(
@@ -2042,7 +2059,7 @@ class SystemFeatureFlagTests(SimpleTestCase):
         ).read_text(encoding="utf-8")
         self.assertIn("window.nequiApiEnabled", sale_template)
         self.assertIn("system_features.nequi_api_recepcion", sale_template)
-        self.assertIn("generar_venta.js' %}?v=26", sale_template)
+        self.assertIn("generar_venta.js' %}?v=28", sale_template)
         self.assertIn("let nequiApiEnabled", sale_script)
         self.assertIn("data?.feature_disabled === NEQUI_FEATURE_KEY", sale_script)
         self.assertIn("disableNequiLinking", sale_script)
@@ -3478,3 +3495,1041 @@ class WebMasterPermissionGrantTests(SimpleTestCase):
         )
         role_permission_model.objects.bulk_create.assert_called_once()
         bump_cache.assert_called_once_with()
+
+
+class PrintConfigurationRegressionTests(SimpleTestCase):
+    """Cobertura sin red ni base externa para los cuatro perfiles de factura."""
+
+    def setUp(self):
+        self.factory = RequestFactory()
+
+    @staticmethod
+    def _venta():
+        return SimpleNamespace(
+            pk=142266,
+            fecha=date(2026, 8, 2),
+            hora=datetime(2026, 8, 2, 9, 15).time(),
+            sucursalid=SimpleNamespace(
+                pk=7,
+                nombre="Sucursal principal con un nombre suficientemente largo",
+            ),
+            sucursalid_id=7,
+            puntopagoid=SimpleNamespace(pk=19),
+            empleadoid=SimpleNamespace(
+                nombre="William",
+                apellido="Nova Cajero Principal",
+            ),
+            clienteid=SimpleNamespace(
+                nombre="Cliente de prueba con nombre extenso",
+            ),
+            total=Decimal("25000.00"),
+            mediopago="efectivo",
+        )
+
+    @staticmethod
+    def _cashier(*, user_id=91, branch_id=7):
+        return SimpleNamespace(
+            pk=user_id,
+            is_authenticated=True,
+            is_active=True,
+            is_staff=False,
+            is_superuser=False,
+            rolid=SimpleNamespace(nombre="Cajero"),
+            empleado=SimpleNamespace(
+                empleadoid=user_id,
+                sucursalid_id=branch_id,
+            ),
+        )
+
+    @staticmethod
+    def _web_master(*, password_valid=True):
+        return SimpleNamespace(
+            pk=1,
+            is_authenticated=True,
+            is_active=True,
+            nombreusuario="William Nova",
+            check_password=MagicMock(return_value=password_valid),
+        )
+
+    @staticmethod
+    def _detalle():
+        return SimpleNamespace(
+            productoid=SimpleNamespace(
+                nombre=(
+                    "CAFE PREMIUM TOSTADO Y MOLIDO CON DESCRIPCION "
+                    "EXTENSA PARA VALIDAR EL AJUSTE"
+                ),
+            ),
+            cantidad=2,
+            preciounitario=Decimal("12500.00"),
+        )
+
+    def test_four_profiles_are_supported_and_invalid_values_are_rejected(self):
+        expected = {
+            (SISTEMA_WINDOWS, TAMANO_GRANDE): (48, "Custom.80x60mm"),
+            (SISTEMA_WINDOWS, TAMANO_PEQUENA): (32, "Custom.58x3276mm"),
+            (SISTEMA_LINUX, TAMANO_GRANDE): (48, "Custom.80x60mm"),
+            (SISTEMA_LINUX, TAMANO_PEQUENA): (32, "Custom.58x3276mm"),
+        }
+
+        for (system, size), (width, media) in expected.items():
+            with self.subTest(system=system, size=size):
+                profile = resolve_print_profile(system, size)
+                self.assertEqual(profile.sistema_operativo, system)
+                self.assertEqual(profile.tamano_factura, size)
+                self.assertEqual(profile.width_chars, width)
+                self.assertEqual(profile.cups_media, media)
+
+        invalid = [
+            ("macos", TAMANO_GRANDE),
+            (SISTEMA_WINDOWS, "a4"),
+            (None, TAMANO_GRANDE),
+            (SISTEMA_LINUX, None),
+        ]
+        for system, size in invalid:
+            with self.subTest(system=system, size=size):
+                with self.assertRaises(ValueError):
+                    resolve_print_profile(system, size)
+
+    def test_database_failure_falls_back_to_windows_large(self):
+        with (
+            patch(
+                "mainApp.services.printing.transaction.atomic",
+                return_value=nullcontext(),
+            ),
+            patch(
+                "mainApp.services.printing.ConfiguracionImpresion.objects.filter",
+                side_effect=DatabaseError("tabla no disponible"),
+            ),
+        ):
+            profile = get_print_profile(SimpleNamespace(pk=19))
+
+        self.assertEqual(profile.sistema_operativo, SISTEMA_WINDOWS)
+        self.assertEqual(profile.tamano_factura, TAMANO_GRANDE)
+        self.assertEqual(profile.width_chars, 48)
+
+    def test_sale_receipt_text_respects_large_and_small_widths(self):
+        venta_data = {
+            "venta_id": 142266,
+            "sucursal_nombre": "Sucursal principal con nombre muy largo",
+            "cajero_nombre": "William Nova Cajero Principal",
+            "refund_total": Decimal("500.00"),
+            "cambio": Decimal("2500.00"),
+            "descuento_empleado": Decimal("2500.00"),
+            "empleado_comprador": "Empleado con nombre largo",
+        }
+        detalles = [{
+            "producto": (
+                "CAFE PREMIUM TOSTADO Y MOLIDO CON DESCRIPCION MUY LARGA"
+            ),
+            "cantidad": 2,
+            "precio_unitario": Decimal("12500.00"),
+            "subtotal": Decimal("25000.00"),
+        }]
+        pagos = [{"medio_pago": "efectivo", "monto": Decimal("22500.00")}]
+
+        for paper_size, max_width in (
+            (TAMANO_GRANDE, 48),
+            (TAMANO_PEQUENA, 32),
+        ):
+            with self.subTest(paper_size=paper_size):
+                receipt = GenerarVentaView._build_receipt_text(
+                    venta_data,
+                    detalles,
+                    Decimal("22500.00"),
+                    pagos,
+                    paper_size=paper_size,
+                )
+                self.assertTrue(receipt.strip())
+                self.assertLessEqual(
+                    max(len(line) for line in receipt.splitlines()),
+                    max_width,
+                )
+
+    def test_database_ticket_lines_respect_both_paper_widths(self):
+        details = [self._detalle()]
+        detail_filter = MagicMock()
+        detail_filter.return_value.select_related.return_value = details
+
+        with (
+            patch("mainApp.views.DetalleVenta.objects.filter", detail_filter),
+            patch(
+                "mainApp.views._venta_tiene_beneficio_merk2888",
+                return_value=False,
+            ),
+        ):
+            for paper_size, max_width in (
+                (TAMANO_GRANDE, 48),
+                (TAMANO_PEQUENA, 32),
+            ):
+                with self.subTest(paper_size=paper_size):
+                    lines = _build_ticket_lines(
+                        self._venta(),
+                        paper_size=paper_size,
+                    )
+                    self.assertTrue(lines)
+                    self.assertLessEqual(
+                        max(len(line) for line in lines),
+                        max_width,
+                    )
+                    self.assertTrue(any("TOTAL" in line for line in lines))
+
+    def test_database_ticket_text_has_canonical_header_and_payment_breakdown(self):
+        from .models import Venta
+        from .views import _build_ticket_text
+
+        venta = Venta(
+            ventaid=142266,
+            fecha=date(2026, 8, 2),
+            hora=datetime(2026, 8, 2, 9, 15).time(),
+            sucursalid_id=7,
+            puntopagoid_id=19,
+            empleadoid_id=91,
+            clienteid_id=None,
+            total=Decimal("25000.00"),
+            mediopago="mixto",
+        )
+        venta._state.fields_cache.update({
+            "sucursalid": SimpleNamespace(
+                pk=7,
+                nombre="Sucursal principal",
+            ),
+            "puntopagoid": SimpleNamespace(pk=19),
+            "empleadoid": SimpleNamespace(
+                nombre="William",
+                apellido="Nova",
+            ),
+        })
+        details = [self._detalle()]
+        detail_filter = MagicMock()
+        detail_filter.return_value.select_related.return_value = details
+
+        payment_rows = MagicMock()
+        payment_rows.values.return_value = payment_rows
+        payment_rows.annotate.return_value = payment_rows
+        payment_rows.order_by.return_value = [
+            {"medio_pago": "efectivo", "total": Decimal("15000.00")},
+            {"medio_pago": "nequi", "total": Decimal("10000.00")},
+        ]
+
+        with (
+            patch("mainApp.views.DetalleVenta.objects.filter", detail_filter),
+            patch(
+                "mainApp.views.PagoVenta.objects.filter",
+                return_value=payment_rows,
+            ),
+            patch(
+                "mainApp.views._venta_tiene_beneficio_merk2888",
+                return_value=False,
+            ),
+        ):
+            receipt = _build_ticket_text(
+                venta,
+                paper_size=TAMANO_GRANDE,
+            )
+
+        self.assertIn("NOVA POS", receipt)
+        self.assertIn("MERK2888", receipt)
+        self.assertIn("NIT: 28.565.875 - 4", receipt)
+        self.assertNotIn("900.000.000-1", receipt)
+        self.assertIn("EFECTIVO", receipt)
+        self.assertIn("$15.000", receipt)
+        self.assertIn("NEQUI", receipt)
+        self.assertIn("$10.000", receipt)
+
+    def test_large_escpos_payload_keeps_height_feed_and_small_is_continuous(self):
+        large = _build_escpos_payload_from_lines(
+            ["FACTURA", "TOTAL $25.000"],
+            paper_size=TAMANO_GRANDE,
+            open_drawer=False,
+            cut=False,
+        )
+        small = _build_escpos_payload_from_lines(
+            ["FACTURA", "TOTAL $25.000"],
+            paper_size=TAMANO_PEQUENA,
+            open_drawer=False,
+            cut=False,
+        )
+
+        self.assertIn(b"\x1d\x4a", large)
+        self.assertNotIn(b"\x1d\x4a", small)
+        self.assertTrue(large.startswith(b"\x1b\x40\x1b\x74\x00"))
+        self.assertTrue(small.startswith(b"\x1b\x40\x1b\x74\x00"))
+
+    def test_linux_printer_uses_safe_media_and_bounded_timeout(self):
+        expected_media = {
+            TAMANO_GRANDE: "Custom.80x60mm",
+            TAMANO_PEQUENA: "Custom.58x3276mm",
+        }
+
+        with (
+            patch.dict("mainApp.views.os.environ", {}, clear=True),
+            patch("mainApp.views.os.path.exists", return_value=False),
+            patch("mainApp.views.subprocess.run") as run_command,
+        ):
+            for paper_size, media in expected_media.items():
+                with self.subTest(paper_size=paper_size):
+                    run_command.reset_mock()
+                    ok, error = _send_to_printer(
+                        b"ticket seguro",
+                        paper_size=paper_size,
+                    )
+
+                    self.assertTrue(ok)
+                    self.assertEqual(error, "")
+                    run_command.assert_called_once_with(
+                        ["lp", "-o", f"media={media}", "-o", "raw"],
+                        input=b"ticket seguro",
+                        check=True,
+                        timeout=8.0,
+                    )
+
+    def test_linux_printer_prefers_payment_point_device_override(self):
+        device_file = mock_open()
+        with (
+            patch.dict(
+                "mainApp.views.os.environ",
+                {
+                    "PRINTER_DEVICE": "/dev/global-printer",
+                    "PRINTER_DEVICE_19": "/dev/payment-point-19",
+                },
+                clear=True,
+            ),
+            patch(
+                "mainApp.views.os.path.exists",
+                side_effect=lambda path: path == "/dev/payment-point-19",
+            ),
+            patch("builtins.open", device_file),
+            patch("mainApp.views.subprocess.run") as run_command,
+        ):
+            ok, error = _send_to_printer(
+                b"ticket punto 19",
+                paper_size=TAMANO_PEQUENA,
+                punto_pago=SimpleNamespace(pk=19),
+            )
+
+        self.assertTrue(ok)
+        self.assertEqual(error, "")
+        device_file.assert_called_once_with("/dev/payment-point-19", "wb")
+        device_file().write.assert_called_once_with(b"ticket punto 19")
+        run_command.assert_not_called()
+
+    def test_linux_printer_prefers_payment_point_cups_override(self):
+        with (
+            patch.dict(
+                "mainApp.views.os.environ",
+                {
+                    "PRINTER": "global-printer",
+                    "PRINTER_19": "payment-point-19",
+                },
+                clear=True,
+            ),
+            patch("mainApp.views.os.path.exists", return_value=False),
+            patch("mainApp.views.subprocess.run") as run_command,
+        ):
+            ok, error = _send_to_printer(
+                b"ticket punto 19",
+                paper_size=TAMANO_GRANDE,
+                punto_pago=19,
+            )
+
+        self.assertTrue(ok)
+        self.assertEqual(error, "")
+        command = run_command.call_args.args[0]
+        destination_index = command.index("-d")
+        self.assertEqual(command[destination_index + 1], "payment-point-19")
+        self.assertNotIn("global-printer", command)
+
+    def test_ticket_text_returns_receipt_and_authoritative_profile(self):
+        venta = self._venta()
+        profile = resolve_print_profile(SISTEMA_WINDOWS, TAMANO_PEQUENA)
+        request = self.factory.post(
+            reverse("ticket_texto"),
+            {"venta_id": str(venta.pk)},
+        )
+        request.user = self._cashier()
+
+        with (
+            patch("mainApp.views.get_object_or_404", return_value=venta),
+            patch(
+                "mainApp.views._user_can_print_venta",
+                return_value=True,
+            ),
+            patch(
+                "mainApp.views.get_print_profile",
+                return_value=profile,
+            ) as get_profile,
+            patch(
+                "mainApp.views._build_ticket_text",
+                return_value="FACTURA PEQUENA\nTOTAL $25.000\n",
+            ) as build_text,
+        ):
+            response = TicketTextoView.as_view()(request)
+
+        payload = json.loads(response.content)
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(payload["success"])
+        self.assertEqual(payload["receipt_text"], "FACTURA PEQUENA\nTOTAL $25.000\n")
+        self.assertEqual(payload["print_operating_system"], SISTEMA_WINDOWS)
+        self.assertEqual(payload["print_paper_size"], TAMANO_PEQUENA)
+        self.assertNotIn("print_token", payload)
+        build_text.assert_called_once_with(
+            venta,
+            paper_size=TAMANO_PEQUENA,
+        )
+        get_profile.assert_called_once_with(venta.puntopagoid, fresh=True)
+
+    def test_cashier_can_only_print_sales_from_own_branch(self):
+        from .views import _user_can_print_venta
+
+        cashier = self._cashier(branch_id=7)
+        local_sale = self._venta()
+        foreign_sale = self._venta()
+        foreign_sale.sucursalid_id = 8
+        foreign_sale.sucursalid.pk = 8
+
+        with (
+            patch("mainApp.views.is_web_master_role", return_value=False),
+            patch("mainApp.views._cajero_sucursal_id", return_value=7),
+        ):
+            self.assertTrue(_user_can_print_venta(cashier, local_sale))
+            self.assertFalse(_user_can_print_venta(cashier, foreign_sale))
+
+    def test_sale_print_token_is_bound_to_sale_user_payment_point_and_size(self):
+        from django.core import signing
+
+        from .views import _build_sale_print_token, _load_sale_print_token
+
+        venta = self._venta()
+        cashier = self._cashier(user_id=91)
+        profile = resolve_print_profile(SISTEMA_LINUX, TAMANO_PEQUENA)
+        receipt_text = "MERK888\nFactura #142266\nTOTAL $25.000,00\n"
+        token = _build_sale_print_token(
+            venta,
+            cashier,
+            profile,
+            receipt_text,
+        )
+
+        payload = _load_sale_print_token(
+            token,
+            venta,
+            cashier,
+            profile,
+        )
+        self.assertEqual(payload["receipt_text"], receipt_text)
+
+        other_sale = self._venta()
+        other_sale.pk = 142267
+        other_user = self._cashier(user_id=92)
+        other_point_sale = self._venta()
+        other_point_sale.puntopagoid = SimpleNamespace(pk=20)
+        other_profile = resolve_print_profile(SISTEMA_LINUX, TAMANO_GRANDE)
+        invalid_bindings = (
+            (other_sale, cashier, profile),
+            (venta, other_user, profile),
+            (other_point_sale, cashier, profile),
+            (venta, cashier, other_profile),
+        )
+        for bound_sale, bound_user, bound_profile in invalid_bindings:
+            with self.subTest(
+                sale=bound_sale.pk,
+                user=bound_user.pk,
+                point=bound_sale.puntopagoid.pk,
+                size=bound_profile.tamano_factura,
+            ):
+                with self.assertRaises(signing.BadSignature):
+                    _load_sale_print_token(
+                        token,
+                        bound_sale,
+                        bound_user,
+                        bound_profile,
+                    )
+
+    def test_ticket_and_linux_print_reject_foreign_branch_before_profile_lookup(self):
+        venta = self._venta()
+        venta.sucursalid_id = 8
+        venta.sucursalid.pk = 8
+
+        endpoints = (
+            (TicketTextoView, "ticket_texto"),
+            (ImprimirFacturaView, "imprimir_factura"),
+        )
+        for view_class, url_name in endpoints:
+            with self.subTest(view=view_class.__name__):
+                request = self.factory.post(
+                    reverse(url_name),
+                    {
+                        "venta_id": str(venta.pk),
+                        "paper_size": TAMANO_PEQUENA,
+                        "open_drawer": "0",
+                    },
+                )
+                request.user = self._cashier(branch_id=7)
+
+                with (
+                    patch("mainApp.views.get_object_or_404", return_value=venta),
+                    patch(
+                        "mainApp.views._user_can_print_venta",
+                        return_value=False,
+                    ),
+                    patch("mainApp.views.get_print_profile") as get_profile,
+                    patch("mainApp.views._build_ticket_text") as build_text,
+                    patch("mainApp.views._build_ticket_payload") as build_payload,
+                    patch("mainApp.views._send_to_printer") as send_to_printer,
+                ):
+                    response = view_class.as_view()(request)
+
+                self.assertEqual(response.status_code, 403)
+                get_profile.assert_not_called()
+                build_text.assert_not_called()
+                build_payload.assert_not_called()
+                send_to_printer.assert_not_called()
+
+    def test_linux_print_endpoint_rejects_windows_without_printing(self):
+        venta = self._venta()
+        profile = resolve_print_profile(SISTEMA_WINDOWS, TAMANO_GRANDE)
+        request = self.factory.post(
+            reverse("imprimir_factura"),
+            {
+                "venta_id": str(venta.pk),
+                "paper_size": TAMANO_GRANDE,
+                "open_drawer": "1",
+            },
+        )
+        request.user = self._cashier()
+
+        with (
+            patch("mainApp.views.get_object_or_404", return_value=venta),
+            patch(
+                "mainApp.views._user_can_print_venta",
+                return_value=True,
+            ),
+            patch(
+                "mainApp.views.get_print_profile",
+                return_value=profile,
+            ) as get_profile,
+            patch("mainApp.views._build_ticket_payload") as build_payload,
+            patch("mainApp.views._send_to_printer") as send_to_printer,
+        ):
+            response = ImprimirFacturaView.as_view()(request)
+
+        payload = json.loads(response.content)
+        self.assertEqual(response.status_code, 409)
+        self.assertFalse(payload["success"])
+        self.assertEqual(payload["print_operating_system"], SISTEMA_WINDOWS)
+        get_profile.assert_called_once_with(venta.puntopagoid, fresh=True)
+        build_payload.assert_not_called()
+        send_to_printer.assert_not_called()
+
+    def test_linux_drawer_requires_a_valid_sale_print_token(self):
+        venta = self._venta()
+        profile = resolve_print_profile(SISTEMA_LINUX, TAMANO_PEQUENA)
+        request = self.factory.post(
+            reverse("imprimir_factura"),
+            {
+                "venta_id": str(venta.pk),
+                "paper_size": TAMANO_PEQUENA,
+                "open_drawer": "1",
+            },
+        )
+        request.user = self._cashier()
+
+        with (
+            patch("mainApp.views.get_object_or_404", return_value=venta),
+            patch(
+                "mainApp.views._user_can_print_venta",
+                return_value=True,
+            ),
+            patch(
+                "mainApp.views.get_print_profile",
+                return_value=profile,
+            ) as get_profile,
+            patch("mainApp.views._load_sale_print_token") as load_token,
+            patch("mainApp.views._build_ticket_payload") as build_payload,
+            patch(
+                "mainApp.views._build_escpos_payload_from_lines",
+            ) as build_signed_payload,
+            patch("mainApp.views._send_to_printer") as send_to_printer,
+        ):
+            response = ImprimirFacturaView.as_view()(request)
+
+        payload = json.loads(response.content)
+        self.assertEqual(response.status_code, 403)
+        self.assertFalse(payload["success"])
+        get_profile.assert_called_once_with(venta.puntopagoid, fresh=True)
+        load_token.assert_not_called()
+        build_payload.assert_not_called()
+        build_signed_payload.assert_not_called()
+        send_to_printer.assert_not_called()
+
+    def test_linux_drawer_accepts_signed_immediate_sale_receipt(self):
+        from .views import _build_sale_print_token
+
+        venta = self._venta()
+        cashier = self._cashier()
+        profile = resolve_print_profile(SISTEMA_LINUX, TAMANO_PEQUENA)
+        receipt_text = "MERK888\nFactura #142266\nTOTAL $25.000,00\n"
+        print_token = _build_sale_print_token(
+            venta,
+            cashier,
+            profile,
+            receipt_text,
+        )
+        request = self.factory.post(
+            reverse("imprimir_factura"),
+            {
+                "venta_id": str(venta.pk),
+                "paper_size": TAMANO_PEQUENA,
+                "open_drawer": "1",
+                "print_token": print_token,
+            },
+        )
+        request.user = cashier
+
+        with (
+            patch("mainApp.views.get_object_or_404", return_value=venta),
+            patch(
+                "mainApp.views._user_can_print_venta",
+                return_value=True,
+            ),
+            patch(
+                "mainApp.views.get_print_profile",
+                return_value=profile,
+            ) as get_profile,
+            patch(
+                "mainApp.views._build_escpos_payload_from_lines",
+                return_value=b"signed-escpos-small",
+            ) as build_signed_payload,
+            patch("mainApp.views._build_ticket_payload") as build_payload,
+            patch(
+                "mainApp.views._send_to_printer",
+                return_value=(True, ""),
+            ) as send_to_printer,
+        ):
+            response = ImprimirFacturaView.as_view()(request)
+
+        payload = json.loads(response.content)
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(payload["success"])
+        get_profile.assert_called_once_with(venta.puntopagoid, fresh=True)
+        build_signed_payload.assert_called_once_with(
+            receipt_text.splitlines(),
+            paper_size=TAMANO_PEQUENA,
+            open_drawer=True,
+            cut=True,
+        )
+        build_payload.assert_not_called()
+        send_to_printer.assert_called_once_with(
+            b"signed-escpos-small",
+            paper_size=TAMANO_PEQUENA,
+            punto_pago=venta.puntopagoid,
+        )
+
+    def test_linux_drawer_rejects_token_bound_to_another_user(self):
+        from .views import _build_sale_print_token
+
+        venta = self._venta()
+        profile = resolve_print_profile(SISTEMA_LINUX, TAMANO_PEQUENA)
+        owner = self._cashier(user_id=91)
+        other_cashier = self._cashier(user_id=92)
+        token = _build_sale_print_token(
+            venta,
+            owner,
+            profile,
+            "MERK888\nTOTAL $25.000,00\n",
+        )
+        request = self.factory.post(
+            reverse("imprimir_factura"),
+            {
+                "venta_id": str(venta.pk),
+                "paper_size": TAMANO_PEQUENA,
+                "open_drawer": "1",
+                "print_token": token,
+            },
+        )
+        request.user = other_cashier
+
+        with (
+            patch("mainApp.views.get_object_or_404", return_value=venta),
+            patch(
+                "mainApp.views._user_can_print_venta",
+                return_value=True,
+            ),
+            patch("mainApp.views.get_print_profile", return_value=profile),
+            patch("mainApp.views._build_ticket_payload") as build_payload,
+            patch(
+                "mainApp.views._build_escpos_payload_from_lines",
+            ) as build_signed_payload,
+            patch("mainApp.views._send_to_printer") as send_to_printer,
+        ):
+            response = ImprimirFacturaView.as_view()(request)
+
+        payload = json.loads(response.content)
+        self.assertEqual(response.status_code, 403)
+        self.assertFalse(payload["success"])
+        build_payload.assert_not_called()
+        build_signed_payload.assert_not_called()
+        send_to_printer.assert_not_called()
+
+    def test_linux_print_endpoint_uses_size_and_drawer_once(self):
+        venta = self._venta()
+        profile = resolve_print_profile(SISTEMA_LINUX, TAMANO_PEQUENA)
+        request = self.factory.post(
+            reverse("imprimir_factura"),
+            {
+                "venta_id": str(venta.pk),
+                "paper_size": TAMANO_PEQUENA,
+                "open_drawer": "0",
+            },
+        )
+        request.user = self._cashier()
+
+        with (
+            patch("mainApp.views.get_object_or_404", return_value=venta),
+            patch(
+                "mainApp.views._user_can_print_venta",
+                return_value=True,
+            ),
+            patch(
+                "mainApp.views.get_print_profile",
+                return_value=profile,
+            ) as get_profile,
+            patch(
+                "mainApp.views._build_ticket_payload",
+                return_value=b"escpos-small",
+            ) as build_payload,
+            patch(
+                "mainApp.views._send_to_printer",
+                return_value=(True, ""),
+            ) as send_to_printer,
+        ):
+            response = ImprimirFacturaView.as_view()(request)
+
+        payload = json.loads(response.content)
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(payload["success"])
+        self.assertEqual(payload["print_operating_system"], SISTEMA_LINUX)
+        self.assertEqual(payload["print_paper_size"], TAMANO_PEQUENA)
+        get_profile.assert_called_once_with(venta.puntopagoid, fresh=True)
+        build_payload.assert_called_once_with(
+            venta,
+            paper_size=TAMANO_PEQUENA,
+            open_drawer=False,
+            cut=True,
+        )
+        send_to_printer.assert_called_once_with(
+            b"escpos-small",
+            paper_size=TAMANO_PEQUENA,
+            punto_pago=venta.puntopagoid,
+        )
+
+    def test_configuration_page_access_is_strictly_web_master_only(self):
+        url = reverse("configuracion_impresion")
+
+        anonymous_request = self.factory.get(url)
+        anonymous_request.user = SimpleNamespace(is_authenticated=False)
+        anonymous = ConfiguracionImpresionView.as_view()(anonymous_request)
+        self.assertEqual(anonymous.status_code, 302)
+
+        denied_request = self.factory.get(url)
+        denied_request.user = SimpleNamespace(
+            is_authenticated=True,
+            is_active=True,
+        )
+        with patch("mainApp.views.is_web_master_role", return_value=False):
+            denied = ConfiguracionImpresionView.as_view()(denied_request)
+        self.assertEqual(denied.status_code, 403)
+
+        allowed_request = self.factory.get(url)
+        allowed_request.user = SimpleNamespace(
+            is_authenticated=True,
+            is_active=True,
+        )
+        with (
+            patch("mainApp.views.is_web_master_role", return_value=True),
+            patch.object(
+                ConfiguracionImpresionView,
+                "get",
+                return_value=HttpResponse("ok"),
+            ),
+        ):
+            allowed = ConfiguracionImpresionView.as_view()(allowed_request)
+        self.assertEqual(allowed.status_code, 200)
+
+    def test_configuration_post_creates_linux_small_profile_and_clears_cache(self):
+        point = SimpleNamespace(pk=19)
+        user = self._web_master(password_valid=True)
+        request = self.factory.post(
+            reverse("configuracion_impresion"),
+            {
+                "punto_pago_id": "19",
+                "operating_system": SISTEMA_LINUX,
+                "paper_size": TAMANO_PEQUENA,
+                "version": "0",
+                "password_web_master": "clave-correcta",
+            },
+        )
+        request.user = user
+
+        point_query = MagicMock()
+        point_query.filter.return_value.first.return_value = point
+        configuration_query = MagicMock()
+        configuration_query.filter.return_value.first.return_value = None
+        created_configuration = SimpleNamespace(pk=71, version=1)
+
+        with (
+            patch("mainApp.views.is_web_master_role", return_value=True),
+            patch(
+                "mainApp.views.transaction.atomic",
+                return_value=nullcontext(),
+            ) as atomic,
+            patch(
+                "mainApp.views.PuntosPago.objects.select_for_update",
+                return_value=point_query,
+            ) as lock_points,
+            patch(
+                "mainApp.views.ConfiguracionImpresion.objects.select_for_update",
+                return_value=configuration_query,
+            ) as lock_configurations,
+            patch(
+                "mainApp.views.ConfiguracionImpresion.objects.create",
+                return_value=created_configuration,
+            ) as create_configuration,
+            patch(
+                "mainApp.views.clear_print_profile_cache",
+            ) as clear_profile_cache,
+            patch("mainApp.views.messages.success") as success_message,
+            patch("mainApp.views.messages.info") as info_message,
+        ):
+            response = ConfiguracionImpresionView.as_view()(request)
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(
+            response["Location"],
+            f"{reverse('configuracion_impresion')}?punto_pago_id=19",
+        )
+        user.check_password.assert_called_once_with("clave-correcta")
+        atomic.assert_called_once_with()
+        lock_points.assert_called_once_with()
+        point_query.filter.assert_called_once_with(pk=19)
+        lock_configurations.assert_called_once_with()
+        configuration_query.filter.assert_called_once_with(
+            punto_pago=point,
+        )
+        create_configuration.assert_called_once_with(
+            punto_pago=point,
+            sistema_operativo=SISTEMA_LINUX,
+            tamano_factura=TAMANO_PEQUENA,
+            version=1,
+            actualizada_por=user,
+            actualizada_por_nombre="William Nova",
+        )
+        clear_profile_cache.assert_called_once_with("19")
+        success_message.assert_called_once()
+        info_message.assert_not_called()
+
+    def test_configuration_post_wrong_password_never_opens_transaction_or_writes(self):
+        user = self._web_master(password_valid=False)
+        request = self.factory.post(
+            reverse("configuracion_impresion"),
+            {
+                "punto_pago_id": "19",
+                "operating_system": SISTEMA_LINUX,
+                "paper_size": TAMANO_PEQUENA,
+                "version": "0",
+                "password_web_master": "clave-incorrecta",
+            },
+        )
+        request.user = user
+        rendered = HttpResponse("contraseña incorrecta", status=400)
+
+        with (
+            patch("mainApp.views.is_web_master_role", return_value=True),
+            patch.object(
+                ConfiguracionImpresionView,
+                "_render",
+                return_value=rendered,
+            ) as render_view,
+            patch("mainApp.views.transaction.atomic") as atomic,
+            patch(
+                "mainApp.views.PuntosPago.objects.select_for_update",
+            ) as lock_points,
+            patch(
+                "mainApp.views.ConfiguracionImpresion.objects.select_for_update",
+            ) as lock_configurations,
+            patch(
+                "mainApp.views.ConfiguracionImpresion.objects.create",
+            ) as create_configuration,
+            patch(
+                "mainApp.views.clear_print_profile_cache",
+            ) as clear_profile_cache,
+        ):
+            response = ConfiguracionImpresionView.as_view()(request)
+
+        self.assertEqual(response.status_code, 400)
+        user.check_password.assert_called_once_with("clave-incorrecta")
+        render_view.assert_called_once_with(
+            request,
+            selected_point_id="19",
+            error="La contraseña del Web Master no es correcta.",
+            status=400,
+        )
+        atomic.assert_not_called()
+        lock_points.assert_not_called()
+        lock_configurations.assert_not_called()
+        create_configuration.assert_not_called()
+        clear_profile_cache.assert_not_called()
+
+    def test_configuration_post_stale_version_renders_after_atomic_without_writing(self):
+        events = []
+        atomic_state = {"active": False}
+
+        class AtomicProbe:
+            def __enter__(self):
+                self_outer.assertFalse(atomic_state["active"])
+                atomic_state["active"] = True
+                events.append("enter")
+                return self
+
+            def __exit__(self, exc_type, exc_value, traceback):
+                self_outer.assertTrue(atomic_state["active"])
+                atomic_state["active"] = False
+                events.append("exit")
+                return False
+
+        self_outer = self
+        point = SimpleNamespace(pk=19)
+        configuration = SimpleNamespace(
+            version=4,
+            sistema_operativo=SISTEMA_WINDOWS,
+            tamano_factura=TAMANO_GRANDE,
+            save=MagicMock(),
+        )
+        user = self._web_master(password_valid=True)
+        request = self.factory.post(
+            reverse("configuracion_impresion"),
+            {
+                "punto_pago_id": "19",
+                "operating_system": SISTEMA_LINUX,
+                "paper_size": TAMANO_PEQUENA,
+                "version": "3",
+                "password_web_master": "clave-correcta",
+            },
+        )
+        request.user = user
+
+        point_query = MagicMock()
+        point_query.filter.return_value.first.return_value = point
+        configuration_query = MagicMock()
+        configuration_query.filter.return_value.first.return_value = configuration
+
+        def render_after_atomic(*args, **kwargs):
+            self.assertFalse(atomic_state["active"])
+            events.append("render")
+            return HttpResponse("versión obsoleta", status=kwargs["status"])
+
+        with (
+            patch("mainApp.views.is_web_master_role", return_value=True),
+            patch(
+                "mainApp.views.transaction.atomic",
+                return_value=AtomicProbe(),
+            ) as atomic,
+            patch(
+                "mainApp.views.PuntosPago.objects.select_for_update",
+                return_value=point_query,
+            ),
+            patch(
+                "mainApp.views.ConfiguracionImpresion.objects.select_for_update",
+                return_value=configuration_query,
+            ),
+            patch(
+                "mainApp.views.ConfiguracionImpresion.objects.create",
+            ) as create_configuration,
+            patch(
+                "mainApp.views.clear_print_profile_cache",
+            ) as clear_profile_cache,
+            patch.object(
+                ConfiguracionImpresionView,
+                "_render",
+                side_effect=render_after_atomic,
+            ) as render_view,
+            patch("mainApp.views.messages.success") as success_message,
+            patch("mainApp.views.messages.info") as info_message,
+        ):
+            response = ConfiguracionImpresionView.as_view()(request)
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(events, ["enter", "exit", "render"])
+        atomic.assert_called_once_with()
+        render_view.assert_called_once()
+        render_kwargs = render_view.call_args.kwargs
+        self.assertEqual(render_kwargs["selected_point_id"], "19")
+        self.assertEqual(render_kwargs["status"], 409)
+        self.assertIn("cambió en otra sesión", render_kwargs["error"])
+        configuration.save.assert_not_called()
+        create_configuration.assert_not_called()
+        clear_profile_cache.assert_not_called()
+        success_message.assert_not_called()
+        info_message.assert_not_called()
+
+    def test_configuration_route_permission_and_navbar_are_complete(self):
+        from .permissions import NAV_GROUPS
+
+        url = reverse("configuracion_impresion")
+        self.assertEqual(resolve(url).url_name, "configuracion_impresion")
+        self.assertEqual(
+            route_permission_for_url_name("configuracion_impresion"),
+            "configuracion_impresion",
+        )
+        self.assertIn("configuracion_impresion", WEB_MASTER_ONLY_URL_NAMES)
+
+        nav_items = [
+            child
+            for group in NAV_GROUPS
+            for child in group.get("children", [])
+        ]
+        self.assertTrue(any(
+            item.get("url_name") == "configuracion_impresion"
+            and item.get("label") == "Configuración de impresión"
+            for item in nav_items
+        ))
+
+    def test_configuration_template_exposes_matrix_warning_and_form_contract(self):
+        template = (
+            settings.BASE_DIR
+            / "mainApp"
+            / "templates"
+            / "configuracion_impresion.html"
+        ).read_text(encoding="utf-8")
+
+        for combination in (
+            "windows-grande",
+            "windows-pequena",
+            "linux-grande",
+            "linux-pequena",
+        ):
+            self.assertIn(f'data-combination="{combination}"', template)
+
+        self.assertIn("PythonAnywhere", template)
+        self.assertIn('name="punto_pago_id"', template)
+        self.assertIn('name="operating_system"', template)
+        self.assertIn('name="paper_size"', template)
+        self.assertIn('name="version"', template)
+        self.assertIn('name="password_web_master"', template)
+        self.assertIn("data-receipt-preview", template)
+
+    def test_sale_scripts_branch_between_linux_server_and_windows_agent(self):
+        base = settings.BASE_DIR / "mainApp" / "static" / "javascript"
+        generate_script = (base / "generar_venta.js").read_text(encoding="utf-8")
+        detail_script = (base / "ver_venta.js").read_text(encoding="utf-8")
+
+        self.assertIn('printOperatingSystem === "linux"', generate_script)
+        self.assertIn("printViaLinuxServer(r.venta_id", generate_script)
+        self.assertIn("agentPrintFast(receiptText)", generate_script)
+        self.assertIn("agentPrintUltra(receiptText)", generate_script)
+
+        self.assertIn('ticket.operatingSystem === "linux"', detail_script)
+        self.assertIn("printViaLinuxServer(ventaId", detail_script)
+        self.assertIn("agentPrintSafe(receiptText", detail_script)
+        self.assertIn("agentKickSafe", detail_script)

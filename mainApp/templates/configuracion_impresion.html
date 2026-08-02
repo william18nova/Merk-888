@@ -1,0 +1,480 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Configuración de impresión{% endblock %}
+
+{% block extra_head %}
+  <link rel="stylesheet" href="{% static 'css/configuracion_impresion.css' %}?v=2">
+{% endblock %}
+
+{% block content %}
+<section class="pc-page" aria-labelledby="pc-page-title">
+  <header class="pc-hero">
+    <div class="pc-hero__copy">
+      <p class="pc-eyebrow">Configuración Web Master</p>
+      <h1 id="pc-page-title">Impresión de facturas</h1>
+      <p class="pc-hero__lead">
+        Define cómo imprime cada punto de pago. Puedes combinar Windows o Linux
+        con factura grande de 80 mm o pequeña de 58 mm.
+      </p>
+
+      <div class="pc-hero__facts" aria-label="Características de la configuración">
+        <span>
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <rect x="5" y="3" width="14" height="7" rx="2"/>
+            <path d="M7 17H5a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2h-2M7 14h10v7H7z"/>
+          </svg>
+          4 combinaciones
+        </span>
+        <span>
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M12 3 5 6v5c0 4.6 2.8 8.4 7 10 4.2-1.6 7-5.4 7-10V6l-7-3Z"/>
+            <path d="m9 12 2 2 4-4"/>
+          </svg>
+          Cambio protegido
+        </span>
+        <span>
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M4 7h16M7 3v4m10-4v4M5 11h14v9H5z"/>
+          </svg>
+          Configuración por caja
+        </span>
+      </div>
+    </div>
+
+    <aside class="pc-hero__summary" aria-label="Configuración seleccionada">
+      <span class="pc-hero__summary-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24">
+          <rect x="5" y="3" width="14" height="7" rx="2"/>
+          <path d="M7 17H5a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2h-2M7 14h10v7H7z"/>
+          <path d="M17 13h.01"/>
+        </svg>
+      </span>
+      <div>
+        <small>Perfil actual</small>
+        <strong data-current-profile>Windows · Factura grande</strong>
+        <span data-current-transport>Agente POS local · 80 mm</span>
+      </div>
+    </aside>
+  </header>
+
+  {% if messages %}
+    <div class="pc-messages" aria-live="polite">
+      {% for message in messages %}
+        <div class="pc-flash pc-flash--{{ message.tags|default:'info' }}">
+          <span class="pc-flash__dot" aria-hidden="true"></span>
+          <p>{{ message }}</p>
+        </div>
+      {% endfor %}
+    </div>
+  {% endif %}
+
+  {% if error %}
+    <div class="pc-messages" aria-live="assertive">
+      <div class="pc-flash pc-flash--error">
+        <span class="pc-flash__dot" aria-hidden="true"></span>
+        <p>{{ error }}</p>
+      </div>
+    </div>
+  {% endif %}
+
+  <div class="pc-linux-notice" role="note" aria-labelledby="pc-linux-notice-title">
+    <span class="pc-linux-notice__icon" aria-hidden="true">
+      <svg viewBox="0 0 24 24">
+        <path d="M12 8v4m0 4h.01"/>
+        <circle cx="12" cy="12" r="9"/>
+      </svg>
+    </span>
+    <div>
+      <strong id="pc-linux-notice-title">Antes de seleccionar Linux</strong>
+      <p>
+        La impresión por USB/CUPS solo funciona si Django se ejecuta en el equipo
+        Linux conectado a la impresora o puede acceder a su servidor CUPS. Si la
+        aplicación está en PythonAnywhere, necesitas un agente local para Linux o
+        un CUPS remoto accesible desde el servidor. Para dirigir cada caja a una
+        impresora distinta puedes usar <code>PRINTER_&lt;ID&gt;</code> (CUPS) o
+        <code>PRINTER_DEVICE_&lt;ID&gt;</code> (USB) en las variables del servidor.
+      </p>
+    </div>
+  </div>
+
+  <div class="pc-layout">
+    <section class="pc-panel pc-config" aria-labelledby="pc-config-title">
+      <header class="pc-panel__header">
+        <div>
+          <p class="pc-eyebrow">Perfil operativo</p>
+          <h2 id="pc-config-title">Configurar punto de pago</h2>
+          <p>Selecciona una caja y define el método y el ancho de impresión.</p>
+        </div>
+        <span class="pc-step-badge" aria-label="Tres pasos">3 pasos</span>
+      </header>
+
+      {% if print_points %}
+      <form
+        method="post"
+        class="pc-form"
+        autocomplete="off"
+        data-print-config-form
+        data-migration-ready="{{ migration_ready|yesno:'1,0' }}"
+      >
+        {% csrf_token %}
+
+        <div class="pc-form-section">
+          <div class="pc-form-section__number" aria-hidden="true">1</div>
+          <div class="pc-form-section__body">
+            <div class="pc-field-heading">
+              <div>
+                <label for="pc-payment-point">Punto de pago</label>
+                <p>La configuración se aplicará a las facturas de esta caja.</p>
+              </div>
+              <span class="pc-required">Obligatorio</span>
+            </div>
+
+            <div class="pc-select-wrap">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <rect x="4" y="5" width="16" height="14" rx="2"/>
+                <path d="M8 9h8M8 13h3m3 0h2M8 16h2"/>
+              </svg>
+              <select
+                id="pc-payment-point"
+                name="punto_pago_id"
+                required
+                data-point-select
+                data-selected-point-id="{{ selected_point_id|default:'' }}"
+              >
+                {% for point in print_points %}
+                  <option
+                    value="{{ point.id }}"
+                    data-label="{{ point.label|escape }}"
+                    data-operating-system="{{ point.operating_system|default:'windows'|escape }}"
+                    data-paper-size="{{ point.paper_size|default:'grande'|escape }}"
+                    data-version="{{ point.version|default_if_none:0 }}"
+                    data-updated-at="{% if point.updated_at %}{{ point.updated_at|date:'d/m/Y · h:i A' }}{% else %}Configuración inicial{% endif %}"
+                    data-updated-by="{{ point.updated_by|default:'Configuración inicial'|escape }}"
+                    {% if point.id == selected_point_id %}selected{% endif %}
+                  >{{ point.label }}</option>
+                {% endfor %}
+              </select>
+              <svg class="pc-select-wrap__chevron" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="m7 10 5 5 5-5"/>
+              </svg>
+            </div>
+
+            <div class="pc-point-meta" aria-live="polite">
+              <div>
+                <small>Configuración guardada</small>
+                <strong data-saved-profile>Windows · Grande</strong>
+              </div>
+              <div>
+                <small>Última actualización</small>
+                <strong data-updated-at>Configuración inicial</strong>
+              </div>
+              <div>
+                <small>Responsable</small>
+                <strong data-updated-by>Configuración inicial</strong>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <fieldset class="pc-form-section">
+          <legend class="pc-sr-only">Sistema operativo de impresión</legend>
+          <div class="pc-form-section__number" aria-hidden="true">2</div>
+          <div class="pc-form-section__body">
+            <div class="pc-field-heading">
+              <div>
+                <span class="pc-field-heading__label">Sistema operativo</span>
+                <p>Determina por dónde se enviará el trabajo de impresión.</p>
+              </div>
+            </div>
+
+            <div class="pc-choice-grid pc-choice-grid--os">
+              <label class="pc-choice">
+                <input type="radio" name="operating_system" value="windows" required data-profile-input>
+                <span class="pc-choice__surface">
+                  <span class="pc-choice__icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24">
+                      <path d="m3 5 8-1v8H3zm10-1 8-1v9h-8zM3 14h8v8l-8-1zm10 0h8v9l-8-1z"/>
+                    </svg>
+                  </span>
+                  <span class="pc-choice__copy">
+                    <strong>Windows</strong>
+                    <small>Imprime mediante el agente POS instalado en el computador.</small>
+                  </span>
+                  <span class="pc-choice__check" aria-hidden="true">
+                    <svg viewBox="0 0 24 24"><path d="m7 12 3 3 7-7"/></svg>
+                  </span>
+                </span>
+              </label>
+
+              <label class="pc-choice">
+                <input type="radio" name="operating_system" value="linux" required data-profile-input>
+                <span class="pc-choice__surface">
+                  <span class="pc-choice__icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24">
+                      <path d="M9 7c0-3 1-5 3-5s3 2 3 5c2 1 3 3 3 6 0 4-2 8-6 8s-6-4-6-8c0-3 1-5 3-6Z"/>
+                      <path d="M9 12h.01M15 12h.01M10 16c1 .7 3 .7 4 0M7 20l-2 2m12-2 2 2"/>
+                    </svg>
+                  </span>
+                  <span class="pc-choice__copy">
+                    <strong>Linux</strong>
+                    <small>Envía la factura al dispositivo USB o a una cola CUPS.</small>
+                  </span>
+                  <span class="pc-choice__check" aria-hidden="true">
+                    <svg viewBox="0 0 24 24"><path d="m7 12 3 3 7-7"/></svg>
+                  </span>
+                </span>
+              </label>
+            </div>
+          </div>
+        </fieldset>
+
+        <fieldset class="pc-form-section">
+          <legend class="pc-sr-only">Tamaño de la factura</legend>
+          <div class="pc-form-section__number" aria-hidden="true">3</div>
+          <div class="pc-form-section__body">
+            <div class="pc-field-heading">
+              <div>
+                <span class="pc-field-heading__label">Tamaño de factura</span>
+                <p>Elige el ancho de papel configurado en la impresora.</p>
+              </div>
+            </div>
+
+            <div class="pc-choice-grid pc-choice-grid--paper">
+              <label class="pc-choice pc-choice--paper">
+                <input type="radio" name="paper_size" value="grande" required data-profile-input>
+                <span class="pc-choice__surface">
+                  <span class="pc-paper-icon pc-paper-icon--large" aria-hidden="true">
+                    <span></span>
+                  </span>
+                  <span class="pc-choice__copy">
+                    <strong>Factura grande</strong>
+                    <small>80 mm · 48 columnas</small>
+                  </span>
+                  <span class="pc-choice__check" aria-hidden="true">
+                    <svg viewBox="0 0 24 24"><path d="m7 12 3 3 7-7"/></svg>
+                  </span>
+                </span>
+              </label>
+
+              <label class="pc-choice pc-choice--paper">
+                <input type="radio" name="paper_size" value="pequena" required data-profile-input>
+                <span class="pc-choice__surface">
+                  <span class="pc-paper-icon pc-paper-icon--small" aria-hidden="true">
+                    <span></span>
+                  </span>
+                  <span class="pc-choice__copy">
+                    <strong>Factura pequeña</strong>
+                    <small>58 mm · 32 columnas</small>
+                  </span>
+                  <span class="pc-choice__check" aria-hidden="true">
+                    <svg viewBox="0 0 24 24"><path d="m7 12 3 3 7-7"/></svg>
+                  </span>
+                </span>
+              </label>
+            </div>
+          </div>
+        </fieldset>
+
+        <input type="hidden" name="version" value="0" data-version-input>
+
+        <div class="pc-security">
+          <div class="pc-security__heading">
+            <span class="pc-security__icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24">
+                <path d="M7 10V7a5 5 0 0 1 10 0v3M5 10h14v11H5z"/>
+              </svg>
+            </span>
+            <div>
+              <strong>Confirmación Web Master</strong>
+              <p>Ingresa tu contraseña actual para autorizar el cambio.</p>
+            </div>
+          </div>
+
+          <label class="pc-password-label" for="pc-web-master-password">Contraseña actual</label>
+          <div class="pc-password">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="8" cy="12" r="3"/>
+              <path d="m11 12 9 0m-3 0v3m-3-3v2"/>
+            </svg>
+            <input
+              id="pc-web-master-password"
+              type="password"
+              name="password_web_master"
+              required
+              autocomplete="current-password"
+              autocapitalize="none"
+              spellcheck="false"
+              placeholder="Escribe tu contraseña"
+              data-password-input
+              {% if not migration_ready %}disabled{% endif %}
+            >
+            <button
+              type="button"
+              class="pc-password__toggle"
+              aria-label="Mostrar contraseña"
+              aria-controls="pc-web-master-password"
+              data-password-toggle
+              {% if not migration_ready %}disabled{% endif %}
+            >
+              <svg class="pc-eye-open" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12Z"/>
+                <circle cx="12" cy="12" r="2.5"/>
+              </svg>
+              <svg class="pc-eye-closed" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="m3 3 18 18M10.6 6.2A11 11 0 0 1 12 6c6.5 0 10 6 10 6a16 16 0 0 1-2.2 3M6.2 6.2C3.5 8 2 12 2 12s3.5 6 10 6c1.3 0 2.5-.2 3.5-.7"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        <div class="pc-form__actions">
+          <p>
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 8v4m0 4h.01"/>
+              <circle cx="12" cy="12" r="9"/>
+            </svg>
+            Las ventas guardadas no se modifican; solo cambia cómo se imprimen.
+          </p>
+          <button
+            type="submit"
+            class="pc-save"
+            data-submit-button
+            {% if not migration_ready %}disabled{% endif %}
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M5 3h12l2 2v16H5zM8 3v6h8V3M8 21v-7h8v7"/>
+            </svg>
+            <span data-submit-label>Guardar configuración</span>
+          </button>
+        </div>
+      </form>
+      {% else %}
+      <div class="pc-empty" role="status">
+        <span aria-hidden="true">
+          <svg viewBox="0 0 24 24">
+            <path d="M4 7h16v12H4zM8 3h8v4M8 12h8m-8 4h5"/>
+          </svg>
+        </span>
+        <h3>No hay puntos de pago disponibles</h3>
+        <p>Crea al menos un punto de pago antes de configurar su impresora.</p>
+      </div>
+      {% endif %}
+    </section>
+
+    <aside class="pc-preview-column" aria-label="Vista previa de impresión">
+      <section class="pc-panel pc-preview-panel">
+        <header class="pc-panel__header pc-preview-panel__header">
+          <div>
+            <p class="pc-eyebrow">Vista previa</p>
+            <h2>Así se verá el ancho</h2>
+            <p>La factura real conservará productos, pagos y descuentos.</p>
+          </div>
+          <span class="pc-live-badge">
+            <span aria-hidden="true"></span>
+            En vivo
+          </span>
+        </header>
+
+        <div class="pc-printer">
+          <div class="pc-printer__body">
+            <span class="pc-printer__light"></span>
+            <span class="pc-printer__slot"></span>
+          </div>
+          <div class="pc-receipt-wrap">
+            <pre class="pc-receipt" data-receipt-preview aria-label="Vista previa de la factura"></pre>
+          </div>
+        </div>
+
+        <div class="pc-preview-facts" aria-live="polite">
+          <div>
+            <small>Ancho</small>
+            <strong data-paper-width>80 mm</strong>
+          </div>
+          <div>
+            <small>Columnas</small>
+            <strong data-column-count>48</strong>
+          </div>
+          <div>
+            <small>Salida</small>
+            <strong data-output-method>Agente POS</strong>
+          </div>
+        </div>
+      </section>
+    </aside>
+  </div>
+
+  <section class="pc-panel pc-matrix" aria-labelledby="pc-matrix-title">
+    <header class="pc-panel__header">
+      <div>
+        <p class="pc-eyebrow">Compatibilidad</p>
+        <h2 id="pc-matrix-title">Cuatro formas de imprimir</h2>
+        <p>El perfil resaltado corresponde a la selección que vas a guardar.</p>
+      </div>
+    </header>
+
+    <div class="pc-matrix__grid">
+      <article class="pc-combination" data-combination="windows-grande">
+        <span class="pc-combination__status">Seleccionada</span>
+        <div class="pc-combination__title">
+          <span aria-hidden="true">W</span>
+          <div><strong>Windows + grande</strong><small>80 mm · 48 columnas</small></div>
+        </div>
+        <p>Agente POS local con el formato amplio actualmente compatible.</p>
+      </article>
+      <article class="pc-combination" data-combination="windows-pequena">
+        <span class="pc-combination__status">Seleccionada</span>
+        <div class="pc-combination__title">
+          <span aria-hidden="true">W</span>
+          <div><strong>Windows + pequeña</strong><small>58 mm · 32 columnas</small></div>
+        </div>
+        <p>Agente POS local con texto ajustado a impresoras compactas.</p>
+      </article>
+      <article class="pc-combination" data-combination="linux-grande">
+        <span class="pc-combination__status">Seleccionada</span>
+        <div class="pc-combination__title">
+          <span aria-hidden="true">L</span>
+          <div><strong>Linux + grande</strong><small>80 mm · 48 columnas</small></div>
+        </div>
+        <p>Dispositivo USB o cola CUPS con factura de ancho completo.</p>
+      </article>
+      <article class="pc-combination" data-combination="linux-pequena">
+        <span class="pc-combination__status">Seleccionada</span>
+        <div class="pc-combination__title">
+          <span aria-hidden="true">L</span>
+          <div><strong>Linux + pequeña</strong><small>58 mm · 32 columnas</small></div>
+        </div>
+        <p>Dispositivo USB o CUPS usando el formato compacto de 58 mm.</p>
+      </article>
+    </div>
+  </section>
+</section>
+
+<dialog class="pc-dialog" id="pc-confirm-dialog" aria-labelledby="pc-dialog-title">
+  <div class="pc-dialog__card">
+    <button type="button" class="pc-dialog__close" aria-label="Cerrar" data-dialog-close>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg>
+    </button>
+    <span class="pc-dialog__icon" aria-hidden="true">
+      <svg viewBox="0 0 24 24">
+        <rect x="5" y="3" width="14" height="7" rx="2"/>
+        <path d="M7 17H5a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2h-2M7 14h10v7H7z"/>
+      </svg>
+    </span>
+    <p class="pc-eyebrow">Confirmar cambio</p>
+    <h2 id="pc-dialog-title">¿Guardar este perfil?</h2>
+    <p>
+      El punto <strong data-dialog-point>seleccionado</strong> imprimirá mediante
+      <strong data-dialog-profile>Windows con factura grande</strong>.
+    </p>
+    <div class="pc-dialog__actions">
+      <button type="button" class="pc-dialog__cancel" data-dialog-cancel>Revisar</button>
+      <button type="button" class="pc-dialog__confirm" data-dialog-confirm>Confirmar y guardar</button>
+    </div>
+  </div>
+</dialog>
+{% endblock %}
+
+{% block scripts %}
+  <script defer src="{% static 'javascript/configuracion_impresion.js' %}?v=2"></script>
+{% endblock %}
