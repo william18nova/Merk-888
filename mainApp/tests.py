@@ -29,6 +29,7 @@ from .services.employee_client import (
 from .services.feature_flags import (
     ActiveCashTurnError,
     FEATURE_REGISTRY,
+    NEQUI_API_FEATURE,
     TURN_REQUIRED_FEATURE,
     FeatureFlagError,
     disabled_feature_for_url,
@@ -58,6 +59,7 @@ from .views import (
     ClavesDescuentoMerk2888View,
     ConfiguracionFuncionalidadesView,
     GenerarVentaView,
+    NequiNotificacionesDisponiblesView,
     NequiNotificationWebhookView,
     ProductoAutocomplete,
     TurnoCajaIniciarApi,
@@ -178,6 +180,135 @@ class NequiWebhookParsingTests(SimpleTestCase):
         self.assertEqual(amount, Decimal("10000.00"))
         self.assertTrue(_looks_like_nequi_payment("", text, amount))
         self.assertEqual(_parse_nequi_sender_plain(text), "Ana Ruiz")
+
+    @override_settings(MACRODROID_NEQUI_TOKEN="test-nequi-token")
+    def test_disabled_api_rejects_valid_webhook_without_writing(self):
+        request = self.factory.post(
+            reverse("macrodroid_nequi_webhook"),
+            data=json.dumps({
+                "event_id": "event-disabled-1",
+                "not_title": "Pago recibido",
+                "not_text": "Ana Ruiz te envio $10.000",
+            }),
+            content_type="application/json",
+            HTTP_AUTHORIZATION="Bearer test-nequi-token",
+        )
+
+        with (
+            patch(
+                "mainApp.views.is_feature_enabled",
+                return_value=False,
+            ) as feature_check,
+            patch(
+                "mainApp.views.NotificacionNequi.objects.get_or_create",
+            ) as create_notification,
+        ):
+            response = NequiNotificationWebhookView().post(request)
+
+        payload = json.loads(response.content)
+        self.assertEqual(response.status_code, 409)
+        self.assertFalse(payload["success"])
+        self.assertEqual(
+            payload["feature_disabled"],
+            NEQUI_API_FEATURE,
+        )
+        self.assertEqual(response["Cache-Control"], "no-store, max-age=0")
+        feature_check.assert_called_once_with(
+            NEQUI_API_FEATURE,
+            fresh=True,
+        )
+        create_notification.assert_not_called()
+
+    @override_settings(MACRODROID_NEQUI_TOKEN="test-nequi-token")
+    def test_invalid_token_does_not_reveal_disabled_api_state(self):
+        request = self.factory.post(
+            reverse("macrodroid_nequi_webhook"),
+            data=json.dumps({"not_title": "Pago recibido"}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION="Bearer invalid-token",
+        )
+
+        with patch("mainApp.views.is_feature_enabled") as feature_check:
+            response = NequiNotificationWebhookView().post(request)
+
+        self.assertEqual(response.status_code, 403)
+        self.assertNotIn("feature_disabled", json.loads(response.content))
+        feature_check.assert_not_called()
+
+    def test_available_payments_endpoint_is_blocked_without_querying(self):
+        request = self.factory.get(
+            reverse("nequi_notificaciones_disponibles"),
+            HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+        )
+        request.user = SimpleNamespace(is_authenticated=True)
+
+        with (
+            patch(
+                "mainApp.views.is_feature_enabled",
+                return_value=False,
+            ),
+            patch(
+                "mainApp.views.NotificacionNequi.objects.filter",
+            ) as notifications,
+        ):
+            response = NequiNotificacionesDisponiblesView().get(request)
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(
+            json.loads(response.content)["feature_disabled"],
+            NEQUI_API_FEATURE,
+        )
+        notifications.assert_not_called()
+
+    @override_settings(MACRODROID_NEQUI_TOKEN="test-nequi-token")
+    def test_enabled_api_preserves_webhook_creation_flow(self):
+        request = self.factory.post(
+            reverse("macrodroid_nequi_webhook"),
+            data=json.dumps({
+                "event_id": "event-enabled-1",
+                "not_title": "Pago recibido Nequi",
+                "not_text": "Ana Ruiz te envio $10.000",
+            }),
+            content_type="application/json",
+            HTTP_AUTHORIZATION="Bearer test-nequi-token",
+        )
+        notification = SimpleNamespace(
+            notificacionid=81,
+            titulo="Pago recibido Nequi",
+            texto="Ana Ruiz te envio $10.000",
+            app="Nequi",
+            paquete="com.nequi.MobileApp",
+            monto=Decimal("10000.00"),
+            remitente="Ana Ruiz",
+            referencia="",
+            recibido_en=datetime.now(dt_timezone.utc),
+            venta_id=None,
+        )
+
+        with (
+            patch(
+                "mainApp.views.is_feature_enabled",
+                return_value=True,
+            ),
+            patch(
+                "mainApp.views.transaction.atomic",
+                return_value=nullcontext(),
+            ),
+            patch(
+                "mainApp.views.locked_feature_enabled",
+                return_value=True,
+            ) as locked_feature,
+            patch(
+                "mainApp.views.NotificacionNequi.objects.get_or_create",
+                return_value=(notification, True),
+            ) as create_notification,
+        ):
+            response = NequiNotificationWebhookView().post(request)
+
+        self.assertEqual(response.status_code, 201)
+        self.assertTrue(json.loads(response.content)["created"])
+        locked_feature.assert_called_once_with(NEQUI_API_FEATURE)
+        create_notification.assert_called_once()
 
 
 class VentaNequiLinkStatusTests(SimpleTestCase):
@@ -1827,6 +1958,95 @@ class SystemFeatureFlagTests(SimpleTestCase):
 
         self.assertTrue(enabled)
 
+    def test_nequi_api_is_configurable_and_enabled_by_default(self):
+        definition = feature_definition(NEQUI_API_FEATURE)
+        migration_source = (
+            settings.BASE_DIR
+            / "mainApp"
+            / "migrations"
+            / "0025_seed_nequi_api_feature.py"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn(NEQUI_API_FEATURE, FEATURE_REGISTRY)
+        self.assertTrue(definition["default_enabled"])
+        self.assertTrue(definition["critical"])
+        self.assertGreaterEqual(len(definition["impacts"]), 3)
+        self.assertIn(
+            'NEQUI_API_FEATURE = "nequi_api_recepcion"',
+            migration_source,
+        )
+        self.assertIn("objects.get_or_create", migration_source)
+
+        with patch(
+            "mainApp.models.ConfiguracionFuncionalidad.objects.filter",
+            side_effect=DatabaseError("table unavailable"),
+        ):
+            enabled = is_feature_enabled(
+                NEQUI_API_FEATURE,
+                fresh=True,
+            )
+
+        self.assertTrue(enabled)
+
+    def test_disabled_nequi_flag_blocks_reception_and_sale_linking_only(self):
+        with patch(
+            "mainApp.services.feature_flags.is_feature_enabled",
+            return_value=False,
+        ):
+            disabled = disabled_feature_for_url(
+                "macrodroid_nequi_webhook",
+                fresh=True,
+            )
+            self.assertEqual(disabled["key"], NEQUI_API_FEATURE)
+
+            for historical_or_sale_route in {
+                "nequi_notificaciones",
+                "nequi_notificaciones_data",
+                "nequi_notificaciones_disponibles",
+                "visualizar_ventas",
+                "generar_venta",
+            }:
+                self.assertIsNone(
+                    disabled_feature_for_url(
+                        historical_or_sale_route,
+                        fresh=True,
+                    ),
+                    historical_or_sale_route,
+                )
+
+    def test_sale_modal_hides_only_nequi_linking_when_api_is_off(self):
+        from django.template.loader import render_to_string
+
+        disabled_html = render_to_string(
+            "modal_venta.html",
+            {"system_features": {NEQUI_API_FEATURE: False}},
+        )
+        enabled_html = render_to_string(
+            "modal_venta.html",
+            {"system_features": {NEQUI_API_FEATURE: True}},
+        )
+
+        self.assertNotIn('id="nequi-payment-panel"', disabled_html)
+        self.assertIn('class="pm-check" value="nequi"', disabled_html)
+        self.assertIn('id="nequi-payment-panel"', enabled_html)
+
+        sale_template = (
+            settings.BASE_DIR / "mainApp" / "templates" / "generar_venta.html"
+        ).read_text(encoding="utf-8")
+        sale_script = (
+            settings.BASE_DIR
+            / "mainApp"
+            / "static"
+            / "javascript"
+            / "generar_venta.js"
+        ).read_text(encoding="utf-8")
+        self.assertIn("window.nequiApiEnabled", sale_template)
+        self.assertIn("system_features.nequi_api_recepcion", sale_template)
+        self.assertIn("generar_venta.js' %}?v=26", sale_template)
+        self.assertIn("let nequiApiEnabled", sale_script)
+        self.assertIn("data?.feature_disabled === NEQUI_FEATURE_KEY", sale_script)
+        self.assertIn("disableNequiLinking", sale_script)
+
     def test_disabled_turn_feature_blocks_operational_routes_but_not_history(self):
         blocked_routes = {
             "turno_caja",
@@ -2062,6 +2282,42 @@ class SystemFeatureFlagTests(SimpleTestCase):
         )
         clear_cache.assert_called_once_with(TURN_REQUIRED_FEATURE)
 
+    def test_nequi_api_change_uses_audit_without_checking_cash_turns(self):
+        row = SimpleNamespace(
+            habilitada=True,
+            version=2,
+            save=MagicMock(),
+        )
+        actor = SimpleNamespace(nombreusuario="Web Master")
+        atomic, audit_filter, audit_create, config_lock, turns_filter = (
+            self._feature_mocks(row=row, active_turns=9)
+        )
+
+        with (
+            atomic,
+            audit_filter,
+            audit_create as create_audit,
+            config_lock,
+            turns_filter as query_active_turns,
+            patch(
+                "mainApp.services.feature_flags.clear_feature_cache",
+            ) as clear_cache,
+        ):
+            result = set_feature_enabled(
+                key=NEQUI_API_FEATURE,
+                enabled=False,
+                expected_version=2,
+                actor=actor,
+                reason="Mantenimiento temporal de la integración Nequi",
+                request_id=str(uuid4()),
+            )
+
+        self.assertTrue(result.changed)
+        self.assertFalse(result.enabled)
+        query_active_turns.assert_not_called()
+        create_audit.assert_called_once()
+        clear_cache.assert_called_once_with(NEQUI_API_FEATURE)
+
 
 class SaleWithoutCashTurnTests(SimpleTestCase):
     def setUp(self):
@@ -2231,6 +2487,75 @@ class SaleWithoutCashTurnTests(SimpleTestCase):
         locked_feature.assert_called_once_with(TURN_REQUIRED_FEATURE)
         create_sale.assert_not_called()
         self.assertFalse(state["inside_atomic"])
+
+    def test_disabled_nequi_api_rejects_stale_link_before_sale_creation(self):
+        from .models import NotificacionNequi, Venta
+
+        user = SimpleNamespace(
+            pk=3,
+            username="cajero",
+            empleado=SimpleNamespace(
+                nombre="Caja",
+                apellido="Prueba",
+            ),
+        )
+        branch = SimpleNamespace(pk=7, nombre="Sucursal")
+        payment_point = SimpleNamespace(pk=21, nombre="Caja 1")
+        details = [{
+            "productoid": 5,
+            "producto": "Producto",
+            "cantidad": 1,
+            "precio_unitario": Decimal("1000"),
+            "subtotal": Decimal("1000"),
+        }]
+
+        def feature_state(key):
+            if key == TURN_REQUIRED_FEATURE:
+                return False
+            if key == NEQUI_API_FEATURE:
+                return False
+            raise AssertionError(f"Funcionalidad inesperada: {key}")
+
+        with (
+            patch(
+                "mainApp.views.transaction.atomic",
+                return_value=nullcontext(),
+            ),
+            patch(
+                "mainApp.views.locked_feature_enabled",
+                side_effect=feature_state,
+            ) as locked_feature,
+            patch.object(
+                NotificacionNequi.objects,
+                "select_for_update",
+            ) as lock_notification,
+            patch.object(Venta.objects, "create") as create_sale,
+        ):
+            response = GenerarVentaView._crear_venta_ultra_fast(
+                user,
+                branch,
+                payment_point,
+                None,
+                [{"medio_pago": "nequi", "monto": Decimal("1000")}],
+                details,
+                Decimal("1000"),
+                Decimal("0"),
+                turno=None,
+                turno_requerido=False,
+                nequi_notificacion_id=81,
+            )
+
+        payload = json.loads(response.content)
+        self.assertFalse(payload["success"])
+        self.assertEqual(payload["feature_disabled"], NEQUI_API_FEATURE)
+        self.assertTrue(payload["configuration_changed"])
+        self.assertEqual(payload["redirect_url"], reverse("generar_venta"))
+        self.assertEqual(
+            [args.args[0] for args in locked_feature.call_args_list],
+            [TURN_REQUIRED_FEATURE, NEQUI_API_FEATURE],
+        )
+        lock_notification.assert_not_called()
+        create_sale.assert_not_called()
 
 
 class RefundAndSpecialDiscountWithoutTurnTests(SimpleTestCase):
@@ -2856,3 +3181,300 @@ class CashTurnFeatureSecurityRegressionTests(SimpleTestCase):
         self.assertIn("data-feature-disable-message", feature_template)
         self.assertIn("form.dataset.featureDisableMessage", feature_script)
         self.assertIn("overflow-y:auto", feature_css)
+
+
+class RoutePermissionAndNavigationCoverageTests(SimpleTestCase):
+    """Evita que una URL nueva quede fuera del permiso o del navbar."""
+
+    @staticmethod
+    def _url_patterns():
+        from django.urls.resolvers import URLPattern, URLResolver
+        from .urls import urlpatterns
+
+        def walk(patterns):
+            for pattern in patterns:
+                if isinstance(pattern, URLPattern):
+                    yield pattern
+                elif isinstance(pattern, URLResolver):
+                    yield from walk(pattern.url_patterns)
+
+        return list(walk(urlpatterns))
+
+    @staticmethod
+    def _nav_url_names():
+        from .permissions import NAV_GROUPS
+
+        names = set()
+        for group in NAV_GROUPS:
+            if group.get("url_name"):
+                names.add(group["url_name"])
+            names.update(
+                child["url_name"]
+                for child in group.get("children", [])
+                if child.get("url_name")
+            )
+        return names
+
+    def test_every_named_app_route_has_an_explicit_access_policy(self):
+        from .permissions import (
+            ALWAYS_ALLOWED_URL_NAMES,
+            PUBLIC_URL_NAMES,
+            ROUTE_PERMISSIONS,
+        )
+
+        route_names = {
+            pattern.name
+            for pattern in self._url_patterns()
+            if pattern.name
+        }
+        classified = (
+            set(ROUTE_PERMISSIONS)
+            | set(PUBLIC_URL_NAMES)
+            | set(ALWAYS_ALLOWED_URL_NAMES)
+        )
+
+        self.assertEqual(sorted(route_names - classified), [])
+
+    def test_route_names_are_unique(self):
+        from collections import Counter
+
+        names = [
+            pattern.name
+            for pattern in self._url_patterns()
+            if pattern.name
+        ]
+        duplicates = sorted(
+            name
+            for name, count in Counter(names).items()
+            if count > 1
+        )
+
+        self.assertEqual(duplicates, [])
+
+    def test_every_permission_mapping_uses_a_catalog_code(self):
+        from .permissions import (
+            PERMISSION_BY_CODE,
+            ROUTE_PERMISSION_ALTERNATIVES,
+            ROUTE_PERMISSIONS,
+        )
+
+        mapped_codes = set(ROUTE_PERMISSIONS.values())
+        mapped_codes.update(
+            code
+            for alternatives in ROUTE_PERMISSION_ALTERNATIVES.values()
+            for code in alternatives
+        )
+
+        self.assertEqual(sorted(mapped_codes - set(PERMISSION_BY_CODE)), [])
+
+    def test_every_static_html_page_is_represented_in_the_navbar(self):
+        from .permissions import PUBLIC_URL_NAMES
+
+        page_names = set()
+        for pattern in self._url_patterns():
+            route = str(pattern.pattern)
+            view_class = getattr(pattern.callback, "view_class", None)
+            if (
+                not pattern.name
+                or pattern.name in PUBLIC_URL_NAMES
+                or "<" in route
+                or view_class is None
+                or not callable(getattr(view_class, "get", None))
+                or not getattr(view_class, "template_name", None)
+            ):
+                continue
+            page_names.add(pattern.name)
+
+        self.assertEqual(
+            sorted(page_names - self._nav_url_names()),
+            [],
+        )
+
+    def test_every_nav_link_resolves_to_a_get_page(self):
+        for url_name in self._nav_url_names():
+            match = resolve(reverse(url_name))
+            view_class = getattr(match.func, "view_class", None)
+            self.assertIsNotNone(view_class, url_name)
+            self.assertTrue(
+                callable(getattr(view_class, "get", None)),
+                url_name,
+            )
+
+    def test_web_master_bypasses_individual_permission_denials(self):
+        from .permissions import user_can_access_url_name
+
+        user = SimpleNamespace(is_authenticated=True)
+        with (
+            patch(
+                "mainApp.permissions.disabled_feature_for_url",
+                return_value=None,
+            ),
+            patch(
+                "mainApp.permissions.is_web_master_role",
+                return_value=True,
+            ),
+            patch(
+                "mainApp.permissions.user_has_permission",
+                return_value=False,
+            ) as permission_check,
+        ):
+            allowed = user_can_access_url_name(
+                user,
+                "visualizar_productos",
+            )
+
+        self.assertTrue(allowed)
+        permission_check.assert_not_called()
+
+    def test_disabled_feature_still_stays_hidden_from_web_master(self):
+        from .permissions import user_can_access_url_name
+
+        with (
+            patch(
+                "mainApp.permissions.disabled_feature_for_url",
+                return_value={"key": TURN_REQUIRED_FEATURE},
+            ),
+            patch(
+                "mainApp.permissions.is_web_master_role",
+                return_value=True,
+            ),
+        ):
+            allowed = user_can_access_url_name(
+                SimpleNamespace(is_authenticated=True),
+                "turno_caja",
+            )
+
+        self.assertFalse(allowed)
+
+    def test_nav_cache_changes_with_feature_configuration(self):
+        from .permissions import _nav_cache_key
+
+        user = SimpleNamespace(
+            pk=7,
+            rolid_id=1,
+            is_staff=False,
+            is_superuser=False,
+        )
+        with patch(
+            "mainApp.permissions.is_feature_enabled",
+            return_value=True,
+        ):
+            enabled_key = _nav_cache_key(user)
+        with patch(
+            "mainApp.permissions.is_feature_enabled",
+            return_value=False,
+        ):
+            disabled_key = _nav_cache_key(user)
+
+        self.assertNotEqual(enabled_key, disabled_key)
+
+    def test_only_the_most_specific_nav_link_is_active(self):
+        from .permissions import _mark_nav_active
+
+        menu = [
+            {"label": "Turno", "url": "/turno_caja/", "children": []},
+            {
+                "label": "Retiro",
+                "url": "/turno_caja/retiro/",
+                "children": [],
+            },
+        ]
+
+        marked = _mark_nav_active(menu, "/turno_caja/retiro/18/")
+
+        self.assertFalse(marked[0]["active"])
+        self.assertTrue(marked[1]["active"])
+
+
+class PermissionMiddlewareCoverageTests(SimpleTestCase):
+    def setUp(self):
+        from .middleware import PagePermissionMiddleware
+
+        self.factory = RequestFactory()
+        self.middleware = PagePermissionMiddleware(
+            lambda request: HttpResponse("ok")
+        )
+
+    @staticmethod
+    def _future_internal_view(request):
+        return HttpResponse("future")
+
+    def _request(self):
+        request = self.factory.get(
+            "/future-internal/",
+            HTTP_ACCEPT="application/json",
+        )
+        request.user = SimpleNamespace(is_authenticated=True)
+        request.resolver_match = SimpleNamespace(
+            url_name="future_internal_route",
+        )
+        return request
+
+    def test_unclassified_internal_route_fails_closed(self):
+        with patch(
+            "mainApp.middleware.is_web_master_role",
+            return_value=False,
+        ):
+            response = self.middleware.process_view(
+                self._request(),
+                self._future_internal_view,
+                (),
+                {},
+            )
+
+        self.assertEqual(response.status_code, 403)
+
+    def test_web_master_can_reach_future_unclassified_internal_route(self):
+        with patch(
+            "mainApp.middleware.is_web_master_role",
+            return_value=True,
+        ):
+            response = self.middleware.process_view(
+                self._request(),
+                self._future_internal_view,
+                (),
+                {},
+            )
+
+        self.assertIsNone(response)
+
+
+class WebMasterPermissionGrantTests(SimpleTestCase):
+    def test_grants_every_web_master_role_without_assuming_primary_key_one(self):
+        from .permissions import grant_all_permissions_to_web_master
+
+        web_master = SimpleNamespace(pk=27, nombre="Web Master")
+        regular_role = SimpleNamespace(pk=1, nombre="Administrador")
+        permissions = [
+            SimpleNamespace(pk=10),
+            SimpleNamespace(pk=11),
+        ]
+        role_permission_model = MagicMock()
+        role_permission_model.objects.filter.return_value.values_list.return_value = []
+
+        with (
+            patch("mainApp.permissions.sync_permission_catalog"),
+            patch(
+                "mainApp.permissions.Rol.objects.all",
+                return_value=[regular_role, web_master],
+            ),
+            patch(
+                "mainApp.permissions.Permiso.objects.all",
+                return_value=permissions,
+            ),
+            patch(
+                "mainApp.permissions.RolPermiso",
+                role_permission_model,
+            ),
+            patch(
+                "mainApp.permissions._bump_permission_cache_version",
+            ) as bump_cache,
+        ):
+            granted = grant_all_permissions_to_web_master()
+
+        self.assertEqual(granted, 2)
+        role_permission_model.objects.filter.assert_called_once_with(
+            rol=web_master,
+        )
+        role_permission_model.objects.bulk_create.assert_called_once()
+        bump_cache.assert_called_once_with()

@@ -8,7 +8,11 @@ from django.db import DatabaseError
 from django.urls import NoReverseMatch, reverse
 
 from .models import Permiso, Rol, RolPermiso
-from .services.feature_flags import disabled_feature_for_url
+from .services.feature_flags import (
+    FEATURE_REGISTRY,
+    disabled_feature_for_url,
+    is_feature_enabled,
+)
 
 
 ADMIN_ROLE_NAMES = {"admin", "administrador", "supervisor"}
@@ -550,6 +554,7 @@ ROUTE_PERMISSIONS = {
     "editar_categoria": "categorias_editar",
     "eliminar_categoria": "categorias_eliminar",
     "agregar_producto": "productos_crear",
+    "categoria_autocomplete": "productos_crear",
     "visualizar_productos": "productos_ver",
     "productos_datatable": "productos_ver",
     "editar_producto": "productos_editar",
@@ -576,6 +581,7 @@ ROUTE_PERMISSIONS = {
     "producto_buscar_nombre_simple": "inventarios_editar",
     "producto_buscar_barras_simple": "inventarios_editar",
     "producto_buscar_id_simple": "inventarios_editar",
+    "sucursal_autocomplete_simple": "inventarios_editar",
     "producto_detalle_inventario": "inventarios_ver",
     "eliminar_producto_inventario": "inventarios_eliminar",
     "agregar_proveedor": "proveedores_crear",
@@ -583,32 +589,49 @@ ROUTE_PERMISSIONS = {
     "editar_proveedor": "proveedores_editar",
     "eliminar_proveedor": "proveedores_eliminar",
     "agregar_productos_precios_proveedor": "precios_proveedor_crear",
+    "proveedor_precios_autocomplete": "precios_proveedor_crear",
+    "producto_precios_autocomplete": "precios_proveedor_crear",
     "visualizar_productos_precios_proveedores": "precios_proveedor_ver",
+    "proveedor_con_productos_autocomplete": "precios_proveedor_ver",
     "editar_productos_precios_proveedor": "precios_proveedor_editar",
     "eliminar_precio_proveedor": "precios_proveedor_eliminar",
     "agregar_punto_pago": "puntos_pago_crear",
+    "sucursal_punto_pago_autocomplete": "puntos_pago_crear",
     "visualizar_puntos_pago": "puntos_pago_ver",
+    "sucursal_punto_pago_visualizar_autocomplete": "puntos_pago_ver",
     "editar_puntos_pago": "puntos_pago_editar",
+    "sucursal_editar_punto_pago_autocomplete": "puntos_pago_editar",
     "eliminar_punto_pago": "puntos_pago_eliminar",
     "agregar_rol": "roles_crear",
     "visualizar_roles": "roles_ver",
     "editar_rol": "roles_editar",
     "eliminar_rol": "roles_eliminar",
     "agregar_usuario": "usuarios_crear",
+    "rol_autocomplete_usuarios": "usuarios_crear",
     "visualizar_usuarios": "usuarios_ver",
     "editar_usuario": "usuarios_editar",
     "eliminar_usuario": "usuarios_eliminar",
     "agregar_empleado": "empleados_crear",
+    "usuario_autocomplete": "empleados_crear",
+    "empleado_sucursal_autocomplete": "empleados_crear",
     "visualizar_empleados": "empleados_ver",
     "editar_empleado": "empleados_editar",
     "eliminar_empleado": "empleados_eliminar",
     "agregar_horario": "horarios_crear",
+    "horarios_sucursal_autocomplete": "horarios_crear",
     "visualizar_horarios": "horarios_ver",
+    "sucursal_horario_visualizar_autocomplete": "horarios_ver",
     "editar_horarios": "horarios_editar",
     "eliminar_horario": "horarios_eliminar",
     "agregar_horario_caja": "horarios_caja_crear",
+    "sucursal_horario_caja_autocomplete": "horarios_caja_crear",
+    "puntopago_horario_caja_autocomplete": "horarios_caja_crear",
     "visualizar_horarios_cajas": "horarios_caja_ver",
+    "visualizar_horarios_cajas_sucursal_autocomplete": "horarios_caja_ver",
+    "visualizar_horarios_cajas_puntopago_autocomplete": "horarios_caja_ver",
     "editar_horarios_cajas": "horarios_caja_editar",
+    "sucursal_caja_editar_autocomplete": "horarios_caja_editar",
+    "puntopago_caja_editar_autocomplete": "horarios_caja_editar",
     "eliminar_horario_caja": "horarios_caja_eliminar",
     "agregar_cliente": "clientes_crear",
     "visualizar_clientes": "clientes_ver",
@@ -617,6 +640,8 @@ ROUTE_PERMISSIONS = {
     "generar_venta": "ventas_generar",
     "claves_descuento_merk2888": "descuentos_especiales_generar",
     "cliente_autocomplete": "ventas_generar",
+    "sucursal_autocomplete": "ventas_generar",
+    "puntopago_autocomplete": "ventas_generar",
     "producto_autocomplete": "ventas_generar",
     "producto_autocomplete_id": "ventas_generar",
     "producto_autocomplete_codigo": "ventas_generar",
@@ -626,6 +651,7 @@ ROUTE_PERMISSIONS = {
     "verificar_producto": "ventas_generar",
     "buscar_producto_por_codigo": "ventas_generar",
     "abrir_caja": "ventas_generar",
+    "venta_carrito_limpio_audit": "ventas_generar",
     "imprimir_factura": "ventas_ver",
     "ticket_texto": "ventas_ver",
     "visualizar_ventas": "ventas_ver",
@@ -648,6 +674,8 @@ ROUTE_PERMISSIONS = {
     "nequi_notificaciones_eliminar_seleccionadas": "nequi_notificaciones",
     "nequi_notificaciones_disponibles": "ventas_generar",
     "agregar_pedido": "pedidos_crear",
+    "pedido_sucursal_autocomplete": "pedidos_crear",
+    "producto_pedido_autocomplete": "pedidos_crear",
     "visualizar_pedidos": "pedidos_ver",
     "ver_pedido": "pedidos_ver",
     "editar_pedido": "pedidos_editar",
@@ -676,8 +704,12 @@ ROUTE_PERMISSIONS = {
     "editar_permiso": "seguridad_permisos",
     "eliminar_permiso": "seguridad_permisos",
     "roles_permisos": "seguridad_permisos",
+    "rol_autocomplete": "seguridad_permisos",
+    "permiso_autocomplete": "seguridad_permisos",
     "visualizar_roles_permisos": "seguridad_permisos",
+    "rol_con_permisos_autocomplete": "seguridad_permisos",
     "editar_roles_permisos": "seguridad_permisos",
+    "permiso_para_rol_autocomplete": "seguridad_permisos",
     "eliminar_rol_permiso": "seguridad_permisos",
     "usuarios_permisos": "seguridad_permisos",
     "configuracion_funcionalidades": "configuracion_funcionalidades",
@@ -691,6 +723,21 @@ ROUTE_PERMISSION_ALTERNATIVES = {
     "ver_venta": ["ventas_ver", "ventas_imprimir", "ventas_cambios"],
     "ticket_texto": ["ventas_ver", "ventas_imprimir", "ventas_cambios"],
     "imprimir_factura": ["ventas_ver", "ventas_imprimir", "ventas_cambios"],
+    "proveedor_precios_autocomplete": ["precios_proveedor_crear", "precios_proveedor_editar"],
+    "producto_precios_autocomplete": ["precios_proveedor_crear", "precios_proveedor_editar"],
+    "proveedor_con_productos_autocomplete": [
+        "precios_proveedor_ver",
+        "pedidos_crear",
+        "pedidos_editar",
+    ],
+    "rol_autocomplete_usuarios": ["usuarios_crear", "usuarios_editar"],
+    "usuario_autocomplete": ["empleados_crear", "empleados_editar"],
+    "empleado_sucursal_autocomplete": ["empleados_crear", "empleados_editar"],
+    "horarios_sucursal_autocomplete": ["horarios_crear", "horarios_editar"],
+    "puntopago_horario_caja_autocomplete": ["horarios_caja_crear", "pedidos_editar"],
+    "pedido_sucursal_autocomplete": ["pedidos_crear", "pedidos_editar"],
+    "producto_pedido_autocomplete": ["pedidos_crear", "pedidos_editar"],
+    "sucursal_autocomplete_simple": ["inventarios_editar", "inventarios_fotos"],
     "inventario_plaza_whatsapp": ["inventario_plaza_whatsapp", "inventarios_ver", "inventarios_editar", "inventarios_fotos"],
     "producto_inventario_buscar_nombre": ["inventarios_ver", "inventarios_editar", "inventarios_fotos", "reportes_ventas_producto"],
     "producto_inventario_buscar_barras": ["inventarios_ver", "inventarios_editar", "inventarios_fotos", "reportes_ventas_producto"],
@@ -816,7 +863,6 @@ NAV_GROUPS = [
             {"label": "Dashboard turnos", "url_name": "turnos_caja_dashboard"},
             {"label": "Admin turnos", "url_name": "turnos_caja_admin"},
             {"label": "Notificaciones Nequi", "url_name": "nequi_notificaciones"},
-            {"label": "Abrir caja (ventas)", "url_name": "abrir_caja"},
         ],
     },
     {
@@ -895,26 +941,39 @@ def sync_permission_catalog() -> int:
     return created
 
 
-def grant_all_permissions_to_web_master(role_id: int = 1) -> int:
+def grant_all_permissions_to_web_master(role_id: Optional[int] = None) -> int:
     sync_permission_catalog()
-    role = Rol.objects.filter(pk=role_id).first()
-    if not role or normalize_permission_key(role.nombre) != "web_master":
+    roles = Rol.objects.all()
+    if role_id is not None:
+        roles = roles.filter(pk=role_id)
+    web_master_roles = [
+        role
+        for role in roles
+        if normalize_permission_key(role.nombre) == "web_master"
+    ]
+    if not web_master_roles:
         return 0
 
     permissions = list(Permiso.objects.all())
-    existing_ids = set(
-        RolPermiso.objects
-        .filter(rol=role)
-        .values_list("permiso_id", flat=True)
-    )
-    missing = [
-        RolPermiso(rol=role, permiso=permission)
-        for permission in permissions
-        if permission.pk not in existing_ids
-    ]
-    if missing:
-        RolPermiso.objects.bulk_create(missing, ignore_conflicts=True)
-    return len(missing)
+    granted = 0
+    for role in web_master_roles:
+        existing_ids = set(
+            RolPermiso.objects
+            .filter(rol=role)
+            .values_list("permiso_id", flat=True)
+        )
+        missing = [
+            RolPermiso(rol=role, permiso=permission)
+            for permission in permissions
+            if permission.pk not in existing_ids
+        ]
+        if missing:
+            RolPermiso.objects.bulk_create(missing, ignore_conflicts=True)
+            granted += len(missing)
+
+    if granted:
+        _bump_permission_cache_version()
+    return granted
 
 
 def role_name(user) -> str:
@@ -1102,9 +1161,11 @@ def user_can_access_url_name(user, url_name: Optional[str]) -> bool:
         return getattr(user, "is_authenticated", False)
     if disabled_feature_for_url(url_name):
         return False
+    if is_web_master_role(user):
+        return True
     if url_name in CAJERO_PRINT_ONLY_URL_NAMES and normalize_permission_key(role_name(user)) == "cajero":
         return True
-    if url_name in WEB_MASTER_ONLY_URL_NAMES and not is_web_master_role(user):
+    if url_name in WEB_MASTER_ONLY_URL_NAMES:
         return False
     permissions = route_permissions_for_url_name(url_name)
     if not permissions:
@@ -1130,9 +1191,14 @@ def _resolve_nav_item(raw_item: Dict[str, object], user) -> Optional[Dict[str, o
 
 
 def _nav_cache_key(user) -> str:
+    feature_signature = ",".join(
+        f"{key}:{int(is_feature_enabled(key))}"
+        for key in sorted(FEATURE_REGISTRY)
+    )
     return ":".join([
         "mainapp:nav",
         _permission_cache_version(),
+        feature_signature,
         str(getattr(user, "pk", "anon") or "anon"),
         str(getattr(user, "rolid_id", "") or "none"),
         "1" if getattr(user, "is_staff", False) else "0",
@@ -1177,20 +1243,48 @@ def _visible_nav_menu(user) -> List[Dict[str, object]]:
     return menu
 
 
+def _nav_match_score(current_path: str, target_url: str) -> int:
+    if not target_url or target_url == "#":
+        return -1
+    if current_path == target_url:
+        return 100_000 + len(target_url)
+    if target_url == "/":
+        return -1
+    prefix = target_url if target_url.endswith("/") else f"{target_url}/"
+    return len(target_url) if current_path.startswith(prefix) else -1
+
+
 def _mark_nav_active(menu: List[Dict[str, object]], current_path: str) -> List[Dict[str, object]]:
     path = current_path or ""
-    marked = []
-    for item in menu:
-        children = []
-        for child in item.get("children", []):
-            child_url = child.get("url", "#")
-            child_active = path == child_url or (child_url != "/" and path.startswith(child_url))
-            children.append({**child, "active": child_active})
+    best_target = None
+    best_score = -1
 
-        item_url = item.get("url", "#")
-        item_active = path == item_url or (item_url != "/" and path.startswith(item_url))
-        if children:
-            item_active = any(child["active"] for child in children)
+    for item_index, item in enumerate(menu):
+        children = item.get("children", [])
+        candidates = (
+            ((item_index, child_index), child)
+            for child_index, child in enumerate(children)
+        ) if children else [((item_index, None), item)]
+        for target, candidate in candidates:
+            score = _nav_match_score(path, str(candidate.get("url", "#")))
+            if score > best_score:
+                best_target = target
+                best_score = score
+
+    marked = []
+    for item_index, item in enumerate(menu):
+        children = [
+            {
+                **child,
+                "active": best_target == (item_index, child_index),
+            }
+            for child_index, child in enumerate(item.get("children", []))
+        ]
+        item_active = (
+            any(child["active"] for child in children)
+            if children
+            else best_target == (item_index, None)
+        )
         marked.append({**item, "active": item_active, "children": children})
     return marked
 

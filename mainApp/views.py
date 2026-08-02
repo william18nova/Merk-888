@@ -108,6 +108,7 @@ from .services.special_discount import (
     preview_one_time_code,
 )
 from .services.feature_flags import (
+    NEQUI_API_FEATURE,
     TURN_REQUIRED_FEATURE,
     FeatureFlagError,
     feature_rows,
@@ -3790,6 +3791,10 @@ class ConfiguracionFuncionalidadesView(LoginRequiredMixin, View):
 
     def _context(self, *, error=""):
         cards = feature_rows()
+        feature_labels = {
+            card["key"]: card["label"]
+            for card in cards
+        }
         active_turns = TurnoCaja.objects.filter(
             estado__in=["ABIERTO", "CIERRE"],
         ).count()
@@ -3803,6 +3808,11 @@ class ConfiguracionFuncionalidadesView(LoginRequiredMixin, View):
             .select_related("funcionalidad", "cambiado_por")
             .order_by("-creado_en", "-id")[:50]
         )
+        for row in history:
+            row.feature_label = feature_labels.get(
+                row.funcionalidad_id,
+                row.funcionalidad_id,
+            )
         return {
             "feature_cards": cards,
             "history_rows": history,
@@ -4686,6 +4696,18 @@ class GenerarVentaView(LoginRequiredMixin, View):
                 )
 
                 if nequi_notificacion_id:
+                    if not locked_feature_enabled(NEQUI_API_FEATURE):
+                        return JsonResponse({
+                            "success": False,
+                            "error": (
+                                "La vinculación automática con Nequi fue "
+                                "desactivada. Actualiza la página y registra "
+                                "la venta como Nequi no vinculada."
+                            ),
+                            "feature_disabled": NEQUI_API_FEATURE,
+                            "configuration_changed": True,
+                            "redirect_url": reverse("generar_venta"),
+                        })
                     if nequi_pago_total <= 0:
                         return JsonResponse({
                             "success": False,
@@ -5531,7 +5553,7 @@ class VentaCarritoAuditListView(LoginRequiredMixin, ListView):
         return context
 
 
-class SucursalAutocompleteView(PaginatedAutocompleteMixin):
+class VentaSucursalAutocompleteView(PaginatedAutocompleteMixin):
     model      = Sucursal
     text_field = "nombre"
     id_field   = "sucursalid"
@@ -8490,6 +8512,19 @@ def _nequi_summary():
     }
 
 
+def _nequi_api_disabled_response():
+    response = JsonResponse({
+        "success": False,
+        "error": (
+            "El API de Nequi está desactivado en la configuración del sistema."
+        ),
+        "feature_disabled": NEQUI_API_FEATURE,
+    }, status=409)
+    response["Cache-Control"] = "no-store, max-age=0"
+    response["Pragma"] = "no-cache"
+    return response
+
+
 class NequiNotificacionesView(LoginRequiredMixin, TemplateView):
     template_name = "nequi_notificaciones.html"
 
@@ -8573,6 +8608,8 @@ class NequiNotificacionesEliminarSeleccionadasView(LoginRequiredMixin, View):
 
 class NequiNotificacionesDisponiblesView(LoginRequiredMixin, View):
     def get(self, request, *args, **kwargs):
+        if not is_feature_enabled(NEQUI_API_FEATURE):
+            return _nequi_api_disabled_response()
         items = list(
             NotificacionNequi.objects
             .filter(venta__isnull=True, monto__isnull=False, monto__gt=0)
@@ -8653,6 +8690,8 @@ class NequiNotificationWebhookView(View):
         request_token = str(self._request_token(request, payload)).strip()
         if not hmac.compare_digest(request_token, configured_token):
             return JsonResponse({"success": False, "error": "Token invalido."}, status=403)
+        if not is_feature_enabled(NEQUI_API_FEATURE, fresh=True):
+            return _nequi_api_disabled_response()
 
         title = _nequi_field(
             payload,
@@ -8693,20 +8732,23 @@ class NequiNotificationWebhookView(View):
         fingerprint = _make_nequi_fingerprint(payload, title, text, package, received_at)
         safe_payload = {key: value for key, value in payload.items() if key.lower() != "token"}
 
-        notification, created = NotificacionNequi.objects.get_or_create(
-            fingerprint=fingerprint,
-            defaults={
-                "titulo": title[:180],
-                "texto": text or title,
-                "app": app_name[:120],
-                "paquete": package[:160],
-                "monto": amount,
-                "remitente": sender[:160],
-                "referencia": reference[:120],
-                "recibido_en": received_at,
-                "raw_payload": safe_payload,
-            },
-        )
+        with transaction.atomic():
+            if not locked_feature_enabled(NEQUI_API_FEATURE):
+                return _nequi_api_disabled_response()
+            notification, created = NotificacionNequi.objects.get_or_create(
+                fingerprint=fingerprint,
+                defaults={
+                    "titulo": title[:180],
+                    "texto": text or title,
+                    "app": app_name[:120],
+                    "paquete": package[:160],
+                    "monto": amount,
+                    "remitente": sender[:160],
+                    "referencia": reference[:120],
+                    "recibido_en": received_at,
+                    "raw_payload": safe_payload,
+                },
+            )
 
         return JsonResponse({
             "success": True,

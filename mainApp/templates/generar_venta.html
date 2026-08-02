@@ -256,7 +256,8 @@
   window.abrirCajaUrl                   = "{% url 'abrir_caja' %}";
   window.carritoLimpioAuditUrl          = "{% url 'venta_carrito_limpio_audit' %}";
   window.carritoAuditRoleName           = "{{ request.user.rolid.nombre|default:''|escapejs }}";
-  window.nequiNotificacionesDisponiblesUrl = "{% url 'nequi_notificaciones_disponibles' %}";
+  window.nequiApiEnabled                  = {% if system_features.nequi_api_recepcion %}true{% else %}false{% endif %};
+  window.nequiNotificacionesDisponiblesUrl = {% if system_features.nequi_api_recepcion %}"{% url 'nequi_notificaciones_disponibles' %}"{% else %}""{% endif %};
   window.turnoCajaRequerido              = {% if turno_requerido %}true{% else %}false{% endif %};
   window.ventaSucursalIdServidor         = "{{ form.initial.sucursal|default:''|escapejs }}";
   window.ventaPuntoPagoIdServidor        = "{{ form.initial.puntopago|default:''|escapejs }}";
@@ -271,5 +272,5 @@
   if (!/^https?:\/\//.test(window.POS_AGENT_URL)) window.POS_AGENT_URL = "http://127.0.0.1:8787";
 </script>
 
-<script src="{% static 'javascript/generar_venta.js' %}?v=25"></script>
+<script src="{% static 'javascript/generar_venta.js' %}?v=26"></script>
 {% endblock %}

@@ -63,7 +63,7 @@
 
   <script>
     const usuarioAutocompleteUrl  = "{% url 'usuario_autocomplete' %}?current={{ form.instance.usuarioid_id|default:'' }}";
-    const sucursalAutocompleteUrl = "{% url 'sucursal_autocomplete' %}";
+    const sucursalAutocompleteUrl = "{% url 'empleado_sucursal_autocomplete' %}";
   </script>
   <script defer src="{% static 'javascript/editar_empleado.js' %}"></script>
 {% endblock %}

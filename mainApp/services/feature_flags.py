@@ -7,6 +7,7 @@ from django.db import DatabaseError, transaction
 
 
 TURN_REQUIRED_FEATURE = "ventas_exigir_turno_caja"
+NEQUI_API_FEATURE = "nequi_api_recepcion"
 FEATURE_CACHE_SECONDS = 3
 
 
@@ -29,6 +30,32 @@ FEATURE_REGISTRY = {
         "default_enabled": True,
         "critical": True,
     },
+    NEQUI_API_FEATURE: {
+        "key": NEQUI_API_FEATURE,
+        "category": "Integraciones",
+        "label": "Recepción automática del API de Nequi",
+        "description": (
+            "Controla si MacroDroid puede registrar nuevas notificaciones "
+            "y si estas se pueden seleccionar al generar una venta."
+        ),
+        "enabled_help": (
+            "El API acepta notificaciones válidas y las deja disponibles "
+            "para vincularlas con una venta."
+        ),
+        "disabled_help": (
+            "El API rechazará notificaciones nuevas y se ocultará el selector "
+            "de envíos en ventas. El historial y los vínculos existentes se "
+            "conservarán."
+        ),
+        "impacts": [
+            "MacroDroid dejará de registrar nuevas notificaciones de Nequi.",
+            "El selector de envíos disponibles se ocultará al generar ventas.",
+            "Las notificaciones y ventas vinculadas existentes se conservarán.",
+            "Se podrán seguir registrando ventas con Nequi como no vinculadas.",
+        ],
+        "default_enabled": True,
+        "critical": True,
+    },
 }
 
 
@@ -45,6 +72,9 @@ FEATURE_ROUTES = {
         "turno_caja_iniciar",
         "turno_caja_retiro_actual",
         "turno_caja_retiro",
+    },
+    NEQUI_API_FEATURE: {
+        "macrodroid_nequi_webhook",
     },
 }
 

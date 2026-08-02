@@ -14,7 +14,9 @@ $(function () {
   const VERIFICAR_URL   = window.verificarProductoUrl;
   const POR_COD_URL     = window.buscarProductoPorCodigoUrl;
   const SNAPSHOT_URL    = window.productoSnapshotUrl || "/api/productos/snapshot/";
+  const NEQUI_FEATURE_KEY = "nequi_api_recepcion";
   const NEQUI_DISPONIBLES_URL = window.nequiNotificacionesDisponiblesUrl || "";
+  let nequiApiEnabled = window.nequiApiEnabled !== false && !!NEQUI_DISPONIBLES_URL;
   const CARRITO_LIMPIO_AUDIT_URL = window.carritoLimpioAuditUrl || "";
   const CARRITO_AUDIT_ROLE = String(window.carritoAuditRoleName || "")
     .toLowerCase()
@@ -3556,8 +3558,20 @@ $(function () {
     renderNequiPaymentList();
   }
 
+  function disableNequiLinking(message = ""){
+    nequiApiEnabled = false;
+    stopNequiAutoRefresh();
+    resetNequiPaymentState({ clearCache: true });
+    $nequiPanel.prop("hidden", true);
+    if (message) showMixError(`${message} La venta puede continuar como Nequi no vinculada.`);
+  }
+
   function shouldAutoRefreshNequi(){
-    return isModalOpen() && getCheckedMedios().includes("nequi");
+    return nequiApiEnabled
+      && !!$nequiPanel.length
+      && !!NEQUI_DISPONIBLES_URL
+      && isModalOpen()
+      && getCheckedMedios().includes("nequi");
   }
 
   function queueNequiAutoRefresh(){
@@ -3571,7 +3585,7 @@ $(function () {
   }
 
   function startNequiAutoRefresh(){
-    if (!$nequiPanel.length || !NEQUI_DISPONIBLES_URL) return;
+    if (!nequiApiEnabled || !$nequiPanel.length || !NEQUI_DISPONIBLES_URL) return;
     if (nequiAutoRefreshTimer) clearTimeout(nequiAutoRefreshTimer);
     nequiAutoRefreshTimer = null;
     queueNequiAutoRefresh();
@@ -3587,7 +3601,7 @@ $(function () {
   }
 
   async function loadNequiPayments(force = false, { silent = false } = {}){
-    if (!$nequiPanel.length || !NEQUI_DISPONIBLES_URL) return;
+    if (!nequiApiEnabled || !$nequiPanel.length || !NEQUI_DISPONIBLES_URL) return;
     if (nequiPaymentsLoading) return;
     if (nequiPaymentsLoaded && !force){
       renderNequiPaymentList();
@@ -3609,6 +3623,10 @@ $(function () {
         signal: nequiLastFetchController.signal
       });
       const data = await response.json();
+      if (data?.feature_disabled === NEQUI_FEATURE_KEY){
+        disableNequiLinking(data.error || "La vinculación con Nequi está desactivada.");
+        return;
+      }
       if (!response.ok || !data.success) throw new Error(data.error || "No se pudieron cargar los envios.");
 
       const items = Array.isArray(data.items) ? data.items : [];
@@ -3636,7 +3654,7 @@ $(function () {
 
   function refreshNequiPanel(){
     if (!$nequiPanel.length) return;
-    const active = getCheckedMedios().includes("nequi");
+    const active = nequiApiEnabled && getCheckedMedios().includes("nequi");
     $nequiPanel.prop("hidden", !active);
 
     if (!active){

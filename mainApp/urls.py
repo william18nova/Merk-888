@@ -150,7 +150,11 @@ urlpatterns = [
 
     path("agregar_empleado/", EmpleadoCreateAJAXView.as_view(), name="agregar_empleado"),
     path("autocomplete/usuario/",   UsuarioDisponibleAutocomplete.as_view(), name="usuario_autocomplete"),
-    path("autocomplete/sucursal/",  SucursalAutocomplete.as_view(), name="sucursal_autocomplete"),
+    path(
+        "autocomplete/empleados/sucursal/",
+        SucursalAutocomplete.as_view(),
+        name="empleado_sucursal_autocomplete",
+    ),
     path("visualizar_empleados/",EmpleadoListView.as_view(), name="visualizar_empleados"),
     path("empleados/editar/<int:empleado_id>/", views.EmpleadoUpdateAJAXView.as_view(), name="editar_empleado"),
     path('eliminar_empleado/<int:empleado_id>/', views.eliminar_empleado_view, name='eliminar_empleado'),
@@ -193,7 +197,7 @@ urlpatterns = [
     path("ventas/auditoria/carrito-limpiado/", views.VentaCarritoLimpioAuditView.as_view(), name="venta_carrito_limpio_audit"),
 
     # Autocompletes
-    path('autocomplete/sucursal/',   views.SucursalAutocompleteView.as_view(),
+    path('autocomplete/sucursal/',   views.VentaSucursalAutocompleteView.as_view(),
          name='sucursal_autocomplete'),
 
     path('autocomplete/puntopago/',  views.PuntoPagoAutocompleteView.as_view(),
@@ -219,22 +223,17 @@ urlpatterns = [
     path('ver_venta/<int:venta_id>/', views.VentaDetailView.as_view(), name='ver_venta'),
     path("ventas/ticket-texto/", views.TicketTextoView.as_view(), name="ticket_texto"),
     path("cambios/", views.CambiosListView.as_view(), name="visualizar_cambios"),
-    path("ventas/imprimir/", views.ImprimirFacturaView.as_view(), name="imprimir_factura"),
-
-
-
     path("agregar_pedido/", views.PedidoProveedorCreateAJAXView.as_view(), name="agregar_pedido"),
+    path(
+        "autocomplete/pedidos/sucursal/",
+        SucursalAutocomplete.as_view(),
+        name="pedido_sucursal_autocomplete",
+    ),
     path("autocomplete/producto_pedido/", views.ProductoPedidoAutocomplete.as_view(), name="producto_pedido_autocomplete"),
     path("visualizar_pedidos/", views.PedidoListView.as_view(), name="visualizar_pedidos"),
     path('eliminar_pedido/<int:pedido_id>/', views.eliminar_pedido, name='eliminar_pedido'),
     path('ver_pedido/<int:pedido_id>/', views.PedidoDetailView.as_view(), name='ver_pedido'),
     path('editar_pedido/<int:pedido_id>/', views.EditarPedidoView.as_view(), name='editar_pedido'),
-    path(
-      "autocomplete/puntopago/",
-      views.PuntoPagoPorSucursalAutocomplete.as_view(),
-      name="puntopago_autocomplete"
-    ),
-
      path("logout/", auth_views.LogoutView.as_view(next_page="login"), name="logout"),
 
      path("permisos/agregar/", views.PermisoCreateView.as_view(), name="permiso_agregar"),
@@ -263,9 +262,6 @@ urlpatterns = [
          name="permiso_para_rol_autocomplete"),
      path("usuarios_permisos/", views.UsuarioPermisoAssignView.as_view(),
          name="usuarios_permisos"),
-     # eliminar relación ya existente en visualizar:
-     path("roles_permisos/eliminar/<int:rp_id>/", views.eliminar_rol_permiso_view,
-         name="eliminar_rol_permiso"),
 
      path("ventas_diarias/", views.VentasDiariasView.as_view(), name="ventas_diarias"),
      path("autocomplete/sucursal_ventas/", views.SucursalParaVentasAutocomplete.as_view(),

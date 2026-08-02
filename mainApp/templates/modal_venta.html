@@ -131,6 +131,7 @@
 
     </div>
 
+    {% if system_features.nequi_api_recepcion %}
     <div id="nequi-payment-panel" class="nequi-payment-panel" hidden>
       <div class="nequi-payment-head">
         <div>
@@ -146,6 +147,7 @@
       <div id="nequi-payment-list" class="nequi-payment-list"></div>
       <small id="nequi-payment-status" class="nequi-payment-status">Cargando envios...</small>
     </div>
+    {% endif %}
 
     <div style="margin-top:.8rem">
       <div id="mix-error"></div>
