@@ -182,17 +182,18 @@ $(function () {
   }
 
   /* ================== Estado persistido ================== */
-  let sucursalID = (localStorage.getItem("sucursalID") || "").toString().match(/\d+/)?.[0] || "";
-  const savedPunto = {
-    id:  localStorage.getItem("puntopagoID") || "",
-    name:localStorage.getItem("puntopagoName") || "",
-    suc: localStorage.getItem("puntopagoSucursalID") || ""
-  };
+  const serverSucursalID = String(
+    window.ventaSucursalIdServidor || $("#sucursal_id").val() || ""
+  ).match(/\d+/)?.[0] || "";
+  const serverPuntoID = String(
+    window.ventaPuntoPagoIdServidor || $("#puntopago_id").val() || ""
+  ).match(/\d+/)?.[0] || "";
+  let sucursalID = serverSucursalID;
   const hasSucursal = () => /^\d+$/.test(String(sucursalID || ""));
 
   (function bootstrapLockedSucursalAndPunto(){
     const domSid = String($("#sucursal_id").val() || "").match(/\d+/)?.[0] || "";
-    if (!sucursalID && domSid) {
+    if (domSid) {
       sucursalID = domSid;
 
       try {
@@ -616,8 +617,8 @@ $(function () {
       cliente_nombre: ($inpCliente.val() || selectedClientLabel || "").trim(),
       sucursal_id: numericIdFromValue($("#sucursal_id").val() || sucursalID),
       sucursal_nombre: ($("#sucursal_autocomplete").val() || localStorage.getItem("sucursalName") || "").trim(),
-      puntopago_id: numericIdFromValue($("#puntopago_id").val() || localStorage.getItem("puntopagoID")),
-      puntopago_nombre: ($("#puntopago_autocomplete").val() || localStorage.getItem("puntopagoName") || "").trim(),
+      puntopago_id: numericIdFromValue($("#puntopago_id").val()),
+      puntopago_nombre: ($("#puntopago_autocomplete").val() || "").trim(),
       enviado_en: new Date().toISOString(),
     };
   }
@@ -2735,7 +2736,12 @@ $(function () {
 
   /* ================== Prefill sucursal/punto ================== */
   if (sucursalID) {
-    $("#sucursal_autocomplete").val(localStorage.getItem("sucursalName") || "");
+    const serverSucursalName = String(
+      window.ventaSucursalNombreServidor
+      || $("#sucursal_autocomplete").val()
+      || ""
+    );
+    $("#sucursal_autocomplete").val(serverSucursalName);
     $("#sucursal_id").val(sucursalID);
     loadPickBoost(sucursalID);
 
@@ -2743,11 +2749,6 @@ $(function () {
       initCatalogSignature(sucursalID);
       startCatalogPolling(sucursalID, { intervalMs: 2500 });
     });
-  }
-
-  if (savedPunto.id && savedPunto.suc && savedPunto.suc.toString() === sucursalID) {
-    $("#puntopago_autocomplete").val(savedPunto.name || "");
-    $("#puntopago_id").val(savedPunto.id);
   }
 
   /* ================== AC Sucursal / Punto ================== */
@@ -2843,6 +2844,19 @@ $(function () {
       localStorage.setItem("puntopagoName", label);
       localStorage.setItem("puntopagoSucursalID", sucursalID || "");
     }
+  });
+
+  // El punto de pago es una decisión de la sesión actual. Si el cajero edita
+  // o borra el texto, el identificador deja de ser válido de inmediato. No se
+  // restaura automáticamente desde localStorage porque el mismo navegador
+  // puede ser usado después por otro cajero.
+  $("#puntopago_autocomplete").on("input", () => {
+    $("#puntopago_id").val("");
+    try {
+      localStorage.removeItem("puntopagoID");
+      localStorage.removeItem("puntopagoName");
+      localStorage.removeItem("puntopagoSucursalID");
+    } catch {}
   });
 
   /* ================== Cliente ================== */
@@ -4570,6 +4584,9 @@ Total: ${money(total)}${changeMessage}${specialMessage}${nequiMessage}`;
         $("#merk2888-password-input").val("");
         if ($submitBtn.length) $submitBtn.prop("disabled", false);
         alert((r && r.error) || "Error");
+        if (r && r.configuration_changed && r.redirect_url) {
+          window.location.assign(String(r.redirect_url));
+        }
         return;
       }
 

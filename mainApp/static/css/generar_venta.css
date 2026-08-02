@@ -902,3 +902,23 @@ body:has(.page-grid):not(.modal-open):not(.nv-menu-open) .table-wrap{
     grid-template-columns:1fr;
   }
 }
+.venta-mode-notice{
+  margin:0 0 12px;
+  padding:11px 13px;
+  border:1px solid transparent;
+  border-radius:10px;
+  font-size:.92rem;
+  line-height:1.45;
+}
+
+.venta-mode-notice.is-info{
+  border-color:rgba(73, 164, 255, .35);
+  background:rgba(42, 133, 225, .12);
+  color:#d9edff;
+}
+
+.venta-mode-notice.is-error{
+  border-color:rgba(255, 99, 112, .42);
+  background:rgba(218, 55, 71, .13);
+  color:#ffe3e6;
+}

@@ -9,6 +9,7 @@ from .permissions import (
     route_permission_for_url_name,
     user_can_access_url_name,
 )
+from .services.feature_flags import disabled_feature_for_url
 
 
 class PagePermissionMiddleware:
@@ -42,6 +43,24 @@ class PagePermissionMiddleware:
             if wants_json:
                 return JsonResponse({"success": False, "error": "Tu sesion expiro. Vuelve a iniciar sesion."}, status=401)
             return redirect_to_login(request.get_full_path())
+
+        disabled_feature = disabled_feature_for_url(url_name, fresh=True)
+        if disabled_feature:
+            message = (
+                f'La función "{disabled_feature["label"]}" está desactivada '
+                "en la configuración del sistema."
+            )
+            if wants_json:
+                return JsonResponse(
+                    {
+                        "success": False,
+                        "error": message,
+                        "feature_disabled": disabled_feature["key"],
+                    },
+                    status=409,
+                )
+            messages.warning(request, message)
+            return redirect("home")
 
         if user_can_access_url_name(user, url_name):
             return None

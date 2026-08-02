@@ -8,6 +8,7 @@ from django.db import DatabaseError
 from django.urls import NoReverseMatch, reverse
 
 from .models import Permiso, Rol, RolPermiso
+from .services.feature_flags import disabled_feature_for_url
 
 
 ADMIN_ROLE_NAMES = {"admin", "administrador", "supervisor"}
@@ -16,6 +17,7 @@ ALWAYS_ALLOWED_URL_NAMES = {"home"}
 WEB_MASTER_ONLY_URL_NAMES = {
     "ventas_no_realizadas",
     "claves_descuento_merk2888",
+    "configuracion_funcionalidades",
 }
 CAJERO_PRINT_ONLY_URL_NAMES = {"ver_venta", "ticket_texto", "imprimir_factura"}
 
@@ -507,6 +509,19 @@ PERMISSION_DEFINITIONS = [
         "aliases": ["permiso_agregar", "visualizar_permisos", "roles_permisos", "usuarios_permisos"],
     },
     {
+        "code": "configuracion_funcionalidades",
+        "label": "Administrar funcionalidades del sistema",
+        "description": (
+            "Permite activar o desactivar funcionalidades globales preparadas "
+            "para operar en ambos modos. Uso exclusivo Web Master."
+        ),
+        "aliases": [
+            "configuracion_funcionalidades",
+            "funcionalidades del sistema",
+            "feature flags",
+        ],
+    },
+    {
         "code": "visor_barcode",
         "label": "Visor Barcode",
         "description": "Permite usar el visor de codigos de barras.",
@@ -665,6 +680,7 @@ ROUTE_PERMISSIONS = {
     "editar_roles_permisos": "seguridad_permisos",
     "eliminar_rol_permiso": "seguridad_permisos",
     "usuarios_permisos": "seguridad_permisos",
+    "configuracion_funcionalidades": "configuracion_funcionalidades",
     "visor_barcode": "visor_barcode",
     "visor_barcode_buscar": "visor_barcode",
     "visor_barcode_lookup": "visor_barcode",
@@ -813,6 +829,7 @@ NAV_GROUPS = [
             {"label": "Asignar roles-permisos", "url_name": "roles_permisos"},
             {"label": "Visualizar relaciones", "url_name": "visualizar_roles_permisos"},
             {"label": "Permisos por usuario", "url_name": "usuarios_permisos"},
+            {"label": "Funcionalidades del sistema", "url_name": "configuracion_funcionalidades"},
         ],
     },
     {"label": "Visor Barcode", "url_name": "visor_barcode"},
@@ -1083,6 +1100,8 @@ def user_can_access_url_name(user, url_name: Optional[str]) -> bool:
         return True
     if url_name in ALWAYS_ALLOWED_URL_NAMES:
         return getattr(user, "is_authenticated", False)
+    if disabled_feature_for_url(url_name):
+        return False
     if url_name in CAJERO_PRINT_ONLY_URL_NAMES and normalize_permission_key(role_name(user)) == "cajero":
         return True
     if url_name in WEB_MASTER_ONLY_URL_NAMES and not is_web_master_role(user):

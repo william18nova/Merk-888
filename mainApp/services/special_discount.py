@@ -357,6 +357,7 @@ def consume_one_time_code(
     sucursal,
     subtotal,
     descuento,
+    turno_requerido=True,
 ):
     _require_atomic()
     if not getattr(autorizacion, "pk", None):
@@ -388,22 +389,28 @@ def consume_one_time_code(
             "La sucursal de la autorización no coincide con la venta.",
             code="wrong_branch",
         )
-    if turno is None:
+    if turno_requerido and turno is None:
         raise SpecialDiscountError(
             "La venta debe tener un turno de caja activo.",
             code="shift_required",
         )
-    if str(getattr(turno, "estado", "") or "").strip().upper() != "ABIERTO":
+    if turno is not None and (
+        str(getattr(turno, "estado", "") or "").strip().upper() != "ABIERTO"
+    ):
         raise SpecialDiscountError(
             "El turno de caja ya no está abierto.",
             code="shift_not_open",
         )
-    if getattr(turno, "cajero_id", None) != getattr(usada_por, "pk", None):
+    if turno is not None and (
+        getattr(turno, "cajero_id", None) != getattr(usada_por, "pk", None)
+    ):
         raise SpecialDiscountError(
             "El turno no pertenece al cajero que registra la venta.",
             code="wrong_cashier",
         )
-    if getattr(turno, "puntopago_id", None) != venta.puntopagoid_id:
+    if turno is not None and (
+        getattr(turno, "puntopago_id", None) != venta.puntopagoid_id
+    ):
         raise SpecialDiscountError(
             "El punto de pago del turno no coincide con la venta.",
             code="wrong_payment_point",

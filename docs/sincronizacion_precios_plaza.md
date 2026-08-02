@@ -107,12 +107,20 @@ Solo después de aprobar la simulación:
 
 ## Programación
 
-PythonAnywhere debe ejecutar diariamente, a las 14:00 UTC. Crea primero la
-carpeta privada de logs y prueba que el archivo de entorno carga correctamente:
+PythonAnywhere debe ejecutar diariamente, a las 14:00 UTC. Usa el ejecutor
+versionado, que carga el entorno privado, valida las variables y registra toda
+la ejecución (incluidos los errores previos a Django):
 
 ```bash
-mkdir -p /home/Merk888/logs
-source /home/Merk888/.price_sync.env && cd /home/Merk888/Merk-888 && /home/Merk888/.virtualenvs/env/bin/python manage.py actualizar_precios_plaza --apply >> /home/Merk888/logs/precios_plaza.log 2>&1
+/bin/bash /home/Merk888/Merk-888/scripts/run_price_sync.sh
+```
+
+Para probar el ejecutor manualmente sin esperar al calendario, agrega
+`--force`. Esta variante sí aplica los cambios, por lo que debe usarse solo
+después de revisar una simulación:
+
+```bash
+/bin/bash /home/Merk888/Merk-888/scripts/run_price_sync.sh --force
 ```
 
 El comando usa la zona `America/Bogota` del proyecto y se omite internamente
@@ -120,7 +128,9 @@ salvo los martes, viernes y domingos. Las credenciales pueden cargarse desde un
 archivo privado fuera del repositorio o desde el entorno de la cuenta antes de
 ejecutar el comando.
 
-Revisa el registro de la tarea después de cada ejecución. El esquema actual de
+Revisa `/home/Merk888/logs/precios_plaza.log` después de cada ejecución. Cada
+intento incluye fecha UTC, fecha de Bogotá, commit ejecutado y estado final.
+El esquema actual de
 producción también debe contener `productos.precio_anterior`; ese campo existe
 en la base actual, pero el historial legacy de migraciones necesita
 regularizarse antes de reconstruir una base desde cero.

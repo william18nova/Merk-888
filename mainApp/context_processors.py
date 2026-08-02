@@ -2,6 +2,7 @@
 from django.conf import settings
 from django.core.cache import cache
 from .permissions import build_nav_menu
+from .services.feature_flags import FEATURE_REGISTRY, is_feature_enabled
 
 SESSION_USER_CACHE_SECONDS = 300
 
@@ -67,10 +68,15 @@ def pos_agent(request):
 
 def permissions_nav(request):
     user = getattr(request, "user", None)
+    system_features = {
+        key: is_feature_enabled(key)
+        for key in FEATURE_REGISTRY
+    }
     return {
         "nav_menu": build_nav_menu(
             user,
             getattr(request, "path", ""),
         ),
+        "system_features": system_features,
         **_session_user_payload(user),
     }

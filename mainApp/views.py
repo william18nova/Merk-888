@@ -1,7 +1,7 @@
 from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib.auth.decorators import login_required
 from django.contrib import messages
-from .models import Usuario, Sucursal, Categoria, Producto, Inventario, Proveedor, PreciosProveedor, PuntosPago, Rol, Empleado, HorariosNegocio, HorarioCaja, Cliente, Venta, DetalleVenta, PedidoProveedor, DetallePedidoProveedor, CambioDevolucion, ReintegroVenta, Permiso, RolPermiso, UsuarioPermiso, PagoVenta, TurnoCaja, TurnoCajaMedio, NotificacionNequi, VentaCarritoAudit, ClienteEspecial, AutorizacionDescuentoEspecial
+from .models import Usuario, Sucursal, Categoria, Producto, Inventario, Proveedor, PreciosProveedor, PuntosPago, Rol, Empleado, HorariosNegocio, HorarioCaja, Cliente, Venta, DetalleVenta, PedidoProveedor, DetallePedidoProveedor, CambioDevolucion, ReintegroVenta, Permiso, RolPermiso, UsuarioPermiso, PagoVenta, TurnoCaja, TurnoCajaMedio, NotificacionNequi, VentaCarritoAudit, ClienteEspecial, AutorizacionDescuentoEspecial, CambioConfiguracionFuncionalidad
 from django.db.models import Count, Sum, Exists, OuterRef, Q, F, ExpressionWrapper, DecimalField, Value, IntegerField, Case, When, CharField
 from django.http import JsonResponse, HttpResponseBadRequest, HttpResponseForbidden, HttpRequest, HttpResponse
 from django.contrib.auth import authenticate, login as auth_login
@@ -12,6 +12,7 @@ import secrets
 import unicodedata
 import hashlib
 import hmac
+from uuid import uuid4
 from urllib.parse import quote
 from datetime import date, datetime, time
 from django.utils import timezone
@@ -105,6 +106,14 @@ from .services.special_discount import (
     is_special_client,
     lock_one_time_code,
     preview_one_time_code,
+)
+from .services.feature_flags import (
+    TURN_REQUIRED_FEATURE,
+    FeatureFlagError,
+    feature_rows,
+    is_feature_enabled,
+    locked_feature_enabled,
+    set_feature_enabled,
 )
 
 def _round_account_peso(value) -> Decimal:
@@ -360,6 +369,7 @@ class HomePageView(LoginRequiredMixin, TemplateView):
         context = super().get_context_data(**kwargs)
         today = timezone.localdate()
         user = self.request.user
+        turno_caja_requerido = is_feature_enabled(TURN_REQUIRED_FEATURE)
         dashboard_permissions = self._dashboard_permissions(user)
         dashboard_cards = []
 
@@ -390,7 +400,7 @@ class HomePageView(LoginRequiredMixin, TemplateView):
             })
 
         turno = None
-        if dashboard_permissions["cash_turn"]:
+        if dashboard_permissions["cash_turn"] and turno_caja_requerido:
             turno = (
                 TurnoCaja.objects
                 .select_related("puntopago", "puntopago__sucursalid")
@@ -450,11 +460,18 @@ class HomePageView(LoginRequiredMixin, TemplateView):
         turno_label = "Sesion activa"
         turno_detail = "Vista ajustada a los permisos de tu rol."
         turno_status = "neutral"
-        if dashboard_permissions["cash_turn"]:
+        if dashboard_permissions["cash_turn"] and turno_caja_requerido:
             turno_label = "Sin turno abierto"
             turno_detail = "Inicia o recupera un turno para vender."
             turno_status = "warning"
-        if dashboard_permissions["cash_turn"] and turno:
+        elif dashboard_permissions["cash_turn"]:
+            turno_label = "Ventas sin turno"
+            turno_detail = (
+                "El control de apertura, cierre y cuadre individual está "
+                "desactivado."
+            )
+            turno_status = "neutral"
+        if dashboard_permissions["cash_turn"] and turno_caja_requerido and turno:
             turno_label = f"Turno {turno.estado.lower()}"
             puntopago = getattr(turno, "puntopago", None)
             sucursal = getattr(puntopago, "sucursalid", None)
@@ -468,7 +485,11 @@ class HomePageView(LoginRequiredMixin, TemplateView):
         if dashboard_permissions["cash_turn"]:
             dashboard_cards.insert(1 if dashboard_permissions["sales_summary"] else 0, {
                 "label": "Turno actual",
-                "value": self._money(turno_total) if turno else "Pendiente",
+                "value": (
+                    self._money(turno_total)
+                    if turno
+                    else ("Pendiente" if turno_caja_requerido else "No requerido")
+                ),
                 "detail": turno_detail,
                 "tone": turno_status,
             })
@@ -483,6 +504,7 @@ class HomePageView(LoginRequiredMixin, TemplateView):
             "dashboard_turno_label": turno_label,
             "dashboard_turno_detail": turno_detail,
             "dashboard_turno_status": turno_status,
+            "dashboard_turno_requerido": turno_caja_requerido,
             "dashboard_cards": dashboard_cards,
             "dashboard_permissions": dashboard_permissions,
             "dashboard_low_stock": low_stock_items,
@@ -3725,6 +3747,139 @@ class ClavesDescuentoMerk2888View(LoginRequiredMixin, View):
             return self._render(request, error=str(exc), status=400)
 
 
+@method_decorator(never_cache, name="dispatch")
+@method_decorator(
+    sensitive_post_parameters("password_web_master"),
+    name="dispatch",
+)
+class ConfiguracionFuncionalidadesView(LoginRequiredMixin, View):
+    """Panel global de funciones soportadas en modo encendido y apagado."""
+
+    template_name = "configuracion_funcionalidades.html"
+
+    def dispatch(self, request, *args, **kwargs):
+        if (
+            getattr(request.user, "is_authenticated", False)
+            and not is_web_master_role(request.user)
+        ):
+            return HttpResponseForbidden(
+                "Solo el rol Web Master puede administrar las funcionalidades."
+            )
+        return super().dispatch(request, *args, **kwargs)
+
+    @staticmethod
+    def _no_store(response):
+        response["Cache-Control"] = (
+            "no-store, no-cache, must-revalidate, max-age=0"
+        )
+        response["Pragma"] = "no-cache"
+        return response
+
+    @staticmethod
+    def _client_ip(request):
+        raw = (
+            request.META.get("HTTP_X_FORWARDED_FOR")
+            or request.META.get("REMOTE_ADDR")
+            or ""
+        )
+        raw = str(raw).split(",")[0].strip()
+        try:
+            return str(ipaddress.ip_address(raw))
+        except ValueError:
+            return None
+
+    def _context(self, *, error=""):
+        cards = feature_rows()
+        active_turns = TurnoCaja.objects.filter(
+            estado__in=["ABIERTO", "CIERRE"],
+        ).count()
+        for card in cards:
+            card["request_id"] = str(uuid4())
+            if card["key"] == TURN_REQUIRED_FEATURE:
+                card["active_turns"] = active_turns
+
+        history = list(
+            CambioConfiguracionFuncionalidad.objects
+            .select_related("funcionalidad", "cambiado_por")
+            .order_by("-creado_en", "-id")[:50]
+        )
+        return {
+            "feature_cards": cards,
+            "history_rows": history,
+            "active_turns": active_turns,
+            "error": error,
+        }
+
+    def _render(self, request, *, error="", status=200):
+        response = render(
+            request,
+            self.template_name,
+            self._context(error=error),
+            status=status,
+        )
+        return self._no_store(response)
+
+    def get(self, request, *args, **kwargs):
+        return self._render(request)
+
+    def post(self, request, *args, **kwargs):
+        if not is_web_master_role(request.user):
+            return HttpResponseForbidden(
+                "Solo el rol Web Master puede administrar las funcionalidades."
+            )
+
+        password = request.POST.get("password_web_master") or ""
+        if not request.user.check_password(password):
+            return self._render(
+                request,
+                error="La contraseña del Web Master no es correcta.",
+                status=400,
+            )
+
+        enabled_raw = (request.POST.get("enabled") or "").strip()
+        if enabled_raw not in {"0", "1"}:
+            return self._render(
+                request,
+                error="El estado solicitado no es válido.",
+                status=400,
+            )
+
+        try:
+            result = set_feature_enabled(
+                key=request.POST.get("key"),
+                enabled=enabled_raw == "1",
+                expected_version=request.POST.get("version"),
+                actor=request.user,
+                reason=request.POST.get("reason"),
+                request_id=request.POST.get("request_id"),
+                ip=self._client_ip(request),
+                user_agent=request.META.get("HTTP_USER_AGENT", ""),
+            )
+        except FeatureFlagError as exc:
+            status = 409 if exc.code in {
+                "active_cash_turns",
+                "stale_version",
+            } else 400
+            return self._render(request, error=str(exc), status=status)
+
+        if result.duplicate:
+            messages.info(
+                request,
+                "Esta solicitud ya había sido procesada; no se repitió el cambio.",
+            )
+        elif result.changed:
+            state_label = "activada" if result.enabled else "desactivada"
+            messages.success(
+                request,
+                f"La funcionalidad fue {state_label} correctamente.",
+            )
+        else:
+            messages.info(request, "La funcionalidad ya tenía ese estado.")
+
+        response = redirect("configuracion_funcionalidades")
+        return self._no_store(response)
+
+
 @method_decorator(
     sensitive_post_parameters(
         "empleado_password",
@@ -3758,11 +3913,11 @@ class GenerarVentaView(LoginRequiredMixin, View):
             return None
         return getattr(pp, "sucursalid", None) or getattr(pp, "sucursal", None)
 
-    def _lock_fields(self, form):
+    def _lock_fields(self, form, field_names=("sucursal", "puntopago")):
         """
         Bloquea campos en el form (solo UX; el backend igual ignora POST).
         """
-        for fname in ("sucursal", "puntopago"):
+        for fname in field_names:
             if fname in form.fields:
                 form.fields[fname].disabled = True
                 form.fields[fname].widget.attrs.update({
@@ -3859,30 +4014,69 @@ class GenerarVentaView(LoginRequiredMixin, View):
 
     # ---------- GET ----------
     def get(self, request, *args, **kwargs):
-        turno = self._get_turno_activo(request.user)
-        if not turno:
+        turno_requerido = is_feature_enabled(
+            TURN_REQUIRED_FEATURE,
+            fresh=True,
+        )
+        turno = self._get_turno_activo(request.user) if turno_requerido else None
+        if turno_requerido and not turno:
             messages.error(request, "Debes iniciar un turno de caja para poder generar ventas.")
             return redirect("turno_caja")
+
         initial = {}
         suc_inst = None
         pp_inst = None
+        config_error = ""
+        puntos_disponibles = True
 
         if turno:
             pp_inst = getattr(turno, "puntopago", None)
             suc_inst = self._resolve_sucursal_from_turno(turno)
-
+        else:
+            empleado = getattr(request.user, "empleado", None)
+            suc_inst = getattr(empleado, "sucursalid", None) if empleado else None
             if suc_inst:
-                initial["sucursal"] = getattr(suc_inst, "pk", suc_inst)
-            if pp_inst:
-                initial["puntopago"] = getattr(pp_inst, "pk", pp_inst)
+                puntos = list(
+                    PuntosPago.objects
+                    .filter(sucursalid=suc_inst)
+                    .order_by("nombre", "puntopagoid")[:2]
+                )
+                puntos_disponibles = bool(puntos)
+                if len(puntos) == 1:
+                    pp_inst = puntos[0]
+                elif not puntos:
+                    config_error = (
+                        "Tu sucursal asignada no tiene puntos de pago. "
+                        "Crea uno antes de generar ventas."
+                    )
+            else:
+                puntos_disponibles = False
+                config_error = (
+                    "Tu empleado no tiene una sucursal asignada. "
+                    "Solicita al Web Master que complete ese dato antes de vender."
+                )
+
+        if suc_inst:
+            initial["sucursal"] = getattr(suc_inst, "pk", suc_inst)
+        if pp_inst:
+            initial["puntopago"] = getattr(pp_inst, "pk", pp_inst)
 
         form = GenerarVentaForm(request.GET or None, initial=initial)
 
         if turno:
             form = self._lock_fields(form)
+        elif suc_inst:
+            form = self._lock_fields(form, ("sucursal",))
 
         ctx = self._base_context(form)
         ctx["turno_activo"] = bool(turno)
+        ctx["turno_requerido"] = turno_requerido
+        ctx["venta_habilitada"] = bool(turno) or (
+            not turno_requerido
+            and bool(suc_inst)
+            and puntos_disponibles
+        )
+        ctx["config_error"] = config_error
         ctx["turno_id"]     = getattr(turno, "pk", None)
         ctx["sucursal_nombre"]  = getattr(suc_inst, "nombre", "") if suc_inst else ""
         ctx["puntopago_nombre"] = getattr(pp_inst, "nombre", "") if pp_inst else ""
@@ -3891,28 +4085,51 @@ class GenerarVentaView(LoginRequiredMixin, View):
 
     # ---------- POST ----------
     def post(self, request, *args, **kwargs):
-        # ✅ 1) turno obligatorio
-        turno = self._get_turno_activo(request.user)
-        if not turno:
+        turno_requerido = is_feature_enabled(
+            TURN_REQUIRED_FEATURE,
+            fresh=True,
+        )
+        turno = self._get_turno_activo(request.user) if turno_requerido else None
+        if turno_requerido and not turno:
             return JsonResponse({
                 "success": False,
-                "error": "No puedes generar ventas porque NO tienes un turno de caja iniciado (ABIERTO)."
+                "error": "No puedes generar ventas porque NO tienes un turno de caja iniciado (ABIERTO).",
+                "configuration_changed": True,
+                "redirect_url": reverse("turno_caja"),
             })
 
-        # ✅ 2) sucursal y punto pago SOLO salen del turno (no del POST)
-        pp_inst  = getattr(turno, "puntopago", None)
-        suc_inst = self._resolve_sucursal_from_turno(turno)
-
-        if not pp_inst or not suc_inst:
-            return JsonResponse({
-                "success": False,
-                "error": "Tu turno activo no tiene punto de pago y/o sucursal asociada. Revisa la configuración."
-            })
-
-        # ✅ 3) inyectar sucursal/puntopago para que el form valide aunque estén disabled
         post_data = request.POST.copy()
-        post_data["sucursal"]  = str(getattr(suc_inst, "pk", suc_inst))
-        post_data["puntopago"] = str(getattr(pp_inst, "pk", pp_inst))
+        pp_inst = None
+        suc_inst = None
+
+        if turno_requerido:
+            # En modo controlado, ubicación y caja solo salen del turno.
+            pp_inst = getattr(turno, "puntopago", None)
+            suc_inst = self._resolve_sucursal_from_turno(turno)
+            if not pp_inst or not suc_inst:
+                return JsonResponse({
+                    "success": False,
+                    "error": (
+                        "Tu turno activo no tiene punto de pago y/o sucursal "
+                        "asociada. Revisa la configuración."
+                    ),
+                })
+            post_data["sucursal"] = str(getattr(suc_inst, "pk", suc_inst))
+            post_data["puntopago"] = str(getattr(pp_inst, "pk", pp_inst))
+        else:
+            # Sin turnos, la sucursal sigue siendo autoritativa desde el
+            # empleado autenticado. El navegador solo elige una caja de ella.
+            empleado = getattr(request.user, "empleado", None)
+            suc_inst = getattr(empleado, "sucursalid", None) if empleado else None
+            if not suc_inst:
+                return JsonResponse({
+                    "success": False,
+                    "error": (
+                        "Tu empleado no tiene una sucursal asignada. "
+                        "No es posible determinar de qué inventario vender."
+                    ),
+                })
+            post_data["sucursal"] = str(suc_inst.pk)
 
         form = GenerarVentaForm(post_data)
         if not form.is_valid():
@@ -3921,6 +4138,19 @@ class GenerarVentaView(LoginRequiredMixin, View):
             return JsonResponse({'success': False, 'error': 'Formulario inválido.'})
 
         data = form.cleaned_data
+        if not turno_requerido:
+            pp_inst = data.get("puntopago")
+            if (
+                pp_inst is None
+                or pp_inst.sucursalid_id != getattr(suc_inst, "pk", None)
+            ):
+                return JsonResponse({
+                    "success": False,
+                    "error": (
+                        "El punto de pago seleccionado no pertenece a tu "
+                        "sucursal asignada."
+                    ),
+                })
 
         productos  = data['productos']     # LISTA (por clean_productos)
         cantidades = data['cantidades']    # LISTA (por clean_cantidades)
@@ -4079,6 +4309,7 @@ class GenerarVentaView(LoginRequiredMixin, View):
             codigo_descuento_merk2888=codigo_descuento_merk2888,
             subtotal_original=subtotal_original,
             turno=turno,
+            turno_requerido=turno_requerido,
             nequi_notificacion_id=nequi_notificacion_id,
         )
 
@@ -4364,7 +4595,8 @@ class GenerarVentaView(LoginRequiredMixin, View):
         cliente_inst=None, empleado_comprador=None, descuento_empleado=Decimal("0"),
         beneficio_web_master=False, beneficio_merk2888=False,
         autorizacion_descuento_id=None, codigo_descuento_merk2888="",
-        subtotal_original=Decimal("0"), turno=None, nequi_notificacion_id=None
+        subtotal_original=Decimal("0"), turno=None, turno_requerido=True,
+        nequi_notificacion_id=None
     ):
         """
         ULTRA FAST:
@@ -4398,26 +4630,49 @@ class GenerarVentaView(LoginRequiredMixin, View):
             prod_ids = list(qty_map.keys())
 
             with transaction.atomic():
-                turno_id = getattr(turno, "pk", turno)
-                turno = (
-                    TurnoCaja.objects
-                    .select_for_update()
-                    .filter(
-                        pk=turno_id,
-                        cajero=user,
-                        puntopago=pp_inst,
-                        estado="ABIERTO",
-                    )
-                    .first()
+                # El mismo bloqueo es usado por el panel de configuración y
+                # por el inicio de turnos. Así un cambio concurrente nunca deja
+                # una venta a mitad entre ambos modos.
+                turno_requerido_actual = locked_feature_enabled(
+                    TURN_REQUIRED_FEATURE,
                 )
-                if not turno:
-                    return JsonResponse({
-                        "success": False,
-                        "error": (
-                            "El turno de caja cambió o ya fue cerrado. "
-                            "Actualiza la página antes de intentar otra venta."
-                        ),
-                    })
+                if turno_requerido_actual:
+                    turno_id = getattr(turno, "pk", turno)
+                    turno = (
+                        TurnoCaja.objects
+                        .select_for_update()
+                        .filter(
+                            pk=turno_id,
+                            cajero=user,
+                            puntopago=pp_inst,
+                            estado="ABIERTO",
+                        )
+                        .first()
+                    )
+                    if not turno:
+                        return JsonResponse({
+                            "success": False,
+                            "error": (
+                                "El control de turnos está activo y tu turno "
+                                "cambió o ya fue cerrado. Actualiza la página."
+                            ),
+                            "configuration_changed": True,
+                            "redirect_url": reverse("turno_caja"),
+                        })
+                    if not _can_use_payment_point_for_turn(
+                        user,
+                        user,
+                        pp_inst,
+                    ):
+                        return JsonResponse({
+                            "success": False,
+                            "error": (
+                                "El punto de pago de tu turno ya no pertenece "
+                                "a tu sucursal asignada. Solicita una revisión."
+                            ),
+                        })
+                else:
+                    turno = None
 
                 nequi_notification = None
                 autorizacion_descuento = None
@@ -4559,6 +4814,7 @@ class GenerarVentaView(LoginRequiredMixin, View):
                         sucursal=suc_inst,
                         subtotal=subtotal_original,
                         descuento=descuento_empleado,
+                        turno_requerido=turno_requerido_actual,
                     )
 
             # CAMBIO: solo pago simple en efectivo
@@ -6256,6 +6512,160 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin, View):
             s += (row.get("monto") or Decimal("0.00"))
         return s.quantize(Q2)
 
+    @staticmethod
+    def _medios_pago_validos() -> set[str]:
+        return {key for key, _label in MEDIOS_PAGO}
+
+    def _mapa_pagos_originales(
+        self,
+        venta,
+        *,
+        total_cobrado=None,
+    ) -> dict[str, Decimal]:
+        """
+        Reconstruye cómo entró el pago original.
+
+        Los reintegros son salidas independientes y nunca reducen este mapa.
+        En ventas de un solo medio, ``Venta.mediopago`` es la autoridad y el
+        monto corresponde al total originalmente cobrado.
+        """
+
+        total_cobrado = _to_q2(
+            self._venta_total_cobrado(venta)
+            if total_cobrado is None
+            else total_cobrado
+        )
+        if total_cobrado <= 0:
+            return {}
+
+        metodo = (venta.mediopago or "").strip().lower()
+        medios_validos = self._medios_pago_validos()
+        if metodo != "mixto":
+            if metodo not in medios_validos:
+                raise ValueError(
+                    "El medio de pago original de la venta no es válido."
+                )
+            return {metodo: total_cobrado}
+
+        mapa = {}
+        rows = (
+            PagoVenta.objects
+            .filter(ventaid=venta)
+            .values("medio_pago")
+            .annotate(total=Sum("monto"))
+        )
+        for row in rows:
+            medio = (row["medio_pago"] or "").strip().lower()
+            monto = _to_q2(row["total"] or Decimal("0.00"))
+            if monto <= 0:
+                continue
+            if medio not in medios_validos:
+                raise ValueError(
+                    f"La venta tiene un medio de pago no válido: {medio}."
+                )
+            mapa[medio] = _to_q2(
+                mapa.get(medio, Decimal("0.00")) + monto
+            )
+
+        suma = _to_q2(sum(mapa.values(), Decimal("0.00")))
+        if suma != total_cobrado:
+            raise ValueError(
+                "La distribución original de pagos no coincide con el total "
+                "cobrado. Corrige los pagos de la venta antes de reclasificarlos."
+            )
+        return mapa
+
+    def _mapa_pagos_desde_formset(self, formset) -> dict[str, Decimal]:
+        mapa = {}
+        for row in (formset.cleaned_data or []):
+            medio = (row.get("medio_pago") or "").strip().lower()
+            monto = _to_q2(row.get("monto") or Decimal("0.00"))
+            if medio and monto > 0:
+                mapa[medio] = _to_q2(
+                    mapa.get(medio, Decimal("0.00")) + monto
+                )
+        return mapa
+
+    @staticmethod
+    def _aplicar_delta_mapa_pagos(
+        venta,
+        mapa_anterior,
+        mapa_nuevo,
+        *,
+        turno_requerido,
+    ):
+        """
+        Reclasifica el ingreso original sin tocar los reintegros.
+
+        El efectivo modifica el saldo físico del punto de pago. Cuando el
+        control de turnos está activo, todos los medios se mueven también en
+        el turno vigente para que el cuadre conserve la misma suma total.
+        """
+
+        medios_validos = {key for key, _label in MEDIOS_PAGO}
+        anterior = {
+            medio: _to_q2(mapa_anterior.get(medio, Decimal("0.00")))
+            for medio in medios_validos
+        }
+        nuevo = {
+            medio: _to_q2(mapa_nuevo.get(medio, Decimal("0.00")))
+            for medio in medios_validos
+        }
+        total_anterior = _to_q2(
+            sum(anterior.values(), Decimal("0.00"))
+        )
+        total_nuevo = _to_q2(sum(nuevo.values(), Decimal("0.00")))
+        if total_anterior != total_nuevo:
+            raise ValueError(
+                "La reclasificación debe conservar el total originalmente cobrado."
+            )
+
+        deltas = {
+            medio: _to_q2(nuevo[medio] - anterior[medio])
+            for medio in medios_validos
+            if _to_q2(nuevo[medio] - anterior[medio]) != 0
+        }
+        if not deltas:
+            return
+
+        if turno_requerido:
+            turno = CambioDevolucion._turno_abierto_para_venta_locked(venta)
+            if turno is None:
+                raise ValueError(
+                    "No hay un turno activo en el punto de pago de esta venta."
+                )
+
+            for medio, delta in deltas.items():
+                CambioDevolucion._upsert_turno_medio_delta(
+                    turno,
+                    medio,
+                    delta,
+                )
+
+            delta_efectivo = deltas.get("efectivo", Decimal("0.00"))
+            delta_no_efectivo = _to_q2(
+                sum(
+                    (
+                        delta
+                        for medio, delta in deltas.items()
+                        if medio != "efectivo"
+                    ),
+                    Decimal("0.00"),
+                )
+            )
+            TurnoCaja.objects.filter(pk=turno.pk).update(
+                ventas_efectivo=F("ventas_efectivo") + delta_efectivo,
+                ventas_no_efectivo=(
+                    F("ventas_no_efectivo") + delta_no_efectivo
+                ),
+            )
+
+        delta_caja = deltas.get("efectivo", Decimal("0.00"))
+        if delta_caja:
+            PuntosPago.objects.filter(pk=venta.puntopagoid_id).update(
+                dinerocaja=F("dinerocaja") + delta_caja,
+            )
+
     # -------------------------
     # ✅ Ticket texto (impresión)
     # -------------------------
@@ -6361,11 +6771,21 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin, View):
     # -------------------------
     # Pagos mixtos: validar/guardar
     # -------------------------
-    def _validar_pagos_mixtos(self, venta, pagos_formset):
+    def _validar_pagos_mixtos(
+        self,
+        venta,
+        pagos_formset,
+        *,
+        total_cobrado=None,
+    ):
         if not pagos_formset.is_valid():
             return False, "Montos de pago inválidos."
 
-        total = (venta.total or Decimal("0.00")).quantize(Q2)
+        total = _to_q2(
+            self._venta_total_cobrado(venta)
+            if total_cobrado is None
+            else total_cobrado
+        )
         suma = self._sum_formset_montos(pagos_formset)
 
         for row in pagos_formset.cleaned_data:
@@ -6583,6 +7003,9 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin, View):
                 return JsonResponse({"success": False, "error": message}, status=403)
             return HttpResponseForbidden(message)
 
+        turno_requerido_actual = locked_feature_enabled(
+            TURN_REQUIRED_FEATURE,
+        )
         detalles = list(DetalleVenta.objects.filter(ventaid=venta))
 
         nuevo_mediopago = (request.POST.get("mediopago") or "").strip().lower()
@@ -6603,25 +7026,75 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin, View):
             )
             return redirect(reverse_lazy("ver_venta", kwargs={"venta_id": venta_id}))
 
-        # 0) Cambio de medio (si cambió)
-        if nuevo_mediopago and nuevo_mediopago != metodo_old:
-            venta.mediopago = nuevo_mediopago
-            venta.save(update_fields=["mediopago"])
+        # 0) Reclasificar el ingreso original. Los reintegros ya registrados
+        # son salidas independientes y no se mezclan con este mapa.
+        metodo_objetivo = nuevo_mediopago or metodo_old
+        medios_validos = self._medios_pago_validos()
+        total_cobrado = self._venta_total_cobrado(venta)
 
-            if metodo_old != "mixto" and nuevo_mediopago != "mixto":
-                try:
-                    self._mover_turno_por_cambio_medio(venta, metodo_old, nuevo_mediopago, venta.total)
-                except Exception as e:
-                    messages.warning(request, f"⚠️ Medio actualizado, pero no se pudo ajustar el turno: {e}")
+        if total_cobrado > 0:
+            if metodo_objetivo not in medios_validos | {"mixto"}:
+                messages.error(request, "⚠️ Medio de pago no válido.")
+                return redirect(
+                    reverse_lazy("ver_venta", kwargs={"venta_id": venta_id})
+                )
+        elif metodo_objetivo not in {"", "sin_pago"}:
+            messages.error(
+                request,
+                "⚠️ Una venta sin cobro debe conservar el medio «Sin pago».",
+            )
+            return redirect(
+                reverse_lazy("ver_venta", kwargs={"venta_id": venta_id})
+            )
 
-            messages.success(request, "✅ Medio de pago actualizado.")
+        try:
+            mapa_anterior = self._mapa_pagos_originales(
+                venta,
+                total_cobrado=total_cobrado,
+            )
+        except ValueError as exc:
+            messages.error(request, f"⚠️ {exc}")
+            return redirect(
+                reverse_lazy("ver_venta", kwargs={"venta_id": venta_id})
+            )
 
-        # 1) Guardar pagos
-        if self._venta_es_mixta(venta):
-            ok, err = self._validar_pagos_mixtos(venta, pagos_formset)
+        if metodo_objetivo == "mixto":
+            ok, err = self._validar_pagos_mixtos(
+                venta,
+                pagos_formset,
+                total_cobrado=total_cobrado,
+            )
             if not ok:
                 messages.error(request, f"⚠️ {err}")
-                return redirect(reverse_lazy("ver_venta", kwargs={"venta_id": venta_id}))
+                return redirect(
+                    reverse_lazy("ver_venta", kwargs={"venta_id": venta_id})
+                )
+            mapa_nuevo = self._mapa_pagos_desde_formset(pagos_formset)
+        elif total_cobrado > 0:
+            mapa_nuevo = {metodo_objetivo: _to_q2(total_cobrado)}
+        else:
+            mapa_nuevo = {}
+
+        try:
+            self._aplicar_delta_mapa_pagos(
+                venta,
+                mapa_anterior,
+                mapa_nuevo,
+                turno_requerido=turno_requerido_actual,
+            )
+        except ValueError as exc:
+            messages.error(request, f"⚠️ {exc}")
+            return redirect(
+                reverse_lazy("ver_venta", kwargs={"venta_id": venta_id})
+            )
+
+        if metodo_objetivo != metodo_old:
+            venta.mediopago = metodo_objetivo
+            venta.save(update_fields=["mediopago"])
+            messages.success(request, "✅ Medio de pago actualizado.")
+
+        # 1) Persistir el nuevo mapa solo después de validarlo y ajustar caja.
+        if metodo_objetivo == "mixto":
             self._guardar_pagos_mixtos(venta, pagos_formset)
         else:
             self._guardar_pago_unico(venta)
@@ -6677,6 +7150,7 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin, View):
                 devoluciones,
                 reintegro_map=reintegro_map,
                 registrado_por=request.user,
+                turno_requerido=turno_requerido_actual,
             )
         except ValueError as exc:
             messages.error(request, f"⚠️ {exc}")
@@ -8887,6 +9361,32 @@ def _can_operate_turno(user, turno) -> bool:
     return _require_admin(user) or getattr(user, "pk", None) == getattr(turno, "cajero_id", None)
 
 
+def _cajero_sucursal_id(cajero):
+    cajero_id = getattr(cajero, "pk", None)
+    if not cajero_id:
+        return None
+    return (
+        Empleado.objects
+        .filter(usuarioid_id=cajero_id)
+        .values_list("sucursalid_id", flat=True)
+        .first()
+    )
+
+
+def _can_use_payment_point_for_turn(operator, cajero, payment_point) -> bool:
+    """Impide que un cajero opere inventario de una sucursal ajena."""
+
+    if _require_admin(operator):
+        return True
+    if getattr(operator, "pk", None) != getattr(cajero, "pk", None):
+        return False
+    branch_id = _cajero_sucursal_id(cajero)
+    return bool(
+        branch_id
+        and branch_id == getattr(payment_point, "sucursalid_id", None)
+    )
+
+
 def _reintegro_ledger_ready() -> bool:
     """Permite que la aplicación siga operativa mientras 0021 está pendiente."""
     try:
@@ -9353,6 +9853,13 @@ class PuntoPagoAutocomplete(LoginRequiredMixin, View):
         page = int(request.GET.get("page") or 1)
 
         qs = PuntosPago.objects.all().order_by("nombre")
+        if not _require_admin(request.user):
+            sucursal_id = _cajero_sucursal_id(request.user)
+            qs = (
+                qs.filter(sucursalid_id=sucursal_id)
+                if sucursal_id
+                else qs.none()
+            )
         if term:
             qs = qs.filter(nombre__icontains=term)
 
@@ -9387,6 +9894,19 @@ class CajeroAutocomplete(LoginRequiredMixin, View):
 class TurnoCajaIniciarApi(LoginRequiredMixin, View):
     @transaction.atomic
     def post(self, request: HttpRequest):
+        if not locked_feature_enabled(TURN_REQUIRED_FEATURE):
+            return JsonResponse(
+                {
+                    "success": False,
+                    "error": (
+                        "El inicio manual de turnos está desactivado en la "
+                        "configuración del sistema."
+                    ),
+                    "feature_disabled": TURN_REQUIRED_FEATURE,
+                },
+                status=409,
+            )
+
         puntopago_id = (request.POST.get("puntopago_id") or "").strip()
         cajero_id    = (request.POST.get("cajero_id") or "").strip()
         password     = request.POST.get("password", "")
@@ -9400,6 +9920,18 @@ class TurnoCajaIniciarApi(LoginRequiredMixin, View):
 
         if not _can_operate_cajero(request.user, cajero):
             return JsonResponse({"success": False, "error": "No puedes iniciar turno para otro cajero."}, status=403)
+
+        if not _can_use_payment_point_for_turn(request.user, cajero, pp):
+            return JsonResponse(
+                {
+                    "success": False,
+                    "error": (
+                        "El punto de pago no pertenece a la sucursal asignada "
+                        "al cajero."
+                    ),
+                },
+                status=403,
+            )
 
         if not _password_ok(cajero, password):
             return JsonResponse({"success": False, "error": "Usuario o contraseña inválidos."}, status=401)
@@ -10381,6 +10913,19 @@ def _resolve_turno_cajero(usuario_id, usuario_nombre):
 class TurnoCajaRecuperarOIniciarView(LoginRequiredMixin, View):
     @transaction.atomic
     def post(self, request: HttpRequest):
+        if not locked_feature_enabled(TURN_REQUIRED_FEATURE):
+            return JsonResponse(
+                {
+                    "success": False,
+                    "error": (
+                        "El inicio manual de turnos está desactivado en la "
+                        "configuración del sistema."
+                    ),
+                    "feature_disabled": TURN_REQUIRED_FEATURE,
+                },
+                status=409,
+            )
+
         action = (request.POST.get("action") or "").strip()
         if action != "recuperar_o_iniciar":
             return JsonResponse({"success": False, "error": "Acción inválida."}, status=400)
@@ -10405,6 +10950,18 @@ class TurnoCajaRecuperarOIniciarView(LoginRequiredMixin, View):
 
         if not _can_operate_cajero(request.user, cajero):
             return JsonResponse({"success": False, "error": "No puedes iniciar o retomar turno para otro cajero."}, status=403)
+
+        if not _can_use_payment_point_for_turn(request.user, cajero, pp):
+            return JsonResponse(
+                {
+                    "success": False,
+                    "error": (
+                        "El punto de pago no pertenece a la sucursal asignada "
+                        "al cajero."
+                    ),
+                },
+                status=403,
+            )
 
         if not _password_ok(cajero, password):
             return JsonResponse({"success": False, "error": "Contraseña incorrecta."}, status=403)
@@ -10701,7 +11258,6 @@ class TurnoCajaAdminUpdateAPI(LoginRequiredMixin, View):
     def post(self, request: HttpRequest, turno_id: int):
         if not _can_edit_turnos(request.user):
             return JsonResponse({"success": False, "error": "No tienes permiso para editar turnos."}, status=403)
-        turno = get_object_or_404(TurnoCaja.objects.select_for_update(), pk=turno_id)
 
         try:
             payload = json.loads(request.body.decode("utf-8"))
@@ -10711,6 +11267,30 @@ class TurnoCajaAdminUpdateAPI(LoginRequiredMixin, View):
         estado = (payload.get("estado") or "").strip().upper()
         if estado and estado not in ESTADOS_TURNO:
             return JsonResponse({"success": False, "error": "Estado inválido."}, status=400)
+
+        # El orden global de bloqueos es configuración → turno. De esta forma
+        # una edición administrativa no puede reabrir turnos mientras las
+        # ventas operan en modo directo.
+        if (
+            estado in {"ABIERTO", "CIERRE"}
+            and not locked_feature_enabled(TURN_REQUIRED_FEATURE)
+        ):
+            return JsonResponse(
+                {
+                    "success": False,
+                    "error": (
+                        "No se puede reabrir un turno mientras el control de "
+                        "turnos está desactivado."
+                    ),
+                    "feature_disabled": TURN_REQUIRED_FEATURE,
+                },
+                status=409,
+            )
+
+        turno = get_object_or_404(
+            TurnoCaja.objects.select_for_update(),
+            pk=turno_id,
+        )
 
         def parse_dt_local(s):
             s = (s or "").strip()

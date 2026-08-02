@@ -7,22 +7,34 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
+from uuid import uuid4
 
 from django.conf import settings
 from django.core.management import call_command
 from django.core.management.base import CommandError
-from django.db import IntegrityError
+from django.db import DatabaseError, IntegrityError
+from django.db.models.deletion import PROTECT
 from django.http import HttpResponse
 from django.test import RequestFactory, SimpleTestCase, override_settings
 from django.urls import resolve, reverse
 
 from .forms import GenerarVentaForm
-from .models import CambioDevolucion, TurnoCajaMedio
+from .models import CambioDevolucion, ReintegroVenta, TurnoCajaMedio
 from .permissions import WEB_MASTER_ONLY_URL_NAMES, route_permission_for_url_name
 from .services.employee_client import (
     EmployeeClientSyncError,
     _matching_clients,
     sync_employee_client,
+)
+from .services.feature_flags import (
+    ActiveCashTurnError,
+    FEATURE_REGISTRY,
+    TURN_REQUIRED_FEATURE,
+    FeatureFlagError,
+    disabled_feature_for_url,
+    feature_definition,
+    is_feature_enabled,
+    set_feature_enabled,
 )
 from .services.product_price_sync import (
     PriceMapping,
@@ -36,6 +48,7 @@ from .services.product_price_sync import (
 )
 from .services.special_discount import (
     SpecialDiscountError,
+    consume_one_time_code,
     generate_one_time_code,
     is_special_client,
     lock_one_time_code,
@@ -43,9 +56,12 @@ from .services.special_discount import (
 )
 from .views import (
     ClavesDescuentoMerk2888View,
+    ConfiguracionFuncionalidadesView,
     GenerarVentaView,
     NequiNotificationWebhookView,
     ProductoAutocomplete,
+    TurnoCajaIniciarApi,
+    TurnoCajaRecuperarOIniciarView,
     VentaDetailView,
     _looks_like_nequi_payment,
     _parse_nequi_amount,
@@ -902,6 +918,22 @@ class ProductPriceMappingTests(SimpleTestCase):
             next(item for item in mappings if item.source_id == 359).expected_source_name,
             "Champiñones Bandeja",
         )
+        self.assertEqual(
+            next(
+                item
+                for item in mappings
+                if item.destination_id == 25062095
+            ).expected_destination_name,
+            "FR PAQUETE GUASCA",
+        )
+        self.assertEqual(
+            next(
+                item
+                for item in mappings
+                if item.destination_id == 25062126
+            ).expected_destination_name,
+            "FR TOMILLO Y LAUREL",
+        )
         maximum_factor = Decimal(settings.PRICE_SYNC_MAX_PRICE_FACTOR)
         for item in payload["mappings"]:
             if not item["active"]:
@@ -1719,3 +1751,1108 @@ class SpecialMerk2888DiscountSecurityTests(SimpleTestCase):
             "if _normalize_key(role.nombre) == \"web_master\"",
             source,
         )
+
+
+class SystemFeatureFlagTests(SimpleTestCase):
+    def setUp(self):
+        self.factory = RequestFactory()
+
+    def test_configuration_route_is_mapped_and_strictly_web_master_only(self):
+        url = reverse("configuracion_funcionalidades")
+
+        self.assertEqual(
+            resolve(url).url_name,
+            "configuracion_funcionalidades",
+        )
+        self.assertEqual(
+            route_permission_for_url_name("configuracion_funcionalidades"),
+            "configuracion_funcionalidades",
+        )
+        self.assertIn(
+            "configuracion_funcionalidades",
+            WEB_MASTER_ONLY_URL_NAMES,
+        )
+
+        anonymous_request = self.factory.get(url)
+        anonymous_request.user = SimpleNamespace(is_authenticated=False)
+        anonymous = ConfiguracionFuncionalidadesView.as_view()(
+            anonymous_request
+        )
+        self.assertEqual(anonymous.status_code, 302)
+
+        denied_request = self.factory.get(url)
+        denied_request.user = SimpleNamespace(
+            is_authenticated=True,
+            is_active=True,
+        )
+        with patch("mainApp.views.is_web_master_role", return_value=False):
+            denied = ConfiguracionFuncionalidadesView.as_view()(
+                denied_request
+            )
+        self.assertEqual(denied.status_code, 403)
+
+        allowed_request = self.factory.get(url)
+        allowed_request.user = SimpleNamespace(
+            is_authenticated=True,
+            is_active=True,
+        )
+        with (
+            patch("mainApp.views.is_web_master_role", return_value=True),
+            patch.object(
+                ConfiguracionFuncionalidadesView,
+                "get",
+                return_value=HttpResponse("ok"),
+            ),
+        ):
+            allowed = ConfiguracionFuncionalidadesView.as_view()(
+                allowed_request
+            )
+        self.assertEqual(allowed.status_code, 200)
+
+    def test_registry_defaults_to_safe_turn_required_state_on_database_error(self):
+        definition = feature_definition(TURN_REQUIRED_FEATURE)
+
+        self.assertIn(TURN_REQUIRED_FEATURE, FEATURE_REGISTRY)
+        self.assertTrue(definition["default_enabled"])
+        self.assertTrue(definition["critical"])
+
+        with patch(
+            "mainApp.models.ConfiguracionFuncionalidad.objects.filter",
+            side_effect=DatabaseError("table unavailable"),
+        ):
+            enabled = is_feature_enabled(
+                TURN_REQUIRED_FEATURE,
+                fresh=True,
+            )
+
+        self.assertTrue(enabled)
+
+    def test_disabled_turn_feature_blocks_operational_routes_but_not_history(self):
+        blocked_routes = {
+            "turno_caja",
+            "turno_recuperar_o_iniciar",
+            "turno_caja_puntopago_ac",
+            "turno_caja_cajero_ac",
+            "turno_caja_iniciar",
+            "turno_caja_retiro_actual",
+            "turno_caja_retiro",
+        }
+        historical_routes = {
+            "turno_caja_iniciar_cierre",
+            "turno_caja_cerrar",
+            "turnos_caja_dashboard",
+            "turnos_caja_admin",
+        }
+
+        with patch(
+            "mainApp.services.feature_flags.is_feature_enabled",
+            return_value=False,
+        ):
+            for url_name in blocked_routes:
+                disabled = disabled_feature_for_url(
+                    url_name,
+                    fresh=True,
+                )
+                self.assertIsNotNone(disabled, url_name)
+                self.assertEqual(
+                    disabled["key"],
+                    TURN_REQUIRED_FEATURE,
+                )
+
+            for url_name in historical_routes:
+                self.assertIsNone(
+                    disabled_feature_for_url(url_name, fresh=True),
+                    url_name,
+                )
+
+    def _feature_mocks(self, *, row, duplicate=None, active_turns=0):
+        from .models import (
+            CambioConfiguracionFuncionalidad,
+            ConfiguracionFuncionalidad,
+            TurnoCaja,
+        )
+
+        audit_lookup = MagicMock()
+        (
+            audit_lookup.select_related.return_value
+            .first.return_value
+        ) = duplicate
+
+        locked_rows = MagicMock()
+        locked_rows.filter.return_value.first.return_value = row
+
+        active_rows = MagicMock()
+        active_rows.count.return_value = active_turns
+
+        return (
+            patch(
+                "mainApp.services.feature_flags.transaction.atomic",
+                return_value=nullcontext(),
+            ),
+            patch.object(
+                CambioConfiguracionFuncionalidad.objects,
+                "filter",
+                return_value=audit_lookup,
+            ),
+            patch.object(
+                CambioConfiguracionFuncionalidad.objects,
+                "create",
+            ),
+            patch.object(
+                ConfiguracionFuncionalidad.objects,
+                "select_for_update",
+                return_value=locked_rows,
+            ),
+            patch.object(
+                TurnoCaja.objects,
+                "filter",
+                return_value=active_rows,
+            ),
+        )
+
+    def test_set_feature_refuses_disable_while_cash_turns_are_active(self):
+        row = SimpleNamespace(
+            habilitada=True,
+            version=4,
+            save=MagicMock(),
+        )
+        atomic, audit_filter, audit_create, config_lock, turns_filter = (
+            self._feature_mocks(row=row, active_turns=2)
+        )
+
+        with (
+            atomic,
+            audit_filter,
+            audit_create as create_audit,
+            config_lock,
+            turns_filter,
+        ):
+            with self.assertRaises(ActiveCashTurnError) as raised:
+                set_feature_enabled(
+                    key=TURN_REQUIRED_FEATURE,
+                    enabled=False,
+                    expected_version=4,
+                    actor=SimpleNamespace(nombreusuario="Web Master"),
+                    reason="Cierre de caja desactivado por mantenimiento",
+                    request_id=str(uuid4()),
+                )
+
+        self.assertEqual(raised.exception.count, 2)
+        row.save.assert_not_called()
+        create_audit.assert_not_called()
+
+    def test_set_feature_duplicate_request_is_idempotent_without_locking_again(self):
+        duplicate = SimpleNamespace(
+            nuevo=False,
+            funcionalidad=SimpleNamespace(version=8),
+        )
+        row = SimpleNamespace(
+            habilitada=True,
+            version=4,
+            save=MagicMock(),
+        )
+        atomic, audit_filter, audit_create, config_lock, turns_filter = (
+            self._feature_mocks(row=row, duplicate=duplicate)
+        )
+
+        with (
+            atomic,
+            audit_filter,
+            audit_create as create_audit,
+            config_lock as lock_feature,
+            turns_filter,
+        ):
+            result = set_feature_enabled(
+                key=TURN_REQUIRED_FEATURE,
+                enabled=False,
+                expected_version=4,
+                actor=SimpleNamespace(nombreusuario="Web Master"),
+                reason="Cierre de caja desactivado por mantenimiento",
+                request_id=str(uuid4()),
+            )
+
+        self.assertFalse(result.changed)
+        self.assertTrue(result.duplicate)
+        self.assertFalse(result.enabled)
+        self.assertEqual(result.version, 8)
+        lock_feature.assert_not_called()
+        create_audit.assert_not_called()
+
+    def test_set_feature_rejects_stale_version_without_mutation(self):
+        row = SimpleNamespace(
+            habilitada=True,
+            version=5,
+            save=MagicMock(),
+        )
+        atomic, audit_filter, audit_create, config_lock, turns_filter = (
+            self._feature_mocks(row=row)
+        )
+
+        with (
+            atomic,
+            audit_filter,
+            audit_create as create_audit,
+            config_lock,
+            turns_filter,
+        ):
+            with self.assertRaises(FeatureFlagError) as raised:
+                set_feature_enabled(
+                    key=TURN_REQUIRED_FEATURE,
+                    enabled=False,
+                    expected_version=4,
+                    actor=SimpleNamespace(nombreusuario="Web Master"),
+                    reason="Cierre de caja desactivado por mantenimiento",
+                    request_id=str(uuid4()),
+                )
+
+        self.assertEqual(raised.exception.code, "stale_version")
+        row.save.assert_not_called()
+        create_audit.assert_not_called()
+
+    def test_set_feature_success_increments_version_and_writes_audit(self):
+        row = SimpleNamespace(
+            habilitada=True,
+            version=5,
+            save=MagicMock(),
+        )
+        actor = SimpleNamespace(nombreusuario="Web Master")
+        request_id = uuid4()
+        atomic, audit_filter, audit_create, config_lock, turns_filter = (
+            self._feature_mocks(row=row, active_turns=0)
+        )
+
+        with (
+            atomic,
+            audit_filter,
+            audit_create as create_audit,
+            config_lock,
+            turns_filter,
+            patch(
+                "mainApp.services.feature_flags.clear_feature_cache",
+            ) as clear_cache,
+        ):
+            result = set_feature_enabled(
+                key=TURN_REQUIRED_FEATURE,
+                enabled=False,
+                expected_version=5,
+                actor=actor,
+                reason="Mantenimiento del control de turnos",
+                request_id=str(request_id),
+                ip="192.0.2.10",
+                user_agent="test-agent",
+            )
+
+        self.assertTrue(result.changed)
+        self.assertFalse(result.duplicate)
+        self.assertFalse(result.enabled)
+        self.assertEqual(result.version, 6)
+        self.assertFalse(row.habilitada)
+        self.assertEqual(row.version, 6)
+        row.save.assert_called_once()
+        create_audit.assert_called_once_with(
+            funcionalidad=row,
+            anterior=True,
+            nuevo=False,
+            motivo="Mantenimiento del control de turnos",
+            cambiado_por=actor,
+            cambiado_por_nombre="Web Master",
+            ip="192.0.2.10",
+            user_agent="test-agent",
+            solicitud_id=request_id,
+        )
+        clear_cache.assert_called_once_with(TURN_REQUIRED_FEATURE)
+
+
+class SaleWithoutCashTurnTests(SimpleTestCase):
+    def setUp(self):
+        self.factory = RequestFactory()
+
+    def _post_request(self, user):
+        request = self.factory.post(
+            reverse("generar_venta"),
+            {
+                "sucursal": "999",
+                "puntopago": "21",
+                "productos": "[]",
+                "cantidades": "[]",
+                "pagos": "[]",
+            },
+        )
+        request.user = user
+        return request
+
+    def test_sale_without_turn_uses_employee_branch_and_accepts_matching_point(self):
+        branch = SimpleNamespace(pk=7)
+        payment_point = SimpleNamespace(pk=21, sucursalid_id=7)
+        user = SimpleNamespace(
+            pk=3,
+            empleado=SimpleNamespace(sucursalid=branch),
+        )
+        form = SimpleNamespace(
+            is_valid=lambda: True,
+            cleaned_data={
+                "puntopago": payment_point,
+                "productos": [],
+                "cantidades": [],
+            },
+        )
+        view = GenerarVentaView()
+
+        with (
+            patch(
+                "mainApp.views.is_feature_enabled",
+                return_value=False,
+            ),
+            patch.object(
+                view,
+                "_get_turno_activo",
+                return_value=None,
+            ) as active_turn,
+            patch(
+                "mainApp.views.GenerarVentaForm",
+                return_value=form,
+            ) as form_class,
+        ):
+            response = view.post(self._post_request(user))
+
+        payload = json.loads(response.content)
+        self.assertIn("Carrito", payload["error"])
+        self.assertNotIn("punto de pago seleccionado", payload["error"])
+        active_turn.assert_not_called()
+        posted_data = form_class.call_args.args[0]
+        self.assertEqual(posted_data["sucursal"], "7")
+        self.assertEqual(posted_data["puntopago"], "21")
+
+    def test_sale_without_turn_rejects_point_from_another_branch(self):
+        branch = SimpleNamespace(pk=7)
+        payment_point = SimpleNamespace(pk=21, sucursalid_id=8)
+        user = SimpleNamespace(
+            pk=3,
+            empleado=SimpleNamespace(sucursalid=branch),
+        )
+        form = SimpleNamespace(
+            is_valid=lambda: True,
+            cleaned_data={
+                "puntopago": payment_point,
+                "productos": [],
+                "cantidades": [],
+            },
+        )
+
+        with (
+            patch(
+                "mainApp.views.is_feature_enabled",
+                return_value=False,
+            ),
+            patch(
+                "mainApp.views.GenerarVentaForm",
+                return_value=form,
+            ),
+        ):
+            response = GenerarVentaView().post(
+                self._post_request(user)
+            )
+
+        payload = json.loads(response.content)
+        self.assertIn(
+            "no pertenece a tu sucursal asignada",
+            payload["error"],
+        )
+
+    def test_final_sale_transaction_rechecks_feature_and_blocks_stale_off_page(self):
+        from .models import TurnoCaja, Venta
+
+        state = {"inside_atomic": False}
+
+        class AtomicGuard:
+            def __enter__(self):
+                state["inside_atomic"] = True
+                return self
+
+            def __exit__(self, exc_type, exc, traceback):
+                state["inside_atomic"] = False
+                return False
+
+        def feature_state(_key):
+            self.assertTrue(state["inside_atomic"])
+            return True
+
+        locked_turns = MagicMock()
+        locked_turns.filter.return_value.first.return_value = None
+        user = SimpleNamespace(
+            pk=3,
+            username="cajero",
+            empleado=SimpleNamespace(
+                nombre="Caja",
+                apellido="Prueba",
+            ),
+        )
+        branch = SimpleNamespace(pk=7, nombre="Sucursal")
+        payment_point = SimpleNamespace(pk=21, nombre="Caja 1")
+        details = [{
+            "productoid": 5,
+            "producto": "Producto",
+            "cantidad": 1,
+            "precio_unitario": Decimal("1000"),
+            "subtotal": Decimal("1000"),
+        }]
+
+        with (
+            patch(
+                "mainApp.views.transaction.atomic",
+                side_effect=lambda: AtomicGuard(),
+            ),
+            patch(
+                "mainApp.views.locked_feature_enabled",
+                side_effect=feature_state,
+            ) as locked_feature,
+            patch.object(
+                TurnoCaja.objects,
+                "select_for_update",
+                return_value=locked_turns,
+            ),
+            patch.object(Venta.objects, "create") as create_sale,
+        ):
+            response = GenerarVentaView._crear_venta_ultra_fast(
+                user,
+                branch,
+                payment_point,
+                None,
+                [{"medio_pago": "efectivo", "monto": Decimal("1000")}],
+                details,
+                Decimal("1000"),
+                Decimal("1000"),
+                turno=None,
+                turno_requerido=False,
+            )
+
+        payload = json.loads(response.content)
+        self.assertIn("control de turnos", payload["error"])
+        locked_feature.assert_called_once_with(TURN_REQUIRED_FEATURE)
+        create_sale.assert_not_called()
+        self.assertFalse(state["inside_atomic"])
+
+
+class RefundAndSpecialDiscountWithoutTurnTests(SimpleTestCase):
+    def test_reintegro_turn_is_nullable_and_migration_0024_is_scoped(self):
+        field = ReintegroVenta._meta.get_field("turno")
+
+        self.assertTrue(field.null)
+        self.assertTrue(field.blank)
+        self.assertIs(field.remote_field.on_delete, PROTECT)
+
+        source = (
+            settings.BASE_DIR
+            / "mainApp"
+            / "migrations"
+            / "0024_system_feature_configuration.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn(
+            '("mainApp", "0023_special_merk2888_discount")',
+            source,
+        )
+        self.assertEqual(source.count("migrations.CreateModel("), 2)
+        self.assertEqual(source.count("migrations.AlterField("), 1)
+        self.assertIn('model_name="reintegroventa"', source)
+        self.assertIn("null=True", source)
+        self.assertIn("on_delete=django.db.models.deletion.PROTECT", source)
+        self.assertIn("seed_feature_and_permission", source)
+        self.assertIn('FEATURE_KEY = "ventas_exigir_turno_caja"', source)
+
+    def test_cash_refund_without_turn_writes_ledger_and_reduces_payment_point(self):
+        sale = SimpleNamespace(
+            total=Decimal("1000.00"),
+            sucursalid_id=7,
+            puntopagoid_id=21,
+            refresh_from_db=MagicMock(),
+            save=MagicMock(),
+        )
+        detail = SimpleNamespace(pk=31, productoid_id=5)
+
+        with (
+            patch.object(
+                CambioDevolucion,
+                "calcular_total_devolucion",
+                return_value=Decimal("500.00"),
+            ),
+            patch.object(
+                CambioDevolucion,
+                "_turno_abierto_para_venta_locked",
+            ) as active_turn,
+            patch.object(
+                CambioDevolucion,
+                "_upsert_inventario_delta",
+            ),
+            patch.object(
+                CambioDevolucion,
+                "_upsert_turno_medio_delta",
+            ) as update_turn_medium,
+            patch("mainApp.models.DetalleVenta.objects.filter"),
+            patch("mainApp.models.CambioDevolucion.objects.create"),
+            patch(
+                "mainApp.models.ReintegroVenta.objects.create",
+            ) as create_refund,
+            patch(
+                "mainApp.models.TurnoCaja.objects.filter",
+            ) as update_turn,
+            patch(
+                "mainApp.models.PuntosPago.objects.filter",
+            ) as payment_points,
+        ):
+            CambioDevolucion.registrar_devolucion(
+                sale,
+                [{"detalle": detail, "cantidad": 1}],
+                reintegro_map={"efectivo": Decimal("500.00")},
+                registrado_por=SimpleNamespace(pk=3),
+                turno_requerido=False,
+            )
+
+        active_turn.assert_not_called()
+        create_refund.assert_called_once()
+        self.assertIsNone(create_refund.call_args.kwargs["turno"])
+        update_turn.assert_not_called()
+        update_turn_medium.assert_not_called()
+        payment_points.assert_called_once_with(pk=21)
+        payment_points.return_value.update.assert_called_once()
+        balance_expression = (
+            payment_points.return_value.update.call_args
+            .kwargs["dinerocaja"]
+        )
+        self.assertIn("F(dinerocaja)", repr(balance_expression))
+        self.assertIn("500.00", repr(balance_expression))
+        self.assertEqual(sale.total, Decimal("500.00"))
+
+    def _special_authorization(self, fixed_now):
+        return SimpleNamespace(
+            pk=41,
+            usada_en=None,
+            venta_id=None,
+            revocada_en=None,
+            bloqueada_en=None,
+            intentos_fallidos=0,
+            expira_en=fixed_now + timedelta(minutes=15),
+            cliente_especial=SimpleNamespace(cliente_id=77),
+            save=MagicMock(),
+        )
+
+    def test_merk2888_accepts_null_turn_only_when_turn_is_not_required(self):
+        fixed_now = datetime(
+            2026,
+            7,
+            30,
+            15,
+            0,
+            tzinfo=dt_timezone.utc,
+        )
+        without_turn = self._special_authorization(fixed_now)
+        turn_required = self._special_authorization(fixed_now)
+        locked_rows = MagicMock()
+        locked_rows.get.side_effect = [without_turn, turn_required]
+        selected_rows = MagicMock()
+        selected_rows.select_for_update.return_value = locked_rows
+        sale = SimpleNamespace(
+            pk=100,
+            clienteid_id=77,
+            sucursalid_id=7,
+            puntopagoid_id=21,
+            total=Decimal("0.00"),
+        )
+        branch = SimpleNamespace(pk=7)
+        cashier = SimpleNamespace(pk=3, nombreusuario="Cajero")
+
+        with (
+            patch(
+                "mainApp.services.special_discount.transaction.get_connection",
+                return_value=SimpleNamespace(in_atomic_block=True),
+            ),
+            patch(
+                "mainApp.services.special_discount.timezone.now",
+                return_value=fixed_now,
+            ),
+            patch(
+                "mainApp.services.special_discount.AutorizacionDescuentoEspecial.objects.select_related",
+                return_value=selected_rows,
+            ),
+        ):
+            consumed = consume_one_time_code(
+                without_turn,
+                venta=sale,
+                usada_por=cashier,
+                turno=None,
+                sucursal=branch,
+                subtotal=Decimal("5000"),
+                descuento=Decimal("5000"),
+                turno_requerido=False,
+            )
+
+            with self.assertRaises(SpecialDiscountError) as raised:
+                consume_one_time_code(
+                    turn_required,
+                    venta=sale,
+                    usada_por=cashier,
+                    turno=None,
+                    sucursal=branch,
+                    subtotal=Decimal("5000"),
+                    descuento=Decimal("5000"),
+                    turno_requerido=True,
+                )
+
+        self.assertIs(consumed, without_turn)
+        self.assertIsNone(without_turn.turno)
+        without_turn.save.assert_called_once()
+        self.assertEqual(raised.exception.code, "shift_required")
+        turn_required.save.assert_not_called()
+
+
+class SalePaymentReclassificationTests(SimpleTestCase):
+    def test_mixed_payment_validation_uses_original_collected_total(self):
+        view = VentaDetailView()
+        sale = SimpleNamespace(total=Decimal("600.00"))
+        formset = SimpleNamespace(
+            is_valid=lambda: True,
+            cleaned_data=[
+                {
+                    "medio_pago": "efectivo",
+                    "monto": Decimal("400.00"),
+                },
+                {
+                    "medio_pago": "nequi",
+                    "monto": Decimal("600.00"),
+                },
+            ],
+        )
+
+        with patch.object(
+            view,
+            "_venta_total_cobrado",
+            return_value=Decimal("1000.00"),
+        ) as collected_total:
+            ok, error = view._validar_pagos_mixtos(sale, formset)
+
+        self.assertTrue(ok)
+        self.assertIsNone(error)
+        collected_total.assert_called_once_with(sale)
+
+    def test_single_payment_map_keeps_full_payment_after_refund(self):
+        view = VentaDetailView()
+        sale = SimpleNamespace(
+            mediopago="nequi",
+            total=Decimal("600.00"),
+        )
+
+        with (
+            patch.object(
+                view,
+                "_venta_total_cobrado",
+                return_value=Decimal("1000.00"),
+            ),
+            patch(
+                "mainApp.views.PagoVenta.objects.filter",
+            ) as payment_rows,
+        ):
+            payment_map = view._mapa_pagos_originales(sale)
+
+        self.assertEqual(
+            payment_map,
+            {"nequi": Decimal("1000.00")},
+        )
+        payment_rows.assert_not_called()
+
+    def test_direct_mode_applies_only_cash_difference_to_payment_point(self):
+        sale = SimpleNamespace(puntopagoid_id=21)
+
+        with (
+            patch.object(
+                CambioDevolucion,
+                "_turno_abierto_para_venta_locked",
+            ) as active_turn,
+            patch.object(
+                CambioDevolucion,
+                "_upsert_turno_medio_delta",
+            ) as update_turn_medium,
+            patch(
+                "mainApp.views.TurnoCaja.objects.filter",
+            ) as turn_rows,
+            patch(
+                "mainApp.views.PuntosPago.objects.filter",
+            ) as payment_points,
+        ):
+            VentaDetailView._aplicar_delta_mapa_pagos(
+                sale,
+                {"nequi": Decimal("1000.00")},
+                {"efectivo": Decimal("1000.00")},
+                turno_requerido=False,
+            )
+
+        active_turn.assert_not_called()
+        update_turn_medium.assert_not_called()
+        turn_rows.assert_not_called()
+        payment_points.assert_called_once_with(pk=21)
+        payment_points.return_value.update.assert_called_once()
+        cash_expression = (
+            payment_points.return_value.update.call_args
+            .kwargs["dinerocaja"]
+        )
+        self.assertIn("F(dinerocaja)", repr(cash_expression))
+        self.assertIn("1000.00", repr(cash_expression))
+
+    def test_turn_mode_moves_every_medium_and_preserves_total(self):
+        sale = SimpleNamespace(puntopagoid_id=21)
+        turn = SimpleNamespace(pk=91)
+
+        with (
+            patch.object(
+                CambioDevolucion,
+                "_turno_abierto_para_venta_locked",
+                return_value=turn,
+            ) as active_turn,
+            patch.object(
+                CambioDevolucion,
+                "_upsert_turno_medio_delta",
+            ) as update_turn_medium,
+            patch(
+                "mainApp.views.TurnoCaja.objects.filter",
+            ) as turn_rows,
+            patch(
+                "mainApp.views.PuntosPago.objects.filter",
+            ) as payment_points,
+        ):
+            VentaDetailView._aplicar_delta_mapa_pagos(
+                sale,
+                {
+                    "efectivo": Decimal("300.00"),
+                    "nequi": Decimal("700.00"),
+                },
+                {
+                    "efectivo": Decimal("800.00"),
+                    "tarjeta": Decimal("200.00"),
+                },
+                turno_requerido=True,
+            )
+
+        active_turn.assert_called_once_with(sale)
+        actual_deltas = {
+            (item.args[1], item.args[2])
+            for item in update_turn_medium.call_args_list
+        }
+        self.assertEqual(
+            actual_deltas,
+            {
+                ("efectivo", Decimal("500.00")),
+                ("nequi", Decimal("-700.00")),
+                ("tarjeta", Decimal("200.00")),
+            },
+        )
+
+        turn_rows.assert_called_once_with(pk=91)
+        turn_rows.return_value.update.assert_called_once()
+        turn_update = turn_rows.return_value.update.call_args.kwargs
+        self.assertIn("500.00", repr(turn_update["ventas_efectivo"]))
+        self.assertIn("-500.00", repr(turn_update["ventas_no_efectivo"]))
+
+        payment_points.assert_called_once_with(pk=21)
+        payment_points.return_value.update.assert_called_once()
+        cash_expression = (
+            payment_points.return_value.update.call_args
+            .kwargs["dinerocaja"]
+        )
+        self.assertIn("500.00", repr(cash_expression))
+
+
+class DisabledCashTurnEndpointAndUiTests(SimpleTestCase):
+    def setUp(self):
+        self.factory = RequestFactory()
+
+    def _call_without_atomic_wrapper(self, view_class, request):
+        handler = view_class.post
+        self.assertTrue(hasattr(handler, "__wrapped__"))
+        return handler.__wrapped__(view_class(), request)
+
+    def test_both_turn_start_endpoints_reject_when_feature_is_off(self):
+        request = self.factory.post(
+            reverse("turno_caja_iniciar"),
+            {"puntopago_id": "21", "cajero_id": "3"},
+        )
+        request.user = SimpleNamespace(pk=3, is_authenticated=True)
+
+        recover_request = self.factory.post(
+            reverse("turno_recuperar_o_iniciar"),
+            {
+                "action": "recuperar_o_iniciar",
+                "puntopago_id": "21",
+                "usuario_id": "3",
+            },
+        )
+        recover_request.user = request.user
+
+        with (
+            patch(
+                "mainApp.views.locked_feature_enabled",
+                return_value=False,
+            ),
+            patch(
+                "mainApp.views.PuntosPago.objects.select_for_update",
+            ) as payment_points,
+            patch(
+                "mainApp.views._resolve_turno_cajero",
+            ) as resolve_cashier,
+        ):
+            direct = self._call_without_atomic_wrapper(
+                TurnoCajaIniciarApi,
+                request,
+            )
+            recover = self._call_without_atomic_wrapper(
+                TurnoCajaRecuperarOIniciarView,
+                recover_request,
+            )
+
+        for response in (direct, recover):
+            self.assertEqual(response.status_code, 409)
+            payload = json.loads(response.content)
+            self.assertEqual(
+                payload["feature_disabled"],
+                TURN_REQUIRED_FEATURE,
+            )
+        payment_points.assert_not_called()
+        resolve_cashier.assert_not_called()
+
+    def test_templates_javascript_and_navigation_expose_both_safe_modes(self):
+        from .permissions import NAV_GROUPS, user_can_access_url_name
+
+        base_dir = settings.BASE_DIR / "mainApp"
+        sale_template = (
+            base_dir / "templates" / "generar_venta.html"
+        ).read_text(encoding="utf-8")
+        sale_script = (
+            base_dir / "static" / "javascript" / "generar_venta.js"
+        ).read_text(encoding="utf-8")
+        feature_template = (
+            base_dir / "templates" / "configuracion_funcionalidades.html"
+        ).read_text(encoding="utf-8")
+        feature_script = (
+            base_dir
+            / "static"
+            / "javascript"
+            / "configuracion_funcionalidades.js"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("Modo sin turnos:", sale_template)
+        self.assertIn(
+            "{% if turno_requerido %}",
+            sale_template,
+        )
+        self.assertIn(
+            "window.ventaSucursalIdServidor",
+            sale_template,
+        )
+        self.assertIn(
+            "let sucursalID = serverSucursalID",
+            sale_script,
+        )
+        self.assertIn(
+            "{ sucursal_id: sucursalID, limit: 50 }",
+            sale_script,
+        )
+
+        self.assertIn("Funcionalidades del sistema", feature_template)
+        self.assertIn('name="password_web_master"', feature_template)
+        self.assertIn('name="version"', feature_template)
+        self.assertIn('name="request_id"', feature_template)
+        self.assertIn("[data-feature-form]", feature_script)
+        self.assertIn("[data-feature-reason]", feature_script)
+
+        navigation_labels = [
+            child["label"]
+            for group in NAV_GROUPS
+            for child in group.get("children", [])
+        ]
+        self.assertIn(
+            "Funcionalidades del sistema",
+            navigation_labels,
+        )
+
+        disabled_definition = feature_definition(
+            TURN_REQUIRED_FEATURE
+        )
+        with patch(
+            "mainApp.permissions.disabled_feature_for_url",
+            return_value=disabled_definition,
+        ):
+            self.assertFalse(
+                user_can_access_url_name(
+                    SimpleNamespace(is_authenticated=True),
+                    "turno_caja",
+                )
+            )
+
+
+class CashTurnFeatureSecurityRegressionTests(SimpleTestCase):
+    def setUp(self):
+        self.factory = RequestFactory()
+
+    def test_regular_cashier_can_only_use_payment_point_from_assigned_branch(self):
+        from .views import _can_use_payment_point_for_turn
+
+        cashier = SimpleNamespace(pk=7)
+        matching_point = SimpleNamespace(sucursalid_id=11)
+        foreign_point = SimpleNamespace(sucursalid_id=12)
+
+        with (
+            patch("mainApp.views._require_admin", return_value=False),
+            patch(
+                "mainApp.views._cajero_sucursal_id",
+                return_value=11,
+            ),
+        ):
+            self.assertTrue(
+                _can_use_payment_point_for_turn(
+                    cashier,
+                    cashier,
+                    matching_point,
+                )
+            )
+            self.assertFalse(
+                _can_use_payment_point_for_turn(
+                    cashier,
+                    cashier,
+                    foreign_point,
+                )
+            )
+
+        with patch("mainApp.views._require_admin", return_value=True):
+            self.assertTrue(
+                _can_use_payment_point_for_turn(
+                    cashier,
+                    SimpleNamespace(pk=99),
+                    foreign_point,
+                )
+            )
+
+    def test_direct_start_rejects_foreign_payment_point_before_password(self):
+        request = self.factory.post(
+            "/turno_caja/api/iniciar/",
+            {
+                "puntopago_id": "12",
+                "cajero_id": "7",
+                "password": "not-evaluated",
+                "saldo_apertura_efectivo": "0",
+            },
+        )
+        request.user = SimpleNamespace(pk=7, is_authenticated=True)
+        payment_point = SimpleNamespace(
+            pk=12,
+            sucursalid_id=99,
+        )
+        cashier = SimpleNamespace(pk=7)
+        wrapped_post = getattr(
+            TurnoCajaIniciarApi.post,
+            "__wrapped__",
+            TurnoCajaIniciarApi.post,
+        )
+
+        with (
+            patch(
+                "mainApp.views.locked_feature_enabled",
+                return_value=True,
+            ),
+            patch(
+                "mainApp.views.get_object_or_404",
+                side_effect=[payment_point, cashier],
+            ),
+            patch(
+                "mainApp.views._can_operate_cajero",
+                return_value=True,
+            ),
+            patch(
+                "mainApp.views._can_use_payment_point_for_turn",
+                return_value=False,
+            ) as branch_check,
+            patch("mainApp.views._password_ok") as password_check,
+        ):
+            response = wrapped_post(TurnoCajaIniciarApi(), request)
+
+        self.assertEqual(response.status_code, 403)
+        branch_check.assert_called_once_with(
+            request.user,
+            cashier,
+            payment_point,
+        )
+        password_check.assert_not_called()
+
+    def test_admin_cannot_reopen_turn_while_direct_mode_is_active(self):
+        from .models import TurnoCaja
+        from .views import TurnoCajaAdminUpdateAPI
+
+        request = self.factory.post(
+            "/api/admin/turnos_caja/45/update/",
+            data=json.dumps({"estado": "ABIERTO"}),
+            content_type="application/json",
+        )
+        request.user = SimpleNamespace(pk=1, is_authenticated=True)
+        wrapped_post = getattr(
+            TurnoCajaAdminUpdateAPI.post,
+            "__wrapped__",
+            TurnoCajaAdminUpdateAPI.post,
+        )
+
+        with (
+            patch("mainApp.views._can_edit_turnos", return_value=True),
+            patch(
+                "mainApp.views.locked_feature_enabled",
+                return_value=False,
+            ) as feature_lock,
+            patch.object(
+                TurnoCaja.objects,
+                "select_for_update",
+            ) as turn_lock,
+        ):
+            response = wrapped_post(
+                TurnoCajaAdminUpdateAPI(),
+                request,
+                45,
+            )
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(
+            json.loads(response.content)["feature_disabled"],
+            TURN_REQUIRED_FEATURE,
+        )
+        feature_lock.assert_called_once_with(TURN_REQUIRED_FEATURE)
+        turn_lock.assert_not_called()
+
+    def test_ui_does_not_restore_shared_payment_point_or_depend_on_javascript(self):
+        base_dir = settings.BASE_DIR / "mainApp"
+        sale_script = (
+            base_dir / "static" / "javascript" / "generar_venta.js"
+        ).read_text(encoding="utf-8")
+        sale_view = (
+            base_dir / "views.py"
+        ).read_text(encoding="utf-8")
+        feature_template = (
+            base_dir / "templates" / "configuracion_funcionalidades.html"
+        ).read_text(encoding="utf-8")
+        feature_script = (
+            base_dir
+            / "static"
+            / "javascript"
+            / "configuracion_funcionalidades.js"
+        ).read_text(encoding="utf-8")
+        feature_css = (
+            base_dir
+            / "static"
+            / "css"
+            / "configuracion_funcionalidades.css"
+        ).read_text(encoding="utf-8")
+
+        self.assertNotIn("const savedPunto", sale_script)
+        self.assertIn(
+            '$("#puntopago_autocomplete").on("input"',
+            sale_script,
+        )
+        self.assertIn("configuration_changed", sale_script)
+        self.assertIn("puntos_disponibles = bool(puntos)", sale_view)
+        self.assertIn('name="reason"', feature_template)
+        self.assertNotIn("data-feature-reason-alias", feature_template)
+        self.assertIn("data-feature-disable-message", feature_template)
+        self.assertIn("form.dataset.featureDisableMessage", feature_script)
+        self.assertIn("overflow-y:auto", feature_css)

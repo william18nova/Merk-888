@@ -94,7 +94,9 @@ USE_I18N = True
 USE_TZ = True
 
 STATIC_URL = "/static/"
-STATICFILES_DIRS = [BASE_DIR / "mainApp" / "static"]
+# ``mainApp/static`` ya se descubre automáticamente mediante
+# AppDirectoriesFinder porque mainApp está en INSTALLED_APPS. Declararla de
+# nuevo en STATICFILES_DIRS duplicaba cada archivo durante collectstatic.
 STATIC_ROOT = BASE_DIR / "staticfiles"
 
 STORAGES = {

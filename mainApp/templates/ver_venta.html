@@ -231,7 +231,14 @@
         <div class="reintegro-history__item">
           <span>{{ reintegro.medio_pago|cut:"_"|title }}</span>
           <strong>-${{ reintegro.monto|floatformat:2 }}</strong>
-          <small>Turno #{{ reintegro.turno_id }} · {{ reintegro.creado_en|date:"d/m/Y H:i" }}</small>
+          <small>
+            {% if reintegro.turno_id %}
+              Turno #{{ reintegro.turno_id }}
+            {% else %}
+              Sin turno · modo directo
+            {% endif %}
+            · {{ reintegro.creado_en|date:"d/m/Y H:i" }}
+          </small>
         </div>
         {% endfor %}
       </div>

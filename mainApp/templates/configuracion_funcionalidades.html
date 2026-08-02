@@ -1,0 +1,558 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Funcionalidades del sistema{% endblock %}
+
+{% block extra_head %}
+  <link rel="stylesheet" href="{% static 'css/configuracion_funcionalidades.css' %}?v=2">
+{% endblock %}
+
+{% block content %}
+<section class="ff-page" aria-labelledby="ff-page-title">
+  <header class="ff-hero">
+    <div class="ff-hero__copy">
+      <p class="ff-eyebrow">Configuración Web Master</p>
+      <h1 id="ff-page-title">Funcionalidades del sistema</h1>
+      <p class="ff-hero__lead">
+        Decide qué herramientas forman parte de la operación diaria. Cada cambio
+        se valida con tu contraseña y queda registrado para auditoría.
+      </p>
+
+      <div class="ff-hero__facts" aria-label="Resumen de seguridad">
+        <span>
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M12 3 5 6v5c0 4.6 2.8 8.4 7 10 4.2-1.6 7-5.4 7-10V6l-7-3Z"/>
+            <path d="m9 12 2 2 4-4"/>
+          </svg>
+          Cambios protegidos
+        </span>
+        <span>
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M12 7v5l3 2"/>
+            <circle cx="12" cy="12" r="9"/>
+          </svg>
+          Historial auditado
+        </span>
+        <span>
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M4 7h16M7 3v4m10-4v4M5 11h14v9H5z"/>
+          </svg>
+          Efecto global
+        </span>
+      </div>
+    </div>
+
+    <aside class="ff-hero__summary" aria-label="Resumen de funcionalidades">
+      <span class="ff-hero__summary-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24">
+          <path d="M4 7h10M18 7h2M4 17h2M10 17h10"/>
+          <circle cx="16" cy="7" r="2"/>
+          <circle cx="8" cy="17" r="2"/>
+        </svg>
+      </span>
+      <div>
+        <small>Configuración global</small>
+        <strong>{{ feature_cards|length }} funcionalidad{{ feature_cards|length|pluralize:"es" }}</strong>
+        <span>Los cambios aplican a todos los usuarios y puntos de pago.</span>
+      </div>
+    </aside>
+  </header>
+
+  {% if messages %}
+    <div class="ff-messages" aria-live="polite">
+      {% for message in messages %}
+        <div class="ff-flash ff-flash--{{ message.tags|default:'info' }}">
+          <span class="ff-flash__dot" aria-hidden="true"></span>
+          <p>{{ message }}</p>
+        </div>
+      {% endfor %}
+    </div>
+  {% endif %}
+
+  {% if error %}
+    <div class="ff-messages" aria-live="assertive">
+      <div class="ff-flash ff-flash--error">
+        <span class="ff-flash__dot" aria-hidden="true"></span>
+        <p>{{ error }}</p>
+      </div>
+    </div>
+  {% endif %}
+
+  <div class="ff-section-heading">
+    <div>
+      <p class="ff-eyebrow">Operación</p>
+      <h2>Funciones disponibles</h2>
+      <p>Revisa el impacto antes de activar o desactivar una opción.</p>
+    </div>
+    <span class="ff-section-heading__count">
+      {{ feature_cards|length }}
+      <small>configuradas</small>
+    </span>
+  </div>
+
+  <div class="ff-feature-grid">
+    {% for feature in feature_cards %}
+      {% firstof feature.key feature.clave "ventas_exigir_turno_caja" as feature_key %}
+      {% firstof feature.label feature.nombre "Exigir turno de caja para vender" as feature_label %}
+      {% firstof feature.description feature.descripcion "Controla si cada cajero debe abrir un turno antes de registrar ventas." as feature_description %}
+      {% firstof feature.updated_at feature.actualizada_en as feature_updated_at %}
+      {% firstof feature.updated_by feature.updated_by_name feature.actualizada_por_nombre "-" as feature_updated_by %}
+      {% firstof feature.request_id feature.solicitud_id request_id solicitud_id "" as feature_request_id %}
+
+      <article
+        class="ff-feature {% if feature.enabled or feature.habilitada %}is-enabled{% else %}is-disabled{% endif %}"
+        data-feature-card
+        data-feature-key="{{ feature_key }}"
+      >
+        <header class="ff-feature__header">
+          <div class="ff-feature__identity">
+            <span class="ff-feature__icon" aria-hidden="true">
+              {% if feature_key == "ventas_exigir_turno_caja" %}
+                <svg viewBox="0 0 24 24">
+                  <path d="M5 4h14v16H5zM8 8h8M8 12h2m2 0h2m2 0h.01M8 16h2m2 0h2m2 0h.01"/>
+                </svg>
+              {% else %}
+                <svg viewBox="0 0 24 24">
+                  <path d="M4 7h10M18 7h2M4 17h2M10 17h10"/>
+                  <circle cx="16" cy="7" r="2"/>
+                  <circle cx="8" cy="17" r="2"/>
+                </svg>
+              {% endif %}
+            </span>
+            <div>
+              <p class="ff-feature__category">
+                {% firstof feature.category feature.categoria "Ventas y caja" %}
+              </p>
+              <h3>{{ feature_label }}</h3>
+            </div>
+          </div>
+
+          <div class="ff-feature__state">
+            <span
+              class="ff-state-pill"
+              {% if feature.enabled or feature.habilitada %}
+                aria-label="Funcionalidad activada"
+              {% else %}
+                aria-label="Funcionalidad desactivada"
+              {% endif %}
+            >
+              <span aria-hidden="true"></span>
+              {% if feature.enabled or feature.habilitada %}Activada{% else %}Desactivada{% endif %}
+            </span>
+            <span
+              class="ff-switch {% if feature.enabled or feature.habilitada %}is-on{% endif %}"
+              role="img"
+              aria-label="{% if feature.enabled or feature.habilitada %}Interruptor encendido{% else %}Interruptor apagado{% endif %}"
+            >
+              <span aria-hidden="true"></span>
+            </span>
+          </div>
+        </header>
+
+        <p class="ff-feature__description">{{ feature_description }}</p>
+
+        {% if feature.blocked_reason or feature.razon_bloqueo %}
+          <div class="ff-feature__blocked" role="status">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 8v4m0 4h.01"/>
+              <circle cx="12" cy="12" r="9"/>
+            </svg>
+            <p>{% firstof feature.blocked_reason feature.razon_bloqueo %}</p>
+          </div>
+        {% endif %}
+
+        {% if feature.active_turns %}
+          <div class="ff-feature__blocked" role="status">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 8v4m0 4h.01"/>
+              <circle cx="12" cy="12" r="9"/>
+            </svg>
+            <p>
+              Hay {{ feature.active_turns }} turno{{ feature.active_turns|pluralize }}
+              abierto{{ feature.active_turns|pluralize }} o en cierre. Debes
+              cerrarlo{{ feature.active_turns|pluralize }} antes de desactivar
+              esta funcionalidad.
+            </p>
+          </div>
+        {% endif %}
+
+        {% if feature_key == "ventas_exigir_turno_caja" %}
+          <section class="ff-impact" aria-label="Impacto de la configuración de turnos">
+            <div class="ff-impact__title">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M12 8v4m0 4h.01"/>
+                <circle cx="12" cy="12" r="9"/>
+              </svg>
+              <div>
+                <small>Antes de cambiarla</small>
+                <strong>¿Qué ocurre si se desactiva?</strong>
+              </div>
+            </div>
+            <ul class="ff-impact__list">
+              <li>
+                <span aria-hidden="true">1</span>
+                <p>Los cajeros podrán vender sin iniciar un turno manualmente.</p>
+              </li>
+              <li>
+                <span aria-hidden="true">2</span>
+                <p>No habrá apertura, cierre ni cuadre individual por cajero.</p>
+              </li>
+              <li>
+                <span aria-hidden="true">3</span>
+                <p>Las ventas seguirán guardando sucursal, punto de pago y empleado.</p>
+              </li>
+            </ul>
+          </section>
+        {% elif feature.impacts %}
+          <section class="ff-impact" aria-label="Impacto de esta funcionalidad">
+            <div class="ff-impact__title">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M12 8v4m0 4h.01"/>
+                <circle cx="12" cy="12" r="9"/>
+              </svg>
+              <div>
+                <small>Antes de cambiarla</small>
+                <strong>Impacto operativo</strong>
+              </div>
+            </div>
+            <ul class="ff-impact__list">
+              {% for impact in feature.impacts %}
+                <li>
+                  <span aria-hidden="true">{{ forloop.counter }}</span>
+                  <p>{{ impact }}</p>
+                </li>
+              {% endfor %}
+            </ul>
+          </section>
+        {% endif %}
+
+        <div class="ff-feature__meta">
+          <div>
+            <small>Última actualización</small>
+            <strong>
+              {% if feature_updated_at %}
+                {{ feature_updated_at|date:"d/m/Y · h:i A" }}
+              {% else %}
+                Configuración inicial
+              {% endif %}
+            </strong>
+          </div>
+          <div>
+            <small>Responsable</small>
+            <strong>{{ feature_updated_by }}</strong>
+          </div>
+          {% if feature.version %}
+            <div>
+              <small>Versión</small>
+              <strong>#{{ feature.version }}</strong>
+            </div>
+          {% endif %}
+        </div>
+
+        <details
+          class="ff-change"
+          data-feature-change
+          {% if feature.form_error %}open{% endif %}
+        >
+          <summary>
+            <span class="ff-change__summary-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24">
+                <path d="M4 7h10M18 7h2M4 17h2M10 17h10"/>
+                <circle cx="16" cy="7" r="2"/>
+                <circle cx="8" cy="17" r="2"/>
+              </svg>
+            </span>
+            <span>
+              <small>Cambiar configuración</small>
+              <strong>
+                {% if feature.enabled or feature.habilitada %}
+                  Desactivar funcionalidad
+                {% else %}
+                  Activar funcionalidad
+                {% endif %}
+              </strong>
+            </span>
+            <svg class="ff-change__chevron" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="m7 10 5 5 5-5"/>
+            </svg>
+          </summary>
+
+          <form
+            method="post"
+            class="ff-change-form"
+            autocomplete="off"
+            data-feature-form
+            data-feature-label="{{ feature_label }}"
+            data-feature-disable-message="{{ feature.disabled_help|default:'Esta función dejará de estar disponible para todos los usuarios.' }}"
+            data-disabling="{% if feature.enabled or feature.habilitada %}1{% else %}0{% endif %}"
+          >
+            {% csrf_token %}
+            <input type="hidden" name="clave" value="{{ feature_key }}">
+            <input type="hidden" name="key" value="{{ feature_key }}">
+            <input
+              type="hidden"
+              name="enabled"
+              value="{% if feature.enabled or feature.habilitada %}0{% else %}1{% endif %}"
+            >
+            <input type="hidden" name="version" value="{{ feature.version|default:0 }}">
+            <input
+              type="hidden"
+              name="solicitud_id"
+              value="{{ feature_request_id }}"
+            >
+            <input type="hidden" name="request_id" value="{{ feature_request_id }}">
+
+            <div class="ff-form-note {% if feature.enabled or feature.habilitada %}is-warning{% else %}is-success{% endif %}">
+              <span aria-hidden="true">
+                {% if feature.enabled or feature.habilitada %}
+                  <svg viewBox="0 0 24 24">
+                    <path d="M12 8v4m0 4h.01"/>
+                    <circle cx="12" cy="12" r="9"/>
+                  </svg>
+                {% else %}
+                  <svg viewBox="0 0 24 24">
+                    <path d="m8 12 3 3 5-6"/>
+                    <circle cx="12" cy="12" r="9"/>
+                  </svg>
+                {% endif %}
+              </span>
+              <p>
+                {% if feature.enabled or feature.habilitada %}
+                  Vas a desactivar esta función para todos los usuarios.
+                {% else %}
+                  Vas a restaurar esta función para todos los usuarios.
+                {% endif %}
+              </p>
+            </div>
+
+            <div class="ff-field">
+              <label class="ff-field__label" for="ff-password-{{ feature_key|slugify }}">
+                Tu contraseña actual de Web Master
+              </label>
+              <div class="ff-password">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M7 10V7a5 5 0 0 1 10 0v3M5 10h14v11H5z"/>
+                </svg>
+                <input
+                  id="ff-password-{{ feature_key|slugify }}"
+                  type="password"
+                  name="password_web_master"
+                  required
+                  autocomplete="current-password"
+                  autocapitalize="none"
+                  spellcheck="false"
+                  placeholder="Escribe tu contraseña"
+                  data-feature-password
+                >
+                <button
+                  type="button"
+                  class="ff-password__toggle"
+                  aria-label="Mostrar contraseña"
+                  aria-controls="ff-password-{{ feature_key|slugify }}"
+                  data-password-toggle
+                >
+                  <svg class="ff-password__eye-open" viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M2.5 12S6 6.5 12 6.5 21.5 12 21.5 12 18 17.5 12 17.5 2.5 12 2.5 12Z"/>
+                    <circle cx="12" cy="12" r="2.5"/>
+                  </svg>
+                  <svg class="ff-password__eye-closed" viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="m4 4 16 16M9.5 7A9.8 9.8 0 0 1 12 6.5c6 0 9.5 5.5 9.5 5.5a16 16 0 0 1-2.1 2.6M6.1 8.1A16.2 16.2 0 0 0 2.5 12S6 17.5 12 17.5c1 0 2-.2 2.8-.5"/>
+                  </svg>
+                </button>
+              </div>
+            </div>
+
+            <label class="ff-field" for="ff-reason-{{ feature_key|slugify }}">
+              <span>
+                Motivo del cambio
+                {% if feature.enabled or feature.habilitada %}
+                  <em>Obligatorio para desactivar</em>
+                {% else %}
+                  <em>Opcional</em>
+                {% endif %}
+              </span>
+              <textarea
+                id="ff-reason-{{ feature_key|slugify }}"
+                name="reason"
+                rows="3"
+                maxlength="500"
+                {% if feature.enabled or feature.habilitada %}minlength="8"{% endif %}
+                placeholder="Explica por qué se realiza este cambio"
+                data-feature-reason
+                {% if feature.enabled or feature.habilitada %}required{% endif %}
+              ></textarea>
+              <small>Este texto aparecerá en el historial de auditoría.</small>
+            </label>
+
+            <button
+              type="submit"
+              class="ff-submit {% if feature.enabled or feature.habilitada %}ff-submit--danger{% else %}ff-submit--success{% endif %}"
+              {% if feature.blocked_reason or feature.razon_bloqueo or feature.active_turns and feature.enabled %}disabled{% endif %}
+              data-submit-button
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                {% if feature.enabled or feature.habilitada %}
+                  <path d="M12 8v4m0 4h.01"/>
+                  <circle cx="12" cy="12" r="9"/>
+                {% else %}
+                  <path d="m8 12 3 3 5-6"/>
+                  <circle cx="12" cy="12" r="9"/>
+                {% endif %}
+              </svg>
+              <span data-submit-label>
+                {% if feature.enabled or feature.habilitada %}
+                  Revisar y desactivar
+                {% else %}
+                  Activar funcionalidad
+                {% endif %}
+              </span>
+            </button>
+          </form>
+        </details>
+      </article>
+    {% empty %}
+      <div class="ff-empty ff-empty--features">
+        <span aria-hidden="true">
+          <svg viewBox="0 0 24 24">
+            <path d="M4 7h10M18 7h2M4 17h2M10 17h10"/>
+            <circle cx="16" cy="7" r="2"/>
+            <circle cx="8" cy="17" r="2"/>
+          </svg>
+        </span>
+        <h3>No hay funcionalidades configurables</h3>
+        <p>Cuando exista una función disponible para administrar, aparecerá en esta sección.</p>
+      </div>
+    {% endfor %}
+  </div>
+
+  <section class="ff-history" aria-labelledby="ff-history-title">
+    <header class="ff-history__header">
+      <div>
+        <p class="ff-eyebrow">Trazabilidad</p>
+        <h2 id="ff-history-title">Historial de cambios</h2>
+        <p>Consulta qué se cambió, quién lo autorizó y el motivo registrado.</p>
+      </div>
+      <span class="ff-section-heading__count">
+        {{ history_rows|length }}
+        <small>movimientos</small>
+      </span>
+    </header>
+
+    {% if history_rows %}
+      <div class="ff-history__table-wrap">
+        <table class="ff-history__table">
+          <thead>
+            <tr>
+              <th scope="col">Fecha</th>
+              <th scope="col">Funcionalidad</th>
+              <th scope="col">Cambio</th>
+              <th scope="col">Responsable</th>
+              <th scope="col">Motivo</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in history_rows %}
+              {% firstof row.created_at row.creado_en row.changed_at as row_date %}
+              {% firstof row.feature_key row.funcionalidad_id row.clave as row_key %}
+              {% firstof row.feature_label row.label row.nombre row.funcionalidad_id row.clave "Funcionalidad" as row_label %}
+              {% firstof row.actor_name row.cambiado_por_nombre row.cambiada_por_nombre row.usuario_nombre "-" as row_actor %}
+              {% firstof row.reason row.motivo "Sin motivo registrado" as row_reason %}
+              <tr>
+                <td data-label="Fecha">
+                  <time {% if row_date %}datetime="{{ row_date|date:'c' }}"{% endif %}>
+                    {% if row_date %}
+                      {{ row_date|date:"d/m/Y" }}
+                      <small>{{ row_date|date:"h:i A" }}</small>
+                    {% else %}
+                      -
+                    {% endif %}
+                  </time>
+                </td>
+                <td data-label="Funcionalidad">
+                  <strong>
+                    {% if row_key == "ventas_exigir_turno_caja" %}
+                      Exigir turno de caja para vender
+                    {% else %}
+                      {{ row_label }}
+                    {% endif %}
+                  </strong>
+                  {% if row_key %}
+                    <small>{{ row_key }}</small>
+                  {% endif %}
+                </td>
+                <td data-label="Cambio">
+                  <div class="ff-transition" aria-label="Cambio de estado">
+                    <span class="{% if row.previous_enabled or row.anterior or row.valor_anterior %}is-on{% else %}is-off{% endif %}">
+                      {% if row.previous_enabled or row.anterior or row.valor_anterior %}Activa{% else %}Inactiva{% endif %}
+                    </span>
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                      <path d="M5 12h14m-4-4 4 4-4 4"/>
+                    </svg>
+                    <span class="{% if row.enabled or row.new_enabled or row.nuevo or row.valor_nuevo %}is-on{% else %}is-off{% endif %}">
+                      {% if row.enabled or row.new_enabled or row.nuevo or row.valor_nuevo %}Activa{% else %}Inactiva{% endif %}
+                    </span>
+                  </div>
+                </td>
+                <td data-label="Responsable">
+                  <strong>{{ row_actor }}</strong>
+                  {% if row.ip_address or row.ip %}
+                    <small>IP {% firstof row.ip_address row.ip %}</small>
+                  {% endif %}
+                </td>
+                <td data-label="Motivo">
+                  <p>{{ row_reason }}</p>
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <div class="ff-empty">
+        <span aria-hidden="true">
+          <svg viewBox="0 0 24 24">
+            <path d="M12 7v5l3 2"/>
+            <circle cx="12" cy="12" r="9"/>
+          </svg>
+        </span>
+        <h3>Todavía no hay cambios</h3>
+        <p>La primera modificación quedará registrada aquí con su responsable y motivo.</p>
+      </div>
+    {% endif %}
+  </section>
+</section>
+
+<dialog class="ff-dialog" id="ff-disable-dialog" aria-labelledby="ff-dialog-title">
+  <div class="ff-dialog__body">
+    <button type="button" class="ff-dialog__close" aria-label="Cerrar confirmación" data-dialog-close>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg>
+    </button>
+    <span class="ff-dialog__icon" aria-hidden="true">
+      <svg viewBox="0 0 24 24">
+        <path d="M12 8v4m0 4h.01"/>
+        <circle cx="12" cy="12" r="9"/>
+      </svg>
+    </span>
+    <p class="ff-eyebrow">Confirmación requerida</p>
+    <h2 id="ff-dialog-title">¿Desactivar esta funcionalidad?</h2>
+    <p class="ff-dialog__feature" data-dialog-feature></p>
+    <div class="ff-dialog__warning">
+      <strong>El cambio será global e inmediato.</strong>
+      <p data-dialog-impact>
+        Esta función dejará de estar disponible para todos los usuarios.
+      </p>
+    </div>
+    <div class="ff-dialog__actions">
+      <button type="button" class="ff-dialog__cancel" data-dialog-cancel>Cancelar</button>
+      <button type="button" class="ff-dialog__confirm" data-dialog-confirm>
+        Sí, desactivar
+      </button>
+    </div>
+  </div>
+</dialog>
+{% endblock %}
+
+{% block scripts %}
+  {{ block.super }}
+  <script defer src="{% static 'javascript/configuracion_funcionalidades.js' %}?v=2"></script>
+{% endblock %}

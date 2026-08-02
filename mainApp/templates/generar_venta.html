@@ -7,7 +7,7 @@
 {% block extra_head %}
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"/>
   <link rel="stylesheet" href="https://code.jquery.com/ui/1.13.2/themes/base/jquery-ui.css"/>
-  <link rel="stylesheet" href="{% static 'css/generar_venta.css' %}?v=17">
+  <link rel="stylesheet" href="{% static 'css/generar_venta.css' %}?v=18">
   <link rel="stylesheet" href="{% static 'css/modal_venta.css' %}?v=19">
 {% endblock %}
 
@@ -18,9 +18,18 @@
   <section class="panel panel-left">
     <h1>Generar Venta</h1>
 
-    {% if not turno_activo %}
-      <div class="alert alert-danger" style="margin-bottom:12px;">
+    {% if config_error %}
+      <div class="venta-mode-notice is-error" role="alert">
+        {{ config_error }}
+      </div>
+    {% elif turno_requerido and not turno_activo %}
+      <div class="venta-mode-notice is-error" role="alert">
         Debes iniciar un turno de caja para poder generar ventas.
+      </div>
+    {% elif not turno_requerido %}
+      <div class="venta-mode-notice is-info" role="status">
+        <strong>Modo sin turnos:</strong> venderás desde tu sucursal asignada.
+        Selecciona el punto de pago antes de finalizar la venta.
       </div>
     {% endif %}
 
@@ -48,7 +57,7 @@
         <input
           type="text"
           id="sucursal_autocomplete"
-          placeholder="Sucursal del turno"
+          placeholder="Sucursal asignada"
           required aria-required="true"
           autocomplete="off"
           value="{{ sucursal_nombre|default:'' }}"
@@ -65,13 +74,15 @@
         <input
           type="text"
           id="puntopago_autocomplete"
-          placeholder="Caja del turno"
+          placeholder="{% if turno_requerido %}Caja del turno{% else %}Selecciona un punto de pago{% endif %}"
           required aria-required="true"
           autocomplete="off"
           value="{{ puntopago_nombre|default:'' }}"
+          {% if turno_requerido %}
           readonly aria-readonly="true"
           data-locked="1"
           tabindex="-1"
+          {% endif %}
         >
         <input type="hidden" id="puntopago_id" name="puntopago" value="{{ form.initial.puntopago|default:'' }}">
       </div>
@@ -176,7 +187,7 @@
           type="button"
           class="btn btn-primary"
           id="generar-venta"
-          {% if not turno_activo %}disabled aria-disabled="true"{% endif %}
+          {% if not venta_habilitada %}disabled aria-disabled="true"{% endif %}
         >
           <i class="fa-solid fa-receipt"></i> Generar Venta
         </button>
@@ -246,6 +257,11 @@
   window.carritoLimpioAuditUrl          = "{% url 'venta_carrito_limpio_audit' %}";
   window.carritoAuditRoleName           = "{{ request.user.rolid.nombre|default:''|escapejs }}";
   window.nequiNotificacionesDisponiblesUrl = "{% url 'nequi_notificaciones_disponibles' %}";
+  window.turnoCajaRequerido              = {% if turno_requerido %}true{% else %}false{% endif %};
+  window.ventaSucursalIdServidor         = "{{ form.initial.sucursal|default:''|escapejs }}";
+  window.ventaPuntoPagoIdServidor        = "{{ form.initial.puntopago|default:''|escapejs }}";
+  window.ventaSucursalNombreServidor     = "{{ sucursal_nombre|default:''|escapejs }}";
+  window.ventaPuntoPagoNombreServidor    = "{{ puntopago_nombre|default:''|escapejs }}";
 </script>
 
 <!-- POS Agent -->
@@ -255,5 +271,5 @@
   if (!/^https?:\/\//.test(window.POS_AGENT_URL)) window.POS_AGENT_URL = "http://127.0.0.1:8787";
 </script>
 
-<script src="{% static 'javascript/generar_venta.js' %}?v=23"></script>
+<script src="{% static 'javascript/generar_venta.js' %}?v=25"></script>
 {% endblock %}

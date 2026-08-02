@@ -686,6 +686,77 @@ class UsuarioPermiso(models.Model):
         return f"{self.usuario} - {self.permiso} ({estado})"
 
 
+class ConfiguracionFuncionalidad(models.Model):
+    """Estado global de una funcionalidad soportada por el sistema."""
+
+    clave = models.CharField(max_length=80, primary_key=True)
+    habilitada = models.BooleanField(default=True)
+    version = models.PositiveBigIntegerField(default=1)
+    actualizada_en = models.DateTimeField(auto_now=True)
+    actualizada_por = models.ForeignKey(
+        Usuario,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="funcionalidades_actualizadas",
+    )
+    actualizada_por_nombre = models.CharField(
+        max_length=160,
+        blank=True,
+        default="",
+    )
+
+    class Meta:
+        db_table = "configuracion_funcionalidades"
+        ordering = ["clave"]
+
+    def __str__(self):
+        estado = "habilitada" if self.habilitada else "deshabilitada"
+        return f"{self.clave}: {estado}"
+
+
+class CambioConfiguracionFuncionalidad(models.Model):
+    """Auditoría inmutable de cada cambio de una funcionalidad."""
+
+    id = models.BigAutoField(primary_key=True)
+    funcionalidad = models.ForeignKey(
+        ConfiguracionFuncionalidad,
+        on_delete=models.PROTECT,
+        related_name="cambios",
+    )
+    anterior = models.BooleanField()
+    nuevo = models.BooleanField()
+    motivo = models.CharField(max_length=500, blank=True, default="")
+    cambiado_por = models.ForeignKey(
+        Usuario,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="cambios_funcionalidades",
+    )
+    cambiado_por_nombre = models.CharField(max_length=160)
+    ip = models.GenericIPAddressField(null=True, blank=True)
+    user_agent = models.CharField(max_length=300, blank=True, default="")
+    solicitud_id = models.UUIDField(unique=True, editable=False)
+    creado_en = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        db_table = "cambios_configuracion_funcionalidades"
+        ordering = ["-creado_en", "-id"]
+        constraints = [
+            models.CheckConstraint(
+                condition=~Q(anterior=F("nuevo")),
+                name="ccf_estado_debe_cambiar",
+            ),
+        ]
+
+    def __str__(self):
+        return (
+            f"{self.funcionalidad_id}: "
+            f"{self.anterior} -> {self.nuevo}"
+        )
+
+
 class TurnoCaja(models.Model):
     ESTADOS = (
         ("ABIERTO", "ABIERTO"),
@@ -976,6 +1047,7 @@ class CambioDevolucion(models.Model):
         devoluciones,
         reintegro_map: dict | None = None,
         registrado_por=None,
+        turno_requerido=True,
     ):
         """
         ✅ Hace TODO:
@@ -1008,8 +1080,9 @@ class CambioDevolucion(models.Model):
         turno = None
         if total_dev > 0:
             reintegro_map = cls._normalizar_reintegro_map(reintegro_map, total_dev)
-            turno = cls._turno_abierto_para_venta_locked(venta)
-            if turno is None:
+            if turno_requerido:
+                turno = cls._turno_abierto_para_venta_locked(venta)
+            if turno_requerido and turno is None:
                 raise ValueError(
                     "No hay un turno de caja activo para registrar la salida de esta devolución."
                 )
@@ -1062,21 +1135,40 @@ class CambioDevolucion(models.Model):
                 registrado_por=registrado_por,
             )
 
-        # 5) ajustar el snapshot del turno. El cierre vuelve a calcularlo desde
-        # ingresos originales menos este ledger de reintegros.
-        TurnoCaja.objects.filter(pk=turno.pk).update(ventas_total=F("ventas_total") - total_dev)
+        if turno is not None:
+            # 5) ajustar el snapshot del turno. El cierre vuelve a calcularlo
+            # desde ingresos originales menos este ledger de reintegros.
+            TurnoCaja.objects.filter(pk=turno.pk).update(
+                ventas_total=F("ventas_total") - total_dev
+            )
 
-        for metodo, monto in reintegro_map.items():
-            cls._upsert_turno_medio_delta(turno, metodo, -monto)
+            for metodo, monto in reintegro_map.items():
+                cls._upsert_turno_medio_delta(turno, metodo, -monto)
 
-            if metodo == "efectivo":
-                TurnoCaja.objects.filter(pk=turno.pk).update(ventas_efectivo=F("ventas_efectivo") - monto)
-            else:
-                TurnoCaja.objects.filter(pk=turno.pk).update(ventas_no_efectivo=F("ventas_no_efectivo") - monto)
+                if metodo == "efectivo":
+                    TurnoCaja.objects.filter(pk=turno.pk).update(
+                        ventas_efectivo=F("ventas_efectivo") - monto
+                    )
+                else:
+                    TurnoCaja.objects.filter(pk=turno.pk).update(
+                        ventas_no_efectivo=F("ventas_no_efectivo") - monto
+                    )
+        else:
+            # Sin control de turnos no existe un cuadre individual. Aun así,
+            # el saldo global de la caja física debe reflejar el efectivo que
+            # realmente salió durante la devolución.
+            efectivo_devuelto = reintegro_map.get(
+                "efectivo",
+                Decimal("0.00"),
+            )
+            if efectivo_devuelto > 0:
+                PuntosPago.objects.filter(pk=venta.puntopagoid_id).update(
+                    dinerocaja=F("dinerocaja") - efectivo_devuelto
+                )
 
 
 class ReintegroVenta(models.Model):
-    """Salida de dinero por una devolución, registrada en el turno real."""
+    """Salida de dinero por devolución, con turno cuando el control está activo."""
 
     reintegroid = models.BigAutoField(primary_key=True, db_column="reintegroid")
     venta = models.ForeignKey(
@@ -1088,6 +1180,8 @@ class ReintegroVenta(models.Model):
     turno = models.ForeignKey(
         "TurnoCaja",
         on_delete=models.PROTECT,
+        null=True,
+        blank=True,
         db_column="turno_id",
         related_name="reintegros",
     )
