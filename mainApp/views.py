@@ -3967,6 +3967,7 @@ class ConfiguracionImpresionView(LoginRequiredMixin, View):
                     resolve_print_profile(
                         configuration.sistema_operativo,
                         configuration.tamano_factura,
+                        getattr(configuration, "corte_automatico", True),
                     )
                     if configuration is not None
                     else DEFAULT_PRINT_PROFILE
@@ -3983,6 +3984,7 @@ class ConfiguracionImpresionView(LoginRequiredMixin, View):
                 "label": f"{branch_name} · {point.nombre}",
                 "operating_system": profile.sistema_operativo,
                 "paper_size": profile.tamano_factura,
+                "auto_cut": profile.corte_automatico,
                 "version": int(getattr(configuration, "version", 0) or 0),
                 "updated_at": getattr(configuration, "actualizada_en", None),
                 "updated_by": (
@@ -4000,7 +4002,7 @@ class ConfiguracionImpresionView(LoginRequiredMixin, View):
         migration_error = ""
         if not migration_ready:
             migration_error = (
-                "Falta aplicar la migración 0026 para guardar la configuración "
+                "Falta aplicar la migración 0027 para guardar la configuración "
                 "de impresión. Mientras tanto se conserva Windows con factura grande."
             )
 
@@ -4062,6 +4064,16 @@ class ConfiguracionImpresionView(LoginRequiredMixin, View):
                 status=400,
             )
 
+        raw_auto_cut = str(request.POST.get("auto_cut") or "1").strip().lower()
+        if raw_auto_cut not in {"0", "1", "false", "true"}:
+            return self._render(
+                request,
+                selected_point_id=point_id,
+                error="La opción de corte automático no es válida.",
+                status=400,
+            )
+        corte_automatico = raw_auto_cut in {"1", "true"}
+
         raw_version = str(request.POST.get("version") or "0").strip()
         if not raw_version.isdigit():
             return self._render(
@@ -4114,12 +4126,15 @@ class ConfiguracionImpresionView(LoginRequiredMixin, View):
                     configuration is None
                     or configuration.sistema_operativo != sistema_operativo
                     or configuration.tamano_factura != tamano_factura
+                    or getattr(configuration, "corte_automatico", True)
+                    != corte_automatico
                 )
                 if configuration is None:
                     configuration = ConfiguracionImpresion.objects.create(
                         punto_pago=point,
                         sistema_operativo=sistema_operativo,
                         tamano_factura=tamano_factura,
+                        corte_automatico=corte_automatico,
                         version=1,
                         actualizada_por=request.user,
                         actualizada_por_nombre=self._actor_name(request.user),
@@ -4127,6 +4142,7 @@ class ConfiguracionImpresionView(LoginRequiredMixin, View):
                 elif changed:
                     configuration.sistema_operativo = sistema_operativo
                     configuration.tamano_factura = tamano_factura
+                    configuration.corte_automatico = corte_automatico
                     configuration.version = current_version + 1
                     configuration.actualizada_por = request.user
                     configuration.actualizada_por_nombre = self._actor_name(
@@ -4135,6 +4151,7 @@ class ConfiguracionImpresionView(LoginRequiredMixin, View):
                     configuration.save(update_fields=[
                         "sistema_operativo",
                         "tamano_factura",
+                        "corte_automatico",
                         "version",
                         "actualizada_por",
                         "actualizada_por_nombre",
@@ -4159,7 +4176,7 @@ class ConfiguracionImpresionView(LoginRequiredMixin, View):
                 selected_point_id=point_id,
                 error=(
                     "No se pudo guardar la configuración. Verifica que la "
-                    "migración 0026 esté aplicada e inténtalo nuevamente."
+                    "migración 0027 esté aplicada e inténtalo nuevamente."
                 ),
                 status=503,
             )
@@ -5256,6 +5273,7 @@ class GenerarVentaView(LoginRequiredMixin, View):
                 "receipt_text": receipt_text,
                 "print_operating_system": print_profile.sistema_operativo,
                 "print_paper_size": print_profile.tamano_factura,
+                "print_auto_cut": print_profile.corte_automatico,
                 "print_token": print_token,
                 "sale_total": str(total),
                 "web_master_free_sale": bool(beneficio_web_master),
@@ -5779,6 +5797,7 @@ def _build_sale_print_token(venta, user, profile, receipt_text: str) -> str:
                 or 0
             ),
             "paper_size": profile.tamano_factura,
+            "auto_cut": profile.corte_automatico,
             "receipt_text": str(receipt_text or ""),
         },
         key=settings.SECRET_KEY,
@@ -5803,6 +5822,7 @@ def _load_sale_print_token(token: str, venta, user, profile) -> dict:
             or 0
         ),
         "paper_size": profile.tamano_factura,
+        "auto_cut": profile.corte_automatico,
     }
     if any(payload.get(key) != value for key, value in expected.items()):
         raise BadSignature("El token no corresponde a esta venta.")
@@ -5848,6 +5868,7 @@ class TicketTextoView(LoginRequiredMixin, View):
             "receipt_text": text,
             "print_operating_system": profile.sistema_operativo,
             "print_paper_size": profile.tamano_factura,
+            "print_auto_cut": profile.corte_automatico,
         })
 
 
@@ -5885,6 +5906,7 @@ class ImprimirFacturaView(LoginRequiredMixin, View):
                 ),
                 "print_operating_system": profile.sistema_operativo,
                 "print_paper_size": profile.tamano_factura,
+                "print_auto_cut": profile.corte_automatico,
             }, status=409)
 
         requested_size = str(request.POST.get("paper_size") or "").strip()
@@ -5906,6 +5928,7 @@ class ImprimirFacturaView(LoginRequiredMixin, View):
                     "configuration_changed": True,
                     "print_operating_system": profile.sistema_operativo,
                     "print_paper_size": profile.tamano_factura,
+                    "print_auto_cut": profile.corte_automatico,
                 }, status=409)
 
         raw_open_drawer = str(
@@ -5954,14 +5977,14 @@ class ImprimirFacturaView(LoginRequiredMixin, View):
                 signed_payload["receipt_text"].splitlines(),
                 paper_size=profile.tamano_factura,
                 open_drawer=open_drawer,
-                cut=True,
+                cut=profile.corte_automatico,
             )
         else:
             payload = _build_ticket_payload(
                 venta,
                 paper_size=profile.tamano_factura,
                 open_drawer=False,
-                cut=True,
+                cut=profile.corte_automatico,
             )
 
         ok, err = _send_to_printer(
@@ -5974,6 +5997,7 @@ class ImprimirFacturaView(LoginRequiredMixin, View):
                 "success": True,
                 "print_operating_system": profile.sistema_operativo,
                 "print_paper_size": profile.tamano_factura,
+                "print_auto_cut": profile.corte_automatico,
             })
         return JsonResponse({"success": False, "error": err}, status=500)
 

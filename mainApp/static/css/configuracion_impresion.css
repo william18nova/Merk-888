@@ -485,7 +485,7 @@ body:has(.pc-dialog[open]){
 
 .pc-point-meta{
   display:grid;
-  grid-template-columns:1.1fr 1fr 1fr;
+  grid-template-columns:1.1fr 1fr 1fr .8fr;
   gap:8px;
   margin-top:11px;
 }
@@ -676,6 +676,139 @@ body:has(.pc-dialog[open]){
 .pc-paper-icon span::after{
   width:70%;
   top:14px;
+}
+
+.pc-cut-state{
+  flex:0 0 auto;
+  padding:6px 10px;
+  border:1px solid rgba(42, 201, 140, .35);
+  border-radius:999px;
+  background:rgba(42, 201, 140, .13);
+  color:#a7f2d2;
+  font-size:10px;
+  font-weight:900;
+  letter-spacing:.04em;
+  text-transform:uppercase;
+  transition:all .18s ease;
+}
+
+.pc-cut-state.is-off{
+  border-color:rgba(190, 221, 255, .18);
+  background:rgba(255, 255, 255, .055);
+  color:var(--pc-muted);
+}
+
+.pc-cut-option{
+  display:block;
+  cursor:pointer;
+}
+
+.pc-cut-option > input{
+  position:absolute;
+  width:1px;
+  height:1px;
+  opacity:0;
+  pointer-events:none;
+}
+
+.pc-cut-option__surface{
+  min-height:92px;
+  display:grid;
+  grid-template-columns:48px minmax(0, 1fr) auto;
+  align-items:center;
+  gap:13px;
+  padding:15px;
+  border:1px solid rgba(190, 221, 255, .19);
+  border-radius:15px;
+  background:rgba(255, 255, 255, .055);
+  transition:border-color .18s ease, background .18s ease, box-shadow .18s ease, transform .18s ease;
+}
+
+.pc-cut-option:hover .pc-cut-option__surface{
+  transform:translateY(-1px);
+  border-color:rgba(114, 215, 255, .48);
+  background:rgba(255, 255, 255, .085);
+}
+
+.pc-cut-option > input:focus-visible + .pc-cut-option__surface{
+  border-color:var(--pc-cyan);
+  box-shadow:0 0 0 4px rgba(114, 215, 255, .18);
+}
+
+.pc-cut-option > input:checked + .pc-cut-option__surface{
+  border-color:rgba(42, 201, 140, .58);
+  background:linear-gradient(145deg, rgba(42, 201, 140, .17), rgba(64, 148, 236, .10));
+  box-shadow:inset 0 0 0 1px rgba(42, 201, 140, .09), 0 10px 25px rgba(0, 17, 43, .15);
+}
+
+.pc-cut-option__icon{
+  width:48px;
+  height:48px;
+  display:grid;
+  place-items:center;
+  border-radius:14px;
+  background:rgba(64, 148, 236, .16);
+  color:#aadaff;
+  transition:all .18s ease;
+}
+
+.pc-cut-option > input:checked + .pc-cut-option__surface .pc-cut-option__icon{
+  background:rgba(42, 201, 140, .17);
+  color:#a7f2d2;
+}
+
+.pc-cut-option__icon svg{
+  width:26px;
+  height:26px;
+}
+
+.pc-cut-option__copy strong,
+.pc-cut-option__copy small{
+  display:block;
+}
+
+.pc-cut-option__copy strong{
+  color:#fff;
+  font-size:14px;
+}
+
+.pc-cut-option__copy small{
+  margin-top:5px;
+  color:var(--pc-muted);
+  font-size:11px;
+  line-height:1.45;
+}
+
+.pc-switch{
+  position:relative;
+  width:48px;
+  height:27px;
+  padding:3px;
+  border:1px solid rgba(190, 221, 255, .24);
+  border-radius:999px;
+  background:rgba(5, 25, 51, .62);
+  box-shadow:inset 0 2px 5px rgba(0, 0, 0, .22);
+  transition:all .2s ease;
+}
+
+.pc-switch span{
+  display:block;
+  width:19px;
+  height:19px;
+  border-radius:50%;
+  background:#afc6dc;
+  box-shadow:0 2px 7px rgba(0, 0, 0, .25);
+  transition:transform .2s ease, background .2s ease;
+}
+
+.pc-cut-option > input:checked + .pc-cut-option__surface .pc-switch{
+  border-color:rgba(42, 201, 140, .65);
+  background:rgba(42, 201, 140, .30);
+}
+
+.pc-cut-option > input:checked + .pc-cut-option__surface .pc-switch span{
+  background:#d7fff0;
+  transform:translateX(21px);
 }
 
 .pc-security{
@@ -968,7 +1101,7 @@ body:has(.pc-dialog[open]){
 
 .pc-preview-facts{
   display:grid;
-  grid-template-columns:repeat(3, 1fr);
+  grid-template-columns:repeat(4, 1fr);
   gap:1px;
   border-top:1px solid var(--pc-border);
   background:var(--pc-border);

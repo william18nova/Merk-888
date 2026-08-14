@@ -2059,7 +2059,7 @@ class SystemFeatureFlagTests(SimpleTestCase):
         ).read_text(encoding="utf-8")
         self.assertIn("window.nequiApiEnabled", sale_template)
         self.assertIn("system_features.nequi_api_recepcion", sale_template)
-        self.assertIn("generar_venta.js' %}?v=28", sale_template)
+        self.assertIn("generar_venta.js' %}?v=29", sale_template)
         self.assertIn("let nequiApiEnabled", sale_script)
         self.assertIn("data?.feature_disabled === NEQUI_FEATURE_KEY", sale_script)
         self.assertIn("disableNequiLinking", sale_script)
@@ -3579,6 +3579,15 @@ class PrintConfigurationRegressionTests(SimpleTestCase):
                 self.assertEqual(profile.tamano_factura, size)
                 self.assertEqual(profile.width_chars, width)
                 self.assertEqual(profile.cups_media, media)
+                self.assertTrue(profile.corte_automatico)
+
+        without_cut = resolve_print_profile(
+            SISTEMA_WINDOWS,
+            TAMANO_GRANDE,
+            False,
+        )
+        self.assertFalse(without_cut.corte_automatico)
+        self.assertEqual(without_cut.width_chars, 48)
 
         invalid = [
             ("macos", TAMANO_GRANDE),
@@ -3607,6 +3616,7 @@ class PrintConfigurationRegressionTests(SimpleTestCase):
         self.assertEqual(profile.sistema_operativo, SISTEMA_WINDOWS)
         self.assertEqual(profile.tamano_factura, TAMANO_GRANDE)
         self.assertEqual(profile.width_chars, 48)
+        self.assertTrue(profile.corte_automatico)
 
     def test_sale_receipt_text_respects_large_and_small_widths(self):
         venta_data = {
@@ -3756,6 +3766,16 @@ class PrintConfigurationRegressionTests(SimpleTestCase):
         self.assertTrue(large.startswith(b"\x1b\x40\x1b\x74\x00"))
         self.assertTrue(small.startswith(b"\x1b\x40\x1b\x74\x00"))
 
+        full_cut = b"\x1d\x56\x41\x00"
+        with_cut = _build_escpos_payload_from_lines(
+            ["FACTURA", "TOTAL $25.000"],
+            paper_size=TAMANO_GRANDE,
+            open_drawer=False,
+            cut=True,
+        )
+        self.assertTrue(with_cut.endswith(full_cut))
+        self.assertNotIn(full_cut, large)
+
     def test_linux_printer_uses_safe_media_and_bounded_timeout(self):
         expected_media = {
             TAMANO_GRANDE: "Custom.80x60mm",
@@ -3872,6 +3892,7 @@ class PrintConfigurationRegressionTests(SimpleTestCase):
         self.assertEqual(payload["receipt_text"], "FACTURA PEQUENA\nTOTAL $25.000\n")
         self.assertEqual(payload["print_operating_system"], SISTEMA_WINDOWS)
         self.assertEqual(payload["print_paper_size"], TAMANO_PEQUENA)
+        self.assertTrue(payload["print_auto_cut"])
         self.assertNotIn("print_token", payload)
         build_text.assert_called_once_with(
             venta,
@@ -3925,11 +3946,17 @@ class PrintConfigurationRegressionTests(SimpleTestCase):
         other_point_sale = self._venta()
         other_point_sale.puntopagoid = SimpleNamespace(pk=20)
         other_profile = resolve_print_profile(SISTEMA_LINUX, TAMANO_GRANDE)
+        other_cut_profile = resolve_print_profile(
+            SISTEMA_LINUX,
+            TAMANO_PEQUENA,
+            False,
+        )
         invalid_bindings = (
             (other_sale, cashier, profile),
             (venta, other_user, profile),
             (other_point_sale, cashier, profile),
             (venta, cashier, other_profile),
+            (venta, cashier, other_cut_profile),
         )
         for bound_sale, bound_user, bound_profile in invalid_bindings:
             with self.subTest(
@@ -4174,7 +4201,11 @@ class PrintConfigurationRegressionTests(SimpleTestCase):
 
     def test_linux_print_endpoint_uses_size_and_drawer_once(self):
         venta = self._venta()
-        profile = resolve_print_profile(SISTEMA_LINUX, TAMANO_PEQUENA)
+        profile = resolve_print_profile(
+            SISTEMA_LINUX,
+            TAMANO_PEQUENA,
+            False,
+        )
         request = self.factory.post(
             reverse("imprimir_factura"),
             {
@@ -4211,12 +4242,13 @@ class PrintConfigurationRegressionTests(SimpleTestCase):
         self.assertTrue(payload["success"])
         self.assertEqual(payload["print_operating_system"], SISTEMA_LINUX)
         self.assertEqual(payload["print_paper_size"], TAMANO_PEQUENA)
+        self.assertFalse(payload["print_auto_cut"])
         get_profile.assert_called_once_with(venta.puntopagoid, fresh=True)
         build_payload.assert_called_once_with(
             venta,
             paper_size=TAMANO_PEQUENA,
             open_drawer=False,
-            cut=True,
+            cut=False,
         )
         send_to_printer.assert_called_once_with(
             b"escpos-small",
@@ -4266,6 +4298,7 @@ class PrintConfigurationRegressionTests(SimpleTestCase):
                 "punto_pago_id": "19",
                 "operating_system": SISTEMA_LINUX,
                 "paper_size": TAMANO_PEQUENA,
+                "auto_cut": "0",
                 "version": "0",
                 "password_web_master": "clave-correcta",
             },
@@ -4321,6 +4354,7 @@ class PrintConfigurationRegressionTests(SimpleTestCase):
             punto_pago=point,
             sistema_operativo=SISTEMA_LINUX,
             tamano_factura=TAMANO_PEQUENA,
+            corte_automatico=False,
             version=1,
             actualizada_por=user,
             actualizada_por_nombre="William Nova",
@@ -4515,6 +4549,7 @@ class PrintConfigurationRegressionTests(SimpleTestCase):
         self.assertIn('name="punto_pago_id"', template)
         self.assertIn('name="operating_system"', template)
         self.assertIn('name="paper_size"', template)
+        self.assertIn('name="auto_cut"', template)
         self.assertIn('name="version"', template)
         self.assertIn('name="password_web_master"', template)
         self.assertIn("data-receipt-preview", template)
@@ -4526,10 +4561,14 @@ class PrintConfigurationRegressionTests(SimpleTestCase):
 
         self.assertIn('printOperatingSystem === "linux"', generate_script)
         self.assertIn("printViaLinuxServer(r.venta_id", generate_script)
-        self.assertIn("agentPrintFast(receiptText)", generate_script)
-        self.assertIn("agentPrintUltra(receiptText)", generate_script)
+        self.assertIn("buildPosAgentPrintPayload", generate_script)
+        self.assertIn("cut_command_embedded", generate_script)
+        self.assertIn("agentPrintFast(receiptText, { autoCut: printAutoCut })", generate_script)
+        self.assertIn("agentPrintUltra(receiptText, { autoCut: printAutoCut })", generate_script)
 
         self.assertIn('ticket.operatingSystem === "linux"', detail_script)
         self.assertIn("printViaLinuxServer(ventaId", detail_script)
         self.assertIn("agentPrintSafe(receiptText", detail_script)
+        self.assertIn("buildPosAgentPrintPayload", detail_script)
+        self.assertIn("autoCut: ticket.autoCut", detail_script)
         self.assertIn("agentKickSafe", detail_script)

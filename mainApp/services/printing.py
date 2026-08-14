@@ -25,6 +25,7 @@ class PrintProfile:
     tamano_factura: str
     width_chars: int
     cups_media: str
+    corte_automatico: bool
 
 
 _PRINT_PROFILES = MappingProxyType(
@@ -34,24 +35,28 @@ _PRINT_PROFILES = MappingProxyType(
             tamano_factura=TAMANO_GRANDE,
             width_chars=48,
             cups_media="Custom.80x60mm",
+            corte_automatico=True,
         ),
         (SISTEMA_WINDOWS, TAMANO_PEQUENA): PrintProfile(
             sistema_operativo=SISTEMA_WINDOWS,
             tamano_factura=TAMANO_PEQUENA,
             width_chars=32,
             cups_media="Custom.58x3276mm",
+            corte_automatico=True,
         ),
         (SISTEMA_LINUX, TAMANO_GRANDE): PrintProfile(
             sistema_operativo=SISTEMA_LINUX,
             tamano_factura=TAMANO_GRANDE,
             width_chars=48,
             cups_media="Custom.80x60mm",
+            corte_automatico=True,
         ),
         (SISTEMA_LINUX, TAMANO_PEQUENA): PrintProfile(
             sistema_operativo=SISTEMA_LINUX,
             tamano_factura=TAMANO_PEQUENA,
             width_chars=32,
             cups_media="Custom.58x3276mm",
+            corte_automatico=True,
         ),
     }
 )
@@ -81,12 +86,24 @@ def normalize_tamano_factura(value: object) -> str:
 def resolve_print_profile(
     sistema_operativo: object,
     tamano_factura: object,
+    corte_automatico: object = True,
 ) -> PrintProfile:
     key = (
         normalize_sistema_operativo(sistema_operativo),
         normalize_tamano_factura(tamano_factura),
     )
-    return _PRINT_PROFILES[key]
+    base_profile = _PRINT_PROFILES[key]
+    if not isinstance(corte_automatico, bool):
+        raise ValueError("La opción de corte automático no es válida.")
+    if corte_automatico:
+        return base_profile
+    return PrintProfile(
+        sistema_operativo=base_profile.sistema_operativo,
+        tamano_factura=base_profile.tamano_factura,
+        width_chars=base_profile.width_chars,
+        cups_media=base_profile.cups_media,
+        corte_automatico=False,
+    )
 
 
 def _punto_pago_id(punto_pago: object) -> object:
@@ -120,9 +137,13 @@ def get_print_profile(punto_pago: object, *, fresh: bool = False) -> PrintProfil
     cache_key = _profile_cache_key(punto_pago_id)
     if not fresh:
         cached = cache.get(cache_key)
-        if isinstance(cached, (tuple, list)) and len(cached) == 2:
+        if isinstance(cached, (tuple, list)) and len(cached) in {2, 3}:
             try:
-                return resolve_print_profile(*cached)
+                return resolve_print_profile(
+                    cached[0],
+                    cached[1],
+                    cached[2] if len(cached) == 3 else True,
+                )
             except ValueError:
                 cache.delete(cache_key)
 
@@ -131,7 +152,11 @@ def get_print_profile(punto_pago: object, *, fresh: bool = False) -> PrintProfil
             selection = (
                 ConfiguracionImpresion.objects
                 .filter(punto_pago_id=punto_pago_id)
-                .values_list("sistema_operativo", "tamano_factura")
+                .values_list(
+                    "sistema_operativo",
+                    "tamano_factura",
+                    "corte_automatico",
+                )
                 .first()
             )
     except (DatabaseError, TypeError, ValueError):
@@ -140,6 +165,7 @@ def get_print_profile(punto_pago: object, *, fresh: bool = False) -> PrintProfil
             (
                 DEFAULT_PRINT_PROFILE.sistema_operativo,
                 DEFAULT_PRINT_PROFILE.tamano_factura,
+                DEFAULT_PRINT_PROFILE.corte_automatico,
             ),
             PRINT_PROFILE_CACHE_SECONDS,
         )
@@ -155,7 +181,11 @@ def get_print_profile(punto_pago: object, *, fresh: bool = False) -> PrintProfil
 
     cache.set(
         cache_key,
-        (profile.sistema_operativo, profile.tamano_factura),
+        (
+            profile.sistema_operativo,
+            profile.tamano_factura,
+            profile.corte_automatico,
+        ),
         PRINT_PROFILE_CACHE_SECONDS,
     )
     return profile

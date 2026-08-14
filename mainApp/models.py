@@ -748,6 +748,7 @@ class ConfiguracionImpresion(models.Model):
         choices=TAMANOS_FACTURA,
         default=TAMANO_GRANDE,
     )
+    corte_automatico = models.BooleanField(default=True)
     version = models.PositiveBigIntegerField(default=1)
     actualizada_en = models.DateTimeField(auto_now=True)
     actualizada_por = models.ForeignKey(

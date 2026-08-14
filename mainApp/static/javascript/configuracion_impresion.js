@@ -4,22 +4,27 @@
   const form = document.querySelector("[data-print-config-form]");
   const pointSelect = document.querySelector("[data-point-select]");
   const versionInput = document.querySelector("[data-version-input]");
+  const autoCutInput = document.querySelector("[data-auto-cut-input]");
   const profileInputs = Array.from(document.querySelectorAll("[data-profile-input]"));
   const receiptPreview = document.querySelector("[data-receipt-preview]");
   const currentProfile = document.querySelector("[data-current-profile]");
   const currentTransport = document.querySelector("[data-current-transport]");
   const savedProfile = document.querySelector("[data-saved-profile]");
+  const savedCut = document.querySelector("[data-saved-cut]");
   const updatedAt = document.querySelector("[data-updated-at]");
   const updatedBy = document.querySelector("[data-updated-by]");
   const paperWidth = document.querySelector("[data-paper-width]");
   const columnCount = document.querySelector("[data-column-count]");
   const outputMethod = document.querySelector("[data-output-method]");
+  const cutState = document.querySelector("[data-cut-state]");
+  const cutPreview = document.querySelector("[data-cut-preview]");
   const combinationCards = Array.from(document.querySelectorAll("[data-combination]"));
   const migrationReady = form?.dataset.migrationReady !== "0";
 
   const dialog = document.getElementById("pc-confirm-dialog");
   const dialogPoint = dialog?.querySelector("[data-dialog-point]");
   const dialogProfile = dialog?.querySelector("[data-dialog-profile]");
+  const dialogCut = dialog?.querySelector("[data-dialog-cut]");
   const dialogConfirm = dialog?.querySelector("[data-dialog-confirm]");
   const dialogCancel = dialog?.querySelector("[data-dialog-cancel]");
   const dialogClose = dialog?.querySelector("[data-dialog-close]");
@@ -43,9 +48,11 @@
 
   const selectedSystem = () => normalizeSystem(selectedValue("operating_system", "windows"));
   const selectedSize = () => normalizeSize(selectedValue("paper_size", "grande"));
+  const selectedAutoCut = () => !!autoCutInput?.checked;
 
   const systemLabel = (system) => system === "linux" ? "Linux" : "Windows";
   const sizeLabel = (size) => size === "pequena" ? "pequeña" : "grande";
+  const cutLabel = (enabled) => enabled ? "Automático" : "Desactivado";
 
   const setRadioValue = (name, value) => {
     const input = document.querySelector(`input[name="${name}"][value="${value}"]`);
@@ -131,16 +138,24 @@
   const updateProfileView = ({ animate = true } = {}) => {
     const system = selectedSystem();
     const size = selectedSize();
+    const autoCut = selectedAutoCut();
     const isSmall = size === "pequena";
     const profileLabel = `${systemLabel(system)} · Factura ${sizeLabel(size)}`;
     const transportLabel = system === "linux" ? "USB / CUPS" : "Agente POS local";
     const widthLabel = isSmall ? "58 mm" : "80 mm";
 
     if (currentProfile) currentProfile.textContent = profileLabel;
-    if (currentTransport) currentTransport.textContent = `${transportLabel} · ${widthLabel}`;
+    if (currentTransport) {
+      currentTransport.textContent = `${transportLabel} · ${widthLabel} · ${autoCut ? "Corte automático" : "Sin corte"}`;
+    }
     if (paperWidth) paperWidth.textContent = widthLabel;
     if (columnCount) columnCount.textContent = isSmall ? "32" : "48";
     if (outputMethod) outputMethod.textContent = system === "linux" ? "USB / CUPS" : "Agente POS";
+    if (cutState) {
+      cutState.textContent = autoCut ? "Activado" : "Desactivado";
+      cutState.classList.toggle("is-off", !autoCut);
+    }
+    if (cutPreview) cutPreview.textContent = cutLabel(autoCut);
 
     if (receiptPreview) {
       const preview = buildReceiptPreview(size);
@@ -170,13 +185,16 @@
 
     const operatingSystem = normalizeSystem(option.dataset.operatingSystem);
     const paperSize = normalizeSize(option.dataset.paperSize);
+    const autoCut = option.dataset.autoCut !== "0";
     setRadioValue("operating_system", operatingSystem);
     setRadioValue("paper_size", paperSize);
+    if (autoCutInput) autoCutInput.checked = autoCut;
 
     if (versionInput) versionInput.value = String(option.dataset.version || "0");
     if (savedProfile) {
       savedProfile.textContent = `${systemLabel(operatingSystem)} · ${sizeLabel(paperSize)}`;
     }
+    if (savedCut) savedCut.textContent = cutLabel(autoCut);
     if (updatedAt) updatedAt.textContent = option.dataset.updatedAt || "Configuración inicial";
     if (updatedBy) updatedBy.textContent = option.dataset.updatedBy || "Configuración inicial";
 
@@ -196,11 +214,15 @@
   const requestConfirmation = () => {
     const system = selectedSystem();
     const size = selectedSize();
+    const autoCut = selectedAutoCut();
     const point = currentPointLabel();
 
     if (dialogPoint) dialogPoint.textContent = point;
     if (dialogProfile) {
       dialogProfile.textContent = `${systemLabel(system)} con factura ${sizeLabel(size)}`;
+    }
+    if (dialogCut) {
+      dialogCut.textContent = autoCut ? "con corte automático" : "sin corte automático";
     }
 
     if (dialog && typeof dialog.showModal === "function") {
@@ -210,7 +232,7 @@
     }
 
     const accepted = window.confirm(
-      `¿Guardar ${systemLabel(system)} con factura ${sizeLabel(size)} para ${point}?`,
+      `¿Guardar ${systemLabel(system)} con factura ${sizeLabel(size)} ${autoCut ? "y corte automático" : "sin corte automático"} para ${point}?`,
     );
     if (!accepted || !form) return;
     form.dataset.confirmed = "1";
@@ -307,6 +329,7 @@
   } else {
     setRadioValue("operating_system", "windows");
     setRadioValue("paper_size", "grande");
+    if (autoCutInput) autoCutInput.checked = true;
     updateProfileView({ animate: false });
   }
 })();

@@ -4394,6 +4394,33 @@ $(function () {
       : "grande";
   }
 
+  const ESCPOS_FULL_CUT_COMMAND = "\x1d\x56\x41\x00";
+
+  function normalizePrintAutoCut(value) {
+    if (value === undefined || value === null || value === "") return true;
+    if (typeof value === "boolean") return value;
+    return ["1", "true", "yes", "on"].includes(
+      String(value).trim().toLowerCase(),
+    );
+  }
+
+  function buildPosAgentPrintPayload(text, autoCut = true) {
+    const shouldCut = normalizePrintAutoCut(autoCut);
+    let printableText = String(text || "");
+
+    // El comando se incluye en el mismo trabajo RAW para que los agentes
+    // existentes puedan cortar aunque todavía no interpreten el campo `cut`.
+    if (shouldCut && !printableText.endsWith(ESCPOS_FULL_CUT_COMMAND)) {
+      printableText += ESCPOS_FULL_CUT_COMMAND;
+    }
+
+    return {
+      text: printableText,
+      cut: shouldCut,
+      cut_command_embedded: shouldCut,
+    };
+  }
+
   async function printViaLinuxServer(ventaId, paperSize, { openDrawer = false, printToken = "" } = {}) {
     if (!IMPRIMIR_FACTURA_URL) {
       throw new Error("La ruta de impresion Linux no esta configurada.");
@@ -4467,8 +4494,11 @@ $(function () {
     }
   }
 
-  function agentPrintUltra(text) {
-    return agentPostUltra(FAST_POS_PRINT_ENDPOINT, { text: text || "" });
+  function agentPrintUltra(text, { autoCut = true } = {}) {
+    return agentPostUltra(
+      FAST_POS_PRINT_ENDPOINT,
+      buildPosAgentPrintPayload(text, autoCut),
+    );
   }
 
   function agentKickUltra() {
@@ -4503,13 +4533,13 @@ $(function () {
 
   // ✅ Versión más rápida: inicia el POST /print y devuelve inmediatamente.
   // No usa await ni AbortController, para no cancelar impresiones lentas ni meter esperas.
-  function agentPrintFast(text) {
+  function agentPrintFast(text, { autoCut = true } = {}) {
     if (!POS_AGENT_TOKEN) return Promise.resolve();
     return fireAndForgetFetch(POS_AGENT_URL + "/print", {
       method: "POST",
       keepalive: true,
       headers: POS_AGENT_HEADERS_JSON,
-      body: JSON.stringify({ text })
+      body: JSON.stringify(buildPosAgentPrintPayload(text, autoCut))
     });
   }
 
@@ -4535,7 +4565,7 @@ $(function () {
     });
   }
 
-  async function agentPrintSafe(text, { timeout = 700 } = {}) {
+  async function agentPrintSafe(text, { timeout = 700, autoCut = true } = {}) {
     if (!POS_AGENT_TOKEN) return;
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), timeout);
@@ -4544,7 +4574,7 @@ $(function () {
         method: "POST",
         keepalive: true,
         headers: POS_AGENT_HEADERS_JSON,
-        body: JSON.stringify({ text }),
+        body: JSON.stringify(buildPosAgentPrintPayload(text, autoCut)),
         signal: ctrl.signal
       });
     } catch (_) {}
@@ -4682,6 +4712,7 @@ Total: ${money(total)}${changeMessage}${specialMessage}${nequiMessage}`;
       let printJobs = [];
       const printOperatingSystem = normalizePrintOperatingSystem(r.print_operating_system);
       const printPaperSize = normalizePrintPaperSize(r.print_paper_size);
+      const printAutoCut = normalizePrintAutoCut(r.print_auto_cut);
       const feedLines = printPaperSize === "pequena" ? 4 : 13;
       const receiptText = (r.receipt_text || "Factura\n\n") + "\n".repeat(feedLines);
       const shouldKickCashDrawer = (
@@ -4711,10 +4742,10 @@ Total: ${money(total)}${changeMessage}${specialMessage}${nequiMessage}`;
         const useUltra = FAST_POS_ULTRA_ENABLED && (FAST_POS_ULTRA_FORCE || posAgentUltraReady);
 
         if (useUltra) {
-          agentPrintUltra(receiptText);
+          agentPrintUltra(receiptText, { autoCut: printAutoCut });
           if (shouldKickCashDrawer) agentKickUltra();
         } else {
-          const printJob = agentPrintFast(receiptText);
+          const printJob = agentPrintFast(receiptText, { autoCut: printAutoCut });
           printJobs.push(printJob);
           if (shouldKickCashDrawer) printJobs.push(agentKickFast());
 
@@ -4722,7 +4753,10 @@ Total: ${money(total)}${changeMessage}${specialMessage}${nequiMessage}`;
           agentDetectUltraFast();
         }
       } else {
-        printJobs = [agentPrintSafe(receiptText, { timeout: 650 })];
+        printJobs = [agentPrintSafe(receiptText, {
+          timeout: 650,
+          autoCut: printAutoCut,
+        })];
         if (shouldKickCashDrawer) {
           printJobs.push(agentKickSafe({ timeout: 300 }));
         }

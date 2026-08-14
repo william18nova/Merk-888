@@ -4,7 +4,7 @@
 {% block title %}Configuración de impresión{% endblock %}
 
 {% block extra_head %}
-  <link rel="stylesheet" href="{% static 'css/configuracion_impresion.css' %}?v=2">
+  <link rel="stylesheet" href="{% static 'css/configuracion_impresion.css' %}?v=3">
 {% endblock %}
 
 {% block content %}
@@ -15,7 +15,7 @@
       <h1 id="pc-page-title">Impresión de facturas</h1>
       <p class="pc-hero__lead">
         Define cómo imprime cada punto de pago. Puedes combinar Windows o Linux
-        con factura grande de 80 mm o pequeña de 58 mm.
+        con factura grande de 80 mm o pequeña de 58 mm y activar la cuchilla automática.
       </p>
 
       <div class="pc-hero__facts" aria-label="Características de la configuración">
@@ -24,7 +24,7 @@
             <rect x="5" y="3" width="14" height="7" rx="2"/>
             <path d="M7 17H5a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2h-2M7 14h10v7H7z"/>
           </svg>
-          4 combinaciones
+          Corte automático
         </span>
         <span>
           <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -104,9 +104,9 @@
         <div>
           <p class="pc-eyebrow">Perfil operativo</p>
           <h2 id="pc-config-title">Configurar punto de pago</h2>
-          <p>Selecciona una caja y define el método y el ancho de impresión.</p>
+          <p>Selecciona una caja y define el método, el ancho y el corte de impresión.</p>
         </div>
-        <span class="pc-step-badge" aria-label="Tres pasos">3 pasos</span>
+        <span class="pc-step-badge" aria-label="Cuatro pasos">4 pasos</span>
       </header>
 
       {% if print_points %}
@@ -148,6 +148,7 @@
                     data-label="{{ point.label|escape }}"
                     data-operating-system="{{ point.operating_system|default:'windows'|escape }}"
                     data-paper-size="{{ point.paper_size|default:'grande'|escape }}"
+                    data-auto-cut="{{ point.auto_cut|yesno:'1,0' }}"
                     data-version="{{ point.version|default_if_none:0 }}"
                     data-updated-at="{% if point.updated_at %}{{ point.updated_at|date:'d/m/Y · h:i A' }}{% else %}Configuración inicial{% endif %}"
                     data-updated-by="{{ point.updated_by|default:'Configuración inicial'|escape }}"
@@ -172,6 +173,10 @@
               <div>
                 <small>Responsable</small>
                 <strong data-updated-by>Configuración inicial</strong>
+              </div>
+              <div>
+                <small>Cuchilla</small>
+                <strong data-saved-cut>Automática</strong>
               </div>
             </div>
           </div>
@@ -273,6 +278,49 @@
                 </span>
               </label>
             </div>
+          </div>
+        </fieldset>
+
+        <fieldset class="pc-form-section">
+          <legend class="pc-sr-only">Corte automático del papel</legend>
+          <div class="pc-form-section__number" aria-hidden="true">4</div>
+          <div class="pc-form-section__body">
+            <div class="pc-field-heading">
+              <div>
+                <span class="pc-field-heading__label">Corte automático</span>
+                <p>Separa la factura al terminar de imprimir cuando la impresora tiene cuchilla ESC/POS.</p>
+              </div>
+              <span class="pc-cut-state" data-cut-state>Activado</span>
+            </div>
+
+            <input type="hidden" name="auto_cut" value="0">
+            <label class="pc-cut-option">
+              <input
+                type="checkbox"
+                name="auto_cut"
+                value="1"
+                data-auto-cut-input
+                data-profile-input
+                checked
+              >
+              <span class="pc-cut-option__surface">
+                <span class="pc-cut-option__icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24">
+                    <circle cx="6" cy="7" r="3"/>
+                    <circle cx="6" cy="17" r="3"/>
+                    <path d="m8.5 8.5 11 7M8.5 15.5l11-7M14 12l5.5 3.5"/>
+                  </svg>
+                </span>
+                <span class="pc-cut-option__copy">
+                  <strong>Separar la factura al finalizar</strong>
+                  <small>
+                    Envía el comando de corte en el mismo trabajo de impresión. Si la impresora
+                    no tiene cuchilla, deja esta opción desactivada.
+                  </small>
+                </span>
+                <span class="pc-switch" aria-hidden="true"><span></span></span>
+              </span>
+            </label>
           </div>
         </fieldset>
 
@@ -399,6 +447,10 @@
             <small>Salida</small>
             <strong data-output-method>Agente POS</strong>
           </div>
+          <div>
+            <small>Corte</small>
+            <strong data-cut-preview>Automático</strong>
+          </div>
         </div>
       </section>
     </aside>
@@ -465,7 +517,8 @@
     <h2 id="pc-dialog-title">¿Guardar este perfil?</h2>
     <p>
       El punto <strong data-dialog-point>seleccionado</strong> imprimirá mediante
-      <strong data-dialog-profile>Windows con factura grande</strong>.
+      <strong data-dialog-profile>Windows con factura grande</strong>,
+      <strong data-dialog-cut>con corte automático</strong>.
     </p>
     <div class="pc-dialog__actions">
       <button type="button" class="pc-dialog__cancel" data-dialog-cancel>Revisar</button>
@@ -476,5 +529,5 @@
 {% endblock %}
 
 {% block scripts %}
-  <script defer src="{% static 'javascript/configuracion_impresion.js' %}?v=2"></script>
+  <script defer src="{% static 'javascript/configuracion_impresion.js' %}?v=3"></script>
 {% endblock %}

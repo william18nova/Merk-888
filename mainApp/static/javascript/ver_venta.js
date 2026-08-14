@@ -272,7 +272,30 @@
       : "grande";
   }
 
-  async function agentPrintSafe(text, { timeout = 700 } = {}) {
+  const ESCPOS_FULL_CUT_COMMAND = "\x1d\x56\x41\x00";
+
+  function normalizePrintAutoCut(value) {
+    if (value === undefined || value === null || value === "") return true;
+    if (typeof value === "boolean") return value;
+    return ["1", "true", "yes", "on"].includes(
+      String(value).trim().toLowerCase(),
+    );
+  }
+
+  function buildPosAgentPrintPayload(text, autoCut = true) {
+    const shouldCut = normalizePrintAutoCut(autoCut);
+    let printableText = String(text || "");
+    if (shouldCut && !printableText.endsWith(ESCPOS_FULL_CUT_COMMAND)) {
+      printableText += ESCPOS_FULL_CUT_COMMAND;
+    }
+    return {
+      text: printableText,
+      cut: shouldCut,
+      cut_command_embedded: shouldCut,
+    };
+  }
+
+  async function agentPrintSafe(text, { timeout = 700, autoCut = true } = {}) {
     if (!POS_AGENT_TOKEN) {
       throw new Error("POS Agent no configurado (token vacio).");
     }
@@ -283,7 +306,7 @@
         method: "POST",
         keepalive: true,
         headers: { "Content-Type": "application/json", "X-Pos-Agent-Token": POS_AGENT_TOKEN },
-        body: JSON.stringify({ text }),
+        body: JSON.stringify(buildPosAgentPrintPayload(text, autoCut)),
         signal: ctrl.signal
       });
       if (!response.ok) {
@@ -381,7 +404,8 @@
     return {
       receiptText: String(data.receipt_text || ""),
       operatingSystem: normalizePrintOperatingSystem(data.print_operating_system),
-      paperSize: normalizePrintPaperSize(data.print_paper_size)
+      paperSize: normalizePrintPaperSize(data.print_paper_size),
+      autoCut: normalizePrintAutoCut(data.print_auto_cut)
     };
   }
 
@@ -414,7 +438,10 @@
       // corta para no desperdiciar rollo; el perfil grande conserva la actual.
       const feedLines = ticket.paperSize === "pequena" ? 4 : 13;
       const receiptText = (ticket.receiptText || "Factura\n\n") + "\n".repeat(feedLines);
-      await agentPrintSafe(receiptText, { timeout: 850 });
+      await agentPrintSafe(receiptText, {
+        timeout: 850,
+        autoCut: ticket.autoCut,
+      });
 
     } catch (err) {
       alert("⚠️ " + (err?.message || "Error al imprimir."));
