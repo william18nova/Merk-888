@@ -1901,6 +1901,29 @@ class SpecialMerk2888DiscountSecurityTests(SimpleTestCase):
         )
 
 
+class SaleProductIdVisibilityTests(SimpleTestCase):
+    def test_search_results_and_cart_show_product_id(self):
+        base_dir = settings.BASE_DIR / "mainApp"
+        script = (
+            base_dir / "static" / "javascript" / "generar_venta.js"
+        ).read_text(encoding="utf-8")
+        styles = (
+            base_dir / "static" / "css" / "generar_venta.css"
+        ).read_text(encoding="utf-8")
+        template = (
+            base_dir / "templates" / "generar_venta.html"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn('class="ac-product-id">ID ${productId}', script)
+        self.assertIn('class="cart-product-name">${onlyName(name)}', script)
+        self.assertIn('class="cart-product-id">ID ${pid}', script)
+        self.assertIn('.find(".cart-product-name")', script)
+        self.assertIn(".ui-autocomplete .ac-product-id", styles)
+        self.assertIn(".cart-product-id", styles)
+        self.assertIn("generar_venta.css' %}?v=20", template)
+        self.assertIn("generar_venta.js' %}?v=31", template)
+
+
 class SystemFeatureFlagTests(SimpleTestCase):
     def setUp(self):
         self.factory = RequestFactory()
@@ -2059,7 +2082,7 @@ class SystemFeatureFlagTests(SimpleTestCase):
         ).read_text(encoding="utf-8")
         self.assertIn("window.nequiApiEnabled", sale_template)
         self.assertIn("system_features.nequi_api_recepcion", sale_template)
-        self.assertIn("generar_venta.js' %}?v=29", sale_template)
+        self.assertIn("generar_venta.js' %}?v=31", sale_template)
         self.assertIn("let nequiApiEnabled", sale_script)
         self.assertIn("data?.feature_disabled === NEQUI_FEATURE_KEY", sale_script)
         self.assertIn("disableNequiLinking", sale_script)

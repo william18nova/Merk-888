@@ -600,6 +600,38 @@ body::before{
 }
 #detalle-productos tr:nth-child(even){ background:#f9fbff; }
 
+.cart-product-info{
+  display:flex;
+  flex-direction:column;
+  align-items:flex-start;
+  gap:3px;
+  min-width:0;
+}
+.cart-product-name{
+  font-weight:700;
+  line-height:1.25;
+}
+.cart-product-id,
+.ui-autocomplete .ac-product-id{
+  display:inline-flex;
+  align-items:center;
+  width:max-content;
+  padding:2px 7px;
+  border-radius:999px;
+  background:#e8f1ff;
+  color:#244f96;
+  font-size:11px;
+  font-weight:800;
+  line-height:1.2;
+  white-space:nowrap;
+}
+.ui-autocomplete .ac-product-id{
+  margin-left:7px;
+}
+.ui-autocomplete .ac-left > .ac-product-id:first-child{
+  margin-left:0;
+}
+
 @media (min-width: 641px){
   #detalle-productos tbody td:nth-child(5){
     display:table-cell;
@@ -775,6 +807,11 @@ body::before{
   #detalle-productos tbody td:nth-child(5)::before{ content:"Acciones"; font-weight:800; color:#2a4f9a; margin-right:10px; }
 
   #detalle-productos tbody td:nth-child(1){ grid-column:1 / -1; grid-row:1; }
+  #detalle-productos tbody td:nth-child(1) .cart-product-info{
+    align-items:flex-end;
+    margin-left:auto;
+    text-align:right;
+  }
   #detalle-productos tbody td:nth-child(2){
     grid-column:1 / -1; grid-row:2;
     justify-content:space-between !important;

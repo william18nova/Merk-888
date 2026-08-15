@@ -587,7 +587,8 @@ $(function () {
     const cached = pid ? (productCache.get(pid) || {}) : {};
     const qty = Number($row.attr("data-qty")) || Number($row.find(".qty-input").val()) || 0;
     const price = Number($row.data("price")) || Number(cached.price) || 0;
-    const name = String($row.children("td").eq(0).text() || cached.nombre || cached.name || "").trim();
+    const visibleName = $row.find(".cart-product-name").first().text();
+    const name = String(visibleName || cached.nombre || cached.name || "").trim();
     rememberCartAuditItem({
       producto_id: pid,
       nombre: name,
@@ -1315,7 +1316,12 @@ $(function () {
 
     return (
       `<tr data-pid="${pid}" data-price="${hasPrice ? cachedPrice : 0}" data-qty="${qty}" class="${pendingCls}">
-         <td>${onlyName(name)}</td>
+         <td class="cart-product-cell">
+           <div class="cart-product-info">
+             <span class="cart-product-name">${onlyName(name)}</span>
+             <small class="cart-product-id">ID ${pid}</small>
+           </div>
+         </td>
          <td><input type="number" class="qty-input" step="1" inputmode="numeric" value="${qty}" /></td>
          <td class="price-cell">${priceTxt}</td>
          <td class="subtotal-cell">${subtotalTxt}</td>
@@ -2028,12 +2034,16 @@ $(function () {
     if (!inst) return;
     inst._renderItem = function(ul, item) {
       const name = (item.name || item.label || item.value || "").toString();
-      let left = `<span class="ac-name">${name}</span>`;
+      const productId = String(item.id ?? "").trim();
+      const idBadge = productId
+        ? `<span class="ac-product-id">ID ${productId}</span>`
+        : "";
+      let left = `<span class="ac-name">${name}</span> ${idBadge}`;
 
       if (mode === "code" && item.barcode) {
-        left = `<span class="ac-code">${item.label}</span><span class="ac-sep"> — </span><span class="ac-name">${name}</span>`;
+        left = `<span class="ac-code">${item.label}</span><span class="ac-sep"> — </span><span class="ac-name">${name}</span> ${idBadge}`;
       } else if (mode === "id") {
-        left = `<span class="ac-code">#${String(item.id)}</span><span class="ac-sep"> — </span><span class="ac-name">${onlyName(item.name || "")}</span>`;
+        left = `${idBadge}<span class="ac-sep"> — </span><span class="ac-name">${onlyName(item.name || "")}</span>`;
       }
 
       const priceNum = Number(item.price);
@@ -2055,6 +2065,8 @@ $(function () {
 .ui-autocomplete .ac-left{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .ui-autocomplete .ac-code{opacity:.85}
 .ui-autocomplete .ac-name{font-weight:500}
+.ui-autocomplete .ac-product-id{display:inline-flex;align-items:center;margin-left:.45rem;padding:.1rem .42rem;border-radius:999px;background:#e8f1ff;color:#244f96;font-size:.72rem;font-weight:800;white-space:nowrap}
+.ui-autocomplete .ac-left>.ac-product-id:first-child{margin-left:0}
 .ui-autocomplete .ac-price{opacity:.85}
 .pending-price .price-cell{opacity:.6}
 .pending-price .subtotal-cell{opacity:.6}
