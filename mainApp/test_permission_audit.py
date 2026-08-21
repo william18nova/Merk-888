@@ -1,9 +1,25 @@
+import importlib
 from contextlib import nullcontext
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from django.test import RequestFactory, SimpleTestCase
 from django.urls import URLPattern, URLResolver
+
+
+class PermissionMigrationAtomicityTests(SimpleTestCase):
+    def test_cleanup_commits_before_creating_case_insensitive_index(self):
+        from django.db.migrations.operations.models import AddConstraint
+        from django.db.migrations.operations.special import RunPython
+
+        migration = importlib.import_module(
+            "mainApp.migrations.0029_permission_catalog_cleanup"
+        ).Migration
+
+        self.assertFalse(migration.atomic)
+        self.assertIsInstance(migration.operations[0], RunPython)
+        self.assertTrue(migration.operations[0].atomic)
+        self.assertIsInstance(migration.operations[1], AddConstraint)
 
 
 class PermissionCatalogAuditTests(SimpleTestCase):

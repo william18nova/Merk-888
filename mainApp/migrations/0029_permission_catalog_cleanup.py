@@ -511,6 +511,11 @@ def cleanup_permission_catalog(apps, schema_editor):
 
 class Migration(migrations.Migration):
 
+    # PostgreSQL no permite crear el índice funcional mientras existan eventos
+    # de trigger pendientes por la limpieza de permisos y sus relaciones. La
+    # limpieza se confirma en su propia transacción y el índice se crea después.
+    atomic = False
+
     dependencies = [
         ("mainApp", "0028_metodopago"),
     ]
@@ -519,6 +524,7 @@ class Migration(migrations.Migration):
         migrations.RunPython(
             cleanup_permission_catalog,
             migrations.RunPython.noop,
+            atomic=True,
         ),
         migrations.AddConstraint(
             model_name="permiso",
