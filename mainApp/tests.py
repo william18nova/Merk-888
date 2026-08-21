@@ -1045,11 +1045,11 @@ class ProductPriceMappingTests(SimpleTestCase):
         self.assertEqual(len(payload["mappings"]), 76)
         self.assertEqual(
             len([item for item in payload["mappings"] if not item["active"]]),
-            6,
+            0,
         )
-        self.assertEqual(len(mappings), 70)
-        self.assertEqual(len({item.source_id for item in mappings}), 66)
-        self.assertEqual(len({item.destination_id for item in mappings}), 70)
+        self.assertEqual(len(mappings), 76)
+        self.assertEqual(len({item.source_id for item in mappings}), 71)
+        self.assertEqual(len({item.destination_id for item in mappings}), 76)
         self.assertEqual(
             sorted(
                 item.destination_id
@@ -1098,11 +1098,20 @@ class ProductPriceMappingTests(SimpleTestCase):
             ).expected_destination_name,
             "FR BATAVIA COMPLETA",
         )
+        self.assertEqual(
+            next(
+                item
+                for item in mappings
+                if item.destination_id == 25062235
+            ).price_multiplier,
+            Decimal("1000"),
+        )
         maximum_factor = Decimal(settings.PRICE_SYNC_MAX_PRICE_FACTOR)
         for item in payload["mappings"]:
-            if not item["active"]:
-                continue
-            source = Decimal(item["source_snapshot_price"])
+            self.assertTrue(item["active"])
+            source = Decimal(item["source_snapshot_price"]) * Decimal(
+                item.get("price_multiplier", "1")
+            )
             destination = Decimal(item["destination_snapshot_price"])
             factor = max(source / destination, destination / source)
             self.assertLessEqual(
@@ -1136,6 +1145,53 @@ class ProductPriceMappingTests(SimpleTestCase):
             with self.assertRaisesMessage(
                 ProductPriceSyncError,
                 "dos productos de origen",
+            ):
+                load_price_mappings(path)
+
+    def test_active_non_direct_mapping_requires_explicit_price_rule(self):
+        payload = {
+            "version": 1,
+            "mappings": [
+                {
+                    "source_id": 1,
+                    "expected_source_name": "Origen",
+                    "destination_id": 10,
+                    "expected_destination_name": "Destino",
+                    "equivalence_type": "Equivalente",
+                    "active": True,
+                }
+            ],
+        }
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "mapping.json"
+            path.write_text(json.dumps(payload), encoding="utf-8")
+
+            with self.assertRaisesMessage(
+                ProductPriceSyncError,
+                "price_multiplier explícita",
+            ):
+                load_price_mappings(path)
+
+    def test_mapping_rejects_invalid_price_multiplier(self):
+        payload = {
+            "version": 1,
+            "mappings": [
+                {
+                    "source_id": 1,
+                    "expected_source_name": "Origen",
+                    "destination_id": 10,
+                    "expected_destination_name": "Destino",
+                    "price_multiplier": "Infinity",
+                }
+            ],
+        }
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "mapping.json"
+            path.write_text(json.dumps(payload), encoding="utf-8")
+
+            with self.assertRaisesMessage(
+                ProductPriceSyncError,
+                "fuera del rango permitido",
             ):
                 load_price_mappings(path)
 
@@ -1283,6 +1339,47 @@ class ProductPriceSyncServiceTests(SimpleTestCase):
 
         self.assertFalse(report.applied)
         self.assertEqual(len(report.changes), 1)
+        bulk_update.assert_not_called()
+
+    @patch("mainApp.services.product_price_sync.Producto.objects.bulk_update")
+    @patch("mainApp.services.product_price_sync._load_destination_products")
+    @patch("mainApp.services.product_price_sync.fetch_source_products")
+    def test_dry_run_applies_mapping_price_multiplier(
+        self,
+        fetch_source,
+        load_destination,
+        bulk_update,
+    ):
+        converted_mapping = PriceMapping(
+            source_id=7,
+            expected_source_name="Cidra",
+            destination_id=70,
+            expected_destination_name="FR CIDRA X UND",
+            equivalence_type="Equivalente",
+            price_multiplier=Decimal("1000"),
+        )
+        fetch_source.return_value = {
+            7: SourceProduct(
+                product_id=7,
+                name="Cidra",
+                price=Decimal("3.00"),
+            )
+        }
+        load_destination.return_value = {
+            70: SimpleNamespace(
+                nombre="FR CIDRA X UND",
+                precio=Decimal("2500.00"),
+                precio_anterior=None,
+            )
+        }
+
+        report = sync_product_prices(
+            apply=False,
+            mappings=(converted_mapping,),
+        )
+
+        self.assertEqual(report.changes[0].new_price, Decimal("3000.00"))
+        self.assertEqual(report.changes[0].price_factor, Decimal("1.2000"))
         bulk_update.assert_not_called()
 
     @override_settings(PRICE_SYNC_MAX_PRICE_FACTOR="5")

@@ -72,8 +72,8 @@
       "equivalence_type": "Equivalente",
       "presentation": "Nombre genérico por peso",
       "note": "La opción principal conserva la venta por peso; la alternativa conserva la presentación en bandeja.",
-      "active": false,
-      "review_reason": "Equivalencia no directa: confirmar producto, unidad y regla de precio antes de activarla."
+      "active": true,
+      "price_multiplier": "1"
     },
     {
       "source_id": 3288,
@@ -457,8 +457,8 @@
       "equivalence_type": "Equivalente",
       "presentation": "Peso frente a unidad",
       "note": "El producto coincide, pero la presentación cambia de peso a unidad.",
-      "active": false,
-      "review_reason": "Equivalencia no directa: confirmar producto, unidad y regla de precio antes de activarla."
+      "active": true,
+      "price_multiplier": "1000"
     },
     {
       "source_id": 360,
@@ -650,8 +650,8 @@
       "equivalence_type": "Equivalente",
       "presentation": "Nombre comercial distinto",
       "note": "Se asume que tomate de guiso corresponde a tomate chonto. Validar según el uso interno.",
-      "active": false,
-      "review_reason": "Equivalencia no directa: confirmar producto, unidad y regla de precio antes de activarla."
+      "active": true,
+      "price_multiplier": "1"
     },
     {
       "source_id": 388,
@@ -723,8 +723,8 @@
       "equivalence_type": "Equivalente",
       "presentation": "Variedad no especificada en destino",
       "note": "Merk2productos no distingue 'papa negra'. La principal coincide con el precio y la venta por peso.",
-      "active": false,
-      "review_reason": "Equivalencia no directa: confirmar producto, unidad y regla de precio antes de activarla."
+      "active": true,
+      "price_multiplier": "1"
     },
     {
       "source_id": 1768,
@@ -868,8 +868,8 @@
       "equivalence_type": "Equivalente",
       "presentation": "Unidad frente a peso",
       "note": "Mismo producto, pero la fuente vende la penca por unidad y el destino la registra por peso.",
-      "active": false,
-      "review_reason": "Equivalencia no directa: confirmar producto, unidad y regla de precio antes de activarla."
+      "active": true,
+      "price_multiplier": "1"
     },
     {
       "source_id": 2382,
@@ -917,8 +917,8 @@
       "equivalence_type": "Equivalencia por presentación",
       "presentation": "Paquete equivalente",
       "note": "El origen especifica arveja desgranada; el destino indica paquete de arveja.",
-      "active": false,
-      "review_reason": "Equivalencia no directa: confirmar producto, unidad y regla de precio antes de activarla."
+      "active": true,
+      "price_multiplier": "1"
     }
   ]
 }

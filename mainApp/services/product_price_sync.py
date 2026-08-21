@@ -16,6 +16,7 @@ from mainApp.models import Producto
 
 PRICE_QUANTUM = Decimal("0.01")
 MAX_PRODUCT_PRICE = Decimal("99999999.99")
+MAX_PRICE_MULTIPLIER = Decimal("1000000")
 SYNC_ADVISORY_LOCK_ID = 2026072901
 
 
@@ -30,6 +31,7 @@ class PriceMapping:
     destination_id: int
     expected_destination_name: str
     equivalence_type: str = "Equivalencia directa"
+    price_multiplier: Decimal = Decimal("1")
 
 
 @dataclass(frozen=True)
@@ -127,6 +129,26 @@ def load_price_mappings(path=None):
         equivalence_type = str(
             item.get("equivalence_type") or "Equivalencia directa"
         ).strip()
+        multiplier_is_explicit = "price_multiplier" in item
+        raw_multiplier = item.get("price_multiplier", "1")
+        if isinstance(raw_multiplier, bool):
+            raise ProductPriceSyncError(
+                f"price_multiplier del mapeo #{index} debe ser un número positivo."
+            )
+        try:
+            price_multiplier = Decimal(str(raw_multiplier))
+        except (InvalidOperation, TypeError, ValueError) as exc:
+            raise ProductPriceSyncError(
+                f"price_multiplier del mapeo #{index} debe ser un número positivo."
+            ) from exc
+        if (
+            not price_multiplier.is_finite()
+            or price_multiplier <= 0
+            or price_multiplier > MAX_PRICE_MULTIPLIER
+        ):
+            raise ProductPriceSyncError(
+                f"price_multiplier del mapeo #{index} está fuera del rango permitido."
+            )
         active = item.get("active", True)
         if not isinstance(active, bool):
             raise ProductPriceSyncError(
@@ -162,10 +184,13 @@ def load_price_mappings(path=None):
 
         if not active:
             continue
-        if equivalence_type != "Equivalencia directa":
+        if (
+            equivalence_type != "Equivalencia directa"
+            and not multiplier_is_explicit
+        ):
             raise ProductPriceSyncError(
                 f"El mapeo activo {source_id} -> {destination_id} no es una "
-                "equivalencia directa; debe revisarse antes de activarlo."
+                "equivalencia directa y necesita una regla price_multiplier explícita."
             )
         mappings.append(
             PriceMapping(
@@ -174,6 +199,7 @@ def load_price_mappings(path=None):
                 destination_id=destination_id,
                 expected_destination_name=destination_name,
                 equivalence_type=equivalence_type,
+                price_multiplier=price_multiplier,
             )
         )
     if not mappings:
@@ -431,6 +457,28 @@ def _price_factor(old_price, new_price):
     )
 
 
+def _mapped_destination_price(mapping, source_product):
+    try:
+        mapped_price = (
+            source_product.price * mapping.price_multiplier
+        ).quantize(PRICE_QUANTUM, rounding=ROUND_HALF_UP)
+    except (InvalidOperation, TypeError, ValueError) as exc:
+        raise ProductPriceSyncError(
+            f"La regla de precio {mapping.source_id} -> "
+            f"{mapping.destination_id} produjo un valor inválido."
+        ) from exc
+    if (
+        not mapped_price.is_finite()
+        or mapped_price <= 0
+        or mapped_price > MAX_PRODUCT_PRICE
+    ):
+        raise ProductPriceSyncError(
+            f"La regla de precio {mapping.source_id} -> "
+            f"{mapping.destination_id} produjo un valor fuera del rango permitido."
+        )
+    return mapped_price
+
+
 @contextmanager
 def _exclusive_sync_lock():
     try:
@@ -481,7 +529,10 @@ def _build_report(mappings, source_products, destination_products, *, applied):
     for mapping in mappings:
         product = destination_products[mapping.destination_id]
         old_price = Decimal(product.precio).quantize(PRICE_QUANTUM)
-        new_price = source_products[mapping.source_id].price
+        new_price = _mapped_destination_price(
+            mapping,
+            source_products[mapping.source_id],
+        )
         if old_price == new_price:
             unchanged_count += 1
             continue

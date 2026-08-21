@@ -4,15 +4,17 @@ El comando consulta `public.productos` en la base externa y actualiza
 `Producto.precio` en merk2 usando el mapeo versionado en
 `mainApp/data/price_sync_plaza_map.json`.
 
-La hoja contiene 76 relaciones (71 productos de origen y 76 destinos). Hay
-70 relaciones directas activas. Se dejaron pausadas 6 equivalencias no directas
-hasta confirmar producto, presentación y regla de precio; entre ellas está
-`cidras`, cuyo snapshot pasa de precio por peso 3 a precio por unidad 3000.
+La hoja contiene 76 relaciones activas (71 productos de origen y 76 destinos).
+Las equivalencias no directas declaran una regla `price_multiplier` explícita.
+Cinco usan una relación 1:1 y `cidras` convierte el precio de origen a precio
+por unidad mediante `precio_destino = precio_origen × 1000`.
 
 La operación tiene estas protecciones:
 
 - la conexión externa se abre con transacción de solo lectura y TLS;
 - cada ID se valida también contra el nombre esperado;
+- toda equivalencia no directa requiere una regla de precio explícita;
+- el precio convertido se valida y redondea antes de compararlo o escribirlo;
 - se valida todo el lote antes de escribir;
 - sin `--apply` el comando siempre es una simulación;
 - al actualizar, conserva el valor anterior en `precio_anterior`;
@@ -24,7 +26,7 @@ por proveedor y esa métrica se actualiza actualmente cuando se registra el
 costo de una compra. Definir otro costo de referencia requeriría una regla
 contable adicional.
 
-## Validación realizada el 29 de julio de 2026
+## Validación realizada el 21 de agosto de 2026
 
 La base `desarrollo-william…` fue confirmada como origen Plaza. Su tabla
 `public.productos` contiene 3.458 referencias y todos los productos activos del
@@ -33,17 +35,17 @@ mapeo coincidieron por ID y nombre. La base `merk-888…` es el destino merk2.
 La simulación real terminó sin escrituras con este resultado:
 
 ```text
-70 mapeos activos
-66 productos de origen
-70 productos de destino
-16 precios cambiarían
-54 precios permanecen iguales
+76 mapeos activos
+71 productos de origen
+76 productos de destino
+1 precio cambiaría
+75 precios permanecen iguales
 0 inconsistencias de ID o nombre
 0 variaciones extremas
 ```
 
-No programes todavía `--apply` hasta aprobar los 16 cambios mostrados por la
-simulación. Las 6 equivalencias no directas continúan pausadas.
+El único cambio pendiente durante esa simulación fue `FR PAPA KG`, de 2.60 a
+2.80, usando el origen `Papa Negra x gr`.
 
 ## Variables privadas
 
@@ -95,9 +97,9 @@ cd /home/Merk888/Merk-888
 /home/Merk888/.virtualenvs/env/bin/python manage.py actualizar_precios_plaza --dry-run --force
 ```
 
-Mientras las 6 relaciones pendientes sigan pausadas, la prueba debe informar
-70 mapeos, 66 productos de origen y 70 productos de destino. No debe mostrar
-inconsistencias de IDs/nombres ni variaciones extremas sin revisar.
+La prueba debe informar 76 mapeos, 71 productos de origen y 76 productos de
+destino. No debe mostrar inconsistencias de IDs/nombres ni variaciones extremas
+sin revisar.
 
 Solo después de aprobar la simulación:
 
