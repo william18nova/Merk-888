@@ -1086,7 +1086,15 @@ class ProductPriceMappingTests(SimpleTestCase):
             next(
                 item
                 for item in mappings
-                if item.destination_id == 2942
+                if item.source_id == 355
+            ).destination_id,
+            25063529,
+        )
+        self.assertEqual(
+            next(
+                item
+                for item in mappings
+                if item.destination_id == 25063529
             ).expected_destination_name,
             "FR BATAVIA COMPLETA",
         )

@@ -1,42 +1,22 @@
 from django.db import migrations
 
 
-PRODUCT_ID = 2942
+PRODUCT_ID = 25063529
 TARGET_NAME = "FR BATAVIA COMPLETA"
-KNOWN_PREVIOUS_NAMES = {
-    "fr batavia x und",
-    "fr batavia media x und",
-    TARGET_NAME.casefold(),
-}
 
 
-def rename_batavia_completa(apps, schema_editor):
+def validate_batavia_completa(apps, schema_editor):
     Producto = apps.get_model("mainApp", "Producto")
     product = Producto.objects.filter(pk=PRODUCT_ID).first()
     if product is None:
         return
 
     current_name = str(product.nombre or "").strip()
-    if current_name.casefold() not in KNOWN_PREVIOUS_NAMES:
+    if current_name.casefold() != TARGET_NAME.casefold():
         raise RuntimeError(
-            f"No se renombro el producto {PRODUCT_ID}: "
-            f"su nombre actual es '{current_name}' y no corresponde a Batavia."
+            f"El producto destino {PRODUCT_ID} debe llamarse '{TARGET_NAME}', "
+            f"pero actualmente se llama '{current_name}'."
         )
-
-    conflict = (
-        Producto.objects.exclude(pk=PRODUCT_ID)
-        .filter(nombre__iexact=TARGET_NAME)
-        .first()
-    )
-    if conflict is not None:
-        raise RuntimeError(
-            f"No se renombro el producto {PRODUCT_ID}: "
-            f"el nombre '{TARGET_NAME}' ya pertenece al producto {conflict.pk}."
-        )
-
-    if current_name != TARGET_NAME:
-        product.nombre = TARGET_NAME
-        product.save(update_fields=["nombre"])
 
 
 class Migration(migrations.Migration):
@@ -46,7 +26,7 @@ class Migration(migrations.Migration):
 
     operations = [
         migrations.RunPython(
-            rename_batavia_completa,
+            validate_batavia_completa,
             reverse_code=migrations.RunPython.noop,
         ),
     ]
