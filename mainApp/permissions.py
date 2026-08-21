@@ -4,7 +4,7 @@ import unicodedata
 from typing import Dict, List, Optional, Set
 
 from django.core.cache import cache
-from django.db import DatabaseError
+from django.db import DatabaseError, connection, transaction
 from django.urls import NoReverseMatch, reverse
 
 from .models import Permiso, Rol, RolPermiso
@@ -15,7 +15,8 @@ from .services.feature_flags import (
 )
 
 
-ADMIN_ROLE_NAMES = {"admin", "administrador", "supervisor"}
+WEB_MASTER_ROLE_NAMES = {"web_master", "webmaster"}
+ADMIN_ROLE_NAMES = {"admin", "administrador", "administradora", "supervisor"}
 PUBLIC_URL_NAMES = {"login", "logout", "visor_barcode", "visor_barcode_buscar", "visor_barcode_lookup", "macrodroid_nequi_webhook"}
 ALWAYS_ALLOWED_URL_NAMES = {"home"}
 WEB_MASTER_ONLY_URL_NAMES = {
@@ -23,9 +24,8 @@ WEB_MASTER_ONLY_URL_NAMES = {
     "claves_descuento_merk2888",
     "configuracion_funcionalidades",
     "configuracion_impresion",
+    "configuracion_metodos_pago",
 }
-CAJERO_PRINT_ONLY_URL_NAMES = {"ver_venta", "ticket_texto", "imprimir_factura"}
-
 PERMISSION_CACHE_SECONDS = 300
 NAV_CACHE_SECONDS = 300
 ROLE_NAME_CACHE_SECONDS = 600
@@ -376,6 +376,8 @@ PERMISSION_DEFINITIONS = [
     {
         "code": "descuentos_especiales_generar",
         "label": "Generar códigos de descuento especial",
+        "assignable": False,
+        "system_only": True,
         "description": (
             "Permite generar y revocar claves de un solo uso para el "
             "beneficio especial merk2888. Uso exclusivo Web Master."
@@ -395,6 +397,8 @@ PERMISSION_DEFINITIONS = [
     {
         "code": "ventas_no_realizadas",
         "label": "Ventas no realizadas",
+        "assignable": False,
+        "system_only": True,
         "description": "Permite ver carritos que fueron armados y luego limpiados sin finalizar venta. Uso exclusivo Web Master.",
         "aliases": ["ventas_no_realizadas", "ventas no realizadas", "carritos limpiados", "auditoria carritos"],
     },
@@ -435,11 +439,18 @@ PERMISSION_DEFINITIONS = [
         "aliases": [
             "nequi_notificaciones",
             "nequi_notificaciones_data",
-            "nequi_notificacion_eliminar",
-            "nequi_notificaciones_eliminar_seleccionadas",
-            "nequi_notificaciones_disponibles",
             "pagos nequi",
             "notificaciones nequi",
+        ],
+    },
+    {
+        "code": "nequi_notificaciones_eliminar",
+        "label": "Eliminar notificaciones Nequi",
+        "description": "Permite eliminar notificaciones de pagos recibidos por Nequi.",
+        "aliases": [
+            "nequi_notificacion_eliminar",
+            "nequi_notificaciones_eliminar_seleccionadas",
+            "eliminar notificaciones nequi",
         ],
     },
     {
@@ -492,9 +503,13 @@ PERMISSION_DEFINITIONS = [
     },
     {
         "code": "caja_admin",
-        "label": "Administrar turnos",
-        "description": "Permite editar, cerrar o eliminar turnos desde admin.",
-        "aliases": ["turnos_caja_admin", "admin turnos"],
+        "label": "Administrar turnos de caja",
+        "description": "Permite editar, cerrar y eliminar turnos desde el panel administrativo.",
+        "aliases": [
+            "Administrar turnos",
+            "api_admin_turno_delete",
+            "Eliminar turnos de caja",
+        ],
     },
     {
         "code": "caja_turnos_editar",
@@ -510,12 +525,14 @@ PERMISSION_DEFINITIONS = [
     {
         "code": "seguridad_permisos",
         "label": "Administrar permisos",
-        "description": "Permite crear permisos y asignarlos a roles o usuarios.",
-        "aliases": ["permiso_agregar", "visualizar_permisos", "roles_permisos", "usuarios_permisos"],
+        "description": "Permite consultar el catálogo y asignar permisos a roles o usuarios.",
+        "aliases": ["visualizar_permisos", "roles_permisos", "usuarios_permisos"],
     },
     {
         "code": "configuracion_funcionalidades",
         "label": "Administrar funcionalidades del sistema",
+        "assignable": False,
+        "system_only": True,
         "description": (
             "Permite activar o desactivar funcionalidades globales preparadas "
             "para operar en ambos modos. Uso exclusivo Web Master."
@@ -529,6 +546,8 @@ PERMISSION_DEFINITIONS = [
     {
         "code": "configuracion_impresion",
         "label": "Configurar impresión",
+        "assignable": False,
+        "system_only": True,
         "description": (
             "Permite definir el sistema operativo y el tamaño de factura "
             "de cada punto de pago. Uso exclusivo Web Master."
@@ -540,10 +559,19 @@ PERMISSION_DEFINITIONS = [
         ],
     },
     {
-        "code": "visor_barcode",
-        "label": "Visor Barcode",
-        "description": "Permite usar el visor de codigos de barras.",
-        "aliases": ["visor_barcode"],
+        "code": "configuracion_metodos_pago",
+        "label": "Administrar métodos de pago",
+        "assignable": False,
+        "system_only": True,
+        "description": (
+            "Permite agregar, ordenar, activar y desactivar los métodos de "
+            "pago. Uso exclusivo Web Master."
+        ),
+        "aliases": [
+            "configuracion_metodos_pago",
+            "métodos de pago",
+            "medios de pago",
+        ],
     },
 ]
 
@@ -555,6 +583,20 @@ PERMISSION_IMPLICATIONS = {
     "caja_turnos_editar": ["caja_admin"],
     "caja_retiro_base": ["caja_turno"],
     "inventarios_fotos": ["inventarios_editar"],
+    "sucursales_ver": ["sucursales_editar", "sucursales_eliminar"],
+    "categorias_ver": ["categorias_editar", "categorias_eliminar"],
+    "productos_ver": ["productos_editar", "productos_eliminar"],
+    "inventarios_ver": ["inventarios_editar", "inventarios_eliminar", "inventarios_fotos"],
+    "proveedores_ver": ["proveedores_editar", "proveedores_eliminar"],
+    "precios_proveedor_ver": ["precios_proveedor_editar", "precios_proveedor_eliminar"],
+    "puntos_pago_ver": ["puntos_pago_editar", "puntos_pago_eliminar"],
+    "roles_ver": ["roles_editar", "roles_eliminar"],
+    "usuarios_ver": ["usuarios_editar", "usuarios_eliminar"],
+    "empleados_ver": ["empleados_editar", "empleados_eliminar"],
+    "horarios_ver": ["horarios_editar", "horarios_eliminar"],
+    "horarios_caja_ver": ["horarios_caja_editar", "horarios_caja_eliminar"],
+    "clientes_ver": ["clientes_editar", "clientes_eliminar"],
+    "pedidos_ver": ["pedidos_editar", "pedidos_eliminar"],
 }
 
 
@@ -684,8 +726,8 @@ ROUTE_PERMISSIONS = {
     "metricas_negocio_data": "metricas_negocio",
     "nequi_notificaciones": "nequi_notificaciones",
     "nequi_notificaciones_data": "nequi_notificaciones",
-    "nequi_notificacion_eliminar": "nequi_notificaciones",
-    "nequi_notificaciones_eliminar_seleccionadas": "nequi_notificaciones",
+    "nequi_notificacion_eliminar": "nequi_notificaciones_eliminar",
+    "nequi_notificaciones_eliminar_seleccionadas": "nequi_notificaciones_eliminar",
     "nequi_notificaciones_disponibles": "ventas_generar",
     "agregar_pedido": "pedidos_crear",
     "pedido_sucursal_autocomplete": "pedidos_crear",
@@ -713,10 +755,7 @@ ROUTE_PERMISSIONS = {
     "api_admin_turno_detail": "caja_turnos_editar",
     "api_admin_turno_update": "caja_turnos_editar",
     "api_admin_turno_delete": "caja_admin",
-    "permiso_agregar": "seguridad_permisos",
     "visualizar_permisos": "seguridad_permisos",
-    "editar_permiso": "seguridad_permisos",
-    "eliminar_permiso": "seguridad_permisos",
     "roles_permisos": "seguridad_permisos",
     "rol_autocomplete": "seguridad_permisos",
     "permiso_autocomplete": "seguridad_permisos",
@@ -728,9 +767,7 @@ ROUTE_PERMISSIONS = {
     "usuarios_permisos": "seguridad_permisos",
     "configuracion_funcionalidades": "configuracion_funcionalidades",
     "configuracion_impresion": "configuracion_impresion",
-    "visor_barcode": "visor_barcode",
-    "visor_barcode_buscar": "visor_barcode",
-    "visor_barcode_lookup": "visor_barcode",
+    "configuracion_metodos_pago": "configuracion_metodos_pago",
 }
 
 
@@ -740,6 +777,8 @@ ROUTE_PERMISSION_ALTERNATIVES = {
     "imprimir_factura": ["ventas_generar", "ventas_ver", "ventas_imprimir", "ventas_cambios"],
     "proveedor_precios_autocomplete": ["precios_proveedor_crear", "precios_proveedor_editar"],
     "producto_precios_autocomplete": ["precios_proveedor_crear", "precios_proveedor_editar"],
+    "categoria_autocomplete": ["productos_crear", "productos_editar"],
+    "producto_autocomplete_global": ["ventas_generar", "ventas_ver"],
     "proveedor_con_productos_autocomplete": [
         "precios_proveedor_ver",
         "pedidos_crear",
@@ -757,6 +796,7 @@ ROUTE_PERMISSION_ALTERNATIVES = {
     "producto_inventario_buscar_nombre": ["inventarios_ver", "inventarios_editar", "inventarios_fotos", "reportes_ventas_producto"],
     "producto_inventario_buscar_barras": ["inventarios_ver", "inventarios_editar", "inventarios_fotos", "reportes_ventas_producto"],
     "producto_inventario_buscar_id": ["inventarios_ver", "inventarios_editar", "inventarios_fotos", "reportes_ventas_producto"],
+    "producto_detalle_inventario": ["inventarios_ver", "inventarios_editar"],
 }
 
 
@@ -885,13 +925,13 @@ NAV_GROUPS = [
         "children": [
             {"label": "Agregar rol", "url_name": "agregar_rol"},
             {"label": "Visualizar roles", "url_name": "visualizar_roles"},
-            {"label": "Agregar permiso", "url_name": "permiso_agregar"},
             {"label": "Visualizar permisos", "url_name": "visualizar_permisos"},
             {"label": "Asignar roles-permisos", "url_name": "roles_permisos"},
             {"label": "Visualizar relaciones", "url_name": "visualizar_roles_permisos"},
             {"label": "Permisos por usuario", "url_name": "usuarios_permisos"},
             {"label": "Funcionalidades del sistema", "url_name": "configuracion_funcionalidades"},
             {"label": "Configuración de impresión", "url_name": "configuracion_impresion"},
+            {"label": "Métodos de pago", "url_name": "configuracion_metodos_pago"},
         ],
     },
     {"label": "Visor Barcode", "url_name": "visor_barcode"},
@@ -922,36 +962,87 @@ def _keys_for_db_permission(permission_name: str) -> Set[str]:
     return keys
 
 
-def permission_catalog() -> List[Dict[str, object]]:
-    return list(PERMISSION_DEFINITIONS)
+def permission_catalog(*, assignable_only: bool = True) -> List[Dict[str, object]]:
+    """Devuelve el catálogo administrable; las políticas internas no se asignan."""
+    if not assignable_only:
+        return list(PERMISSION_DEFINITIONS)
+    return [
+        definition
+        for definition in PERMISSION_DEFINITIONS
+        if definition.get("assignable", True)
+    ]
+
+
+def is_assignable_permission_name(value: object) -> bool:
+    """Indica si un registro de BD pertenece al catálogo delegable."""
+    key = normalize_permission_key(value)
+    return any(
+        key in _permission_keys_for_definition(definition["code"])
+        for definition in permission_catalog()
+    )
+
+
+def assignable_permissions_queryset():
+    """QuerySet seguro para listas, autocompletes y validación de POST."""
+    assignable_ids = [
+        permission_id
+        for permission_id, name in Permiso.objects.values_list("pk", "nombre")
+        if is_assignable_permission_name(name)
+    ]
+    return Permiso.objects.filter(pk__in=assignable_ids)
 
 
 def sync_permission_catalog() -> int:
+    """Sincroniza únicamente permisos delegables de forma transaccional."""
     created = 0
     updated = 0
-    existing_by_key = {
-        normalize_permission_key(permission.nombre): permission
-        for permission in Permiso.objects.all()
-    }
-    for definition in PERMISSION_DEFINITIONS:
-        candidates = [definition["label"], definition["code"], *definition.get("aliases", [])]
-        existing = None
-        for candidate in candidates:
-            existing = existing_by_key.get(normalize_permission_key(candidate))
-            if existing:
-                break
-        if existing:
-            if not existing.descripcion:
-                existing.descripcion = definition["description"]
-                existing.save(update_fields=["descripcion"])
-                updated += 1
-            continue
-        permission = Permiso.objects.create(
-            nombre=definition["label"],
-            descripcion=definition["description"],
+    with transaction.atomic():
+        if connection.vendor == "postgresql":
+            # Serializa despliegues/requests concurrentes incluso antes de que
+            # exista el índice único de la migración de saneamiento.
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT pg_advisory_xact_lock(%s)", [2026081601])
+
+        existing_permissions = list(
+            Permiso.objects.select_for_update().order_by("pk")
         )
-        existing_by_key[normalize_permission_key(permission.nombre)] = permission
-        created += 1
+        for definition in permission_catalog():
+            canonical_label = definition["label"]
+            accepted_keys = _permission_keys_for_definition(definition["code"])
+            matches = [
+                permission
+                for permission in existing_permissions
+                if normalize_permission_key(permission.nombre) in accepted_keys
+            ]
+            matches.sort(
+                key=lambda permission: (
+                    permission.nombre.casefold() != canonical_label.casefold(),
+                    permission.pk,
+                )
+            )
+
+            if matches:
+                permission = matches[0]
+            else:
+                permission, was_created = Permiso.objects.get_or_create(
+                    nombre=canonical_label,
+                    defaults={"descripcion": definition["description"]},
+                )
+                if was_created:
+                    created += 1
+                    existing_permissions.append(permission)
+
+            changed_fields = []
+            if permission.nombre != canonical_label:
+                permission.nombre = canonical_label
+                changed_fields.append("nombre")
+            if permission.descripcion != definition["description"]:
+                permission.descripcion = definition["description"]
+                changed_fields.append("descripcion")
+            if changed_fields:
+                permission.save(update_fields=changed_fields)
+                updated += 1
+
     if created or updated:
         _bump_permission_cache_version()
     return created
@@ -965,12 +1056,21 @@ def grant_all_permissions_to_web_master(role_id: Optional[int] = None) -> int:
     web_master_roles = [
         role
         for role in roles
-        if normalize_permission_key(role.nombre) == "web_master"
+        if normalize_permission_key(role.nombre) in WEB_MASTER_ROLE_NAMES
     ]
     if not web_master_roles:
         return 0
 
-    permissions = list(Permiso.objects.all())
+    assignable_definitions = permission_catalog()
+    permissions = [
+        permission
+        for permission in Permiso.objects.all()
+        if any(
+            normalize_permission_key(permission.nombre)
+            in _permission_keys_for_definition(definition["code"])
+            for definition in assignable_definitions
+        )
+    ]
     granted = 0
     for role in web_master_roles:
         existing_ids = set(
@@ -1018,7 +1118,12 @@ def role_name(user) -> str:
 
 
 def is_web_master_role(user) -> bool:
-    return normalize_permission_key(role_name(user)) == "web_master"
+    return normalize_permission_key(role_name(user)) in WEB_MASTER_ROLE_NAMES
+
+
+def is_privileged_role_name(value: object) -> bool:
+    normalized = normalize_permission_key(value)
+    return normalized in WEB_MASTER_ROLE_NAMES or normalized in ADMIN_ROLE_NAMES
 
 
 def is_permission_admin(user) -> bool:
@@ -1127,7 +1232,9 @@ def clear_permission_cache(user=None) -> None:
 def user_has_permission(user, code: Optional[str]) -> bool:
     if not code:
         return True
-    if is_permission_admin(user):
+    if not getattr(user, "is_authenticated", False):
+        return False
+    if getattr(user, "is_superuser", False) or getattr(user, "is_staff", False):
         return True
 
     wanted = _permission_keys_for_definition(code)
@@ -1136,6 +1243,8 @@ def user_has_permission(user, code: Optional[str]) -> bool:
 
     if state["deny"] & wanted:
         return False
+    if is_permission_admin(user):
+        return True
     if state["allow"] & wanted:
         return True
     if state["role"] & wanted:
@@ -1178,8 +1287,6 @@ def user_can_access_url_name(user, url_name: Optional[str]) -> bool:
     if disabled_feature_for_url(url_name):
         return False
     if is_web_master_role(user):
-        return True
-    if url_name in CAJERO_PRINT_ONLY_URL_NAMES and normalize_permission_key(role_name(user)) == "cajero":
         return True
     if url_name in WEB_MASTER_ONLY_URL_NAMES:
         return False

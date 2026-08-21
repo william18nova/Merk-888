@@ -144,25 +144,44 @@
       const tr = document.createElement("tr");
 
       const tdM = document.createElement("td");
-      tdM.innerHTML = `<span class="chip">${String(m.metodo || "").toUpperCase()}</span>`;
+      const chip = document.createElement("span");
+      chip.className = "chip";
+      chip.textContent = m.label || String(m.metodo || "").toUpperCase();
+      tdM.appendChild(chip);
       tr.appendChild(tdM);
 
       const tdE = document.createElement("td");
       tdE.className = "num";
-      tdE.innerHTML = `<input class="in in-sm numin" type="number" step="0.01" min="0"
-                        data-esp="${m.metodo}" value="${num(m.esperado)}">`;
+      const inputEsperado = document.createElement("input");
+      inputEsperado.className = "in in-sm numin";
+      inputEsperado.type = "number";
+      inputEsperado.step = "0.01";
+      inputEsperado.min = "0";
+      inputEsperado.dataset.esp = m.metodo;
+      inputEsperado.value = String(num(m.esperado));
+      tdE.appendChild(inputEsperado);
       tr.appendChild(tdE);
 
       const tdC = document.createElement("td");
       tdC.className = "num";
-      tdC.innerHTML = `<input class="in in-sm numin" type="number" step="0.01" min="0"
-                        data-con="${m.metodo}" value="${m.contado === null ? "" : num(m.contado)}"
-                        placeholder="(vacío = 0)">`;
+      const inputContado = document.createElement("input");
+      inputContado.className = "in in-sm numin";
+      inputContado.type = "number";
+      inputContado.step = "0.01";
+      inputContado.min = "0";
+      inputContado.dataset.con = m.metodo;
+      inputContado.value = m.contado === null ? "" : String(num(m.contado));
+      inputContado.placeholder = "(vacío = 0)";
+      tdC.appendChild(inputContado);
       tr.appendChild(tdC);
 
       const tdD = document.createElement("td");
       tdD.className = "num";
-      tdD.innerHTML = `<span class="diff" data-diff="${m.metodo}">${money2(m.diferencia || 0)}</span>`;
+      const diff = document.createElement("span");
+      diff.className = "diff";
+      diff.dataset.diff = m.metodo;
+      diff.textContent = money2(m.diferencia || 0);
+      tdD.appendChild(diff);
       tr.appendChild(tdD);
 
       frag.appendChild(tr);
@@ -195,6 +214,7 @@
     TURNO = data.turno;
     MEDIOS = (data.medios || []).map(m => ({
       metodo: m.metodo,
+      label: m.label || String(m.metodo || "").toUpperCase(),
       esperado: num(m.esperado),
       contado: (m.contado === null ? "" : num(m.contado)),
       diferencia: num(m.diferencia),

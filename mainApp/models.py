@@ -7,6 +7,7 @@ from django.db.models import Q
 from django.forms import ValidationError
 from django.utils import timezone
 from django.db.models import F
+from django.db.models.functions import Lower, Trim
 
 class Sucursal(models.Model):
     sucursalid = models.AutoField(primary_key=True)
@@ -623,6 +624,12 @@ class Permiso(models.Model):
         verbose_name = "permiso"
         verbose_name_plural = "permisos"
         ordering = ["nombre"]
+        constraints = [
+            models.UniqueConstraint(
+                Lower(Trim("nombre")),
+                name="ux_permisos_nombre_ci",
+            ),
+        ]
 
     def __str__(self):
         return self.nombre
@@ -787,6 +794,51 @@ class ConfiguracionImpresion(models.Model):
             f"{self.punto_pago}: {self.get_sistema_operativo_display()} / "
             f"{self.get_tamano_factura_display()}"
         )
+
+
+class MetodoPago(models.Model):
+    """Catálogo administrable de medios disponibles para nuevos movimientos."""
+
+    codigo = models.CharField(max_length=50, primary_key=True)
+    nombre = models.CharField(max_length=80)
+    activo = models.BooleanField(default=True, db_index=True)
+    es_efectivo = models.BooleanField(default=False)
+    es_sistema = models.BooleanField(default=False)
+    orden = models.PositiveSmallIntegerField(default=100)
+    version = models.PositiveBigIntegerField(default=1)
+    creado_en = models.DateTimeField(auto_now_add=True)
+    actualizado_en = models.DateTimeField(auto_now=True)
+    actualizado_por = models.ForeignKey(
+        Usuario,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="metodos_pago_actualizados",
+    )
+    actualizado_por_nombre = models.CharField(
+        max_length=160,
+        blank=True,
+        default="",
+    )
+
+    class Meta:
+        db_table = "metodos_pago"
+        ordering = ["orden", "nombre", "codigo"]
+        constraints = [
+            models.CheckConstraint(
+                condition=Q(version__gte=1),
+                name="metodo_pago_version_positiva",
+            ),
+            models.UniqueConstraint(
+                fields=["es_efectivo"],
+                condition=Q(es_efectivo=True),
+                name="metodo_pago_un_solo_efectivo",
+            ),
+        ]
+
+    def __str__(self):
+        estado = "activo" if self.activo else "inactivo"
+        return f"{self.nombre} ({self.codigo}) · {estado}"
 
 
 class CambioConfiguracionFuncionalidad(models.Model):
@@ -1079,19 +1131,51 @@ class CambioDevolucion(models.Model):
 
     @classmethod
     def _normalizar_reintegro_map(cls, reintegro_map, total_dev):
-        medios_validos = {
-            "efectivo", "nequi", "daviplata", "tarjeta", "banco_caja_social"
-        }
+        from collections.abc import Mapping
+        from decimal import InvalidOperation
+
+        from .services.payment_methods import (
+            CASH_PAYMENT_CODE,
+            active_payment_method_codes,
+            normalize_payment_method_code,
+        )
+
+        if reintegro_map is not None and not isinstance(reintegro_map, Mapping):
+            raise ValueError(
+                "La distribucion de la devolucion debe ser un mapa de pagos."
+            )
+
+        # Efectivo es un contrato contable protegido: sigue siendo el fallback
+        # aun si una configuracion incompleta lo marcara inactivo. Los demas
+        # metodos deben estar activos al momento de registrar la salida.
+        medios_validos = set(active_payment_method_codes())
+        medios_validos.add(CASH_PAYMENT_CODE)
         normalizado = {}
-        for metodo, monto in (reintegro_map or {}).items():
-            metodo = (metodo or "").strip().lower()
-            monto = _to_q2(monto)
+        for metodo_raw, monto_raw in (reintegro_map or {}).items():
+            metodo = normalize_payment_method_code(metodo_raw)
+            try:
+                monto_decimal = (
+                    monto_raw
+                    if isinstance(monto_raw, Decimal)
+                    else Decimal(str(monto_raw))
+                )
+                monto = _to_q2(monto_decimal)
+            except (InvalidOperation, TypeError, ValueError):
+                raise ValueError(
+                    f"Monto de devolucion invalido para {metodo or 'medio vacio'}."
+                ) from None
+            if not monto.is_finite():
+                raise ValueError(
+                    f"Monto de devolucion invalido para {metodo or 'medio vacio'}."
+                )
             if monto < 0:
                 raise ValueError("Los montos de devolución no pueden ser negativos.")
             if monto == 0:
                 continue
             if metodo not in medios_validos:
-                raise ValueError(f"Medio de devolución no válido: {metodo or 'vacío'}.")
+                raise ValueError(
+                    f"Medio de devolución no válido: {metodo or 'vacío'}."
+                )
             normalizado[metodo] = _to_q2(
                 normalizado.get(metodo, Decimal("0.00")) + monto
             )
@@ -1102,7 +1186,7 @@ class CambioDevolucion(models.Model):
         # Efectivo es el medio predeterminado. Esto también protege llamadas
         # al método de dominio que no pasan por la interfaz web.
         if total_dev > 0 and not normalizado:
-            return {"efectivo": total_dev}
+            return {CASH_PAYMENT_CODE: total_dev}
 
         if suma != total_dev:
             raise ValueError(

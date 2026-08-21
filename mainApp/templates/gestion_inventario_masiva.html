@@ -46,7 +46,8 @@
                    placeholder="Buscar por nombre…" autocomplete="off">
 
             <input type="text" id="producto_busqueda_barras" class="form-control"
-                   placeholder="Buscar por código de barras…" autocomplete="off" inputmode="numeric">
+                   placeholder="Buscar por código de barras…" autocomplete="off" inputmode="numeric"
+                   data-barcode-camera="true">
 
             <input type="text" id="producto_busqueda_id" class="form-control"
                    placeholder="Buscar por ID…" autocomplete="off" inputmode="numeric">
@@ -113,7 +114,8 @@
         <input id="np_nombre" class="form-control" placeholder="Nombre (obligatorio)">
 
         <input id="np_desc" class="form-control" placeholder="Descripción (opcional)">
-        <input id="np_barras" class="form-control" placeholder="Código de barras (opcional)">
+        <input id="np_barras" class="form-control" placeholder="Código de barras (opcional)"
+               autocomplete="off" data-barcode-camera="true">
         <input id="np_categoria" class="form-control" placeholder="Categoría ID (opcional)" inputmode="numeric">
 
         <input id="np_precio" class="form-control" placeholder="Precio (obligatorio) ej: 2500.00" inputmode="decimal">
@@ -148,5 +150,5 @@
   <script src="https://cdn.datatables.net/1.13.8/js/jquery.dataTables.min.js"></script>
   <script src="https://code.jquery.com/ui/1.13.3/jquery-ui.min.js"></script>
 
-  <script defer src="{% static 'javascript/gestion_inventario_masiva.js' %}"></script>
+  <script defer src="{% static 'javascript/gestion_inventario_masiva.js' %}?v=1"></script>
 {% endblock %}

@@ -1,16 +1,12 @@
-/*  visualizar_permisos.js
-    • DataTable responsive + castellano
-    • Eliminación con confirmación vía formulario oculto
---------------------------------------------------*/
+/* Tabla de consulta del catálogo de permisos. */
 $(function () {
   "use strict";
 
-  const table = $("#permisosTable").DataTable({
+  $("#permisosTable").DataTable({
     paging    : true,
     searching : true,
     info      : true,
     responsive: true,
-    columnDefs: [{ targets: "no-sort", orderable: false }],
     language  : {
       search      : "",
       zeroRecords : "No se encontraron permisos",
@@ -22,16 +18,6 @@ $(function () {
         next    : "Siguiente",
         previous: "Anterior"
       }
-    }
-  });
-
-  $("#permisosTable").on("click", ".btn.borrar", function (e) {
-    e.preventDefault();
-    const $btn   = $(this);
-    const id     = $btn.data("id");
-    const nombre = $btn.data("nombre");
-    if (confirm(`¿Eliminar el permiso «${nombre}»?`)) {
-      $(`#eliminar-permiso-${id}`)[0].submit();
     }
   });
 });

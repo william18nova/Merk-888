@@ -1082,6 +1082,14 @@ class ProductPriceMappingTests(SimpleTestCase):
             ).expected_destination_name,
             "FR TOMILLO Y LAUREL",
         )
+        self.assertEqual(
+            next(
+                item
+                for item in mappings
+                if item.destination_id == 2942
+            ).expected_destination_name,
+            "FR BATAVIA COMPLETA",
+        )
         maximum_factor = Decimal(settings.PRICE_SYNC_MAX_PRICE_FACTOR)
         for item in payload["mappings"]:
             if not item["active"]:
@@ -1922,6 +1930,175 @@ class SaleProductIdVisibilityTests(SimpleTestCase):
         self.assertIn(".cart-product-id", styles)
         self.assertIn("generar_venta.css' %}?v=20", template)
         self.assertIn("generar_venta.js' %}?v=31", template)
+
+
+class GlobalBarcodeCameraTests(SimpleTestCase):
+    def setUp(self):
+        self.base_dir = settings.BASE_DIR / "mainApp"
+
+    def read_template(self, name):
+        return (self.base_dir / "templates" / name).read_text(encoding="utf-8")
+
+    def read_script(self, name):
+        return (
+            self.base_dir / "static" / "javascript" / name
+        ).read_text(encoding="utf-8")
+
+    def test_shared_assets_are_loaded_globally(self):
+        base = self.read_template("base.html")
+
+        self.assertIn("css/barcode_camera.css' %}?v=2", base)
+        self.assertIn("javascript/barcode_camera.js' %}?v=2", base)
+        self.assertIn("@zxing/library@0.20.0/umd/index.min.js", base)
+
+    def test_product_and_inventory_form_fields_request_camera_button(self):
+        from .forms import InventarioForm, ProductoEditarForm, ProductoForm
+
+        fields = (
+            ProductoForm.base_fields["codigo_de_barras"],
+            ProductoEditarForm.base_fields["codigo_de_barras"],
+            InventarioForm.base_fields["producto_autocomplete"],
+        )
+        for field in fields:
+            self.assertEqual(
+                field.widget.attrs.get("data-barcode-camera"),
+                "true",
+            )
+
+    def test_all_five_additional_template_inputs_are_marked(self):
+        expected_markers = {
+            "gestion_inventario_masiva.html": 2,
+            "inventario_fotos.html": 1,
+            "visualizar_productos.html": 1,
+            "visualizar_ventas.html": 1,
+        }
+        # Los cinco marcadores de plantilla, sumados al campo de producto de
+        # InventarioForm, completan los seis inputs estaticos faltantes.
+        self.assertEqual(sum(expected_markers.values()), 5)
+        for template_name, count in expected_markers.items():
+            self.assertEqual(
+                self.read_template(template_name).count(
+                    'data-barcode-camera="true"'
+                ),
+                count,
+                template_name,
+            )
+
+    def test_both_kinds_of_dynamic_barcode_rows_are_marked(self):
+        mass_inventory = self.read_script("gestion_inventario_masiva.js")
+        photo_inventory = self.read_script("inventario_fotos.js")
+
+        self.assertIn(
+            'class="form-control p_barras"',
+            mass_inventory,
+        )
+        self.assertIn(
+            'data-barcode-camera="true"',
+            mass_inventory,
+        )
+        self.assertIn('class="invf-barcode"', photo_inventory)
+        self.assertIn(
+            'data-barcode-camera="true"',
+            photo_inventory,
+        )
+
+    def test_shared_scanner_supports_dynamic_targets_fallback_and_cleanup(self):
+        scanner = self.read_script("barcode_camera.js")
+
+        for contract in (
+            'input[data-barcode-camera="true"]',
+            "new MutationObserver",
+            "navigator.mediaDevices.getUserMedia",
+            '"BarcodeDetector" in window',
+            "BrowserMultiFormatReader",
+            "decodeContinuously",
+            "decodeFromVideoElementContinuously",
+            'facingMode: { ideal: "environment" }',
+            "getSupportedFormats",
+            "getTracks().forEach",
+            "script.remove()",
+            "token !== state.session",
+            "stopNativeDetector()",
+            'window.addEventListener("pagehide"',
+            'document.addEventListener("visibilitychange"',
+            'event.key === "Escape"',
+            "applyConstraints",
+            "switchCamera",
+            'new CustomEvent(EVENT_NAME',
+            "cancelable: true",
+            'source: "camera"',
+            'target.dispatchEvent(new Event("input"',
+            'target.dispatchEvent(new Event("change"',
+            "window.isSecureContext",
+        ):
+            self.assertIn(contract, scanner)
+
+    def test_camera_scan_triggers_the_correct_page_action(self):
+        add_inventory = self.read_script("agregar_inventario.js")
+        mass_inventory = self.read_script("gestion_inventario_masiva.js")
+        photo_inventory = self.read_script("inventario_fotos.js")
+        sale_list = self.read_script("visualizar_ventas.js")
+        product_list = self.read_script("visualizar_productos.js")
+
+        self.assertIn(
+            'dom.productInput.addEventListener("nova:barcode-scanned"',
+            add_inventory,
+        )
+        self.assertIn("productAutocomplete.select(exactIndexes[0])", add_inventory)
+        self.assertIn(
+            '$inpBar.on("nova:barcode-scanned"',
+            mass_inventory,
+        )
+        self.assertIn("addProductFromAutocomplete($inpBar", mass_inventory)
+        self.assertIn(
+            'resultadoBody?.addEventListener("nova:barcode-scanned"',
+            photo_inventory,
+        )
+        self.assertIn(
+            'scanAddBarcode?.addEventListener("nova:barcode-scanned"',
+            photo_inventory,
+        )
+        self.assertIn(
+            '$inpProd.on("nova:barcode-scanned"',
+            sale_list,
+        )
+        self.assertIn("setProductoFiltroByTerm(code)", sale_list)
+        self.assertIn('$("#buscador-productos").on("input"', product_list)
+        self.assertIn("table.search(this.value).draw()", product_list)
+
+        templates = self.base_dir / "templates"
+        self.assertIn(
+            "agregar_inventario.js' %}?v=6",
+            (templates / "agregar_inventario.html").read_text(encoding="utf-8"),
+        )
+        self.assertIn(
+            "inventario_fotos.js' %}?v=3",
+            (templates / "inventario_fotos.html").read_text(encoding="utf-8"),
+        )
+        self.assertIn(
+            "visualizar_ventas.js' %}?v=6",
+            (templates / "visualizar_ventas.html").read_text(encoding="utf-8"),
+        )
+        self.assertIn(
+            "gestion_inventario_masiva.js' %}?v=1",
+            (templates / "gestion_inventario_masiva.html").read_text(encoding="utf-8"),
+        )
+
+    def test_existing_camera_pages_keep_their_single_dedicated_button(self):
+        dedicated_buttons = {
+            "generar_venta.html": 'id="btn-scan-cam"',
+            "editar_inventario.html": 'id="btnScanBarcode"',
+            "ventas_producto_rango.html": 'id="btnScanBarcode"',
+            "visor_producto_barcode.html": 'id="vb_camera"',
+        }
+        for template_name, marker in dedicated_buttons.items():
+            template = self.read_template(template_name)
+            self.assertEqual(template.count(marker), 1, template_name)
+            self.assertNotIn(
+                'data-barcode-camera="true"',
+                template,
+                template_name,
+            )
 
 
 class SystemFeatureFlagTests(SimpleTestCase):
@@ -3486,8 +3663,9 @@ class WebMasterPermissionGrantTests(SimpleTestCase):
         web_master = SimpleNamespace(pk=27, nombre="Web Master")
         regular_role = SimpleNamespace(pk=1, nombre="Administrador")
         permissions = [
-            SimpleNamespace(pk=10),
-            SimpleNamespace(pk=11),
+            SimpleNamespace(pk=10, nombre="Visualizar productos"),
+            SimpleNamespace(pk=11, nombre="Generar venta"),
+            SimpleNamespace(pk=12, nombre="Visor Barcode"),
         ]
         role_permission_model = MagicMock()
         role_permission_model.objects.filter.return_value.values_list.return_value = []

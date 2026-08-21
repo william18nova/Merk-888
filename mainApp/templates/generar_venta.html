@@ -256,8 +256,8 @@
   window.abrirCajaUrl                   = "{% url 'abrir_caja' %}";
   window.carritoLimpioAuditUrl          = "{% url 'venta_carrito_limpio_audit' %}";
   window.carritoAuditRoleName           = "{{ request.user.rolid.nombre|default:''|escapejs }}";
-  window.nequiApiEnabled                  = {% if system_features.nequi_api_recepcion %}true{% else %}false{% endif %};
-  window.nequiNotificacionesDisponiblesUrl = {% if system_features.nequi_api_recepcion %}"{% url 'nequi_notificaciones_disponibles' %}"{% else %}""{% endif %};
+  window.nequiApiEnabled                  = {% if system_features.nequi_api_recepcion and nequi_payment_method_enabled %}true{% else %}false{% endif %};
+  window.nequiNotificacionesDisponiblesUrl = {% if system_features.nequi_api_recepcion and nequi_payment_method_enabled %}"{% url 'nequi_notificaciones_disponibles' %}"{% else %}""{% endif %};
   window.turnoCajaRequerido              = {% if turno_requerido %}true{% else %}false{% endif %};
   window.ventaSucursalIdServidor         = "{{ form.initial.sucursal|default:''|escapejs }}";
   window.ventaPuntoPagoIdServidor        = "{{ form.initial.puntopago|default:''|escapejs }}";

@@ -11,6 +11,30 @@
   }
   function to2(n) { return (Math.round(n * 100) / 100).toFixed(2); }
 
+  function hydratePaymentMethodLabels() {
+    const dataNode = document.getElementById("payment-method-labels-data");
+    let labels = {};
+    try {
+      labels = JSON.parse(dataNode?.textContent || "{}") || {};
+    } catch (_) {
+      labels = {};
+    }
+
+    document.querySelectorAll("[data-payment-method-code]").forEach((element) => {
+      const code = String(element.dataset.paymentMethodCode || "").trim().toLowerCase();
+      const label = String(labels[code] || "").trim();
+      if (!label) return;
+
+      if (element instanceof HTMLInputElement) {
+        element.value = label;
+      } else {
+        element.textContent = label;
+      }
+    });
+  }
+
+  hydratePaymentMethodLabels();
+
   function getCSRFToken() {
     return document.querySelector("input[name='csrfmiddlewaretoken']")?.value || "";
   }

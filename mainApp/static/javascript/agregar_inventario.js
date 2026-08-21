@@ -851,6 +851,40 @@
     onClear: updatePageState,
   });
 
+  // Un codigo leido con la camara debe quedar seleccionado, no solamente
+  // escrito. Asi el usuario puede pasar directamente a indicar la cantidad.
+  dom.productInput.addEventListener("nova:barcode-scanned", async (event) => {
+    event.preventDefault();
+    const code = String(event.detail?.code || "").trim();
+    if (!code || !dom.branchHidden.value || productAutocomplete.disabled) return;
+
+    if (productAutocomplete.timer) {
+      window.clearTimeout(productAutocomplete.timer);
+      productAutocomplete.timer = null;
+    }
+    await productAutocomplete.search(1, false, true);
+
+    const normalizedCode = code.toLocaleLowerCase();
+    const exactIndexes = productAutocomplete.rows.reduce((indexes, row, index) => {
+      if (
+        String(row.barcode || "").trim().toLocaleLowerCase() === normalizedCode
+      ) indexes.push(index);
+      return indexes;
+    }, []);
+    if (exactIndexes.length === 1) {
+      productAutocomplete.select(exactIndexes[0]);
+      return;
+    }
+
+    UI.fieldError(
+      "productoid",
+      exactIndexes.length > 1
+        ? "Hay varios productos con este codigo. Selecciona el correcto de la lista."
+        : "No encontramos un producto disponible con el codigo de barras escaneado."
+    );
+    dom.productInput.focus();
+  });
+
   function positiveInteger(value) {
     const text = String(value ?? "").trim();
     if (!/^\d+$/.test(text)) return null;

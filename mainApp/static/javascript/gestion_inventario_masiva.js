@@ -84,7 +84,7 @@ $(function () {
 
         <td><input class="form-control p_nombre" value="${escapeHtml(p.nombre || "")}"></td>
         <td><input class="form-control p_desc" value="${escapeHtml(p.descripcion || "")}"></td>
-        <td><input class="form-control p_barras" value="${escapeHtml(p.codigo_de_barras || "")}"></td>
+        <td><input class="form-control p_barras" value="${escapeHtml(p.codigo_de_barras || "")}" autocomplete="off" data-barcode-camera="true"></td>
         <td><input class="form-control p_categoria" value="${escapeHtml(p.categoria_id || "")}" inputmode="numeric"></td>
 
         <td><input class="form-control p_precio" value="${escapeHtml(p.precio || "0")}" inputmode="decimal"></td>
@@ -180,6 +180,24 @@ $(function () {
   });
 
   /* ================= 3 Autocomplete Producto ================= */
+  function addProductFromAutocomplete($input, item){
+    if (!item) return false;
+
+    const sid = requireSucursal();
+    if (!sid) return false;
+
+    fetch(`${PROD_DETALLE_URL}?sucursal_id=${encodeURIComponent(sid)}&productoid=${encodeURIComponent(item.id)}`, {cache:"no-store"})
+      .then(r => r.ok ? r.json() : Promise.reject())
+      .then(d => {
+        if (!d || !d.success) { showErr("No se pudo cargar el producto."); return; }
+        addRow(d.product, d.inventario?.cantidad ?? 0);
+        showOk("Producto agregado a la tabla.");
+        $input.val("");
+      })
+      .catch(() => showErr("Error de red cargando producto."));
+    return false;
+  }
+
   function makeAC($input, urlBuilder, mode){
     $input.autocomplete({
       minLength: 1,
@@ -209,20 +227,7 @@ $(function () {
       },
       select: function(_e, ui){
         if (!ui || !ui.item) return false;
-
-        const sid = requireSucursal();
-        if (!sid) return false;
-
-        fetch(`${PROD_DETALLE_URL}?sucursal_id=${encodeURIComponent(sid)}&productoid=${encodeURIComponent(ui.item.id)}`, {cache:"no-store"})
-          .then(r => r.ok ? r.json() : Promise.reject())
-          .then(d => {
-            if (!d || !d.success) { showErr("No se pudo cargar el producto."); return; }
-            addRow(d.product, d.inventario?.cantidad ?? 0);
-            showOk("Producto agregado a la tabla.");
-            $input.val("");
-          })
-          .catch(() => showErr("Error de red cargando producto."));
-        return false;
+        return addProductFromAutocomplete($input, ui.item);
       }
     });
   }
@@ -230,6 +235,51 @@ $(function () {
   makeAC($inpNom, (term) => `${PROD_NOMBRE_URL}?term=${encodeURIComponent(term)}&page=1`, "nombre");
   makeAC($inpBar, (term) => `${PROD_BARRAS_URL}?term=${encodeURIComponent(term)}&page=1`, "barras");
   makeAC($inpId,  (term) => `${PROD_ID_URL}?term=${encodeURIComponent(onlyDigits(term))}&page=1`, "id");
+
+  // La camara resuelve el codigo exacto y agrega la fila de inmediato. Los
+  // campos editables .p_barras y #np_barras solo se rellenan, como corresponde.
+  $inpBar.on("nova:barcode-scanned", function(event){
+    const code = String(event.originalEvent?.detail?.code || "").trim();
+    if (!code || !requireSucursal()) return;
+
+    let openDuplicateMenu = false;
+    try {
+      $inpBar.autocomplete("close");
+      $inpBar.autocomplete("disable");
+    } catch {}
+
+    fetch(`${PROD_BARRAS_URL}?term=${encodeURIComponent(code)}&page=1`, {cache:"no-store"})
+      .then(r => r.ok ? r.json() : Promise.reject())
+      .then(d => {
+        const normalized = code.toLocaleLowerCase();
+        const matches = (d.results || []).filter(item =>
+          String(item.barcode || "").trim().toLocaleLowerCase() === normalized
+        );
+        if (!matches.length) {
+          showErr("No se encontró un producto con el código de barras escaneado.");
+          return;
+        }
+        if (matches.length > 1) {
+          openDuplicateMenu = true;
+          showErr("Hay varios productos con este código. Selecciona el correcto de la lista.");
+          return;
+        }
+        const match = matches[0];
+        addProductFromAutocomplete($inpBar, {
+          id: match.id,
+          barcode: match.barcode || code,
+          text: match.text || "",
+        });
+      })
+      .catch(() => showErr("No se pudo consultar el código de barras escaneado."))
+      .finally(() => {
+        try {
+          $inpBar.autocomplete("enable");
+          if (openDuplicateMenu) $inpBar.autocomplete("search", code);
+          else $inpBar.autocomplete("close");
+        } catch {}
+      });
+  });
 
   $inpId.on("input", function(){
     const d = onlyDigits(this.value);

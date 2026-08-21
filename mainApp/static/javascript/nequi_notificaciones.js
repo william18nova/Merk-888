@@ -3,6 +3,7 @@
   if (!page) return;
 
   const feedUrl = page.dataset.feedUrl;
+  const canDelete = page.dataset.canDelete === "true";
   const deleteUrlTemplate = page.dataset.deleteUrlTemplate || "";
   const bulkDeleteUrl = page.dataset.bulkDeleteUrl || "";
   const list = document.getElementById("nequi-list");
@@ -97,7 +98,7 @@
     check.type = "checkbox";
     check.className = "nequi-row-check";
     check.value = item.id;
-    check.disabled = !!(item.usada || item.venta_id);
+    check.disabled = !canDelete || !!(item.usada || item.venta_id);
     check.checked = selectedIds.has(String(item.id)) && !check.disabled;
     checkLabel.append(check, document.createElement("span"));
 
@@ -142,7 +143,8 @@
     }
     actions.appendChild(del);
 
-    article.append(checkLabel, main, actions);
+    if (canDelete) article.append(checkLabel, main, actions);
+    else article.append(main);
 
     if (isNew) {
       window.setTimeout(() => article.classList.remove("is-new"), 2800);
@@ -163,7 +165,7 @@
     const nextMax = Math.max(0, ...items.map((item) => Number(item.id || 0)));
     const selectable = new Set(
       items
-        .filter((item) => !(item.usada || item.venta_id))
+        .filter((item) => canDelete && !(item.usada || item.venta_id))
         .map((item) => String(item.id))
     );
     for (const id of Array.from(selectedIds)) {

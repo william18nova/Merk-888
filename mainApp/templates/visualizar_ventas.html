@@ -31,6 +31,7 @@
            class="search-input"
            type="text"
            autocomplete="off"
+           data-barcode-camera="true"
            placeholder="Filtrar por producto (id, nombre o código)…">
     <button id="filtro-producto-clear"
             type="button"
@@ -242,5 +243,5 @@
 </script>
 
 {# ——— Lógica JS ——— #}
-<script src="{% static 'javascript/visualizar_ventas.js' %}?v=5" defer></script>
+<script src="{% static 'javascript/visualizar_ventas.js' %}?v=6" defer></script>
 {% endblock %}

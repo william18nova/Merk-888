@@ -54,7 +54,6 @@ from .views import (
                     HorarioUpdateAJAXView,
                     HorarioCajaCreateAJAXView,
                     SucursalHorarioCajaAutocomplete,
-                    PermisoCreateView,
 
                     )
 
@@ -73,6 +72,11 @@ urlpatterns = [
         "configuracion/impresion/",
         views.ConfiguracionImpresionView.as_view(),
         name="configuracion_impresion",
+    ),
+    path(
+        "configuracion/metodos-pago/",
+        views.ConfiguracionMetodosPagoView.as_view(),
+        name="configuracion_metodos_pago",
     ),
 
     path('agregar_sucursal/', SucursalCreateAJAXView.as_view(), name='agregar_sucursal'),
@@ -241,14 +245,7 @@ urlpatterns = [
     path('editar_pedido/<int:pedido_id>/', views.EditarPedidoView.as_view(), name='editar_pedido'),
      path("logout/", auth_views.LogoutView.as_view(next_page="login"), name="logout"),
 
-     path("permisos/agregar/", views.PermisoCreateView.as_view(), name="permiso_agregar"),
      path("visualizar_permisos/", views.PermisoListView.as_view(), name="visualizar_permisos"),
-     path("permisos/editar/<int:permiso_id>/",
-         views.PermisoUpdateAJAXView.as_view(),
-         name="editar_permiso"),
-     path("permisos/<int:pk>/eliminar/", views.eliminar_permiso, name="eliminar_permiso"),
-
-
 
     path("roles_permisos/", views.RolPermisoAssignView.as_view(), name="roles_permisos"),
     path("autocomplete/rol/", views.RolAutocomplete.as_view(), name="rol_autocomplete"),

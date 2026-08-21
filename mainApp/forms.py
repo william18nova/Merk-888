@@ -3,6 +3,7 @@
 from django import forms
 from .models import Categoria, Cliente, Empleado, Usuario, Sucursal, HorarioCaja, PuntosPago, HorariosNegocio, Producto, Proveedor, Rol, Inventario, PreciosProveedor, PedidoProveedor, DetallePedidoProveedor, Permiso
 import re
+import unicodedata
 from django.core.exceptions import ValidationError
 from django.core.validators import RegexValidator
 from dal import autocomplete
@@ -12,14 +13,60 @@ from django.forms import formset_factory, DecimalField, DateField, HiddenInput, 
 from datetime import date
 from django.utils import timezone
 from decimal import Decimal
+from .services.payment_methods import DEFAULT_PAYMENT_METHODS
 
-MEDIOS_PAGO = [
-    ("efectivo", "Efectivo"),
-    ("nequi", "Nequi"),
-    ("daviplata", "Daviplata"),
-    ("tarjeta", "Tarjeta"),
-    ("banco_caja_social", "Banco Caja Social"),
-]
+# Compatibilidad para código externo que todavía importe esta constante.
+# Los formularios de venta usan el catálogo dinámico desde la vista.
+MEDIOS_PAGO = tuple(
+    (method["code"], method["label"])
+    for method in DEFAULT_PAYMENT_METHODS
+)
+
+
+# Nombres de rol que otorgan acceso administrativo. La normalización se
+# mantiene local para no acoplar los formularios con ``mainApp.permissions``
+# (ese módulo también importa modelos y servicios usados por las vistas).
+_PRIVILEGED_ROLE_NAMES = frozenset({
+    "web_master",
+    "webmaster",
+    "admin",
+    "administrador",
+    "administradora",
+    "supervisor",
+})
+
+
+def _normalize_role_name(value):
+    """Convierte variantes como ``Web Master`` en ``web_master``."""
+    text = unicodedata.normalize("NFKD", str(value or "").strip().lower())
+    text = text.encode("ascii", "ignore").decode("ascii")
+    text = re.sub(r"[^a-z0-9]+", "_", text)
+    return text.strip("_")
+
+
+def _is_privileged_role_name(value):
+    return _normalize_role_name(value) in _PRIVILEGED_ROLE_NAMES
+
+
+def _assignable_roles_queryset(allow_privileged_roles=False):
+    """
+    Devuelve el queryset autoritativo del ModelChoiceField.
+
+    Se calculan los IDs con la misma normalización usada al validar nombres;
+    así también se excluyen variantes existentes con espacios, guiones,
+    mayúsculas o tildes. Al quedar fuera del queryset, Django rechaza por sí
+    mismo un ID privilegiado inyectado en el POST.
+    """
+    queryset = Rol.objects.all()
+    if allow_privileged_roles:
+        return queryset
+
+    privileged_ids = [
+        role_id
+        for role_id, role_name in queryset.values_list("pk", "nombre")
+        if _is_privileged_role_name(role_name)
+    ]
+    return queryset.exclude(pk__in=privileged_ids)
 
 telefono_validator = RegexValidator(
     regex=r'^\d{10}$',
@@ -835,7 +882,9 @@ class ProductoForm(forms.ModelForm):
         required=False,
         widget=forms.TextInput(attrs={
             "class": "form-control",
-            "placeholder": "Ingresa el código de barras"
+            "placeholder": "Ingresa el código de barras",
+            "autocomplete": "off",
+            "data-barcode-camera": "true",
         })
     )
 
@@ -1052,6 +1101,7 @@ class ProductoEditarForm(forms.ModelForm):
 
             "codigo_de_barras": forms.TextInput(attrs={
                 "class": "form-control", "placeholder": "EAN / código de barras",
+                "autocomplete": "off", "data-barcode-camera": "true",
             }),
             "iva": forms.NumberInput(attrs={
                 "class": "form-control", "step": "0.01", "min": "0", "max": "1",
@@ -1290,9 +1340,19 @@ class RolForm(forms.ModelForm):
             "descripcion": "Descripción",
         }
 
+    def __init__(self, *args, **kwargs):
+        self.allow_privileged_roles = (
+            kwargs.pop("allow_privileged_roles", False) is True
+        )
+        super().__init__(*args, **kwargs)
+
     # --------- unicidad case-insensitive ---------
     def clean_nombre(self):
         nombre = self.cleaned_data["nombre"].strip()
+        if not self.allow_privileged_roles and _is_privileged_role_name(nombre):
+            raise forms.ValidationError(
+                "Solo un Web Master puede crear un rol privilegiado."
+            )
         if Rol.objects.filter(nombre__iexact=nombre).exists():
             raise forms.ValidationError("Ya existe un rol con ese nombre.")
         return nombre
@@ -1339,12 +1399,40 @@ class RolEditarForm(forms.ModelForm):
         model  = Rol
         fields = ("nombre", "descripcion")
 
+    def __init__(self, *args, **kwargs):
+        self.allow_privileged_roles = (
+            kwargs.pop("allow_privileged_roles", False) is True
+        )
+        super().__init__(*args, **kwargs)
+
     # ---------- validación de unicidad ----------
     def clean_nombre(self):
         nombre = self.cleaned_data.get("nombre", "").strip()
+        original_name = str(getattr(self.instance, "nombre", "") or "").strip()
+        original_key = _normalize_role_name(original_name)
+        new_key = _normalize_role_name(nombre)
+
+        # La identidad Web Master es estructural para permisos y beneficios.
+        # Nadie, ni siquiera otro Web Master, puede renombrar ese registro.
+        if original_key in {"web_master", "webmaster"} and nombre != original_name:
+            raise forms.ValidationError(
+                "El rol Web Master no puede cambiar de nombre."
+            )
+
+        # Un usuario no privilegiado puede guardar un rol reservado sin
+        # cambiar su nombre (por ejemplo, editar su descripción), pero no
+        # convertir otro rol en uno reservado ni cambiar entre reservados.
+        if (
+            not self.allow_privileged_roles
+            and new_key in _PRIVILEGED_ROLE_NAMES
+            and new_key != original_key
+        ):
+            raise forms.ValidationError(
+                "Solo un Web Master puede asignar un nombre de rol privilegiado."
+            )
 
         # Si el usuario NO cambió el nombre, lo aceptamos tal cual
-        if self.instance and nombre.lower() == self.instance.nombre.lower():
+        if self.instance and nombre.lower() == original_name.lower():
             return nombre
 
         # Si lo cambió, comprobamos duplicados excluyendo el propio ID
@@ -1372,6 +1460,7 @@ class InventarioForm(forms.Form):
             "class": "form-control",
             "placeholder": "Nombre, código de barras o ID…",
             "autocomplete": "off",
+            "data-barcode-camera": "true",
         }), required=False)
 
     cantidad = forms.IntegerField(
@@ -1782,8 +1871,25 @@ class UsuarioForm(forms.ModelForm):
 
     # ---------- init ----------
     def __init__(self, *args, **kwargs):
+        self.allow_privileged_roles = (
+            kwargs.pop("allow_privileged_roles", False) is True
+        )
         super().__init__(*args, **kwargs)
-        self.fields["rolid"].queryset = Rol.objects.all()
+        self.fields["rolid"].queryset = _assignable_roles_queryset(
+            self.allow_privileged_roles
+        )
+
+    def clean_rolid(self):
+        role = self.cleaned_data.get("rolid")
+        if (
+            role is not None
+            and not self.allow_privileged_roles
+            and _is_privileged_role_name(role.nombre)
+        ):
+            raise forms.ValidationError(
+                "Solo un Web Master puede asignar un rol privilegiado."
+            )
+        return role
 
     # ---------- validaciones ----------
     def clean_nombreusuario(self):
@@ -1860,10 +1966,16 @@ class UsuarioEditarForm(forms.ModelForm):
 
     # ─────────── init ───────────
     def __init__(self, *args, **kwargs):
+        self.allow_privileged_roles = (
+            kwargs.pop("allow_privileged_roles", False) is True
+        )
         super().__init__(*args, **kwargs)
 
-        # queryset completo para el <select> oculto
-        self.fields["rolid"].queryset = Rol.objects.all()
+        # Queryset autoritativo para el <select> oculto. Un ID excluido se
+        # rechaza aunque el POST se construya manualmente.
+        self.fields["rolid"].queryset = _assignable_roles_queryset(
+            self.allow_privileged_roles
+        )
 
         # precargar datos del usuario que se está editando
         if self.instance.pk:
@@ -1871,6 +1983,18 @@ class UsuarioEditarForm(forms.ModelForm):
             if rol_obj:
                 self.fields["rol_autocomplete"].initial = rol_obj.nombre
                 self.fields["rolid"].initial            = rol_obj.pk
+
+    def clean_rolid(self):
+        role = self.cleaned_data.get("rolid")
+        if (
+            role is not None
+            and not self.allow_privileged_roles
+            and _is_privileged_role_name(role.nombre)
+        ):
+            raise forms.ValidationError(
+                "Solo un Web Master puede asignar un rol privilegiado."
+            )
+        return role
 
     # ─────────── validaciones ───────────
     def clean_nombreusuario(self):
@@ -1926,15 +2050,10 @@ class GenerarVentaForm(forms.Form):
     cantidades = forms.CharField(widget=forms.HiddenInput(), required=False)
 
     # ✅ pago simple (compatibilidad / fallback)
-    medio_pago = forms.ChoiceField(
-        choices=[
-            ("nequi", "Nequi"),
-            ("efectivo", "Efectivo"),
-            ("daviplata", "Daviplata"),
-            ("tarjeta", "Tarjeta"),
-            ("banco_caja_social", "Banco Caja Social"),
-            ("mixto", "Mixto"),
-        ],
+    # El catálogo es administrable. Este campo viaja oculto y la validación
+    # autoritativa se hace en la vista justo antes de registrar la venta.
+    medio_pago = forms.CharField(
+        max_length=50,
         widget=forms.HiddenInput(),
         required=False
     )
@@ -2101,14 +2220,6 @@ class LineaDevolucionForm(forms.Form):
         min_value=0, label="Cant.",
         widget=forms.NumberInput(attrs={"class": "form-control form-control-sm", "style": "width:5em"}))
 
-MEDIOS_PAGO = (
-    ("efectivo", "Efectivo"),
-    ("nequi", "Nequi"),
-    ("daviplata", "Daviplata"),
-    ("tarjeta", "Tarjeta"),
-    ("banco_caja_social", "Banco Caja Social"),
-)
-
 class DevolucionForm(forms.Form):
     devolver = forms.IntegerField(
         min_value=0,
@@ -2210,92 +2321,6 @@ class EditarPedidoForm(forms.Form):
                 )
 
         return cleaned
-    
-class PermisoForm(forms.ModelForm):
-    class Meta:
-        model = Permiso
-        fields = ['nombre', 'descripcion']
-        widgets = {
-            'nombre': forms.TextInput(attrs={
-                'class': 'form-control',
-                'placeholder': 'Ej. Agregar sucursal',
-                'maxlength': '50',
-                'autocomplete': 'off',
-            }),
-            'descripcion': forms.Textarea(attrs={
-                'class': 'form-control',
-                'rows': 5,
-                'placeholder': 'Descripción breve del permiso (opcional)',
-            }),
-        }
-        labels = {
-            'nombre': 'Nombre del permiso',
-            'descripcion': 'Descripción',
-        }
-
-    def clean_nombre(self):
-        nombre = self.cleaned_data["nombre"].strip()
-        # Unicidad case-insensitive
-        if Permiso.objects.filter(nombre__iexact=nombre).exists():
-            raise forms.ValidationError("Ya existe un permiso con ese nombre.")
-        return nombre
-    
-class PermisoEditarForm(forms.ModelForm):
-    """
-    ▸ Form para editar un Permiso.
-    ▸ Acepta el mismo nombre si no cambió.
-    ▸ Si cambia, valida duplicados (case-insensitive) excluyendo el propio registro.
-    """
-
-    nombre = forms.CharField(
-        label="Nombre del permiso",
-        max_length=50,
-        validators=[
-            RegexValidator(
-                regex=r"^[A-Za-zÁÉÍÓÚáéíóúÑñ0-9\s\-\_]+$",
-                message="El nombre solo debe contener letras, números, espacios y - _."
-            )
-        ],
-        widget=forms.TextInput(attrs={
-            "class"      : "form-control",
-            "placeholder": "Ej. Agregar sucursal",
-            "required"   : True,
-        }),
-        error_messages={
-            "required"   : "El nombre es obligatorio.",
-            "max_length" : "El nombre no puede superar 50 caracteres.",
-        },
-    )
-
-    descripcion = forms.CharField(
-        label="Descripción",
-        required=False,
-        widget=forms.Textarea(attrs={
-            "class"      : "form-control",
-            "placeholder": "Descripción breve del permiso (opcional)",
-            "rows"       : 5,
-        }),
-    )
-
-    class Meta:
-        model  = Permiso
-        fields = ("nombre", "descripcion")
-
-    def clean_nombre(self):
-        nombre = (self.cleaned_data.get("nombre") or "").strip()
-
-        # Si no cambió, permitir
-        if self.instance and nombre.lower() == (self.instance.nombre or "").lower():
-            return nombre
-
-        # Si cambió, validar duplicado
-        existe = Permiso.objects.filter(
-            nombre__iexact=nombre
-        ).exclude(pk=self.instance.pk).exists()
-
-        if existe:
-            raise forms.ValidationError("Ya existe un permiso con ese nombre.")
-        return nombre
     
 class RolPermisoAssignForm(forms.Form):
     """

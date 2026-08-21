@@ -15,7 +15,13 @@
 
 {% block content %}
   <div class="container">
-    <h2><i class="fas fa-key"></i> Lista de Permisos</h2>
+    <h2><i class="fas fa-key"></i> Catálogo de permisos</h2>
+
+    <p>
+      Este catálogo es administrado por el sistema para evitar permisos
+      duplicados o sin efecto. Usa las páginas de asignación para concederlos
+      a roles o usuarios.
+    </p>
 
     {% if messages %}
       <div class="messages">
@@ -32,7 +38,8 @@
         <tr>
           <th>Nombre</th>
           <th>Descripción</th>
-          <th class="no-sort">Acciones</th>
+          <th>Roles</th>
+          <th>Usuarios</th>
         </tr>
       </thead>
       <tbody>
@@ -40,27 +47,8 @@
           <tr>
             <td data-label="Nombre">{{ p.nombre }}</td>
             <td data-label="Descripción">{{ p.descripcion|default:"—" }}</td>
-            <td data-label="Acciones" class="actions-cell">
-              <div class="btn-container">
-                <a class="btn editar"
-                   href="{% url 'editar_permiso' p.pk %}"
-                   title="Editar"><i class="fas fa-edit"></i></a>
-
-                <button type="button"
-                        class="btn borrar"
-                        data-id="{{ p.pk }}"
-                        data-nombre="{{ p.nombre }}"
-                        title="Eliminar">
-                  <i class="fas fa-trash-alt"></i>
-                </button>
-              </div>
-
-              <form id="eliminar-permiso-{{ p.pk }}"
-                    action="{% url 'eliminar_permiso' p.pk %}"
-                    method="post" style="display:none;">
-                {% csrf_token %}
-              </form>
-            </td>
+            <td data-label="Roles">{{ p.roles_asignados }}</td>
+            <td data-label="Usuarios">{{ p.usuarios_asignados }}</td>
           </tr>
         {% endfor %}
       </tbody>
@@ -69,5 +57,5 @@
 
   <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
   <script src="https://cdn.datatables.net/1.13.8/js/jquery.dataTables.min.js"></script>
-  <script defer src="{% static 'javascript/visualizar_permisos.js' %}"></script>
+  <script defer src="{% static 'javascript/visualizar_permisos.js' %}?v=2"></script>
 {% endblock %}

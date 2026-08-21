@@ -168,7 +168,8 @@
           <strong>Agregar producto</strong>
         </div>
         <div class="invf-scan-controls">
-          <input id="scanAddBarcode" class="invf-scan-input" type="text" placeholder="Codigo o nombre del producto" autocomplete="off">
+          <input id="scanAddBarcode" class="invf-scan-input" type="text" placeholder="Codigo o nombre del producto"
+                 autocomplete="off" data-barcode-camera="true">
           <input id="scanAddQty" class="invf-scan-qty" type="number" min="1" value="1" aria-label="Cantidad">
           <button type="button" id="btnScanAdd" class="invf-btn invf-btn--primary invf-btn--scan">
             <i class="fas fa-plus"></i> Agregar
@@ -297,5 +298,5 @@
       agentToken: "{{ INVENTARIO_AGENT_TOKEN|default:''|escapejs }}"
     };
   </script>
-  <script defer src="{% static 'javascript/inventario_fotos.js' %}?v=2"></script>
+  <script defer src="{% static 'javascript/inventario_fotos.js' %}?v=3"></script>
 {% endblock %}

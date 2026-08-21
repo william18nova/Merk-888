@@ -72,11 +72,17 @@
         <i class="fa-solid fa-wallet"></i>
         <select id="modo" class="vd-input" style="padding-left:38px">
           <option value="TOTAL">Totales</option>
+          {% for method in payment_methods %}
+          <option value="{{ method.code }}">
+            {{ method.label }}{% if not method.active %} (inactivo){% endif %}
+          </option>
+          {% empty %}
           <option value="efectivo">Efectivo</option>
           <option value="nequi">Nequi</option>
           <option value="daviplata">Daviplata</option>
           <option value="tarjeta">Tarjeta</option>
           <option value="banco_caja_social">Banco Caja Social</option>
+          {% endfor %}
         </select>
       </div>
     </form>

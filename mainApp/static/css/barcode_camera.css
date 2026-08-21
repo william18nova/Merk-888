@@ -1,0 +1,411 @@
+/* Lector de codigos de barras reutilizable. Se carga desde base.html y solo
+   se activa en inputs marcados con data-barcode-camera="true". */
+.nova-barcode-field {
+  position: relative;
+  display: block;
+  flex: 1 1 auto;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.nova-barcode-field > [data-barcode-camera="true"] {
+  width: 100% !important;
+  min-width: 0 !important;
+  padding-right: 50px !important;
+}
+
+.nova-barcode-camera-button {
+  position: absolute;
+  z-index: 6;
+  top: 50%;
+  right: 5px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 34px;
+  padding: 0;
+  transform: translateY(-50%);
+  border: 1px solid rgba(255, 255, 255, .3);
+  border-radius: 10px;
+  background: linear-gradient(145deg, #43a1ff, #236fd1);
+  color: #fff;
+  box-shadow: 0 5px 13px rgba(16, 74, 153, .28);
+  cursor: pointer;
+  transition: transform .16s ease, filter .16s ease, box-shadow .16s ease, opacity .16s ease;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.nova-barcode-camera-button:hover:not(:disabled) {
+  transform: translateY(-50%) scale(1.04);
+  filter: brightness(1.08);
+  box-shadow: 0 7px 17px rgba(16, 74, 153, .36);
+}
+
+.nova-barcode-camera-button:focus-visible {
+  outline: 3px solid rgba(125, 211, 252, .7);
+  outline-offset: 2px;
+}
+
+.nova-barcode-camera-button:active:not(:disabled) {
+  transform: translateY(-50%) scale(.96);
+}
+
+.nova-barcode-camera-button:disabled {
+  opacity: .46;
+  cursor: not-allowed;
+  filter: grayscale(.25);
+  box-shadow: none;
+}
+
+.nova-barcode-camera-button svg {
+  display: block;
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2;
+  pointer-events: none;
+}
+
+/* Conserva visibles los iconos ubicados a la izquierda de los buscadores. */
+.search-wrapper > i {
+  z-index: 8;
+  pointer-events: none;
+}
+
+.search-wrapper > .nova-barcode-field {
+  z-index: 1;
+}
+
+/* Los campos editables dentro de tablas son mas bajos. */
+table .nova-barcode-field > [data-barcode-camera="true"] {
+  padding-right: 37px !important;
+}
+
+table .nova-barcode-camera-button {
+  right: 3px;
+  width: 29px;
+  height: 24px;
+  border-radius: 7px;
+}
+
+table .nova-barcode-camera-button svg {
+  width: 16px;
+  height: 16px;
+}
+
+body.nova-barcode-camera-open {
+  overflow: hidden !important;
+}
+
+.nova-barcode-camera-announcer {
+  position: fixed !important;
+  width: 1px !important;
+  height: 1px !important;
+  overflow: hidden !important;
+  clip: rect(0 0 0 0) !important;
+  clip-path: inset(50%) !important;
+  white-space: nowrap !important;
+}
+
+.nova-barcode-camera-overlay[hidden] {
+  display: none !important;
+}
+
+.nova-barcode-camera-overlay {
+  position: fixed;
+  z-index: 2147483000;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: max(14px, env(safe-area-inset-top)) max(14px, env(safe-area-inset-right))
+           max(14px, env(safe-area-inset-bottom)) max(14px, env(safe-area-inset-left));
+  background: rgba(3, 10, 24, .82);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+  opacity: 0;
+  transition: opacity .18s ease;
+}
+
+.nova-barcode-camera-overlay.is-open {
+  opacity: 1;
+}
+
+.nova-barcode-camera-dialog {
+  width: min(620px, 100%);
+  max-height: min(92vh, 760px);
+  max-height: min(92dvh, 760px);
+  overflow: auto;
+  border: 1px solid rgba(160, 205, 255, .28);
+  border-radius: 22px;
+  background: linear-gradient(160deg, #112b50, #08182f 78%);
+  color: #f7fbff;
+  box-shadow: 0 28px 80px rgba(0, 0, 0, .55), inset 0 1px 0 rgba(255, 255, 255, .08);
+  transform: translateY(10px) scale(.985);
+  transition: transform .18s ease;
+}
+
+.nova-barcode-camera-overlay.is-open .nova-barcode-camera-dialog {
+  transform: translateY(0) scale(1);
+}
+
+.nova-barcode-camera-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 17px 18px 14px;
+  border-bottom: 1px solid rgba(255, 255, 255, .1);
+  background: rgba(255, 255, 255, .04);
+}
+
+.nova-barcode-camera-heading {
+  min-width: 0;
+}
+
+.nova-barcode-camera-eyebrow {
+  display: block;
+  margin-bottom: 3px;
+  color: #79c3ff;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+}
+
+.nova-barcode-camera-title {
+  display: block;
+  overflow: hidden;
+  color: #fff;
+  font-size: clamp(18px, 4.5vw, 23px);
+  font-weight: 850;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nova-barcode-camera-close {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, .18);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, .08);
+  color: #fff;
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.nova-barcode-camera-close:hover,
+.nova-barcode-camera-close:focus-visible {
+  border-color: rgba(125, 211, 252, .65);
+  background: rgba(125, 211, 252, .17);
+  outline: none;
+}
+
+.nova-barcode-camera-stage {
+  position: relative;
+  margin: 16px 16px 0;
+  overflow: hidden;
+  aspect-ratio: 4 / 3;
+  min-height: 220px;
+  border: 1px solid rgba(255, 255, 255, .13);
+  border-radius: 17px;
+  background: #02060d;
+}
+
+.nova-barcode-camera-video {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  background: #02060d;
+}
+
+.nova-barcode-camera-guide {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: min(82%, 440px);
+  height: min(38%, 145px);
+  transform: translate(-50%, -50%);
+  border-radius: 15px;
+  box-shadow: 0 0 0 999px rgba(0, 0, 0, .3);
+  pointer-events: none;
+}
+
+.nova-barcode-camera-guide::before,
+.nova-barcode-camera-guide::after {
+  position: absolute;
+  inset: 0;
+  border: 3px solid transparent;
+  border-radius: inherit;
+  content: "";
+}
+
+.nova-barcode-camera-guide::before {
+  border-top-color: #65bdff;
+  border-bottom-color: #65bdff;
+}
+
+.nova-barcode-camera-guide::after {
+  border-right-color: #65bdff;
+  border-left-color: #65bdff;
+}
+
+.nova-barcode-camera-scanline {
+  position: absolute;
+  z-index: 2;
+  top: 50%;
+  left: 12%;
+  width: 76%;
+  height: 2px;
+  border-radius: 99px;
+  background: linear-gradient(90deg, transparent, #7dd3fc 14%, #fff 50%, #7dd3fc 86%, transparent);
+  box-shadow: 0 0 12px rgba(125, 211, 252, .8);
+  animation: nova-barcode-scanline 1.9s ease-in-out infinite alternate;
+  pointer-events: none;
+}
+
+@keyframes nova-barcode-scanline {
+  from { transform: translateY(-55px); opacity: .65; }
+  to { transform: translateY(55px); opacity: 1; }
+}
+
+.nova-barcode-camera-copy {
+  padding: 14px 18px 5px;
+}
+
+.nova-barcode-camera-status {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  min-height: 42px;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid rgba(125, 211, 252, .19);
+  border-radius: 12px;
+  background: rgba(71, 153, 235, .1);
+  color: #dceeff;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.nova-barcode-camera-status::before {
+  flex: 0 0 auto;
+  width: 9px;
+  height: 9px;
+  margin-top: 5px;
+  border-radius: 50%;
+  background: #65bdff;
+  box-shadow: 0 0 0 5px rgba(101, 189, 255, .12);
+  content: "";
+}
+
+.nova-barcode-camera-status.is-error {
+  border-color: rgba(255, 118, 134, .34);
+  background: rgba(231, 65, 86, .13);
+  color: #ffe4e8;
+}
+
+.nova-barcode-camera-status.is-error::before {
+  background: #ff7d8d;
+  box-shadow: 0 0 0 5px rgba(255, 125, 141, .12);
+}
+
+.nova-barcode-camera-status.is-success {
+  border-color: rgba(83, 211, 128, .38);
+  background: rgba(45, 180, 98, .13);
+  color: #e5ffed;
+}
+
+.nova-barcode-camera-status.is-success::before {
+  background: #53d380;
+  box-shadow: 0 0 0 5px rgba(83, 211, 128, .12);
+}
+
+.nova-barcode-camera-help {
+  margin: 9px 2px 0;
+  color: #a9c0dc;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.nova-barcode-camera-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 9px;
+  padding: 12px 18px 18px;
+}
+
+.nova-barcode-camera-action {
+  display: inline-flex;
+  flex: 1 1 auto;
+  align-items: center;
+  justify-content: center;
+  min-height: 40px;
+  padding: 9px 14px;
+  border: 1px solid rgba(255, 255, 255, .18);
+  border-radius: 11px;
+  background: rgba(255, 255, 255, .08);
+  color: #f3f8ff;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.nova-barcode-camera-action:hover:not(:disabled),
+.nova-barcode-camera-action:focus-visible {
+  border-color: rgba(125, 211, 252, .55);
+  background: rgba(125, 211, 252, .15);
+  outline: none;
+}
+
+.nova-barcode-camera-action:disabled {
+  opacity: .48;
+  cursor: not-allowed;
+}
+
+.nova-barcode-camera-action[hidden] {
+  display: none !important;
+}
+
+@media (max-width: 560px) {
+  .nova-barcode-camera-overlay {
+    align-items: flex-end;
+    padding: 8px 8px max(8px, env(safe-area-inset-bottom));
+  }
+
+  .nova-barcode-camera-dialog {
+    width: 100%;
+    max-height: 96vh;
+    max-height: 96dvh;
+    border-radius: 20px 20px 14px 14px;
+  }
+
+  .nova-barcode-camera-head { padding: 14px; }
+  .nova-barcode-camera-stage { margin: 12px 10px 0; min-height: 200px; }
+  .nova-barcode-camera-copy { padding: 12px 12px 4px; }
+  .nova-barcode-camera-actions { padding: 10px 12px 14px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nova-barcode-camera-overlay,
+  .nova-barcode-camera-dialog,
+  .nova-barcode-camera-button {
+    transition: none !important;
+  }
+
+  .nova-barcode-camera-scanline { animation: none; }
+}

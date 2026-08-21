@@ -46,15 +46,27 @@
       <div>
         <label for="id_mediopago">Medio de Pago</label>
         {% if venta_print_only or beneficio_merk2888 %}
-          <input readonly value="{% if beneficio_merk2888 %}Sin pago · beneficio 100%{% else %}{{ venta.mediopago|cut:'_'|title }}{% endif %}">
+          <input
+            readonly
+            {% if not beneficio_merk2888 %}data-payment-method-code="{{ venta.mediopago|lower }}"{% endif %}
+            value="{% if beneficio_merk2888 %}Sin pago · beneficio 100%{% else %}{{ venta.mediopago|cut:'_'|title }}{% endif %}">
         {% else %}
         {% with mp=venta.mediopago|lower %}
         <select name="mediopago" id="id_mediopago">
+          {% for method in payment_methods %}
+          <option value="{{ method.code }}"
+                  data-payment-method-active="{{ method.active|yesno:'1,0' }}"
+                  {% if not method.active and method.code != mp %}disabled{% endif %}
+                  {% if method.code == mp %}selected{% endif %}>
+            {{ method.label }}{% if not method.active %} (inactivo){% endif %}
+          </option>
+          {% empty %}
           <option value="efectivo" {% if mp == "efectivo" %}selected{% endif %}>Efectivo</option>
           <option value="nequi" {% if mp == "nequi" %}selected{% endif %}>Nequi</option>
           <option value="daviplata" {% if mp == "daviplata" %}selected{% endif %}>Daviplata</option>
           <option value="tarjeta" {% if mp == "tarjeta" %}selected{% endif %}>Tarjeta</option>
           <option value="banco_caja_social" {% if mp == "banco_caja_social" %}selected{% endif %}>Banco Caja Social</option>
+          {% endfor %}
           <option value="mixto" {% if mp == "mixto" %}selected{% endif %}>Mixto</option>
         </select>
         {% endwith %}
@@ -101,8 +113,9 @@
       <div class="mixto-grid">
         {% for f in pagos_formset.forms %}
           <div class="mixto-row">
-            <span class="mixto-label">
-              {{ f.medio_pago.value|cut:"_"|title }}
+            <span class="mixto-label"
+                  data-payment-method-code="{{ f.medio_pago.value|lower }}">
+              {{ f.payment_method_label }}
             </span>
             <div class="mixto-input">
               {{ f.monto }}
@@ -184,8 +197,9 @@
       <div class="mixto-grid">
         {% for f in reintegro_formset.forms %}
           <div class="mixto-row">
-            <span class="mixto-label">
-              {{ f.medio_pago.value|cut:"_"|title }}
+            <span class="mixto-label"
+                  data-payment-method-code="{{ f.medio_pago.value|lower }}">
+              {{ f.payment_method_label }}
             </span>
             <div class="mixto-input">
               {{ f.monto }}
@@ -229,7 +243,9 @@
       <div class="reintegro-history__list">
         {% for reintegro in reintegros %}
         <div class="reintegro-history__item">
-          <span>{{ reintegro.medio_pago|cut:"_"|title }}</span>
+          <span data-payment-method-code="{{ reintegro.medio_pago|lower }}">
+            {{ reintegro.payment_method_label }}
+          </span>
           <strong>-${{ reintegro.monto|floatformat:2 }}</strong>
           <small>
             {% if reintegro.turno_id %}
@@ -309,6 +325,12 @@
   window.imprimirFacturaUrl = "{% url 'imprimir_factura' %}";
 </script>
 
+{% if payment_method_labels %}
+  {{ payment_method_labels|json_script:"payment-method-labels-data" }}
+{% else %}
+  <script id="payment-method-labels-data" type="application/json">{}</script>
+{% endif %}
+
 <!-- POS Agent (mismo método que generar_venta) -->
 <script>
   window.POS_AGENT_URL   = "{{ POS_AGENT_URL|default:'http://127.0.0.1:8787'|escapejs }}".trim();
@@ -316,5 +338,5 @@
   if (!/^https?:\/\//.test(window.POS_AGENT_URL)) window.POS_AGENT_URL = "http://127.0.0.1:8787";
 </script>
 
-<script src="{% static 'javascript/ver_venta.js' %}?v=6"></script>
+<script src="{% static 'javascript/ver_venta.js' %}?v=7"></script>
 {% endblock %}

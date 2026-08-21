@@ -10,8 +10,11 @@
 {% block content %}
 <section class="nequi-page"
          data-feed-url="{% url 'nequi_notificaciones_data' %}"
-         data-delete-url-template="{% url 'nequi_notificacion_eliminar' 0 %}"
-         data-bulk-delete-url="{% url 'nequi_notificaciones_eliminar_seleccionadas' %}">
+         data-can-delete="{{ can_delete_nequi_notifications|yesno:'true,false' }}"
+         {% if can_delete_nequi_notifications %}
+           data-delete-url-template="{% url 'nequi_notificacion_eliminar' 0 %}"
+           data-bulk-delete-url="{% url 'nequi_notificaciones_eliminar_seleccionadas' %}"
+         {% endif %}>
   <header class="nequi-hero">
     <div>
       <p class="nequi-eyebrow">Pagos en tiempo real</p>
@@ -53,14 +56,16 @@
         <h2>Ultimas notificaciones</h2>
       </div>
       <div class="nequi-panel__actions">
-        <label class="nequi-select-all">
-          <input type="checkbox" id="nequi-select-all">
-          <span>Seleccionar visibles</span>
-        </label>
-        <button type="button" class="nequi-delete-selected" id="nequi-delete-selected" disabled>
-          Eliminar seleccionadas
-          <span id="nequi-selected-count">0</span>
-        </button>
+        {% if can_delete_nequi_notifications %}
+          <label class="nequi-select-all">
+            <input type="checkbox" id="nequi-select-all">
+            <span>Seleccionar visibles</span>
+          </label>
+          <button type="button" class="nequi-delete-selected" id="nequi-delete-selected" disabled>
+            Eliminar seleccionadas
+            <span id="nequi-selected-count">0</span>
+          </button>
+        {% endif %}
         <button type="button" class="nequi-refresh" id="nequi-refresh">Actualizar</button>
       </div>
     </div>
@@ -68,13 +73,15 @@
     <div class="nequi-list" id="nequi-list">
       {% for item in notificaciones %}
         <article class="nequi-item" data-id="{{ item.notificacionid }}">
-          <label class="nequi-check">
-            <input type="checkbox"
-                   class="nequi-row-check"
-                   value="{{ item.notificacionid }}"
-                   {% if item.venta_id %}disabled{% endif %}>
-            <span></span>
-          </label>
+          {% if can_delete_nequi_notifications %}
+            <label class="nequi-check">
+              <input type="checkbox"
+                     class="nequi-row-check"
+                     value="{{ item.notificacionid }}"
+                     {% if item.venta_id %}disabled{% endif %}>
+              <span></span>
+            </label>
+          {% endif %}
           <div class="nequi-item__main">
             <div class="nequi-item__title">
               <strong>{% if item.monto %}$ {{ item.monto }}{% else %}Pago Nequi{% endif %}</strong>
@@ -88,13 +95,15 @@
               {% if item.venta_id %}<span>Usada en venta #{{ item.venta_id }}</span>{% endif %}
             </div>
           </div>
-          <div class="nequi-item__actions">
-            {% if item.venta_id %}
-              <button type="button" class="nequi-delete" disabled>Usada</button>
-            {% else %}
-              <button type="button" class="nequi-delete" data-delete-id="{{ item.notificacionid }}">Eliminar</button>
-            {% endif %}
-          </div>
+          {% if can_delete_nequi_notifications %}
+            <div class="nequi-item__actions">
+              {% if item.venta_id %}
+                <button type="button" class="nequi-delete" disabled>Usada</button>
+              {% else %}
+                <button type="button" class="nequi-delete" data-delete-id="{{ item.notificacionid }}">Eliminar</button>
+              {% endif %}
+            </div>
+          {% endif %}
         </article>
       {% empty %}
         <div class="nequi-empty" id="nequi-empty">Todavia no hay notificaciones de Nequi.</div>
@@ -105,5 +114,5 @@
 {% endblock %}
 
 {% block scripts %}
-  <script src="{% static 'javascript/nequi_notificaciones.js' %}?v=3"></script>
+  <script src="{% static 'javascript/nequi_notificaciones.js' %}?v=4"></script>
 {% endblock %}

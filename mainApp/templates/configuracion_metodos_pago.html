@@ -1,0 +1,357 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Métodos de pago{% endblock %}
+
+{% block extra_head %}
+  <link rel="stylesheet" href="{% static 'css/configuracion_metodos_pago.css' %}?v=2">
+{% endblock %}
+
+{% block content %}
+<section class="pmc-page" aria-labelledby="pmc-title">
+  <header class="pmc-hero">
+    <div class="pmc-hero__copy">
+      <p class="pmc-eyebrow">Configuración Web Master</p>
+      <h1 id="pmc-title">Métodos de pago</h1>
+      <p class="pmc-hero__lead">
+        Decide qué medios aparecen al cobrar y en qué orden. Los métodos retirados
+        conservan sus ventas, devoluciones y cierres anteriores.
+      </p>
+
+      <div class="pmc-hero__facts" aria-label="Características del catálogo">
+        <span>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16v11H4zM4 10h16M8 15h3"/></svg>
+          Cobro dinámico
+        </span>
+        <span>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 5 6v5c0 4.6 2.8 8.4 7 10 4.2-1.6 7-5.4 7-10V6l-7-3Z"/><path d="m9 12 2 2 4-4"/></svg>
+          Historial protegido
+        </span>
+        <span>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 7v5l3 2"/><circle cx="12" cy="12" r="9"/></svg>
+          Aplicación inmediata
+        </span>
+      </div>
+    </div>
+
+    <aside class="pmc-hero__summary" aria-label="Resumen del catálogo">
+      <span class="pmc-hero__summary-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24"><path d="M4 7h16v11H4zM4 10h16M8 15h3"/></svg>
+      </span>
+      <div>
+        <small>Catálogo global</small>
+        <strong>{{ payment_methods|length }} método{{ payment_methods|length|pluralize }}</strong>
+        <span>Disponible para todos los puntos de pago.</span>
+      </div>
+    </aside>
+  </header>
+
+  {% if messages %}
+  <div class="pmc-messages" aria-live="polite">
+    {% for message in messages %}
+      <div class="pmc-flash pmc-flash--{{ message.tags|default:'info' }}">
+        <span aria-hidden="true"></span>
+        <p>{{ message }}</p>
+      </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {% if error %}
+  <div class="pmc-messages" aria-live="assertive">
+    <div class="pmc-flash pmc-flash--error">
+      <span aria-hidden="true"></span>
+      <p>{{ error }}</p>
+    </div>
+  </div>
+  {% endif %}
+
+  {% if not migration_ready %}
+  <div class="pmc-notice" role="alert">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8v4m0 4h.01"/><circle cx="12" cy="12" r="9"/></svg>
+    <div>
+      <strong>Configuración pendiente de habilitar</strong>
+      <p>Aplica la migración del catálogo de métodos de pago antes de guardar cambios.</p>
+    </div>
+  </div>
+  {% endif %}
+
+  <div class="pmc-layout">
+    <section class="pmc-panel pmc-create" aria-labelledby="pmc-create-title">
+      <header class="pmc-panel__head">
+        <span class="pmc-panel__icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+        </span>
+        <div>
+          <p class="pmc-eyebrow">Nuevo medio</p>
+          <h2 id="pmc-create-title">Agregar método</h2>
+          <p>El código interno se genera una sola vez a partir del nombre.</p>
+        </div>
+      </header>
+
+      <form method="post"
+            class="pmc-form"
+            autocomplete="off"
+            data-payment-method-form
+            data-form-action="create">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="create">
+        <input type="hidden" name="request_id" value="" data-request-id>
+
+        <label class="pmc-field" for="pmc-new-label">
+          <span>Nombre visible</span>
+          <input id="pmc-new-label"
+                 name="label"
+                 maxlength="80"
+                 required
+                 autocomplete="off"
+                 placeholder="Ej. Transferencia bancaria">
+          <small>Así aparecerá en ventas, devoluciones, filtros y cierres.</small>
+        </label>
+
+        <label class="pmc-field" for="pmc-new-order">
+          <span>Orden de aparición</span>
+          <input id="pmc-new-order"
+                 name="order"
+                 type="number"
+                 min="1"
+                 max="32767"
+                 step="1"
+                 value="100"
+                 required>
+          <small>Los números menores aparecen primero.</small>
+        </label>
+
+        <label class="pmc-field" for="pmc-new-password">
+          <span>Contraseña de Web Master</span>
+          <span class="pmc-password">
+            <input id="pmc-new-password"
+                   name="password_web_master"
+                   type="password"
+                   required
+                   autocomplete="current-password"
+                   autocapitalize="none"
+                   spellcheck="false"
+                   placeholder="Confirma tu identidad">
+            <button type="button"
+                    aria-label="Mostrar contraseña"
+                    aria-controls="pmc-new-password"
+                    data-password-toggle>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2.5 12S6 6.5 12 6.5 21.5 12 21.5 12 18 17.5 12 17.5 2.5 12 2.5 12Z"/><circle cx="12" cy="12" r="2.5"/></svg>
+            </button>
+          </span>
+        </label>
+
+        <button type="submit"
+                class="pmc-primary"
+                data-submit-button
+                data-busy-label="Agregando método…"
+                {% if not migration_ready %}disabled{% endif %}>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+          <span data-submit-label>Agregar método</span>
+        </button>
+      </form>
+    </section>
+
+    <aside class="pmc-panel pmc-rules" aria-labelledby="pmc-rules-title">
+      <p class="pmc-eyebrow">Reglas operativas</p>
+      <h2 id="pmc-rules-title">Qué significa quitar</h2>
+      <ul>
+        <li>
+          <span>1</span>
+          <p><strong>Se desactiva, no se borra.</strong> El método deja de aparecer en ventas nuevas.</p>
+        </li>
+        <li>
+          <span>2</span>
+          <p><strong>El historial permanece.</strong> Facturas y cierres anteriores conservan su nombre y valor.</p>
+        </li>
+        <li>
+          <span>3</span>
+          <p><strong>Efectivo está protegido.</strong> La caja física y la devolución predeterminada dependen de él.</p>
+        </li>
+      </ul>
+    </aside>
+  </div>
+
+  <section class="pmc-catalog" aria-labelledby="pmc-catalog-title">
+    <header class="pmc-catalog__head">
+      <div>
+        <p class="pmc-eyebrow">Operación</p>
+        <h2 id="pmc-catalog-title">Métodos configurados</h2>
+        <p>Edita el nombre o el orden, o retira temporalmente un método.</p>
+      </div>
+      <label class="pmc-search" for="pmc-search">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m16 16 4 4"/></svg>
+        <input id="pmc-search" type="search" placeholder="Buscar método…" autocomplete="off" data-method-filter>
+      </label>
+    </header>
+
+    <div class="pmc-method-grid" data-method-grid>
+      {% for method in payment_methods %}
+      <article class="pmc-method {% if method.active %}is-active{% else %}is-inactive{% endif %}"
+               data-method-card
+               data-method-search="{{ method.label }} {{ method.code }}">
+        <header class="pmc-method__head">
+          <div class="pmc-method__identity">
+            <span class="pmc-method__avatar" aria-hidden="true">
+              {% if method.is_cash %}
+                <svg viewBox="0 0 24 24"><path d="M3 7h18v11H3zM7 12h.01M17 12h.01"/><circle cx="12" cy="12.5" r="2.5"/></svg>
+              {% else %}
+                <svg viewBox="0 0 24 24"><path d="M4 7h16v11H4zM4 10h16M8 15h3"/></svg>
+              {% endif %}
+            </span>
+            <div>
+              <div class="pmc-method__title-line">
+                <h3>{{ method.label }}</h3>
+                {% if method.is_system %}<span class="pmc-tag">Sistema</span>{% endif %}
+                {% if method.is_cash %}<span class="pmc-tag pmc-tag--cash">Caja física</span>{% endif %}
+              </div>
+              <code>{{ method.code }}</code>
+            </div>
+          </div>
+          <span class="pmc-state {% if method.active %}is-active{% else %}is-inactive{% endif %}">
+            <span aria-hidden="true"></span>
+            {% if method.active %}Activo{% else %}Inactivo{% endif %}
+          </span>
+        </header>
+
+        <form method="post"
+              class="pmc-method__form"
+              autocomplete="off"
+              data-payment-method-form
+              data-method-label="{{ method.label }}"
+              data-method-active="{{ method.active|yesno:'1,0' }}">
+          {% csrf_token %}
+          <input type="hidden" name="code" value="{{ method.code }}">
+          <input type="hidden" name="version" value="{{ method.version|default:0 }}">
+          <input type="hidden" name="active" value="{% if method.active %}0{% else %}1{% endif %}" data-active-target>
+          <input type="hidden" name="request_id" value="" data-request-id>
+
+          <div class="pmc-method__fields">
+            <label class="pmc-field" for="pmc-label-{{ method.code|slugify }}">
+              <span>Nombre visible</span>
+              <input id="pmc-label-{{ method.code|slugify }}"
+                     name="label"
+                     value="{{ method.label }}"
+                     maxlength="80"
+                     required
+                     autocomplete="off">
+            </label>
+
+            <label class="pmc-field pmc-field--order" for="pmc-order-{{ method.code|slugify }}">
+              <span>Orden</span>
+              <input id="pmc-order-{{ method.code|slugify }}"
+                     name="order"
+                     type="number"
+                     min="1"
+                     max="32767"
+                     step="1"
+                     value="{{ method.order|default:100 }}"
+                     required>
+            </label>
+          </div>
+
+          <label class="pmc-field" for="pmc-password-{{ method.code|slugify }}">
+            <span>Contraseña de Web Master</span>
+            <span class="pmc-password">
+              <input id="pmc-password-{{ method.code|slugify }}"
+                     name="password_web_master"
+                     type="password"
+                     required
+                     autocomplete="current-password"
+                     autocapitalize="none"
+                     spellcheck="false"
+                     placeholder="Confirma para guardar">
+              <button type="button"
+                      aria-label="Mostrar contraseña"
+                      aria-controls="pmc-password-{{ method.code|slugify }}"
+                      data-password-toggle>
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2.5 12S6 6.5 12 6.5 21.5 12 21.5 12 18 17.5 12 17.5 2.5 12 2.5 12Z"/><circle cx="12" cy="12" r="2.5"/></svg>
+              </button>
+            </span>
+          </label>
+
+          <div class="pmc-method__meta">
+            <span>Versión {{ method.version|default:1 }}</span>
+            <span>{{ method.usage_count|default:0 }} registro{{ method.usage_count|default:0|pluralize }} histórico{{ method.usage_count|default:0|pluralize }}</span>
+            <span>
+              {% if method.updated_at %}Actualizado {{ method.updated_at|date:"d/m/Y · h:i A" }}{% else %}Configuración inicial{% endif %}
+            </span>
+            {% if method.updated_by %}<span>Por {{ method.updated_by }}</span>{% endif %}
+          </div>
+
+          <div class="pmc-method__actions">
+            <button type="submit"
+                    name="action"
+                    value="update"
+                    class="pmc-secondary"
+                    data-submit-button
+                    data-busy-label="Guardando…"
+                    {% if not migration_ready %}disabled{% endif %}>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h11l3 3v13H5zM8 4v6h8V4M8 17h8"/></svg>
+              <span data-submit-label>Guardar cambios</span>
+            </button>
+
+            <button type="submit"
+                    name="action"
+                    value="toggle"
+                    class="pmc-toggle {% if method.active %}is-disable{% else %}is-enable{% endif %}"
+                    data-submit-button
+                    data-toggle-button
+                    data-busy-label="Aplicando…"
+                    {% if not migration_ready or method.is_cash %}disabled{% endif %}
+                    {% if method.is_cash %}title="Efectivo es necesario para la caja y las devoluciones"{% endif %}>
+              {% if method.active %}
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
+                <span data-submit-label>{% if method.is_cash %}Método protegido{% else %}Desactivar{% endif %}</span>
+              {% else %}
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4 4L19 6"/></svg>
+                <span data-submit-label>Activar</span>
+              {% endif %}
+            </button>
+          </div>
+        </form>
+      </article>
+      {% empty %}
+      <div class="pmc-empty" data-method-empty>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16v11H4zM4 10h16M8 15h3"/></svg>
+        <h3>No hay métodos configurados</h3>
+        <p>Agrega el primer método cuando la migración esté aplicada.</p>
+      </div>
+      {% endfor %}
+    </div>
+
+    <div class="pmc-empty pmc-empty--filter" hidden data-filter-empty>
+      <h3>No encontramos coincidencias</h3>
+      <p>Prueba con otro nombre o código.</p>
+    </div>
+  </section>
+</section>
+
+<dialog class="pmc-dialog" id="pmc-toggle-dialog" aria-labelledby="pmc-dialog-title">
+  <div class="pmc-dialog__body">
+    <button type="button" class="pmc-dialog__close" aria-label="Cerrar" data-dialog-close>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg>
+    </button>
+    <span class="pmc-dialog__icon" aria-hidden="true">
+      <svg viewBox="0 0 24 24"><path d="M12 8v4m0 4h.01"/><circle cx="12" cy="12" r="9"/></svg>
+    </span>
+    <p class="pmc-eyebrow">Confirmación requerida</p>
+    <h2 id="pmc-dialog-title">¿Desactivar este método?</h2>
+    <p class="pmc-dialog__method" data-dialog-method></p>
+    <div class="pmc-dialog__notice">
+      <strong>Dejará de estar disponible para ventas nuevas.</strong>
+      <p>Las facturas, devoluciones y cierres que ya lo usaron se conservarán sin cambios.</p>
+    </div>
+    <div class="pmc-dialog__actions">
+      <button type="button" class="pmc-dialog__cancel" data-dialog-cancel>Cancelar</button>
+      <button type="button" class="pmc-dialog__confirm" data-dialog-confirm>Sí, desactivar</button>
+    </div>
+  </div>
+</dialog>
+{% endblock %}
+
+{% block scripts %}
+  {{ block.super }}
+  <script defer src="{% static 'javascript/configuracion_metodos_pago.js' %}?v=1"></script>
+{% endblock %}

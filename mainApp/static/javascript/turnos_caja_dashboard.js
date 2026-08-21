@@ -11,6 +11,15 @@
       maximumFractionDigits: 2,
     }).format(Number(v || 0));
 
+  function escapeHtml(value) {
+    return String(value ?? "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#039;");
+  }
+
   function flash(ok, msg) {
     const box = $("#flash");
     box.className = "alert " + (ok ? "alert-success" : "alert-error");
@@ -188,7 +197,7 @@
 
       return `
         <tr>
-          <td><span class="chip">${(m.metodo || "").toUpperCase()}</span></td>
+          <td><span class="chip">${escapeHtml(m.label || String(m.metodo || "").toUpperCase())}</span></td>
           <td class="num">${money2(m.esperado_bd || 0)}</td>
           <td class="num">${ec === null ? "—" : money2(ec)}</td>
           <td class="num">${contado === null ? "—" : money2(contado)}</td>

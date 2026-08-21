@@ -78,6 +78,7 @@
   let progressStartedAt = 0;
   let lastProgressPercent = 0;
   let lastProgressState = {};
+  let scanAddInProgress = false;
 
   function getCSRFToken() {
     return form.querySelector("input[name='csrfmiddlewaretoken']")?.value || "";
@@ -960,6 +961,7 @@
             value="${barcodeSearch}"
             placeholder="Escanea o escribe el código"
             autocomplete="off"
+            data-barcode-camera="true"
           >
           <button type="button" class="invf-btn invf-btn--ghost invf-btn--mini invf-apply-barcode" data-index="${index}">
             Reemplazar
@@ -1114,7 +1116,11 @@
     }
 
     const normalized = normalizeBarcode(raw);
-    let selected = results.find(item => normalizeBarcode(item.barcode) === normalized);
+    const exactMatches = results.filter(item => normalizeBarcode(item.barcode) === normalized);
+    if (exactMatches.length > 1) {
+      throw new Error("Hay varios productos con este codigo. Selecciona el correcto de la lista.");
+    }
+    let selected = exactMatches[0];
 
     if (!selected && options.requireExact) {
       throw new Error("No se encontro coincidencia exacta para ese codigo de barras.");
@@ -1217,6 +1223,7 @@
   }
 
   async function agregarProductoEscaneado(productFromAutocomplete = null) {
+    if (scanAddInProgress) return false;
     const raw = String(scanAddBarcode?.value || "").trim();
     const qty = parsePositiveQty(scanAddQty?.value, 1);
 
@@ -1227,6 +1234,7 @@
     }
 
     try {
+      scanAddInProgress = true;
       if (btnScanAdd) btnScanAdd.disabled = true;
       const product = productFromAutocomplete || await obtenerProductoPorCodigo(raw, { requireExact: true });
       addOrIncreaseProductFromScan(product, qty, raw || product.barcode || "");
@@ -1241,6 +1249,7 @@
       scanAddBarcode?.focus();
       return false;
     } finally {
+      scanAddInProgress = false;
       if (btnScanAdd) btnScanAdd.disabled = false;
     }
   }
@@ -1510,6 +1519,32 @@
     await buscarProductoPorCodigo(Number(input.dataset.index), input.value, { requireExact: true });
   });
 
+  resultadoBody?.addEventListener("nova:barcode-scanned", async function (event) {
+    const input = event.target.closest(".invf-barcode");
+    if (!input) return;
+    const $input = $(input);
+    let replaced = false;
+    try {
+      $input.autocomplete("close");
+      $input.autocomplete("disable");
+    } catch {}
+    try {
+      replaced = await buscarProductoPorCodigo(
+        Number(input.dataset.index),
+        event.detail?.code || input.value,
+        { requireExact: true }
+      );
+    } finally {
+      if (input.isConnected) {
+        try {
+          $input.autocomplete("enable");
+          if (!replaced && input.value) $input.autocomplete("search", input.value);
+          else $input.autocomplete("close");
+        } catch {}
+      }
+    }
+  });
+
   resultadoBody?.addEventListener("input", function (event) {
     const input = event.target.closest(".invf-qty, .invf-price");
     if (!input) return;
@@ -1546,6 +1581,27 @@
     event.preventDefault();
     event.stopPropagation();
     agregarProductoEscaneado();
+  });
+
+  scanAddBarcode?.addEventListener("nova:barcode-scanned", async function () {
+    const $input = $(scanAddBarcode);
+    let added = false;
+    try {
+      $input.autocomplete("close");
+      $input.autocomplete("disable");
+    } catch {}
+    try {
+      added = await agregarProductoEscaneado();
+    } finally {
+      try {
+        $input.autocomplete("enable");
+        if (!added && scanAddBarcode.value) {
+          $input.autocomplete("search", scanAddBarcode.value);
+        } else {
+          $input.autocomplete("close");
+        }
+      } catch {}
+    }
   });
 
   scanAddQty?.addEventListener("keydown", function (event) {

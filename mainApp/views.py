@@ -1,7 +1,7 @@
 from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib.auth.decorators import login_required
 from django.contrib import messages
-from .models import Usuario, Sucursal, Categoria, Producto, Inventario, Proveedor, PreciosProveedor, PuntosPago, Rol, Empleado, HorariosNegocio, HorarioCaja, Cliente, Venta, DetalleVenta, PedidoProveedor, DetallePedidoProveedor, CambioDevolucion, ReintegroVenta, Permiso, RolPermiso, UsuarioPermiso, PagoVenta, TurnoCaja, TurnoCajaMedio, NotificacionNequi, VentaCarritoAudit, ClienteEspecial, AutorizacionDescuentoEspecial, CambioConfiguracionFuncionalidad, ConfiguracionImpresion
+from .models import Usuario, Sucursal, Categoria, Producto, Inventario, Proveedor, PreciosProveedor, PuntosPago, Rol, Empleado, HorariosNegocio, HorarioCaja, Cliente, Venta, DetalleVenta, PedidoProveedor, DetallePedidoProveedor, CambioDevolucion, ReintegroVenta, Permiso, RolPermiso, UsuarioPermiso, PagoVenta, TurnoCaja, TurnoCajaMedio, NotificacionNequi, VentaCarritoAudit, ClienteEspecial, AutorizacionDescuentoEspecial, CambioConfiguracionFuncionalidad, ConfiguracionImpresion, MetodoPago
 from django.db.models import Count, Sum, Exists, OuterRef, Q, F, ExpressionWrapper, DecimalField, Value, IntegerField, Case, When, CharField
 from django.http import JsonResponse, HttpResponseBadRequest, HttpResponseForbidden, HttpRequest, HttpResponse
 from django.contrib.auth import authenticate, login as auth_login
@@ -60,14 +60,11 @@ from .forms import (
     GenerarVentaForm,
     PedidoProveedorForm,
     EditarPedidoForm,
-    PermisoForm,
-    PermisoEditarForm,
     RolPermisoAssignForm,
     RolPermisoEditForm,
     DevolucionFormSet,
     PagoMixtoFormSet,
     ReintegroMixtoFormSet,
-    MEDIOS_PAGO,
     InventarioFotosForm,
     InventarioFotosConfirmarForm,
 
@@ -79,7 +76,7 @@ from itertools import zip_longest
 from django.forms import formset_factory
 from django.views          import View
 from django.contrib.auth.mixins import LoginRequiredMixin
-from django.views.generic import TemplateView, CreateView
+from django.views.generic import TemplateView
 from django.views.generic.edit import FormView, UpdateView
 from django.views.generic import ListView
 from django.utils.decorators import method_decorator
@@ -97,7 +94,18 @@ from datetime import timedelta
 import pytz
 from typing import List, Dict, Any
 from urllib.parse import parse_qsl
-from .permissions import clear_permission_cache, permission_catalog, sync_permission_catalog, user_can_access_url_name, user_has_permission, is_web_master_role
+from .permissions import (
+    WEB_MASTER_ROLE_NAMES,
+    assignable_permissions_queryset,
+    clear_permission_cache,
+    is_permission_admin,
+    is_privileged_role_name,
+    is_web_master_role,
+    normalize_permission_key,
+    permission_catalog,
+    user_can_access_url_name,
+    user_has_permission,
+)
 from .services.employee_client import EmployeeClientSyncError
 from .services.special_discount import (
     SPECIAL_CLIENT_KEY,
@@ -129,6 +137,21 @@ from .services.printing import (
     normalize_sistema_operativo,
     normalize_tamano_factura,
     resolve_print_profile,
+)
+from .services.payment_methods import (
+    CASH_PAYMENT_CODE,
+    DEFAULT_PAYMENT_METHODS,
+    INTERNAL_PAYMENT_CODES,
+    NEQUI_PAYMENT_CODE,
+    active_payment_method_codes,
+    all_payment_method_codes,
+    normalize_payment_method_code,
+    payment_method_choices,
+    payment_method_label,
+    payment_method_label_map,
+    payment_method_options,
+    payment_method_table_ready,
+    validate_new_payment_method_code,
 )
 
 def _round_account_peso(value) -> Decimal:
@@ -2535,6 +2558,58 @@ class SucursalEditarPuntoPagoAutocomplete(PaginatedAutocompleteMixin):
         return qs.order_by("nombre")
 
 
+def _lock_user_and_web_master_count(user_id):
+    """Bloquea el estado administrativo y devuelve usuario, rol y WMs activos."""
+    roles = list(
+        Rol.objects.select_for_update().only("pk", "nombre").order_by("pk")
+    )
+    role_names = {role.pk: role.nombre for role in roles}
+    web_master_role_ids = [
+        role.pk
+        for role in roles
+        if normalize_permission_key(role.nombre) in WEB_MASTER_ROLE_NAMES
+    ]
+    active_web_masters = list(
+        Usuario.objects
+        .select_for_update()
+        .filter(is_active=True, rolid_id__in=web_master_role_ids)
+        .order_by("pk")
+    )
+    target = next(
+        (user for user in active_web_masters if user.pk == user_id),
+        None,
+    )
+    if target is None:
+        target = get_object_or_404(
+            Usuario.objects.select_for_update(),
+            pk=user_id,
+        )
+    return target, role_names.get(target.rolid_id, ""), len(active_web_masters)
+
+
+def _can_manage_role(actor, role):
+    return (
+        is_web_master_role(actor)
+        or not is_privileged_role_name(getattr(role, "nombre", ""))
+    )
+
+
+def _manageable_roles_queryset(queryset, actor):
+    if is_web_master_role(actor):
+        return queryset
+    privileged_ids = [
+        role.pk
+        for role in queryset.only("pk", "nombre")
+        if is_privileged_role_name(role.nombre)
+    ]
+    return queryset.exclude(pk__in=privileged_ids)
+
+
+def _can_manage_user_permissions(actor, target_user):
+    target_role = getattr(target_user, "rolid", None)
+    return target_role is None or _can_manage_role(actor, target_role)
+
+
 class RolCreateAJAXView(LoginRequiredMixin, FormView):
     """
     • GET  → renderiza formulario clásico
@@ -2542,6 +2617,11 @@ class RolCreateAJAXView(LoginRequiredMixin, FormView):
     """
     template_name = "agregar_rol.html"
     form_class    = RolForm
+
+    def get_form_kwargs(self):
+        kwargs = super().get_form_kwargs()
+        kwargs["allow_privileged_roles"] = is_web_master_role(self.request.user)
+        return kwargs
 
     # ---------- POST OK ----------
     def form_valid(self, form):
@@ -2589,6 +2669,19 @@ class RolUpdateAJAXView(LoginRequiredMixin, UpdateView):
     template_name = "editar_rol.html"
     success_url   = reverse_lazy("visualizar_roles")
 
+    def dispatch(self, request, *args, **kwargs):
+        if not getattr(request.user, "is_authenticated", False):
+            return super().dispatch(request, *args, **kwargs)
+        role = get_object_or_404(Rol, pk=kwargs.get("rol_id"))
+        if is_privileged_role_name(role.nombre) and not is_web_master_role(request.user):
+            return HttpResponseForbidden("Solo un Web Master puede modificar este rol.")
+        return super().dispatch(request, *args, **kwargs)
+
+    def get_form_kwargs(self):
+        kwargs = super().get_form_kwargs()
+        kwargs["allow_privileged_roles"] = is_web_master_role(self.request.user)
+        return kwargs
+
     # -------- AJAX OK --------
     def form_valid(self, form):
         self.object = form.save()
@@ -2605,7 +2698,6 @@ class RolUpdateAJAXView(LoginRequiredMixin, UpdateView):
             })
         return super().form_valid(form)
 
-    # -------- AJAX KO --------
     def form_invalid(self, form):
         if self.request.headers.get("x-requested-with") == "XMLHttpRequest":
             return JsonResponse(
@@ -2616,22 +2708,30 @@ class RolUpdateAJAXView(LoginRequiredMixin, UpdateView):
 
 
 @login_required
+@require_POST
 def eliminar_rol_view(request, rol_id):
-    if request.method == 'POST':
-        rol = get_object_or_404(Rol, pk=rol_id)
-        nombre_rol = rol.nombre
-        rol.delete()
-        clear_permission_cache()
-        messages.success(request, f'Se eliminó el rol "{nombre_rol}" correctamente.')
-        return redirect('visualizar_roles')
-    # Si no es POST, retornamos un JSON de error (o podrías redirigir)
-    return JsonResponse({'success': False, 'message': 'Error al eliminar el rol.'})
+    rol = get_object_or_404(Rol, pk=rol_id)
+    normalized_role = normalize_permission_key(rol.nombre)
+    if normalized_role in {"web_master", "webmaster"}:
+        return HttpResponseForbidden("El rol Web Master está protegido y no puede eliminarse.")
+    if is_privileged_role_name(rol.nombre) and not is_web_master_role(request.user):
+        return HttpResponseForbidden("Solo un Web Master puede eliminar este rol.")
+    nombre_rol = rol.nombre
+    rol.delete()
+    clear_permission_cache()
+    messages.success(request, f'Se eliminó el rol "{nombre_rol}" correctamente.')
+    return redirect('visualizar_roles')
 
 
 class UsuarioCreateAJAXView(LoginRequiredMixin, FormView):
     template_name = "agregar_usuario.html"
     form_class    = UsuarioForm
     success_url   = reverse_lazy("visualizar_usuarios")   # ajusta la URL si existe
+
+    def get_form_kwargs(self):
+        kwargs = super().get_form_kwargs()
+        kwargs["allow_privileged_roles"] = is_web_master_role(self.request.user)
+        return kwargs
 
     # ----- POST ↩︎ JSON ----------------------------------------------------
     def form_valid(self, form):
@@ -2666,9 +2766,11 @@ class RolAutocompleteView(PaginatedAutocompleteMixin):
     id_field   = "rolid"
     per_page   = 10
 
+    def extra_filter(self, qs, request):
+        return _manageable_roles_queryset(qs, request.user)
 
-class UsuarioListView(LoginRequiredMixin,DenyRolesMixin, ListView):
-    deny_roles = ["Cajero", "Auxiliar"]
+
+class UsuarioListView(LoginRequiredMixin, ListView):
     """
     Muestra los usuarios en una tabla paginada con DataTables.
 
@@ -2690,16 +2792,31 @@ class UsuarioListView(LoginRequiredMixin,DenyRolesMixin, ListView):
         )
 
 @login_required
+@require_POST
+@transaction.atomic
 def eliminar_usuario_view(request, usuarioid):
-    usuario = get_object_or_404(Usuario, pk=usuarioid)
+    usuario, target_role, active_web_master_count = (
+        _lock_user_and_web_master_count(usuarioid)
+    )
+    if usuario.pk == request.user.pk:
+        return HttpResponseForbidden("No puedes eliminar tu propio usuario.")
+    if is_privileged_role_name(target_role) and not is_web_master_role(request.user):
+        return HttpResponseForbidden("Solo un Web Master puede eliminar este usuario.")
+    if (
+        usuario.is_active
+        and normalize_permission_key(target_role) in WEB_MASTER_ROLE_NAMES
+        and active_web_master_count <= 1
+    ):
+        return HttpResponseForbidden(
+            "No se puede eliminar el último Web Master activo."
+        )
     nombre_usuario = usuario.nombreusuario
     usuario.delete()
     messages.success(request, f'Usuario "{nombre_usuario}" eliminado exitosamente.')
     return redirect('visualizar_usuarios')
 
 
-class UsuarioUpdateAJAXView(LoginRequiredMixin, DenyRolesMixin, UpdateView):
-    deny_roles = ["Cajero", "Auxiliar"]
+class UsuarioUpdateAJAXView(LoginRequiredMixin, UpdateView):
     """
     Vista de actualización de usuarios:
 
@@ -2713,6 +2830,23 @@ class UsuarioUpdateAJAXView(LoginRequiredMixin, DenyRolesMixin, UpdateView):
     form_class    = UsuarioEditarForm
     template_name = "editar_usuario.html"
     pk_url_kwarg  = "usuario_id"              # /usuarios/editar/<usuario_id>/
+
+    def dispatch(self, request, *args, **kwargs):
+        if not getattr(request.user, "is_authenticated", False):
+            return super().dispatch(request, *args, **kwargs)
+        target = get_object_or_404(
+            Usuario.objects.select_related("rolid"),
+            pk=kwargs.get("usuario_id"),
+        )
+        target_role = getattr(getattr(target, "rolid", None), "nombre", "")
+        if is_privileged_role_name(target_role) and not is_web_master_role(request.user):
+            return HttpResponseForbidden("Solo un Web Master puede modificar este usuario.")
+        return super().dispatch(request, *args, **kwargs)
+
+    def get_form_kwargs(self):
+        kwargs = super().get_form_kwargs()
+        kwargs["allow_privileged_roles"] = is_web_master_role(self.request.user)
+        return kwargs
 
     # ---------------------------------------------------------------- helpers
     @staticmethod
@@ -2729,7 +2863,35 @@ class UsuarioUpdateAJAXView(LoginRequiredMixin, DenyRolesMixin, UpdateView):
 
     # ---------------------------------------------------------------- POST
     def form_valid(self, form):
-        usuario = form.save()  # El ModelForm setea rol y contraseña si aplica
+        with transaction.atomic():
+            usuario_actual, role_name, active_web_master_count = (
+                _lock_user_and_web_master_count(self.object.pk)
+            )
+            new_role = form.cleaned_data.get("rolid")
+            is_current_web_master = (
+                usuario_actual.is_active
+                and normalize_permission_key(role_name)
+                in WEB_MASTER_ROLE_NAMES
+            )
+            is_new_web_master = (
+                new_role is not None
+                and normalize_permission_key(new_role.nombre)
+                in WEB_MASTER_ROLE_NAMES
+            )
+            if (
+                is_current_web_master
+                and not is_new_web_master
+                and active_web_master_count <= 1
+            ):
+                form.add_error(
+                    "rolid",
+                    "No se puede cambiar el rol del último Web Master activo.",
+                )
+                return self.form_invalid(form)
+
+            form.instance = usuario_actual
+            usuario = form.save()
+            self.object = usuario
 
         if self._is_ajax(self.request):
             return JsonResponse({
@@ -4200,6 +4362,274 @@ class ConfiguracionImpresionView(LoginRequiredMixin, View):
         return self._no_store(response)
 
 
+@method_decorator(never_cache, name="dispatch")
+@method_decorator(
+    sensitive_post_parameters("password_web_master"),
+    name="dispatch",
+)
+class ConfiguracionMetodosPagoView(LoginRequiredMixin, View):
+    """Catálogo seguro de medios disponibles para nuevos movimientos."""
+
+    template_name = "configuracion_metodos_pago.html"
+
+    def dispatch(self, request, *args, **kwargs):
+        if (
+            getattr(request.user, "is_authenticated", False)
+            and not is_web_master_role(request.user)
+        ):
+            return HttpResponseForbidden(
+                "Solo el rol Web Master puede administrar los métodos de pago."
+            )
+        return super().dispatch(request, *args, **kwargs)
+
+    @staticmethod
+    def _no_store(response):
+        response["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        response["Pragma"] = "no-cache"
+        return response
+
+    @staticmethod
+    def _actor_name(user):
+        return (
+            getattr(user, "nombreusuario", "")
+            or getattr(user, "username", "")
+            or str(user)
+        )[:160]
+
+    @staticmethod
+    def _clean_label(value):
+        return re.sub(r"\s+", " ", str(value or "").strip())
+
+    @staticmethod
+    def _clean_order(value, *, default=100):
+        raw = str(value or "").strip()
+        if not raw:
+            return default
+        try:
+            order = int(raw)
+        except (TypeError, ValueError):
+            raise ValueError("El orden debe ser un número entero.")
+        if not 1 <= order <= 32767:
+            raise ValueError("El orden debe estar entre 1 y 32767.")
+        return order
+
+    @staticmethod
+    def _expected_version(value):
+        try:
+            version = int(str(value or "").strip())
+        except (TypeError, ValueError):
+            raise ValueError("La versión del método no es válida.")
+        if version < 1:
+            raise ValueError("La versión del método no es válida.")
+        return version
+
+    def _context(self, *, error=""):
+        migration_ready = payment_method_table_ready()
+        methods = payment_method_options(active_only=False)
+
+        # Un solo conteo aproximado es suficiente para advertir que los
+        # registros históricos se conservarán al desactivar un método.
+        usage = {}
+        if migration_ready:
+            sources = (
+                (Venta, "mediopago"),
+                (PagoVenta, "medio_pago"),
+                (ReintegroVenta, "medio_pago"),
+                (TurnoCajaMedio, "metodo"),
+            )
+            for model, field in sources:
+                try:
+                    for row in model.objects.values(field).annotate(total=Count("*")):
+                        code = normalize_payment_method_code(row.get(field))
+                        if code and code not in INTERNAL_PAYMENT_CODES:
+                            usage[code] = usage.get(code, 0) + int(row["total"] or 0)
+                except DatabaseError:
+                    # Algunas instalaciones antiguas pueden no tener todavía
+                    # uno de los libros auxiliares; eso no bloquea el catálogo.
+                    continue
+
+        for method in methods:
+            method["usage_count"] = usage.get(method["code"], 0)
+
+        if not migration_ready and not error:
+            error = (
+                "Falta aplicar la migración 0028. Mientras tanto se muestran "
+                "los métodos predeterminados, pero no se pueden modificar."
+            )
+        return {
+            "payment_methods": methods,
+            "payment_method_labels": {
+                method["code"]: method["label"] for method in methods
+            },
+            "migration_ready": migration_ready,
+            "error": error,
+        }
+
+    def _render(self, request, *, error="", status=200):
+        response = render(
+            request,
+            self.template_name,
+            self._context(error=error),
+            status=status,
+        )
+        return self._no_store(response)
+
+    def get(self, request, *args, **kwargs):
+        return self._render(request)
+
+    def _create(self, request):
+        label = self._clean_label(request.POST.get("label"))
+        if not 2 <= len(label) <= 80:
+            raise ValueError("El nombre debe tener entre 2 y 80 caracteres.")
+
+        code = validate_new_payment_method_code(label)
+        order = self._clean_order(request.POST.get("order"), default=100)
+
+        if MetodoPago.objects.filter(
+            Q(codigo=code) | Q(nombre__iexact=label)
+        ).exists():
+            raise ValueError("Ya existe un método de pago con ese nombre o código.")
+
+        MetodoPago.objects.create(
+            codigo=code,
+            nombre=label,
+            activo=True,
+            es_efectivo=False,
+            es_sistema=False,
+            orden=order,
+            version=1,
+            actualizado_por=request.user,
+            actualizado_por_nombre=self._actor_name(request.user),
+        )
+        return f"Se agregó el método «{label}»."
+
+    def _locked_method(self, request):
+        code = normalize_payment_method_code(request.POST.get("code"))
+        if not code or code in INTERNAL_PAYMENT_CODES:
+            raise ValueError("El método de pago no es válido.")
+        method = MetodoPago.objects.select_for_update().filter(pk=code).first()
+        if not method:
+            raise ValueError("El método de pago ya no existe.")
+        expected = self._expected_version(request.POST.get("version"))
+        if method.version != expected:
+            error = ValueError(
+                "Otro usuario modificó este método. Actualiza la página e inténtalo de nuevo."
+            )
+            error.stale = True
+            raise error
+        return method
+
+    def _update(self, request):
+        method = self._locked_method(request)
+        label = self._clean_label(request.POST.get("label"))
+        if not 2 <= len(label) <= 80:
+            raise ValueError("El nombre debe tener entre 2 y 80 caracteres.")
+        if not method.es_sistema:
+            validate_new_payment_method_code(label)
+        order = self._clean_order(request.POST.get("order"), default=method.orden)
+        if MetodoPago.objects.exclude(pk=method.pk).filter(nombre__iexact=label).exists():
+            raise ValueError("Ya existe otro método con ese nombre.")
+
+        changed = method.nombre != label or method.orden != order
+        if changed:
+            method.nombre = label
+            method.orden = order
+            method.version += 1
+            method.actualizado_por = request.user
+            method.actualizado_por_nombre = self._actor_name(request.user)
+            method.save(update_fields=[
+                "nombre", "orden", "version", "actualizado_en",
+                "actualizado_por", "actualizado_por_nombre",
+            ])
+        return (
+            f"Se actualizó el método «{label}»."
+            if changed else "El método ya tenía esos datos."
+        )
+
+    def _toggle(self, request):
+        method = self._locked_method(request)
+        active_raw = str(request.POST.get("active") or "").strip().lower()
+        if active_raw not in {"0", "1", "false", "true"}:
+            raise ValueError("El estado solicitado no es válido.")
+        active = active_raw in {"1", "true"}
+        if method.es_efectivo and not active:
+            raise ValueError(
+                "Efectivo no puede desactivarse porque sostiene la caja y las devoluciones."
+            )
+        if not active and method.activo:
+            if MetodoPago.objects.select_for_update().filter(activo=True).count() <= 1:
+                raise ValueError("Debe permanecer al menos un método de pago activo.")
+
+        changed = method.activo != active
+        if changed:
+            method.activo = active
+            method.version += 1
+            method.actualizado_por = request.user
+            method.actualizado_por_nombre = self._actor_name(request.user)
+            method.save(update_fields=[
+                "activo", "version", "actualizado_en",
+                "actualizado_por", "actualizado_por_nombre",
+            ])
+        state = "activó" if active else "desactivó"
+        return (
+            f"Se {state} el método «{method.nombre}»."
+            if changed else f"El método «{method.nombre}» ya tenía ese estado."
+        )
+
+    def post(self, request, *args, **kwargs):
+        if not is_web_master_role(request.user):
+            return HttpResponseForbidden(
+                "Solo el rol Web Master puede administrar los métodos de pago."
+            )
+        if not payment_method_table_ready():
+            return self._render(
+                request,
+                error="Aplica la migración 0028 antes de administrar los métodos de pago.",
+                status=503,
+            )
+        if not request.user.check_password(request.POST.get("password_web_master") or ""):
+            return self._render(
+                request,
+                error="La contraseña del Web Master no es correcta.",
+                status=400,
+            )
+
+        action = str(request.POST.get("action") or "").strip().lower()
+        handlers = {
+            "create": self._create,
+            "update": self._update,
+            "toggle": self._toggle,
+        }
+        if action not in handlers:
+            return self._render(request, error="La acción solicitada no es válida.", status=400)
+
+        try:
+            with transaction.atomic():
+                success_message = handlers[action](request)
+        except ValueError as exc:
+            return self._render(
+                request,
+                error=str(exc),
+                status=409 if getattr(exc, "stale", False) else 400,
+            )
+        except IntegrityError:
+            return self._render(
+                request,
+                error="No se pudo guardar: el nombre o código ya está en uso.",
+                status=409,
+            )
+        except DatabaseError:
+            logger.exception("No se pudo modificar el catálogo de métodos de pago")
+            return self._render(
+                request,
+                error="No se pudo guardar el cambio. Verifica la migración 0028.",
+                status=503,
+            )
+
+        messages.success(request, success_message)
+        return self._no_store(redirect("configuracion_metodos_pago"))
+
+
 @method_decorator(
     sensitive_post_parameters(
         "empleado_password",
@@ -4250,16 +4680,12 @@ class GenerarVentaView(LoginRequiredMixin, View):
     def _normalize_document(value):
         return re.sub(r"[^0-9A-Za-z]+", "", str(value or "")).lower()
 
-    @staticmethod
-    def _normalize_role_name(value):
-        return re.sub(r"[\s_-]+", " ", str(value or "").strip().lower())
-
     @classmethod
     def _empleado_es_web_master(cls, empleado):
         usuario = getattr(empleado, "usuarioid", None)
         rol = getattr(usuario, "rolid", None) if usuario else None
-        role_name = cls._normalize_role_name(getattr(rol, "nombre", ""))
-        return role_name in {"web master", "webmaster"}
+        role_name = normalize_permission_key(getattr(rol, "nombre", ""))
+        return role_name in WEB_MASTER_ROLE_NAMES
 
     @classmethod
     def _employee_sale_pricing(cls, empleado_comprador, total_cuenta):
@@ -4605,7 +5031,12 @@ class GenerarVentaView(LoginRequiredMixin, View):
             except Exception:
                 pass
 
-        pagos_normalizados = self._normalize_payments(pagos, total, medio_pago_simple)
+        pagos_normalizados = self._normalize_payments(
+            pagos,
+            total,
+            medio_pago_simple,
+            allowed_codes=active_payment_method_codes(),
+        )
 
         if total > 0 and not pagos_normalizados:
             return JsonResponse({'success': False, 'error': 'Debe indicar el/los pagos.'})
@@ -4637,12 +5068,26 @@ class GenerarVentaView(LoginRequiredMixin, View):
     # base / pagos
     # =========================
     def _base_context(self, form, detalles=None, total=Decimal('0')):
-        return {'form': form, 'detalles': detalles or [], 'total': total}
+        methods = payment_method_options(active_only=True)
+        active_codes = {
+            method["code"] for method in methods if method["active"]
+        }
+        return {
+            'form': form,
+            'detalles': detalles or [],
+            'total': total,
+            'payment_methods': methods,
+            'payment_method_labels': {
+                method["code"]: method["label"] for method in methods
+            },
+            'nequi_payment_method_enabled': NEQUI_PAYMENT_CODE in active_codes,
+        }
 
     @staticmethod
     def _to_decimal(x):
         try:
-            return Decimal(str(x))
+            value = Decimal(str(x))
+            return value if value.is_finite() else Decimal("0")
         except Exception:
             return Decimal("0")
 
@@ -4659,28 +5104,47 @@ class GenerarVentaView(LoginRequiredMixin, View):
         }
 
     @staticmethod
-    def _normalize_payments(pagos_list, total, medio_pago_simple=""):
-        allowed = {"nequi", "efectivo", "daviplata", "tarjeta", "banco_caja_social"}
+    def _normalize_payments(
+        pagos_list,
+        total,
+        medio_pago_simple="",
+        *,
+        allowed_codes=None,
+    ):
+        # El valor predeterminado mantiene este helper puro para pruebas y
+        # compatibilidad previa a 0028. Los POST reales siempre inyectan el
+        # conjunto activo consultado justo antes de registrar la venta.
+        allowed = {
+            row["code"] for row in DEFAULT_PAYMENT_METHODS
+        } if allowed_codes is None else {
+            normalize_payment_method_code(code) for code in allowed_codes
+        }
+        allowed.discard("")
         total = GenerarVentaView._to_decimal(total)
 
         if total <= 0:
             return []
 
         if isinstance(pagos_list, list) and len(pagos_list) > 0:
-            acc = []
+            amounts = {}
             for it in pagos_list:
                 if not isinstance(it, dict):
-                    continue
+                    return []
 
-                medio = str(it.get("medio_pago", "")).strip().lower()
+                medio = normalize_payment_method_code(it.get("medio_pago"))
                 if medio not in allowed:
-                    continue
+                    return []
 
                 monto = GenerarVentaView._to_decimal(it.get("monto", "0"))
                 if monto <= 0:
                     continue
 
-                acc.append({"medio_pago": medio, "monto": monto})
+                amounts[medio] = amounts.get(medio, Decimal("0")) + monto
+
+            acc = [
+                {"medio_pago": medio, "monto": monto}
+                for medio, monto in amounts.items()
+            ]
 
             if not acc:
                 return []
@@ -4696,7 +5160,7 @@ class GenerarVentaView(LoginRequiredMixin, View):
 
             return acc
 
-        medio = (medio_pago_simple or "").strip().lower()
+        medio = normalize_payment_method_code(medio_pago_simple)
         if medio in allowed:
             return [{"medio_pago": medio, "monto": total}]
 
@@ -4905,8 +5369,14 @@ class GenerarVentaView(LoginRequiredMixin, View):
         pay_lines = ["-" * WIDTH]
         if pagos:
             pay_lines.append(line("PAGOS:"))
+            payment_labels = payment_method_label_map(
+                include_codes=[p.get("medio_pago") for p in pagos],
+            )
             for p in pagos:
-                mp = (p.get("medio_pago") or "").upper().replace("_", " ")
+                mp = payment_method_label(
+                    p.get("medio_pago"),
+                    labels=payment_labels,
+                ).upper()
                 pay_lines.append(lr(mp[:18], money(p.get("monto", 0))))
         elif beneficio_merk2888:
             pay_lines.append(line("SIN PAGO - BENEFICIO 100%"))
@@ -4960,6 +5430,25 @@ class GenerarVentaView(LoginRequiredMixin, View):
         """
         try:
             ahora = timezone.localtime()
+            submitted_payment_codes = {
+                normalize_payment_method_code(payment.get("medio_pago"))
+                for payment in (pagos or [])
+                if isinstance(payment, dict)
+            }
+            submitted_payment_codes.discard("")
+            catalog_ready = payment_method_table_ready()
+            if not catalog_ready:
+                fallback_codes = {
+                    row["code"]
+                    for row in DEFAULT_PAYMENT_METHODS
+                    if row["active"]
+                }
+                if not submitted_payment_codes.issubset(fallback_codes):
+                    return JsonResponse({
+                        "success": False,
+                        "error": "El método de pago no está disponible.",
+                        "configuration_changed": True,
+                    })
 
             empleado = getattr(user, "empleado", None)
             if empleado is None:
@@ -4984,6 +5473,27 @@ class GenerarVentaView(LoginRequiredMixin, View):
             prod_ids = list(qty_map.keys())
 
             with transaction.atomic():
+                if catalog_ready and submitted_payment_codes:
+                    locked_active_codes = set(
+                        MetodoPago.objects
+                        .select_for_update()
+                        .filter(
+                            codigo__in=submitted_payment_codes,
+                            activo=True,
+                        )
+                        .values_list("codigo", flat=True)
+                    )
+                    if locked_active_codes != submitted_payment_codes:
+                        return JsonResponse({
+                            "success": False,
+                            "error": (
+                                "Uno de los métodos de pago fue desactivado. "
+                                "Actualiza la página y selecciona otro."
+                            ),
+                            "configuration_changed": True,
+                            "redirect_url": reverse("generar_venta"),
+                        })
+
                 # El mismo bloqueo es usado por el panel de configuración y
                 # por el inicio de turnos. Así un cambio concurrente nunca deja
                 # una venta a mitad entre ambos modos.
@@ -5034,7 +5544,7 @@ class GenerarVentaView(LoginRequiredMixin, View):
                     (
                         GenerarVentaView._to_decimal(p.get("monto", 0))
                         for p in (pagos or [])
-                        if (p.get("medio_pago") or "").strip().lower() == "nequi"
+                        if normalize_payment_method_code(p.get("medio_pago")) == NEQUI_PAYMENT_CODE
                     ),
                     Decimal("0")
                 )
@@ -5153,7 +5663,7 @@ class GenerarVentaView(LoginRequiredMixin, View):
                     mp = (p.get("medio_pago") or "").lower()
                     monto = GenerarVentaView._to_decimal(p.get("monto", 0))
                     pagos_objs.append(PagoVenta(ventaid=venta, medio_pago=mp, monto=monto))
-                    if mp == "efectivo":
+                    if mp == CASH_PAYMENT_CODE:
                         efectivo_monto += monto
 
                 if pagos_objs:
@@ -5190,7 +5700,9 @@ class GenerarVentaView(LoginRequiredMixin, View):
                 total > 0
                 and pagos
                 and len(pagos) == 1
-                and (pagos[0].get("medio_pago") or "").lower() == "efectivo"
+                and normalize_payment_method_code(
+                    pagos[0].get("medio_pago")
+                ) == CASH_PAYMENT_CODE
             )
             if pago_unico_efectivo:
                 if efectivo_recibido <= 0:
@@ -6045,9 +6557,8 @@ def _audit_text(value, limit):
 
 def _audit_user_is_web_master(user):
     role = getattr(user, "rolid", None)
-    role_name = str(getattr(role, "nombre", "") or "").strip().lower()
-    role_name = re.sub(r"[\s_-]+", " ", role_name)
-    return role_name in {"web master", "webmaster"}
+    role_name = normalize_permission_key(getattr(role, "nombre", ""))
+    return role_name in WEB_MASTER_ROLE_NAMES
 
 
 @method_decorator(require_POST, name="dispatch")
@@ -6814,7 +7325,10 @@ class VentaListView(LoginRequiredMixin, ListView):
                 .order_by("sucursalid__nombre", "nombre")
             ),
             "empleados": Empleado.objects.order_by("nombre", "apellido"),
-            "medios_pago": [("mixto", "Mixto"), *MEDIOS_PAGO],
+            "medios_pago": [
+                ("mixto", "Mixto"),
+                *payment_method_choices(active_only=False),
+            ],
         })
         return context
 
@@ -6848,7 +7362,12 @@ class VentaDataTableView(LoginRequiredMixin, View):
         puntopago_id  = (request.GET.get("puntopago_id", "") or "").strip()
         empleado_id   = (request.GET.get("empleado_id", "") or "").strip()
         cliente_term  = (request.GET.get("cliente_term", "") or "").strip()
-        mediopago     = (request.GET.get("mediopago", "") or "").strip().lower()
+        mediopago_raw = (request.GET.get("mediopago", "") or "").strip().lower()
+        mediopago = (
+            "mixto"
+            if mediopago_raw == "mixto"
+            else normalize_payment_method_code(mediopago_raw)
+        )
         nequi_status  = (request.GET.get("nequi_status", "") or "").strip().lower()
         total_min_raw = (request.GET.get("total_min", "") or "").strip().replace(",", ".")
         total_max_raw = (request.GET.get("total_max", "") or "").strip().replace(",", ".")
@@ -6913,10 +7432,21 @@ class VentaDataTableView(LoginRequiredMixin, View):
             qs = qs.filter(empleadoid_id=int(empleado_id))
 
         if mediopago:
-            if mediopago == "nequi":
-                qs = qs.filter(nequi_payment_filter)
+            if mediopago == "mixto":
+                qs = qs.filter(mediopago__iexact="mixto")
+            elif mediopago not in all_payment_method_codes():
+                qs = qs.none()
             else:
-                qs = qs.filter(mediopago__iexact=mediopago)
+                selected_payment_rows = payment_rows.filter(
+                    medio_pago__iexact=mediopago,
+                    monto__gt=0,
+                )
+                qs = qs.annotate(
+                    has_selected_payment_row=Exists(selected_payment_rows),
+                ).filter(
+                    Q(has_selected_payment_row=True)
+                    | Q(has_payment_rows=False, mediopago__iexact=mediopago)
+                )
 
         if nequi_status == "linked":
             qs = qs.filter(
@@ -7029,6 +7559,7 @@ class VentaDataTableView(LoginRequiredMixin, View):
         qs_page = qs_values[start:] if length == -1 else qs_values[start:start + length]
 
         data = []
+        payment_labels = payment_method_label_map()
         for v in qs_page:
             cliente = "—"
             if v["clienteid__nombre"]:
@@ -7038,7 +7569,12 @@ class VentaDataTableView(LoginRequiredMixin, View):
             empleado = f"{v['empleadoid__nombre']} {(v['empleadoid__apellido'] or '')}".strip()
             sucursal = v["sucursalid__nombre"] or "—"
             punto    = v["puntopagoid__nombre"] or "—"
-            medio    = (v["mediopago"] or "").title()
+            medio_code = normalize_payment_method_code(v["mediopago"])
+            medio = (
+                "Mixto"
+                if (v["mediopago"] or "").strip().lower() == "mixto"
+                else payment_method_label(medio_code, labels=payment_labels)
+            )
 
             fecha_str = v["fecha"].strftime("%d/%m/%Y") if v["fecha"] else ""
             hora_str  = v["hora"].strftime("%H:%M") if v["hora"] else ""
@@ -7092,19 +7628,20 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin, View):
             return False
         return user_has_permission(user, self.edit_permission)
 
-    def _can_print_venta(self, user) -> bool:
+    def _can_print_venta(self, user, venta=None) -> bool:
         if self._is_cajero_role(user):
-            return True
-        return (
+            return venta is None or _user_can_print_venta(user, venta)
+        allowed = (
             self._can_view_venta(user)
             or self._can_edit_venta(user)
             or user_has_permission(user, self.print_permission)
         )
+        return allowed
 
-    def _is_print_only(self, user) -> bool:
-        if self._is_cajero_role(user) and self._can_print_venta(user):
+    def _is_print_only(self, user, venta=None) -> bool:
+        if self._is_cajero_role(user) and self._can_print_venta(user, venta):
             return True
-        return self._can_print_venta(user) and not self._can_edit_venta(user)
+        return self._can_print_venta(user, venta) and not self._can_edit_venta(user)
 
     def dispatch(self, request, *args, **kwargs):
         if not getattr(request.user, "is_authenticated", False):
@@ -7163,8 +7700,13 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin, View):
                 for r in rows
             }
 
+        options = payment_method_options(
+            active_only=True,
+            include_codes=pagos_bd.keys(),
+        )
         initial = []
-        for key, _label in MEDIOS_PAGO:
+        for option in options:
+            key = option["code"]
             initial.append({
                 "medio_pago": key,
                 "monto": (pagos_bd.get(key, Decimal("0.00"))).quantize(Q2)
@@ -7172,7 +7714,10 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin, View):
         return initial
 
     def _build_reintegro_initial(self, venta):
-        return [{"medio_pago": key, "monto": Decimal("0.00")} for key, _label in MEDIOS_PAGO]
+        return [
+            {"medio_pago": option["code"], "monto": Decimal("0.00")}
+            for option in payment_method_options(active_only=True)
+        ]
 
     def _calcular_total_reintegro(self, venta, devoluciones) -> Decimal:
         return CambioDevolucion.calcular_total_devolucion(venta, devoluciones).quantize(Q2)
@@ -7196,8 +7741,15 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin, View):
         return s.quantize(Q2)
 
     @staticmethod
-    def _medios_pago_validos() -> set[str]:
-        return {key for key, _label in MEDIOS_PAGO}
+    def _medios_pago_validos(*, active_only=True, include_codes=None) -> set[str]:
+        return {
+            option["code"]
+            for option in payment_method_options(
+                active_only=active_only,
+                include_codes=include_codes,
+            )
+            if not active_only or option["active"] or option["code"] in set(include_codes or ())
+        }
 
     def _mapa_pagos_originales(
         self,
@@ -7221,10 +7773,13 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin, View):
         if total_cobrado <= 0:
             return {}
 
-        metodo = (venta.mediopago or "").strip().lower()
-        medios_validos = self._medios_pago_validos()
+        metodo = normalize_payment_method_code(venta.mediopago)
         if metodo != "mixto":
-            if metodo not in medios_validos:
+            medios_validos = self._medios_pago_validos(
+                active_only=False,
+                include_codes=[metodo],
+            )
+            if not metodo or metodo in INTERNAL_PAYMENT_CODES or metodo not in medios_validos:
                 raise ValueError(
                     "El medio de pago original de la venta no es válido."
                 )
@@ -7237,12 +7792,25 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin, View):
             .values("medio_pago")
             .annotate(total=Sum("monto"))
         )
+        rows = list(rows)
+        row_codes = [
+            normalize_payment_method_code(row["medio_pago"])
+            for row in rows
+        ]
+        medios_validos = self._medios_pago_validos(
+            active_only=False,
+            include_codes=row_codes,
+        )
         for row in rows:
-            medio = (row["medio_pago"] or "").strip().lower()
+            medio = normalize_payment_method_code(row["medio_pago"])
             monto = _to_q2(row["total"] or Decimal("0.00"))
             if monto <= 0:
                 continue
-            if medio not in medios_validos:
+            if (
+                not medio
+                or medio in INTERNAL_PAYMENT_CODES
+                or medio not in medios_validos
+            ):
                 raise ValueError(
                     f"La venta tiene un medio de pago no válido: {medio}."
                 )
@@ -7261,7 +7829,7 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin, View):
     def _mapa_pagos_desde_formset(self, formset) -> dict[str, Decimal]:
         mapa = {}
         for row in (formset.cleaned_data or []):
-            medio = (row.get("medio_pago") or "").strip().lower()
+            medio = normalize_payment_method_code(row.get("medio_pago"))
             monto = _to_q2(row.get("monto") or Decimal("0.00"))
             if medio and monto > 0:
                 mapa[medio] = _to_q2(
@@ -7285,7 +7853,12 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin, View):
         el turno vigente para que el cuadre conserve la misma suma total.
         """
 
-        medios_validos = {key for key, _label in MEDIOS_PAGO}
+        medios_validos = {
+            normalize_payment_method_code(medio)
+            for medio in set(mapa_anterior) | set(mapa_nuevo)
+        }
+        medios_validos.discard("")
+        medios_validos -= INTERNAL_PAYMENT_CODES
         anterior = {
             medio: _to_q2(mapa_anterior.get(medio, Decimal("0.00")))
             for medio in medios_validos
@@ -7325,13 +7898,13 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin, View):
                     delta,
                 )
 
-            delta_efectivo = deltas.get("efectivo", Decimal("0.00"))
+            delta_efectivo = deltas.get(CASH_PAYMENT_CODE, Decimal("0.00"))
             delta_no_efectivo = _to_q2(
                 sum(
                     (
                         delta
                         for medio, delta in deltas.items()
-                        if medio != "efectivo"
+                        if medio != CASH_PAYMENT_CODE
                     ),
                     Decimal("0.00"),
                 )
@@ -7343,7 +7916,7 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin, View):
                 ),
             )
 
-        delta_caja = deltas.get("efectivo", Decimal("0.00"))
+        delta_caja = deltas.get(CASH_PAYMENT_CODE, Decimal("0.00"))
         if delta_caja:
             PuntosPago.objects.filter(pk=venta.puntopagoid_id).update(
                 dinerocaja=F("dinerocaja") + delta_caja,
@@ -7373,6 +7946,8 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin, View):
         pagos_formset,
         *,
         total_cobrado=None,
+        active_codes=None,
+        previous_map=None,
     ):
         if not pagos_formset.is_valid():
             return False, "Montos de pago inválidos."
@@ -7384,28 +7959,67 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin, View):
         )
         suma = self._sum_formset_montos(pagos_formset)
 
+        active_codes = {
+            normalize_payment_method_code(code)
+            for code in (active_codes or self._medios_pago_validos())
+        }
+        previous_map = {
+            normalize_payment_method_code(code): _to_q2(amount)
+            for code, amount in (previous_map or {}).items()
+        }
+        allowed_codes = active_codes | set(previous_map)
+        seen_codes = set()
+
         for row in pagos_formset.cleaned_data:
+            medio = normalize_payment_method_code(row.get("medio_pago"))
             monto = (row.get("monto") or Decimal("0.00")).quantize(Q2)
             if monto < 0:
                 return False, "No puedes poner montos negativos."
+            if (
+                not medio
+                or medio in INTERNAL_PAYMENT_CODES
+                or medio not in allowed_codes
+            ):
+                return False, "Uno de los métodos de pago no es válido."
+            if medio in seen_codes:
+                return False, "No puedes repetir un método de pago."
+            seen_codes.add(medio)
+            if (
+                medio not in active_codes
+                and monto > previous_map.get(medio, Decimal("0.00"))
+            ):
+                return False, (
+                    f"{payment_method_label(medio)} está desactivado; "
+                    "solo puedes conservar o reducir su valor histórico."
+                )
 
         if suma != total:
             return False, f"La suma de pagos ({suma}) debe ser igual al total ({total})."
 
         return True, None
 
-    def _validar_reintegro_mixto(self, venta, reintegro_formset, total_reintegro):
+    def _validar_reintegro_mixto(
+        self,
+        venta,
+        reintegro_formset,
+        total_reintegro,
+        *,
+        active_codes=None,
+    ):
         if not reintegro_formset.is_valid():
             return False, "Montos de reintegro invalidos.", {}
 
         total_reintegro = _to_q2(total_reintegro)
-        medios_validos = {key for key, _label in MEDIOS_PAGO}
+        medios_validos = {
+            normalize_payment_method_code(code)
+            for code in (active_codes or self._medios_pago_validos())
+        }
 
         reintegro_map = {}
         suma = Decimal("0.00")
 
         for row in (reintegro_formset.cleaned_data or []):
-            medio = (row.get("medio_pago") or "").strip().lower()
+            medio = normalize_payment_method_code(row.get("medio_pago"))
             monto = _to_q2(row.get("monto") or Decimal("0.00"))
 
             if monto < 0:
@@ -7423,7 +8037,7 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin, View):
         # Si no se indicó ningún monto, tomar todo el reintegro como efectivo.
         # Cualquier distribución explícita continúa validándose exactamente.
         if total_reintegro > 0 and not reintegro_map:
-            return True, None, {"efectivo": total_reintegro}
+            return True, None, {CASH_PAYMENT_CODE: total_reintegro}
 
         if suma != total_reintegro:
             return False, f"Reintegro mixto ({suma}) debe ser igual al total a devolver ({total_reintegro}).", {}
@@ -7435,7 +8049,7 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin, View):
 
         nuevos = []
         for row in pagos_formset.cleaned_data:
-            medio = (row.get("medio_pago") or "").strip().lower()
+            medio = normalize_payment_method_code(row.get("medio_pago"))
             monto = (row.get("monto") or Decimal("0.00")).quantize(Q2)
             if monto > 0:
                 nuevos.append(PagoVenta(ventaid=venta, medio_pago=medio, monto=monto))
@@ -7446,7 +8060,7 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin, View):
     def _guardar_pago_unico(self, venta):
         PagoVenta.objects.filter(ventaid=venta).delete()
 
-        medio = (venta.mediopago or "").strip().lower()
+        medio = normalize_payment_method_code(venta.mediopago)
         total = self._venta_total_cobrado(venta)
 
         if total > 0 and medio:
@@ -7464,6 +8078,10 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin, View):
             Venta.objects.select_related("clienteid", "empleadoid", "sucursalid", "puntopagoid"),
             pk=venta_id
         )
+        if not self._can_print_venta(request.user, venta):
+            return HttpResponseForbidden(
+                "No puedes consultar una venta de otra sucursal."
+            )
 
         detalles = (
             DetalleVenta.objects
@@ -7535,6 +8153,55 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin, View):
                 .order_by("-creado_en", "-reintegroid")
             )
 
+        historical_codes = [venta.mediopago]
+        historical_codes.extend(
+            PagoVenta.objects
+            .filter(ventaid=venta)
+            .values_list("medio_pago", flat=True)
+        )
+        historical_codes.extend(row.medio_pago for row in reintegros)
+        payment_methods = payment_method_options(
+            active_only=True,
+            include_codes=historical_codes,
+        )
+        refund_payment_methods = payment_method_options(active_only=True)
+        payment_method_labels = payment_method_label_map(
+            include_codes=historical_codes,
+        )
+        for raw_code in historical_codes:
+            raw_key = str(raw_code or "").strip().lower()
+            normalized = normalize_payment_method_code(raw_code)
+            if raw_key and normalized:
+                payment_method_labels[raw_key] = payment_method_label(
+                    normalized,
+                    labels=payment_method_labels,
+                )
+        payment_method_labels.update({
+            "mixto": "Mixto",
+            "sin_pago": "Sin pago",
+        })
+        for form_row in pagos_formset.forms:
+            code = normalize_payment_method_code(
+                form_row.initial.get("medio_pago")
+            )
+            form_row.payment_method_label = payment_method_label(
+                code,
+                labels=payment_method_labels,
+            )
+        for form_row in reintegro_formset.forms:
+            code = normalize_payment_method_code(
+                form_row.initial.get("medio_pago")
+            )
+            form_row.payment_method_label = payment_method_label(
+                code,
+                labels=payment_method_labels,
+            )
+        for reintegro in reintegros:
+            reintegro.payment_method_label = payment_method_label(
+                reintegro.medio_pago,
+                labels=payment_method_labels,
+            )
+
         return render(request, self.template_name, {
             "venta": venta,
             "filas": zip(detalles, dev_formset.forms),
@@ -7542,12 +8209,18 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin, View):
             "pagos_formset": pagos_formset,
             "reintegro_formset": reintegro_formset,
             "es_mixto": self._venta_es_mixta(venta),
-            "medios_pago": MEDIOS_PAGO,
+            "payment_methods": payment_methods,
+            "refund_payment_methods": refund_payment_methods,
+            "payment_method_labels": payment_method_labels,
+            "medios_pago": [
+                (method["code"], method["label"])
+                for method in payment_methods
+            ],
             "venta_total": (venta.total or Decimal("0.00")).quantize(Q2),
             "venta_total_cobrado": self._venta_total_cobrado(venta),
             "reintegros": reintegros,
             "reintegro_ledger_ready": reintegro_ledger_ready,
-            "venta_print_only": self._is_print_only(request.user),
+            "venta_print_only": self._is_print_only(request.user, venta),
             "venta_solicitud_cambio_whatsapp_url": solicitud_whatsapp_url,
             "autorizacion_merk2888": autorizacion_merk2888,
             "beneficio_merk2888": bool(autorizacion_merk2888),
@@ -7578,6 +8251,10 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin, View):
 
     def _post_atomic(self, request, venta_id):
         venta = Venta.objects.select_for_update().get(pk=venta_id)
+        if not self._can_print_venta(request.user, venta):
+            return HttpResponseForbidden(
+                "No puedes consultar una venta de otra sucursal."
+            )
 
         accion = (request.POST.get("accion") or "").strip()
 
@@ -7594,7 +8271,7 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin, View):
             except Exception as e:
                 return JsonResponse({"ok": False, "error": str(e)}, status=400)
 
-        if self._is_print_only(request.user):
+        if self._is_print_only(request.user, venta):
             message = "Este permiso solo permite ver e imprimir la factura."
             wants_json = (
                 request.headers.get("x-requested-with") == "XMLHttpRequest"
@@ -7609,13 +8286,23 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin, View):
         )
         detalles = list(DetalleVenta.objects.filter(ventaid=venta))
 
-        nuevo_mediopago = (request.POST.get("mediopago") or "").strip().lower()
+        nuevo_mediopago_raw = (request.POST.get("mediopago") or "").strip().lower()
+        nuevo_mediopago = (
+            "mixto"
+            if nuevo_mediopago_raw == "mixto"
+            else normalize_payment_method_code(nuevo_mediopago_raw)
+        )
 
         dev_formset = DevolucionFormSet(request.POST, prefix="dev")
         pagos_formset = PagoMixtoFormSet(request.POST, prefix="pagos")
         reintegro_formset = ReintegroMixtoFormSet(request.POST, prefix="reint")
 
-        metodo_old = (venta.mediopago or "").strip().lower()
+        metodo_old_raw = (venta.mediopago or "").strip().lower()
+        metodo_old = (
+            "mixto"
+            if metodo_old_raw == "mixto"
+            else normalize_payment_method_code(metodo_old_raw)
+        )
 
         # ✅ clave: detectar si realmente hay devoluciones
         hay_devolucion = self._hay_devolucion_en_post(request)
@@ -7630,11 +8317,22 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin, View):
         # 0) Reclasificar el ingreso original. Los reintegros ya registrados
         # son salidas independientes y no se mezclan con este mapa.
         metodo_objetivo = nuevo_mediopago or metodo_old
-        medios_validos = self._medios_pago_validos()
+        if payment_method_table_ready():
+            medios_activos = set(
+                MetodoPago.objects
+                .select_for_update()
+                .filter(activo=True)
+                .values_list("codigo", flat=True)
+            )
+        else:
+            medios_activos = active_payment_method_codes()
         total_cobrado = self._venta_total_cobrado(venta)
 
         if total_cobrado > 0:
-            if metodo_objetivo not in medios_validos | {"mixto"}:
+            if (
+                metodo_objetivo not in medios_activos | {"mixto"}
+                and metodo_objetivo != metodo_old
+            ):
                 messages.error(request, "⚠️ Medio de pago no válido.")
                 return redirect(
                     reverse_lazy("ver_venta", kwargs={"venta_id": venta_id})
@@ -7664,6 +8362,8 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin, View):
                 venta,
                 pagos_formset,
                 total_cobrado=total_cobrado,
+                active_codes=medios_activos,
+                previous_map=mapa_anterior,
             )
             if not ok:
                 messages.error(request, f"⚠️ {err}")
@@ -7675,6 +8375,20 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin, View):
             mapa_nuevo = {metodo_objetivo: _to_q2(total_cobrado)}
         else:
             mapa_nuevo = {}
+
+        for medio, nuevo_monto in mapa_nuevo.items():
+            if (
+                medio not in medios_activos
+                and _to_q2(nuevo_monto)
+                > _to_q2(mapa_anterior.get(medio, Decimal("0.00")))
+            ):
+                messages.error(
+                    request,
+                    f"{payment_method_label(medio)} está desactivado y no puede recibir un valor nuevo.",
+                )
+                return redirect(
+                    reverse_lazy("ver_venta", kwargs={"venta_id": venta_id})
+                )
 
         try:
             self._aplicar_delta_mapa_pagos(
@@ -7740,6 +8454,7 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin, View):
             venta,
             reintegro_formset,
             total_reintegro,
+            active_codes=medios_activos,
         )
         if not ok:
             messages.error(request, f"⚠️ {err}")
@@ -8179,29 +8894,7 @@ class PuntoPagoPorSucursalAutocomplete(PaginatedAutocompleteMixin):
             qs = qs.filter(sucursalid_id=sid)
         return qs.order_by(self.text_field)
 
-class SyncPermissionCatalogMixin:
-    def dispatch(self, request, *args, **kwargs):
-        sync_permission_catalog()
-        return super().dispatch(request, *args, **kwargs)
-
-
-class PermisoCreateView(SyncPermissionCatalogMixin, LoginRequiredMixin, CreateView):
-    model = Permiso
-    form_class = PermisoForm
-    template_name = "permiso_form.html"
-    success_url = reverse_lazy("permiso_agregar")  # permanecer en la página para agregar varios
-
-    def form_valid(self, form):
-        response = super().form_valid(form)
-        clear_permission_cache()
-        messages.success(self.request, "Permiso creado correctamente.")
-        return response
-
-    def form_invalid(self, form):
-        messages.error(self.request, "Por favor corrige los errores.")
-        return super().form_invalid(form)
-
-class PermisoListView(SyncPermissionCatalogMixin, LoginRequiredMixin, ListView):
+class PermisoListView(LoginRequiredMixin, ListView):
     """
     Muestra la tabla de permisos con DataTable.
     """
@@ -8209,51 +8902,17 @@ class PermisoListView(SyncPermissionCatalogMixin, LoginRequiredMixin, ListView):
     model               = Permiso
     context_object_name = "permisos"
 
-class PermisoUpdateAJAXView(SyncPermissionCatalogMixin, LoginRequiredMixin, UpdateView):
-    """
-    ▸ Edita un permiso vía AJAX, manteniendo misma UX que ‘Editar Rol’.
-    """
-    model         = Permiso
-    pk_url_kwarg  = "permiso_id"
-    form_class    = PermisoEditarForm
-    template_name = "editar_permiso.html"
-    success_url   = reverse_lazy("visualizar_permisos")
-
-    # -------- AJAX OK --------
-    def form_valid(self, form):
-        self.object = form.save()
-        clear_permission_cache()
-        msg = f'Permiso «{self.object.nombre}» actualizado correctamente.'
-        messages.success(self.request, msg)  # persiste tras redirect
-
-        if self.request.headers.get("x-requested-with") == "XMLHttpRequest":
-            return JsonResponse({
-                "success": True,
-                "message": msg,
-                "redirect_url": str(self.success_url),
-            })
-        return super().form_valid(form)
-
-    # -------- AJAX KO --------
-    def form_invalid(self, form):
-        if self.request.headers.get("x-requested-with") == "XMLHttpRequest":
-            return JsonResponse(
-                {"success": False, "errors": form.errors.get_json_data()},
-                status=400,
+    def get_queryset(self):
+        return (
+            assignable_permissions_queryset()
+            .annotate(
+                roles_asignados=Count("rolespermisos", distinct=True),
+                usuarios_asignados=Count("usuarios_permisos", distinct=True),
             )
-        return super().form_invalid(form)
+            .order_by("nombre")
+        )
 
-def eliminar_permiso(request, pk):
-    """Elimina por POST y vuelve a la lista."""
-    if request.method == "POST":
-        obj = get_object_or_404(Permiso, pk=pk)
-        nombre = obj.nombre
-        obj.delete()
-        clear_permission_cache()
-        messages.success(request, f"Permiso «{nombre}» eliminado correctamente.")
-    return redirect("visualizar_permisos")
-
-class RolPermisoAssignView(SyncPermissionCatalogMixin, LoginRequiredMixin, View):
+class RolPermisoAssignView(LoginRequiredMixin, View):
     """
     Página + endpoint AJAX para asociar 1..n permisos a un rol.
     Espera:
@@ -8278,6 +8937,21 @@ class RolPermisoAssignView(SyncPermissionCatalogMixin, LoginRequiredMixin, View)
 
         # Rol
         rol = form.cleaned_data["rol"]
+        if not _can_manage_role(request.user, rol):
+            return JsonResponse(
+                {
+                    "success": False,
+                    "errors": json.dumps({
+                        "rol": [{
+                            "message": (
+                                "Solo un Web Master puede modificar los "
+                                "permisos de este rol."
+                            )
+                        }]
+                    }),
+                },
+                status=403,
+            )
 
         # Lista de permisos venida del front
         raw = request.POST.get("permisos_temp", "[]")
@@ -8300,7 +8974,10 @@ class RolPermisoAssignView(SyncPermissionCatalogMixin, LoginRequiredMixin, View)
             pid = it.get("permisoId")
             if not pid:
                 continue
-            permiso = get_object_or_404(Permiso, pk=pid)
+            permiso = get_object_or_404(
+                assignable_permissions_queryset(),
+                pk=pid,
+            )
 
             # Gracias al unique(rol, permiso) esto es seguro y atómico
             _, was_created = RolPermiso.objects.get_or_create(rol=rol, permiso=permiso)
@@ -8342,6 +9019,7 @@ class RolAutocomplete(LoginRequiredMixin, View):
                .filter(_has_perms=False)          # <-- solo SIN permisos
                .order_by("nombre")
         )
+        qs = _manageable_roles_queryset(qs, request.user)
 
         if term:
             qs = qs.filter(Q(nombre__icontains=term))
@@ -8356,7 +9034,7 @@ class RolAutocomplete(LoginRequiredMixin, View):
         return JsonResponse({"results": results, "has_more": has_more})
 
 
-class PermisoAutocomplete(SyncPermissionCatalogMixin, LoginRequiredMixin, View):
+class PermisoAutocomplete(LoginRequiredMixin, View):
     """
     Devuelve permisos excluyendo IDs ya listados (?excluded=1,2,3).
     Respuesta {results:[{id,text}], has_more}
@@ -8370,7 +9048,11 @@ class PermisoAutocomplete(SyncPermissionCatalogMixin, LoginRequiredMixin, View):
         excluded = request.GET.get("excluded", "")
         ids = [int(x) for x in excluded.split(",") if x.isdigit()]
 
-        qs = Permiso.objects.exclude(pk__in=ids).order_by("nombre")
+        qs = (
+            assignable_permissions_queryset()
+            .exclude(pk__in=ids)
+            .order_by("nombre")
+        )
         if term:
             qs = qs.filter(Q(nombre__icontains=term) | Q(descripcion__icontains=term))
 
@@ -8381,7 +9063,7 @@ class PermisoAutocomplete(SyncPermissionCatalogMixin, LoginRequiredMixin, View):
         results = [{"id": p.pk, "text": p.nombre} for p in rows]
         return JsonResponse({"results": results, "has_more": end < total})
 
-class VisualizarRolesPermisosView(SyncPermissionCatalogMixin, LoginRequiredMixin, View):
+class VisualizarRolesPermisosView(LoginRequiredMixin, View):
     """
     GET  -> página base sin tabla (hasta que el usuario elija un rol)
     POST -> recibe rol (id) y muestra sus permisos en tabla
@@ -8396,6 +9078,10 @@ class VisualizarRolesPermisosView(SyncPermissionCatalogMixin, LoginRequiredMixin
         rid = (request.POST.get("rol") or "").strip()  # <input name="rol" ...>
         if rid.isdigit():
             rol = get_object_or_404(Rol, pk=int(rid))
+            if not _can_manage_role(request.user, rol):
+                return HttpResponseForbidden(
+                    "Solo un Web Master puede consultar los permisos de este rol."
+                )
             permisos_rel = (
                 RolPermiso.objects
                 .select_related("permiso")
@@ -8413,17 +9099,27 @@ class VisualizarRolesPermisosView(SyncPermissionCatalogMixin, LoginRequiredMixin
 
 
 @login_required
+@require_POST
 def eliminar_rol_permiso_view(request, rp_id):
     """
     Elimina una relación RolPermiso por PK (botón papelera) y devuelve JSON.
     Maneja grácilmente el caso 'no encontrado' para clientes AJAX.
     """
     try:
-        rel = RolPermiso.objects.select_related("permiso").get(pk=rp_id)
+        rel = RolPermiso.objects.select_related("permiso", "rol").get(pk=rp_id)
     except RolPermiso.DoesNotExist:
         return JsonResponse(
             {"success": False, "message": "Relación no encontrada."},
             status=404
+        )
+
+    if not _can_manage_role(request.user, rel.rol):
+        return JsonResponse(
+            {
+                "success": False,
+                "message": "Solo un Web Master puede modificar este rol.",
+            },
+            status=403,
         )
 
     nombre_perm = rel.permiso.nombre
@@ -8434,7 +9130,7 @@ def eliminar_rol_permiso_view(request, rp_id):
     )
 
 
-class RolConPermisosAutocomplete(SyncPermissionCatalogMixin, LoginRequiredMixin, View):
+class RolConPermisosAutocomplete(LoginRequiredMixin, View):
     """
     Respuesta: {results:[{id,text}], has_more:bool}
     GET: term, page
@@ -8450,6 +9146,7 @@ class RolConPermisosAutocomplete(SyncPermissionCatalogMixin, LoginRequiredMixin,
               .annotate(has_perms=Exists(sub))
               .filter(has_perms=True)
               .order_by("nombre"))
+        qs = _manageable_roles_queryset(qs, request.user)
         if term:
             qs = qs.filter(nombre__icontains=term)
 
@@ -8461,7 +9158,7 @@ class RolConPermisosAutocomplete(SyncPermissionCatalogMixin, LoginRequiredMixin,
         results = [{"id": r.pk, "text": r.nombre} for r in rows]
         return JsonResponse({"results": results, "has_more": end < total})
 
-class RolesPermisosEditView(SyncPermissionCatalogMixin, LoginRequiredMixin, View):
+class RolesPermisosEditView(LoginRequiredMixin, View):
     """
     Editar permisos de un rol con 'buffer':
       • GET  -> muestra permisos actuales
@@ -8473,6 +9170,10 @@ class RolesPermisosEditView(SyncPermissionCatalogMixin, LoginRequiredMixin, View
 
     def get(self, request, rol_id):
         rol = get_object_or_404(Rol, pk=rol_id)
+        if not _can_manage_role(request.user, rol):
+            return HttpResponseForbidden(
+                "Solo un Web Master puede modificar los permisos de este rol."
+            )
 
         rels = (RolPermiso.objects
                 .select_related("permiso")
@@ -8491,6 +9192,21 @@ class RolesPermisosEditView(SyncPermissionCatalogMixin, LoginRequiredMixin, View
           - 'permisos_borrar' => JSON con bajas  [permisoId, ...]
         """
         rol  = get_object_or_404(Rol, pk=rol_id)
+        if not _can_manage_role(request.user, rol):
+            return JsonResponse(
+                {
+                    "success": False,
+                    "errors": {
+                        "rol": [{
+                            "message": (
+                                "Solo un Web Master puede modificar los "
+                                "permisos de este rol."
+                            )
+                        }]
+                    },
+                },
+                status=403,
+            )
         form = self.form_class(request.POST, initial={"rol": rol})
 
         if not form.is_valid():
@@ -8530,7 +9246,10 @@ class RolesPermisosEditView(SyncPermissionCatalogMixin, LoginRequiredMixin, View
             pid = it.get("permisoId")
             if not pid:
                 continue
-            permiso = get_object_or_404(Permiso, pk=pid)
+            permiso = get_object_or_404(
+                assignable_permissions_queryset(),
+                pk=pid,
+            )
             _, was_created = RolPermiso.objects.get_or_create(rol=rol, permiso=permiso)
             if was_created:
                 creados += 1
@@ -8556,7 +9275,7 @@ class RolesPermisosEditView(SyncPermissionCatalogMixin, LoginRequiredMixin, View
         })
 
 
-class PermisoParaRolAutocomplete(SyncPermissionCatalogMixin, LoginRequiredMixin, View):
+class PermisoParaRolAutocomplete(LoginRequiredMixin, View):
     """
     Autocomplete de permisos EXCLUYENDO:
       • los que ya tiene el rol en BD (salvo los marcados en 'pending_remove')
@@ -8592,7 +9311,11 @@ class PermisoParaRolAutocomplete(SyncPermissionCatalogMixin, LoginRequiredMixin,
                 already_ids = [pid for pid in already_ids if pid not in set(pending_remove_ids)]
 
         # construir queryset final
-        qs = Permiso.objects.exclude(pk__in=already_ids + excluded_ids).order_by("nombre")
+        qs = (
+            assignable_permissions_queryset()
+            .exclude(pk__in=already_ids + excluded_ids)
+            .order_by("nombre")
+        )
         if term:
             qs = qs.filter(Q(nombre__icontains=term) | Q(descripcion__icontains=term))
 
@@ -8604,7 +9327,7 @@ class PermisoParaRolAutocomplete(SyncPermissionCatalogMixin, LoginRequiredMixin,
         return JsonResponse({"results": data, "has_more": start + self.PAGE < total})
 
 
-class UsuarioPermisoAssignView(SyncPermissionCatalogMixin, LoginRequiredMixin, View):
+class UsuarioPermisoAssignView(LoginRequiredMixin, View):
     template_name = "usuarios_permisos.html"
 
     def _selected_user(self, request):
@@ -8615,7 +9338,14 @@ class UsuarioPermisoAssignView(SyncPermissionCatalogMixin, LoginRequiredMixin, V
 
     def _context(self, request, selected_user=None):
         usuarios = Usuario.objects.select_related("rolid").order_by("nombreusuario")
-        permisos = list(Permiso.objects.order_by("nombre"))
+        if not is_web_master_role(request.user):
+            privileged_role_ids = [
+                role.pk
+                for role in Rol.objects.only("pk", "nombre")
+                if is_privileged_role_name(role.nombre)
+            ]
+            usuarios = usuarios.exclude(rolid_id__in=privileged_role_ids)
+        permisos = list(assignable_permissions_queryset().order_by("nombre"))
         selected_user = selected_user or self._selected_user(request)
 
         direct_by_perm = {}
@@ -8652,7 +9382,19 @@ class UsuarioPermisoAssignView(SyncPermissionCatalogMixin, LoginRequiredMixin, V
         }
 
     def get(self, request):
-        return render(request, self.template_name, self._context(request))
+        selected_user = self._selected_user(request)
+        if (
+            selected_user is not None
+            and not _can_manage_user_permissions(request.user, selected_user)
+        ):
+            return HttpResponseForbidden(
+                "Solo un Web Master puede modificar los permisos de este usuario."
+            )
+        return render(
+            request,
+            self.template_name,
+            self._context(request, selected_user),
+        )
 
     @transaction.atomic
     def post(self, request):
@@ -8660,10 +9402,18 @@ class UsuarioPermisoAssignView(SyncPermissionCatalogMixin, LoginRequiredMixin, V
         if not selected_user:
             messages.error(request, "Seleccione un usuario valido.")
             return render(request, self.template_name, self._context(request), status=400)
+        if not _can_manage_user_permissions(request.user, selected_user):
+            return HttpResponseForbidden(
+                "Solo un Web Master puede modificar los permisos de este usuario."
+            )
 
-        permisos = Permiso.objects.only("pk")
-        valid_ids = {str(permiso.pk) for permiso in permisos}
-        UsuarioPermiso.objects.filter(usuario=selected_user).delete()
+        permisos = assignable_permissions_queryset().only("pk")
+        valid_id_values = {permiso.pk for permiso in permisos}
+        valid_ids = {str(permission_id) for permission_id in valid_id_values}
+        UsuarioPermiso.objects.filter(
+            usuario=selected_user,
+            permiso_id__in=valid_id_values,
+        ).delete()
 
         nuevos = []
         for key, value in request.POST.items():
@@ -8701,30 +9451,9 @@ class VentasDiariasStatsView(LoginRequiredMixin, View):
       Incluye endpoints: >= y <=
     """
 
-    METODO_ALIASES = {
-        "EFECTIVO": {"EFECTIVO", "CASH", "EF"},
-        "NEQUI": {"NEQUI"},
-        "DAVIPLATA": {"DAVIPLATA", "DAVI", "DAVI PLATA"},
-        "TARJETA": {"TARJETA", "CARD", "TC", "TARJETA CREDITO", "TARJETA DEBITO", "CREDITO", "DEBITO"},
-        "BANCO_CAJA_SOCIAL": {"BANCO_CAJA_SOCIAL", "BANCO CAJA SOCIAL", "CAJA SOCIAL", "BCS"},
-    }
-
-    METODO_CANON = {
-        "EFECTIVO": "efectivo",
-        "NEQUI": "nequi",
-        "DAVIPLATA": "daviplata",
-        "TARJETA": "tarjeta",
-        "BANCO_CAJA_SOCIAL": "banco_caja_social",
-    }
-
     def _resolve_canonical(self, modo_upper: str):
-        modo_upper = (modo_upper or "").upper().strip()
-        if modo_upper in self.METODO_CANON:
-            return self.METODO_CANON[modo_upper]
-        for key, aliases in self.METODO_ALIASES.items():
-            if modo_upper in aliases:
-                return self.METODO_CANON.get(key)
-        return None
+        code = normalize_payment_method_code(modo_upper)
+        return code if code in all_payment_method_codes() else None
 
     def _pick_field(self, model, candidates):
         for name in candidates:
@@ -8879,6 +9608,22 @@ class VentasDiariasStatsView(LoginRequiredMixin, View):
         num_ventas = pagos_qs.values("ventaid_id").distinct().count()
         total_vendido = pagos_qs.aggregate(total=Sum("monto"))["total"] or Decimal("0")
 
+        # Compatibilidad con ventas históricas anteriores al libro de
+        # PagoVenta: si no tienen filas auxiliares, Venta conserva el método.
+        payment_rows_for_sale = PagoVenta.objects.filter(
+            ventaid_id=OuterRef("ventaid")
+        )
+        legacy_qs = (
+            ventas_qs
+            .annotate(has_payment_rows=Exists(payment_rows_for_sale))
+            .filter(has_payment_rows=False, mediopago__iexact=canon)
+        )
+        num_ventas += legacy_qs.count()
+        total_vendido += (
+            legacy_qs.aggregate(total=Sum("total"))["total"]
+            or Decimal("0")
+        )
+
         return JsonResponse({
             "success": True,
             "num_ventas": int(num_ventas),
@@ -8886,8 +9631,7 @@ class VentasDiariasStatsView(LoginRequiredMixin, View):
         })
 
 
-class VentasDiariasView(LoginRequiredMixin,DenyRolesMixin, View):
-    deny_roles = ["Cajero", "Auxiliar"]
+class VentasDiariasView(LoginRequiredMixin, View):
     template_name = "ventas_diarias.html"
 
 
@@ -8896,7 +9640,10 @@ class VentasDiariasView(LoginRequiredMixin,DenyRolesMixin, View):
 
     def get(self, request):
         hoy = timezone.localdate()  # date
-        return render(request, self.template_name, {"fecha_hoy": _iso_co(hoy)})
+        return render(request, self.template_name, {
+            "fecha_hoy": _iso_co(hoy),
+            "payment_methods": payment_method_options(active_only=False),
+        })
 
 
 NEQUI_NOTIFICATION_LIMIT = 80
@@ -9112,6 +9859,10 @@ class NequiNotificacionesView(LoginRequiredMixin, TemplateView):
         items = NotificacionNequi.objects.order_by("-recibido_en", "-notificacionid")[:NEQUI_NOTIFICATION_LIMIT]
         context["notificaciones"] = items
         context["resumen_nequi"] = _nequi_summary()
+        context["can_delete_nequi_notifications"] = user_can_access_url_name(
+            self.request.user,
+            "nequi_notificacion_eliminar",
+        )
         return context
 
 
@@ -9618,25 +10369,49 @@ class MetricasNegocioDataView(LoginRequiredMixin, View):
             if month_day_occurrences.get(day, 0) > 0
         ]
 
-        payments = [
-            {
-                "label": (row["medio_pago"] or "sin_pago").replace("_", " ").title(),
-                "total": self._dec(row["total"]),
-                "cantidad": self._int(row["cantidad"]),
-            }
-            for row in PagoVenta.objects.filter(ventaid__in=ventas_ids)
+        payment_rows = list(
+            PagoVenta.objects.filter(ventaid__in=ventas_ids)
             .values("medio_pago")
             .annotate(total=Sum("monto"), cantidad=Count("id"))
             .order_by("-total")
+        )
+        metric_payment_labels = payment_method_label_map(
+            include_codes=[row["medio_pago"] for row in payment_rows],
+        )
+        payments = [
+            {
+                "label": payment_method_label(
+                    row["medio_pago"],
+                    labels=metric_payment_labels,
+                ),
+                "total": self._dec(row["total"]),
+                "cantidad": self._int(row["cantidad"]),
+            }
+            for row in payment_rows
         ]
         if not payments:
+            fallback_payment_rows = list(
+                ventas_qs.values("mediopago")
+                .annotate(total=Sum("total"), cantidad=Count("ventaid"))
+                .order_by("-total")
+            )
+            fallback_labels = payment_method_label_map(
+                include_codes=[row["mediopago"] for row in fallback_payment_rows],
+            )
             payments = [
                 {
-                    "label": (row["mediopago"] or "sin_pago").replace("_", " ").title(),
+                    "label": (
+                        "Mixto"
+                        if (row["mediopago"] or "").strip().lower() == "mixto"
+                        else payment_method_label(
+                            row["mediopago"],
+                            labels=fallback_labels,
+                        )
+                    ),
                     "total": self._dec(row["total"]),
                     "cantidad": self._int(row["cantidad"]),
                 }
-                for row in ventas_qs.values("mediopago").annotate(total=Sum("total"), cantidad=Count("ventaid")).order_by("-total")
+                for row in fallback_payment_rows
             ]
 
         top_products = [
@@ -9910,23 +10685,6 @@ class PedidosPagadosView(LoginRequiredMixin, View):
 CO_TZ = ZoneInfo("America/Bogota")
 PAGE_SIZE = 20
 
-# Medios "oficiales" que quieres ver siempre en cierre (aunque esperado=0)
-DEFAULT_METODOS = [
-    "efectivo",
-    "nequi",
-    "daviplata",
-    "tarjeta",
-    "banco_caja_social",
-]
-
-DISPLAY_METODO = {
-    "efectivo": "Efectivo",
-    "nequi": "Nequi",
-    "daviplata": "Daviplata",
-    "tarjeta": "Tarjeta",
-    "banco_caja_social": "Banco Caja Social",
-}
-
 FACTURAS_PAGADAS_METODO = "facturas_pagadas"
 
 def _now_co():
@@ -9943,34 +10701,73 @@ def _to_decimal(v, default=Decimal("0")) -> Decimal:
             s = s.replace(",", ".")
         elif "." in s and s.rsplit(".", 1)[-1].isdigit() and len(s.rsplit(".", 1)[-1]) == 3:
             s = s.replace(".", "")
-        return Decimal(s).quantize(Decimal("0.01"))
+        value = Decimal(s)
+        if not value.is_finite():
+            return default
+        return value.quantize(Decimal("0.01"))
     except (InvalidOperation, ValueError, TypeError):
         return default
 
 def _normalize_metodo(s: str) -> str:
-    s = (s or "").strip().lower()
-    s = " ".join(s.split())
-    s = s.replace("-", " ").replace("_", " ")
-    aliases = {
-        "ef": "efectivo",
-        "cash": "efectivo",
-        "efectivo": "efectivo",
-        "nequi": "nequi",
-        "davi": "daviplata",
-        "davi plata": "daviplata",
-        "daviplata": "daviplata",
-        "tarjeta": "tarjeta",
-        "card": "tarjeta",
-        "tc": "tarjeta",
-        "credito": "tarjeta",
-        "debito": "tarjeta",
-        "tarjeta credito": "tarjeta",
-        "tarjeta debito": "tarjeta",
-        "banco caja social": "banco_caja_social",
-        "caja social": "banco_caja_social",
-        "bcs": "banco_caja_social",
-    }
-    return aliases.get(s, s.replace(" ", "_"))
+    return normalize_payment_method_code(s)
+
+
+def _turn_payment_method_codes(*, expected=None, existing_codes=()):
+    """
+    Orden estable para caja: catalogo activo + movimientos + filas historicas.
+
+    ``include_codes`` hace que el servicio conserve metodos inactivos usados.
+    Los pseudo-metodos nunca se convierten en medios de pago del turno.
+    """
+
+    included = []
+    seen_included = set()
+    for raw in [*(expected or {}).keys(), *(existing_codes or ())]:
+        code = _normalize_metodo(raw)
+        if (
+            code
+            and code not in INTERNAL_PAYMENT_CODES
+            and code not in seen_included
+        ):
+            seen_included.add(code)
+            included.append(code)
+
+    codes = []
+    seen = set()
+    for row in payment_method_options(
+        active_only=True,
+        include_codes=included,
+    ):
+        code = _normalize_metodo(row.get("code"))
+        if code and code not in INTERNAL_PAYMENT_CODES and code not in seen:
+            seen.add(code)
+            codes.append(code)
+
+    # Efectivo sostiene apertura, denominaciones y devoluciones. Incluso una
+    # configuracion incompleta no debe eliminarlo de un cuadre.
+    if CASH_PAYMENT_CODE not in seen:
+        codes.insert(0, CASH_PAYMENT_CODE)
+        seen.add(CASH_PAYMENT_CODE)
+
+    for code in included:
+        if code not in seen:
+            seen.add(code)
+            codes.append(code)
+    return codes
+
+
+def _turn_payment_method_labels(codes):
+    normalized = []
+    for raw_code in codes:
+        code = _normalize_metodo(raw_code)
+        if code and code not in INTERNAL_PAYMENT_CODES:
+            normalized.append(code)
+    return payment_method_label_map(include_codes=normalized)
+
+
+def _turn_method_label(code, *, labels=None):
+    normalized = _normalize_metodo(code)
+    return payment_method_label(normalized, labels=labels)
 
 def _turno_label_usuario(usuario) -> str:
     return getattr(usuario, "nombreusuario", None) or str(getattr(usuario, "pk", "") or usuario)
@@ -10065,10 +10862,22 @@ def _medios_payload(turno, auto_confirmados=None, manuales_sin_api=None, reinteg
     auto_confirmados = auto_confirmados or {}
     manuales_sin_api = manuales_sin_api or {}
     reintegros = _sum_reintegros_por_metodo(turno) if reintegros is None else reintegros
+    medios_rows = list(TurnoCajaMedio.objects.filter(turno=turno))
+    codes = _turn_payment_method_codes(
+        existing_codes=[m.metodo for m in medios_rows],
+    )
+    order = {code: index for index, code in enumerate(codes)}
+    labels = _turn_payment_method_labels(codes)
+    medios_rows.sort(
+        key=lambda row: (
+            order.get(_normalize_metodo(row.metodo), len(order)),
+            _normalize_metodo(row.metodo),
+        )
+    )
     medios = []
-    for m in TurnoCajaMedio.objects.filter(turno=turno).order_by("metodo"):
+    for m in medios_rows:
         metodo = _normalize_metodo(m.metodo)
-        if metodo == FACTURAS_PAGADAS_METODO:
+        if metodo in INTERNAL_PAYMENT_CODES:
             continue
         auto_confirmado = auto_confirmados.get(metodo, Decimal("0.00")) or Decimal("0.00")
         manual_info = manuales_sin_api.get(metodo) or {}
@@ -10077,7 +10886,7 @@ def _medios_payload(turno, auto_confirmados=None, manuales_sin_api=None, reinteg
         manual_total = manual_info.get("total", Decimal("0.00")) or Decimal("0.00")
         medios.append({
             "metodo": metodo,
-            "label": DISPLAY_METODO.get(metodo, metodo.replace("_", " ").title()),
+            "label": _turn_method_label(metodo, labels=labels),
             "esperado": float(m.esperado or 0),
             "contado": float(m.contado) if m.contado is not None else None,
             "diferencia": float(m.diferencia or 0),
@@ -10094,7 +10903,20 @@ def _sync_turno_medios_esperados(turno, expected: dict[str, Decimal], reset_cont
         for m in TurnoCajaMedio.objects.filter(turno=turno)
     }
     existing = {metodo: obj.metodo for metodo, obj in existing_objs.items()}
-    all_methods = list(dict.fromkeys(DEFAULT_METODOS + list(expected.keys()) + list(existing.keys())))
+    expected_normalized = {}
+    for raw_method, amount in (expected or {}).items():
+        method = _normalize_metodo(raw_method)
+        if not method or method in INTERNAL_PAYMENT_CODES:
+            continue
+        expected_normalized[method] = (
+            expected_normalized.get(method, Decimal("0.00"))
+            + (amount or Decimal("0.00"))
+        ).quantize(Decimal("0.01"))
+
+    all_methods = _turn_payment_method_codes(
+        expected=expected_normalized,
+        existing_codes=existing.keys(),
+    )
 
     missing = [
         TurnoCajaMedio(
@@ -10121,7 +10943,10 @@ def _sync_turno_medios_esperados(turno, expected: dict[str, Decimal], reset_cont
         if medio is None:
             continue
         created = metodo not in existing
-        medio.esperado = (expected.get(metodo, Decimal("0.00")) or Decimal("0.00")).quantize(Decimal("0.01"))
+        medio.esperado = (
+            expected_normalized.get(metodo, Decimal("0.00"))
+            or Decimal("0.00")
+        ).quantize(Decimal("0.01"))
         if reset_contados or created:
             medio.contado = None
             medio.diferencia = Decimal("0.00")
@@ -10421,12 +11246,31 @@ def _expected_por_metodo(turno: TurnoCaja) -> tuple[dict[str, Decimal], Decimal,
         _sum_reintegros_por_metodo(turno),
     )
 
-    # aseguro llaves default
-    for m in DEFAULT_METODOS:
+    normalized_expected = {}
+    for raw_method, amount in expected.items():
+        method = _normalize_metodo(raw_method)
+        if not method or method in INTERNAL_PAYMENT_CODES:
+            continue
+        normalized_expected[method] = (
+            normalized_expected.get(method, Decimal("0.00"))
+            + (amount or Decimal("0.00"))
+        ).quantize(Decimal("0.01"))
+    expected = normalized_expected
+
+    # Los activos aparecen aunque no tengan movimientos. Los inactivos solo
+    # permanecen si el turno conserva ventas, reintegros o una fila historica.
+    existing_codes = TurnoCajaMedio.objects.filter(turno=turno).values_list(
+        "metodo",
+        flat=True,
+    )
+    for m in _turn_payment_method_codes(
+        expected=expected,
+        existing_codes=existing_codes,
+    ):
         expected.setdefault(m, Decimal("0.00"))
 
     esperado_total = sum(expected.values(), Decimal("0.00"))
-    esperado_efectivo = expected.get("efectivo", Decimal("0.00"))
+    esperado_efectivo = expected.get(CASH_PAYMENT_CODE, Decimal("0.00"))
     esperado_no_efectivo = (esperado_total - esperado_efectivo)
 
     return expected, esperado_total, esperado_efectivo, esperado_no_efectivo
@@ -10734,20 +11578,54 @@ class TurnoCajaCerrarApi(LoginRequiredMixin, View):
         manuales_sin_api = _manuales_sin_api_por_metodo(turno)
 
         reintegros = _sum_reintegros_por_metodo(turno)
-        medios_db = {_normalize_metodo(m.metodo): m for m in turno.medios.select_for_update().all()}
-
-        if "efectivo" not in medios_db:
-            medios_db["efectivo"] = TurnoCajaMedio.objects.create(
-                turno=turno, metodo="efectivo", esperado=Decimal("0.00")
+        medios_db = {
+            _normalize_metodo(m.metodo): m
+            for m in turno.medios.select_for_update().all()
+            if _normalize_metodo(m.metodo) not in INTERNAL_PAYMENT_CODES
+        }
+        if CASH_PAYMENT_CODE not in medios_db:
+            return JsonResponse(
+                {
+                    "success": False,
+                    "error": "El turno no tiene configurado el medio Efectivo.",
+                },
+                status=409,
             )
 
         contados: dict[str, Decimal] = {}
         for item in medios_in:
             if not isinstance(item, dict):
-                continue
+                return JsonResponse(
+                    {"success": False, "error": "Cada medio contado debe ser un objeto."},
+                    status=400,
+                )
             metodo = _normalize_metodo(item.get("metodo"))
-            if not metodo or metodo == "efectivo":
-                continue
+            if not metodo or metodo in INTERNAL_PAYMENT_CODES:
+                return JsonResponse(
+                    {"success": False, "error": "Medio de pago no valido en el cierre."},
+                    status=400,
+                )
+            if metodo == CASH_PAYMENT_CODE:
+                return JsonResponse(
+                    {
+                        "success": False,
+                        "error": "El efectivo se envia mediante el conteo de denominaciones.",
+                    },
+                    status=400,
+                )
+            if metodo not in medios_db:
+                return JsonResponse(
+                    {
+                        "success": False,
+                        "error": f"El medio {_turn_method_label(metodo)} no pertenece a este turno.",
+                    },
+                    status=400,
+                )
+            if metodo in contados:
+                return JsonResponse(
+                    {"success": False, "error": "Hay un medio de pago repetido en el cierre."},
+                    status=400,
+                )
 
             contado = _to_decimal(item.get("contado"), Decimal("0.00"))
             if contado < 0:
@@ -10756,6 +11634,9 @@ class TurnoCajaCerrarApi(LoginRequiredMixin, View):
             contados[metodo] = contado
 
         for metodo, confirmado in auto_confirmados.items():
+            metodo = _normalize_metodo(metodo)
+            if metodo not in medios_db or metodo in INTERNAL_PAYMENT_CODES:
+                continue
             confirmado = (confirmado or Decimal("0.00")).quantize(Decimal("0.01"))
             if confirmado > 0:
                 contados[metodo] = (contados.get(metodo, Decimal("0.00")) + confirmado).quantize(Decimal("0.01"))
@@ -10765,28 +11646,14 @@ class TurnoCajaCerrarApi(LoginRequiredMixin, View):
         # Efectivo no se descuenta aquí porque ya está reflejado físicamente en
         # efectivo_entregado - base.
         for metodo, reintegrado in reintegros.items():
-            if metodo == "efectivo":
+            metodo = _normalize_metodo(metodo)
+            if metodo == CASH_PAYMENT_CODE or metodo not in medios_db:
                 continue
             contados[metodo] = (
                 contados.get(metodo, Decimal("0.00")) - reintegrado
             ).quantize(Decimal("0.01"))
 
-        missing_methods = [
-            metodo for metodo in contados
-            if metodo not in medios_db and metodo not in {"efectivo", FACTURAS_PAGADAS_METODO}
-        ]
-        if missing_methods:
-            TurnoCajaMedio.objects.bulk_create(
-                [
-                    TurnoCajaMedio(turno=turno, metodo=metodo, esperado=Decimal("0.00"))
-                    for metodo in missing_methods
-                ],
-                ignore_conflicts=True,
-                batch_size=50,
-            )
-            medios_db = {_normalize_metodo(m.metodo): m for m in turno.medios.select_for_update().all()}
-
-        contados["efectivo"] = efectivo_para_cuadre
+        contados[CASH_PAYMENT_CODE] = efectivo_para_cuadre
 
         sum_contado = Decimal("0.00")
         sum_esperado = Decimal("0.00")
@@ -10798,16 +11665,16 @@ class TurnoCajaCerrarApi(LoginRequiredMixin, View):
         medios_to_update = []
 
         for metodo, medio_obj in medios_db.items():
-            if metodo == FACTURAS_PAGADAS_METODO:
+            if metodo in INTERNAL_PAYMENT_CODES:
                 continue
 
             esperado = medio_obj.esperado or Decimal("0.00")
             contado = contados.get(metodo)
 
-            if contado is None and metodo != "efectivo":
+            if contado is None and metodo != CASH_PAYMENT_CODE:
                 contado = Decimal("0.00")
 
-            if metodo == "efectivo":
+            if metodo == CASH_PAYMENT_CODE:
                 contado = efectivo_para_cuadre
                 esperado_efectivo = esperado
 
@@ -10820,7 +11687,7 @@ class TurnoCajaCerrarApi(LoginRequiredMixin, View):
 
             sum_contado += contado
             sum_esperado += esperado
-            if metodo == "efectivo":
+            if metodo == CASH_PAYMENT_CODE:
                 contado_efectivo += contado
             else:
                 contado_no_efectivo += contado
@@ -10938,15 +11805,29 @@ class TurnoCajaRetiroView(LoginRequiredMixin, View):
 
         medios = []
         facturas_pagadas = Decimal("0.00")
-        for medio in TurnoCajaMedio.objects.filter(turno=turno).order_by("metodo"):
+        medios_rows = list(TurnoCajaMedio.objects.filter(turno=turno))
+        codes = _turn_payment_method_codes(
+            existing_codes=[medio.metodo for medio in medios_rows],
+        )
+        order = {code: index for index, code in enumerate(codes)}
+        labels = _turn_payment_method_labels(codes)
+        medios_rows.sort(
+            key=lambda medio: (
+                order.get(_normalize_metodo(medio.metodo), len(order)),
+                _normalize_metodo(medio.metodo),
+            )
+        )
+        for medio in medios_rows:
             metodo = _normalize_metodo(medio.metodo)
             contado = (medio.contado or Decimal("0.00")).quantize(Decimal("0.01"))
             if metodo == FACTURAS_PAGADAS_METODO:
                 facturas_pagadas = contado
                 continue
+            if metodo in INTERNAL_PAYMENT_CODES:
+                continue
             medios.append({
                 "metodo": metodo,
-                "label": DISPLAY_METODO.get(metodo, metodo.replace("_", " ").title()),
+                "label": _turn_method_label(metodo, labels=labels),
                 "contado": float(contado),
                 "vendido": float(contado),
             })
@@ -10996,20 +11877,7 @@ def _q_ventas_intervalo_cerrado(start_dt, end_dt):
 
 
 def _canon_metodo(raw: str) -> str:
-    """
-    Normaliza el método a un canonical en minúscula para guardar en TurnoCajaMedio.metodo
-    """
-    s = (raw or "").strip().lower()
-
-    # aliases típicos
-    if s in {"ef", "cash"}: return "efectivo"
-    if s in {"tc", "card", "credito", "debito", "tarjeta credito", "tarjeta debito"}: return "tarjeta"
-    if s in {"banco caja social", "caja social", "bcs"}: return "banco_caja_social"
-    if s in {"davi", "davi plata"}: return "daviplata"
-    return s
-
-
-CANON_ORDER = ["efectivo", "nequi", "daviplata", "tarjeta", "banco_caja_social"]
+    return _normalize_metodo(raw)
 
 
 def _calcular_esperados_por_metodo(pp_id, start_dt, end_dt, turno=None):
@@ -11067,15 +11935,33 @@ def _calcular_esperados_por_metodo(pp_id, start_dt, end_dt, turno=None):
             canon = _canon_metodo(row["_m"])
             esperado_por[canon] = (esperado_por.get(canon, Decimal("0")) + (row["total"] or Decimal("0")))
 
-    # asegurar keys fijas
-    for k in CANON_ORDER:
-        esperado_por.setdefault(k, Decimal("0"))
-
     if turno is not None:
         esperado_por = _aplicar_reintegros_a_esperados(
             esperado_por,
             _sum_reintegros_por_metodo(turno),
         )
+
+    esperado_normalizado = {}
+    for method, amount in esperado_por.items():
+        code = _normalize_metodo(method)
+        if not code or code in INTERNAL_PAYMENT_CODES:
+            continue
+        esperado_normalizado[code] = (
+            esperado_normalizado.get(code, Decimal("0.00"))
+            + (amount or Decimal("0.00"))
+        ).quantize(Decimal("0.01"))
+    esperado_por = esperado_normalizado
+
+    existing_codes = (
+        TurnoCajaMedio.objects.filter(turno=turno).values_list("metodo", flat=True)
+        if turno is not None
+        else ()
+    )
+    for code in _turn_payment_method_codes(
+        expected=esperado_por,
+        existing_codes=existing_codes,
+    ):
+        esperado_por.setdefault(code, Decimal("0.00"))
 
     esperado_total = sum(esperado_por.values(), Decimal("0.00")).quantize(Decimal("0.01"))
 
@@ -11083,12 +11969,6 @@ def _calcular_esperados_por_metodo(pp_id, start_dt, end_dt, turno=None):
 
 
 PAGE_SIZE = 30
-
-# Orden canónico de métodos
-try:
-    CANON_ORDER = list(CANON_ORDER)  # si ya existe
-except Exception:
-    CANON_ORDER = ["efectivo", "nequi", "daviplata", "tarjeta", "banco_caja_social"]
 
 ESTADOS_TURNO = ("ABIERTO", "CIERRE", "CERRADO")
 
@@ -11158,7 +12038,10 @@ def _to_dec(v, default=Decimal("0.00")):
             s = s.replace(",", ".")
         elif "." in s and s.rsplit(".", 1)[-1].isdigit() and len(s.rsplit(".", 1)[-1]) == 3:
             s = s.replace(".", "")
-        return Decimal(s).quantize(Decimal("0.01"))
+        value = Decimal(s)
+        if not value.is_finite():
+            return default
+        return value.quantize(Decimal("0.01"))
     except Exception:
         return default
 
@@ -11177,9 +12060,7 @@ def _iso_dt_local_input(dt):
 
 
 def _require_admin(user):
-    if bool(getattr(user, "is_staff", False) or getattr(user, "is_superuser", False)):
-        return True
-    return _role_name(user).strip().lower() in {"admin", "administrador", "supervisor"}
+    return is_web_master_role(user) or is_permission_admin(user)
 
 
 def _can_admin_turnos(user):
@@ -11208,7 +12089,7 @@ def _recalc_turno_from_medios(turno):
 
     for m in medios:
         metodo_norm = _normalize_metodo(m.metodo)
-        if metodo_norm == FACTURAS_PAGADAS_METODO:
+        if metodo_norm in INTERNAL_PAYMENT_CODES:
             m.diferencia = Decimal("0.00")
             m.save(update_fields=["diferencia"])
             continue
@@ -11219,7 +12100,7 @@ def _recalc_turno_from_medios(turno):
         esperado_total += esp
         ventas_total += con
 
-        if metodo_norm == "efectivo":
+        if metodo_norm == CASH_PAYMENT_CODE:
             esperado_ef = esp
             contado_ef = con
 
@@ -11328,24 +12209,16 @@ class TurnoCajaIniciarCierreAPI(View):
             turno=turno,
         )
 
-        for metodo in CANON_ORDER:
-            TurnoCajaMedio.objects.update_or_create(
-                turno=turno,
-                metodo=metodo,
-                defaults={"esperado": esperado_por.get(metodo, Decimal("0.00"))}
-            )
+        _sync_turno_medios_esperados(
+            turno,
+            esperado_por,
+            reset_contados=False,
+        )
 
         turno.esperado_total = esperado_total
         turno.save(update_fields=["esperado_total"])
 
-        medios = []
-        for m in TurnoCajaMedio.objects.filter(turno=turno).order_by("metodo"):
-            medios.append({
-                "metodo": (m.metodo or "").strip().lower(),
-                "esperado": float(m.esperado or 0),
-                "contado": float(m.contado or 0) if m.contado is not None else None,
-                "diferencia": float(m.diferencia or 0),
-            })
+        medios = _medios_payload(turno)
 
         return JsonResponse({
             "success": True,
@@ -11379,16 +12252,27 @@ class TurnoCajaSnapshotAPI(View):
         if not turno.cierre_iniciado:
             return JsonResponse({"success": False, "error": "Este turno aún no tiene cierre iniciado."}, status=400)
 
-        for metodo in CANON_ORDER:
-            TurnoCajaMedio.objects.get_or_create(turno=turno, metodo=metodo, defaults={"esperado": Decimal("0.00")})
-
+        medios_rows = list(TurnoCajaMedio.objects.filter(turno=turno))
+        medios_by_code = {
+            _normalize_metodo(m.metodo): m
+            for m in medios_rows
+            if _normalize_metodo(m.metodo) not in INTERNAL_PAYMENT_CODES
+        }
+        codes = _turn_payment_method_codes(existing_codes=medios_by_code)
+        labels = _turn_payment_method_labels(codes)
         medios = []
-        for m in TurnoCajaMedio.objects.filter(turno=turno).order_by("metodo"):
+        for code in codes:
+            medio = medios_by_code.get(code)
             medios.append({
-                "metodo": (m.metodo or "").strip().lower(),
-                "esperado": float(m.esperado or 0),
-                "contado": float(m.contado or 0) if m.contado is not None else None,
-                "diferencia": float(m.diferencia or 0),
+                "metodo": code,
+                "label": _turn_method_label(code, labels=labels),
+                "esperado": float(medio.esperado or 0) if medio else 0.0,
+                "contado": (
+                    float(medio.contado)
+                    if medio is not None and medio.contado is not None
+                    else None
+                ),
+                "diferencia": float(medio.diferencia or 0) if medio else 0.0,
             })
 
         return JsonResponse({
@@ -11429,31 +12313,24 @@ class TurnoCajaCerrarAPI(View):
             payload = json.loads(request.body.decode("utf-8"))
         except Exception:
             return JsonResponse({"success": False, "error": "JSON inválido."}, status=400)
+        if not isinstance(payload, dict):
+            return JsonResponse(
+                {"success": False, "error": "El cuerpo JSON debe ser un objeto."},
+                status=400,
+            )
 
         efectivo_entregado = _to_dec(payload.get("efectivo_entregado"), Decimal("0.00"))
-        contados = payload.get("contados") or {}
-
-        base = turno.saldo_apertura_efectivo or Decimal("0.00")
-        efectivo_contado = (efectivo_entregado - base).quantize(Decimal("0.01"))
-
-        for metodo in CANON_ORDER:
-            TurnoCajaMedio.objects.get_or_create(turno=turno, metodo=metodo, defaults={"esperado": Decimal("0.00")})
-
-        ventas_no_efectivo_real = Decimal("0.00")
-        for m in TurnoCajaMedio.objects.filter(turno=turno):
-            metodo = _canon_metodo(m.metodo)
-
-            if metodo == "efectivo":
-                m.contado = efectivo_contado
-            else:
-                v = _to_dec(contados.get(metodo), Decimal("0.00"))
-                if v < 0:
-                    v = Decimal("0.00")
-                m.contado = v
-                ventas_no_efectivo_real += v
-
-            m.diferencia = (m.contado or Decimal("0.00")) - (m.esperado or Decimal("0.00"))
-            m.save(update_fields=["contado", "diferencia"])
+        if efectivo_entregado < 0:
+            return JsonResponse(
+                {"success": False, "error": "El efectivo entregado no puede ser negativo."},
+                status=400,
+            )
+        contados_in = payload.get("contados") or {}
+        if not isinstance(contados_in, dict):
+            return JsonResponse(
+                {"success": False, "error": "contados debe ser un objeto."},
+                status=400,
+            )
 
         esperado_total, esperado_por = _calcular_esperados_por_metodo(
             pp_id=turno.puntopago_id,
@@ -11461,13 +12338,70 @@ class TurnoCajaCerrarAPI(View):
             end_dt=turno.cierre_iniciado,
             turno=turno,
         )
+        _sync_turno_medios_esperados(turno, esperado_por, reset_contados=False)
+
+        medios_rows = list(
+            TurnoCajaMedio.objects.select_for_update().filter(turno=turno)
+        )
+        medios_db = {
+            _normalize_metodo(m.metodo): m
+            for m in medios_rows
+            if _normalize_metodo(m.metodo) not in INTERNAL_PAYMENT_CODES
+        }
+        if CASH_PAYMENT_CODE not in medios_db:
+            return JsonResponse(
+                {"success": False, "error": "El turno no tiene configurado Efectivo."},
+                status=409,
+            )
+
+        contados = {}
+        for raw_method, raw_value in contados_in.items():
+            method = _normalize_metodo(raw_method)
+            if (
+                not method
+                or method in INTERNAL_PAYMENT_CODES
+                or method == CASH_PAYMENT_CODE
+                or method not in medios_db
+            ):
+                return JsonResponse(
+                    {"success": False, "error": "Hay un medio de pago no valido para este turno."},
+                    status=400,
+                )
+            if method in contados:
+                return JsonResponse(
+                    {"success": False, "error": "Hay un medio de pago repetido."},
+                    status=400,
+                )
+            value = _to_dec(raw_value, Decimal("0.00"))
+            contados[method] = max(value, Decimal("0.00"))
+
+        base = turno.saldo_apertura_efectivo or Decimal("0.00")
+        efectivo_contado = (efectivo_entregado - base).quantize(Decimal("0.01"))
+
+        ventas_no_efectivo_real = Decimal("0.00")
+        for m in medios_rows:
+            metodo = _canon_metodo(m.metodo)
+            if metodo in INTERNAL_PAYMENT_CODES:
+                continue
+
+            if metodo == CASH_PAYMENT_CODE:
+                m.contado = efectivo_contado
+            else:
+                v = contados.get(metodo, Decimal("0.00"))
+                m.contado = v
+                ventas_no_efectivo_real += v
+
+            m.diferencia = (m.contado or Decimal("0.00")) - (m.esperado or Decimal("0.00"))
+            m.save(update_fields=["contado", "diferencia"])
 
         ventas_total_real = (ventas_no_efectivo_real + efectivo_contado).quantize(Decimal("0.01"))
         diferencia_total = (ventas_total_real - esperado_total).quantize(Decimal("0.01"))
 
         # ✅ deuda_total = SUMA SOLO de negativos por medio (diff < 0). Queda NEGATIVA o 0.
         deuda_total = Decimal("0.00")
-        for m in TurnoCajaMedio.objects.filter(turno=turno):
+        for m in medios_rows:
+            if _normalize_metodo(m.metodo) in INTERNAL_PAYMENT_CODES:
+                continue
             diff = (m.diferencia or Decimal("0.00")).quantize(Decimal("0.01"))
             if diff < 0:
                 deuda_total += diff
@@ -11481,7 +12415,10 @@ class TurnoCajaCerrarAPI(View):
         turno.efectivo_real = efectivo_entregado
 
         turno.diferencia_total = diferencia_total
-        turno.diferencia_efectivo = (efectivo_contado - esperado_por.get("efectivo", Decimal("0.00"))).quantize(Decimal("0.01"))
+        turno.diferencia_efectivo = (
+            efectivo_contado
+            - esperado_por.get(CASH_PAYMENT_CODE, Decimal("0.00"))
+        ).quantize(Decimal("0.01"))
 
         turno.deuda_total = deuda_total
 
@@ -11748,14 +12685,6 @@ class TurnoCajaDashboardDetailAPI(View):
 
         turno = get_object_or_404(TurnoCaja.objects.select_related("puntopago", "cajero"), pk=turno_id)
 
-        try:
-            canon_order = list(CANON_ORDER)
-        except Exception:
-            canon_order = ["efectivo", "nequi", "daviplata", "tarjeta", "banco_caja_social"]
-
-        for m in canon_order:
-            TurnoCajaMedio.objects.get_or_create(turno=turno, metodo=m, defaults={"esperado": Decimal("0.00")})
-
         esperado_total_calc = None
         esperado_por_calc = None
         if compute_expected:
@@ -11767,17 +12696,24 @@ class TurnoCajaDashboardDetailAPI(View):
                 turno=turno,
             )
 
-        medios_qs = TurnoCajaMedio.objects.filter(turno=turno)
-
-        order_index = {m: i for i, m in enumerate(canon_order)}
-        medios_list = sorted(list(medios_qs), key=lambda x: order_index.get((x.metodo or "").lower(), 999))
+        medios_list = list(TurnoCajaMedio.objects.filter(turno=turno))
+        medios_by_code = {
+            _normalize_metodo(medio.metodo): medio
+            for medio in medios_list
+            if _normalize_metodo(medio.metodo) not in INTERNAL_PAYMENT_CODES
+        }
+        codes = _turn_payment_method_codes(
+            expected=esperado_por_calc,
+            existing_codes=medios_by_code,
+        )
+        labels = _turn_payment_method_labels(codes)
 
         medios_out = []
-        for medio in medios_list:
-            metodo = (medio.metodo or "").lower().strip()
-            esperado = medio.esperado or Decimal("0.00")
-            contado = medio.contado
-            diferencia = medio.diferencia or Decimal("0.00")
+        for metodo in codes:
+            medio = medios_by_code.get(metodo)
+            esperado = medio.esperado or Decimal("0.00") if medio else Decimal("0.00")
+            contado = medio.contado if medio else None
+            diferencia = medio.diferencia or Decimal("0.00") if medio else Decimal("0.00")
 
             esperado_calc = None
             if esperado_por_calc is not None:
@@ -11785,6 +12721,7 @@ class TurnoCajaDashboardDetailAPI(View):
 
             medios_out.append({
                 "metodo": metodo,
+                "label": _turn_method_label(metodo, labels=labels),
                 "esperado_bd": float(esperado),
                 "esperado_calc": float(esperado_calc) if esperado_calc is not None else None,
                 "contado": float(contado) if contado is not None else None,
@@ -11836,7 +12773,22 @@ class TurnoCajaAdminDetailAPI(LoginRequiredMixin, View):
         if not _can_edit_turnos(request.user):
             return JsonResponse({"success": False, "error": "No tienes permiso para editar turnos."}, status=403)
         turno = get_object_or_404(TurnoCaja.objects.select_related("puntopago", "cajero"), pk=turno_id)
-        medios = list(TurnoCajaMedio.objects.filter(turno=turno).order_by("metodo"))
+        medios = [
+            medio
+            for medio in TurnoCajaMedio.objects.filter(turno=turno)
+            if _normalize_metodo(medio.metodo) not in INTERNAL_PAYMENT_CODES
+        ]
+        codes = _turn_payment_method_codes(
+            existing_codes=[medio.metodo for medio in medios],
+        )
+        order = {code: index for index, code in enumerate(codes)}
+        labels = _turn_payment_method_labels(codes)
+        medios.sort(
+            key=lambda medio: (
+                order.get(_normalize_metodo(medio.metodo), len(order)),
+                _normalize_metodo(medio.metodo),
+            )
+        )
 
         return JsonResponse({
             "success": True,
@@ -11864,7 +12816,11 @@ class TurnoCajaAdminDetailAPI(LoginRequiredMixin, View):
             "medios": [
                 {
                     "id": m.id,
-                    "metodo": (m.metodo or "").strip().lower(),
+                    "metodo": _normalize_metodo(m.metodo),
+                    "label": _turn_method_label(
+                        m.metodo,
+                        labels=labels,
+                    ),
                     "esperado": float(m.esperado or 0),
                     "contado": float(m.contado) if m.contado is not None else None,
                     "diferencia": float(m.diferencia or 0),
@@ -11884,6 +12840,11 @@ class TurnoCajaAdminUpdateAPI(LoginRequiredMixin, View):
             payload = json.loads(request.body.decode("utf-8"))
         except Exception:
             return JsonResponse({"success": False, "error": "JSON inválido."}, status=400)
+        if not isinstance(payload, dict):
+            return JsonResponse(
+                {"success": False, "error": "El cuerpo JSON debe ser un objeto."},
+                status=400,
+            )
 
         estado = (payload.get("estado") or "").strip().upper()
         if estado and estado not in ESTADOS_TURNO:
@@ -11912,6 +12873,52 @@ class TurnoCajaAdminUpdateAPI(LoginRequiredMixin, View):
             TurnoCaja.objects.select_for_update(),
             pk=turno_id,
         )
+
+        medios_in = payload.get("medios") or []
+        if not isinstance(medios_in, list):
+            return JsonResponse(
+                {"success": False, "error": "medios debe ser una lista."},
+                status=400,
+            )
+        medios_rows = list(
+            TurnoCajaMedio.objects.select_for_update().filter(turno=turno)
+        )
+        medios_db = {
+            _normalize_metodo(medio.metodo): medio
+            for medio in medios_rows
+            if _normalize_metodo(medio.metodo) not in INTERNAL_PAYMENT_CODES
+        }
+        medios_validated = []
+        seen_methods = set()
+        for item in medios_in:
+            if not isinstance(item, dict):
+                return JsonResponse(
+                    {"success": False, "error": "Cada medio debe ser un objeto."},
+                    status=400,
+                )
+            metodo = _normalize_metodo(item.get("metodo"))
+            if (
+                not metodo
+                or metodo in INTERNAL_PAYMENT_CODES
+                or metodo not in medios_db
+            ):
+                return JsonResponse(
+                    {"success": False, "error": "Hay un medio que no pertenece al turno."},
+                    status=400,
+                )
+            if metodo in seen_methods:
+                return JsonResponse(
+                    {"success": False, "error": "Hay un medio de pago repetido."},
+                    status=400,
+                )
+            seen_methods.add(metodo)
+
+            esperado = _to_dec(item.get("esperado"), Decimal("0.00"))
+            contado_raw = item.get("contado")
+            contado = None
+            if contado_raw is not None and str(contado_raw).strip() != "":
+                contado = _to_dec(contado_raw, Decimal("0.00"))
+            medios_validated.append((medios_db[metodo], esperado, contado))
 
         def parse_dt_local(s):
             s = (s or "").strip()
@@ -11950,21 +12957,7 @@ class TurnoCajaAdminUpdateAPI(LoginRequiredMixin, View):
 
         turno.save()
 
-        medios_in = payload.get("medios") or []
-        for item in medios_in:
-            metodo = (item.get("metodo") or "").strip().lower()
-            if not metodo:
-                continue
-
-            esperado = _to_dec(item.get("esperado"), Decimal("0.00"))
-            contado_raw = item.get("contado")
-            contado = None
-            if contado_raw is not None and str(contado_raw).strip() != "":
-                contado = _to_dec(contado_raw, Decimal("0.00"))
-                if contado < 0:
-                    contado = Decimal("0.00")
-
-            m, _ = TurnoCajaMedio.objects.get_or_create(turno=turno, metodo=metodo, defaults={"esperado": Decimal("0.00")})
+        for m, esperado, contado in medios_validated:
             m.esperado = esperado
             m.contado = contado
             m.save(update_fields=["esperado", "contado"])

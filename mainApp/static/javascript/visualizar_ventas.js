@@ -337,6 +337,21 @@ $(function () {
     }
   });
 
+  // Un codigo capturado por camara se aplica como filtro inmediatamente; no
+  // obliga a escoger manualmente una opcion del autocomplete.
+  $inpProd.on("nova:barcode-scanned", function (event) {
+    const code = String(event.originalEvent?.detail?.code || "").trim();
+    if (!code) return;
+    try {
+      $inpProd.autocomplete("close");
+      $inpProd.autocomplete("disable");
+      window.setTimeout(() => {
+        try { $inpProd.autocomplete("enable"); } catch {}
+      }, 260);
+    } catch {}
+    setProductoFiltroByTerm(code);
+  });
+
   $clearBtn.on("click", clearProductoFiltro);
 
   $("#limpiar-filtros-ventas").on("click", function () {
