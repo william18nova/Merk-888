@@ -381,7 +381,7 @@ class HomePageView(LoginRequiredMixin, TemplateView):
             ),
         }
 
-    def _quick_actions(self):
+    def _quick_actions(self, *, employee_dashboard=False):
         items = [
             ("generar_venta", "Generar venta", "Caja"),
             ("inventario_fotos", "Inventario por foto", "Inventario"),
@@ -393,7 +393,14 @@ class HomePageView(LoginRequiredMixin, TemplateView):
             ("visualizar_pedidos", "Pedidos proveedor", "Compras"),
         ]
         actions = []
+        employee_hidden_actions = {
+            "nequi_notificaciones",
+            "ventas_diarias",
+            "metricas_negocio",
+        }
         for url_name, label, eyebrow in items:
+            if employee_dashboard and url_name in employee_hidden_actions:
+                continue
             if not user_can_access_url_name(self.request.user, url_name):
                 continue
             try:
@@ -407,11 +414,24 @@ class HomePageView(LoginRequiredMixin, TemplateView):
         context = super().get_context_data(**kwargs)
         today = timezone.localdate()
         user = self.request.user
-        turno_caja_requerido = is_feature_enabled(TURN_REQUIRED_FEATURE)
+        empleado = getattr(user, "empleado", None)
         dashboard_permissions = self._dashboard_permissions(user)
+        is_employee_dashboard = (
+            not is_web_master_role(user)
+            and not is_permission_admin(user)
+        )
+        turno_caja_requerido = (
+            False
+            if is_employee_dashboard
+            else is_feature_enabled(TURN_REQUIRED_FEATURE)
+        )
+        show_sales_summary = (
+            dashboard_permissions["sales_summary"]
+            and not is_employee_dashboard
+        )
         dashboard_cards = []
 
-        if dashboard_permissions["sales_summary"]:
+        if show_sales_summary:
             ventas_hoy = Venta.objects.filter(fecha=today).aggregate(
                 total=Sum("total"),
                 cantidad=Count("ventaid"),
@@ -425,8 +445,14 @@ class HomePageView(LoginRequiredMixin, TemplateView):
                 "tone": "sales",
             })
 
-        if user_can_access_url_name(user, "nequi_notificaciones"):
-            nequi_hoy = NotificacionNequi.objects.filter(recibido_en__date=today).aggregate(
+        if (
+            not is_employee_dashboard
+            and user_can_access_url_name(user, "nequi_notificaciones")
+        ):
+            nequi_hoy = NotificacionNequi.objects.filter(
+                es_ingreso=True,
+                recibido_en__date=today,
+            ).aggregate(
                 total=Sum("monto"),
                 cantidad=Count("notificacionid"),
             )
@@ -438,7 +464,11 @@ class HomePageView(LoginRequiredMixin, TemplateView):
             })
 
         turno = None
-        if dashboard_permissions["cash_turn"] and turno_caja_requerido:
+        if (
+            not is_employee_dashboard
+            and dashboard_permissions["cash_turn"]
+            and turno_caja_requerido
+        ):
             turno = (
                 TurnoCaja.objects
                 .select_related("puntopago", "puntopago__sucursalid")
@@ -485,7 +515,11 @@ class HomePageView(LoginRequiredMixin, TemplateView):
             })
 
         top_productos = []
-        if dashboard_permissions["sales_products"]:
+        show_top_products = (
+            dashboard_permissions["sales_products"]
+            and not is_employee_dashboard
+        )
+        if show_top_products:
             top_productos = (
                 DetalleVenta.objects
                 .filter(ventaid__fecha=today, cantidad__gt=0)
@@ -498,41 +532,49 @@ class HomePageView(LoginRequiredMixin, TemplateView):
         turno_label = "Sesion activa"
         turno_detail = "Vista ajustada a los permisos de tu rol."
         turno_status = "neutral"
-        if dashboard_permissions["cash_turn"] and turno_caja_requerido:
-            turno_label = "Sin turno abierto"
-            turno_detail = "Inicia o recupera un turno para vender."
-            turno_status = "warning"
-        elif dashboard_permissions["cash_turn"]:
-            turno_label = "Ventas sin turno"
-            turno_detail = (
-                "El control de apertura, cierre y cuadre individual está "
-                "desactivado."
-            )
-            turno_status = "neutral"
-        if dashboard_permissions["cash_turn"] and turno_caja_requerido and turno:
-            turno_label = f"Turno {turno.estado.lower()}"
-            puntopago = getattr(turno, "puntopago", None)
-            sucursal = getattr(puntopago, "sucursalid", None)
-            turno_detail = " - ".join(
-                part for part in [
-                    getattr(sucursal, "nombre", ""),
-                    getattr(puntopago, "nombre", ""),
-                ] if part
-            ) or "Caja activa"
-            turno_status = "ok" if turno.estado == "ABIERTO" else "attention"
-        if dashboard_permissions["cash_turn"]:
-            dashboard_cards.insert(1 if dashboard_permissions["sales_summary"] else 0, {
-                "label": "Turno actual",
-                "value": (
-                    self._money(turno_total)
-                    if turno
-                    else ("Pendiente" if turno_caja_requerido else "No requerido")
-                ),
-                "detail": turno_detail,
-                "tone": turno_status,
-            })
+        if not is_employee_dashboard:
+            if dashboard_permissions["cash_turn"] and turno_caja_requerido:
+                turno_label = "Sin turno abierto"
+                turno_detail = "Inicia o recupera un turno para vender."
+                turno_status = "warning"
+            elif dashboard_permissions["cash_turn"]:
+                turno_label = "Ventas sin turno"
+                turno_detail = (
+                    "El control de apertura, cierre y cuadre individual está "
+                    "desactivado."
+                )
+                turno_status = "neutral"
+            if (
+                dashboard_permissions["cash_turn"]
+                and turno_caja_requerido
+                and turno
+            ):
+                turno_label = f"Turno {turno.estado.lower()}"
+                puntopago = getattr(turno, "puntopago", None)
+                sucursal = getattr(puntopago, "sucursalid", None)
+                turno_detail = " - ".join(
+                    part for part in [
+                        getattr(sucursal, "nombre", ""),
+                        getattr(puntopago, "nombre", ""),
+                    ] if part
+                ) or "Caja activa"
+                turno_status = "ok" if turno.estado == "ABIERTO" else "attention"
+            if dashboard_permissions["cash_turn"]:
+                dashboard_cards.insert(1 if show_sales_summary else 0, {
+                    "label": "Turno actual",
+                    "value": (
+                        self._money(turno_total)
+                        if turno
+                        else (
+                            "Pendiente"
+                            if turno_caja_requerido
+                            else "No requerido"
+                        )
+                    ),
+                    "detail": turno_detail,
+                    "tone": turno_status,
+                })
 
-        empleado = getattr(user, "empleado", None)
         user_label = str(empleado or user)
 
         context.update({
@@ -545,11 +587,15 @@ class HomePageView(LoginRequiredMixin, TemplateView):
             "dashboard_turno_requerido": turno_caja_requerido,
             "dashboard_cards": dashboard_cards,
             "dashboard_permissions": dashboard_permissions,
+            "dashboard_is_employee": is_employee_dashboard,
+            "dashboard_show_sales_summary": show_sales_summary,
             "dashboard_low_stock": low_stock_items,
             "dashboard_top_products": top_productos,
-            "dashboard_quick_actions": self._quick_actions(),
+            "dashboard_quick_actions": self._quick_actions(
+                employee_dashboard=is_employee_dashboard,
+            ),
             "dashboard_scope_copy": "Informacion visible segun los permisos asignados a tu rol.",
-            "dashboard_show_top_products": dashboard_permissions["sales_products"],
+            "dashboard_show_top_products": show_top_products,
             "dashboard_show_inventory_alerts": dashboard_permissions["inventory_alerts"],
         })
         return context
@@ -5565,19 +5611,23 @@ class GenerarVentaView(LoginRequiredMixin, View):
                     if nequi_pago_total <= 0:
                         return JsonResponse({
                             "success": False,
-                            "error": "Seleccionaste un envio de Nequi, pero la venta no tiene pago por Nequi."
+                            "error": "Seleccionaste un pago recibido por Nequi, pero la venta no tiene pago por Nequi."
                         })
 
                     nequi_notification = (
                         NotificacionNequi.objects
                         .select_for_update()
-                        .filter(pk=nequi_notificacion_id, venta__isnull=True)
+                        .filter(
+                            pk=nequi_notificacion_id,
+                            es_ingreso=True,
+                            venta__isnull=True,
+                        )
                         .first()
                     )
                     if not nequi_notification:
                         return JsonResponse({
                             "success": False,
-                            "error": "Ese envio de Nequi ya fue usado o no esta disponible."
+                            "error": "Ese pago recibido por Nequi ya fue usado o no esta disponible."
                         })
 
                     nequi_monto = GenerarVentaView._to_decimal(nequi_notification.monto or 0)
@@ -5585,7 +5635,7 @@ class GenerarVentaView(LoginRequiredMixin, View):
                         return JsonResponse({
                             "success": False,
                             "error": (
-                                f"El envio de Nequi seleccionado ({nequi_monto}) "
+                                f"El pago recibido por Nequi seleccionado ({nequi_monto}) "
                                 f"no cubre el pago Nequi ({nequi_pago_total})."
                             )
                         })
@@ -7382,7 +7432,10 @@ class VentaDataTableView(LoginRequiredMixin, View):
         )
         nequi_links = (
             NotificacionNequi.objects
-            .filter(venta_id=OuterRef("ventaid"))
+            .filter(
+                es_ingreso=True,
+                venta_id=OuterRef("ventaid"),
+            )
             .order_by("notificacionid")
         )
 
@@ -8119,7 +8172,7 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin, View):
         )
         nequi_notification_id = (
             NotificacionNequi.objects
-            .filter(venta=venta)
+            .filter(venta=venta, es_ingreso=True)
             .order_by("notificacionid")
             .values_list("notificacionid", flat=True)
             .first()
@@ -9648,6 +9701,52 @@ class VentasDiariasView(LoginRequiredMixin, View):
 
 NEQUI_NOTIFICATION_LIMIT = 80
 
+NEQUI_INCOMING_MARKERS = (
+    "te envio",
+    "te enviaron",
+    "te llego plata",
+    "te llego dinero",
+    "te pagaron",
+    "te consignaron",
+    "te transfirieron",
+    "te depositaron",
+    "pago recibido",
+    "plata recibida",
+    "dinero recibido",
+    "transferencia recibida",
+    "recibiste plata",
+    "recibiste dinero",
+    "recibiste un pago",
+    "recibiste una transferencia",
+)
+
+NEQUI_OUTGOING_MARKERS = (
+    "enviaste",
+    "transferiste",
+    "pagaste",
+    "hiciste un pago",
+    "pago exitoso",
+    "envio exitoso",
+    "envio de plata exitoso",
+    "tu plata llego con exito",
+    "compra exitosa",
+    "compra rechazada",
+    "fondos insuficientes",
+    "sacaste",
+    "retiraste",
+    "retiro en cajero",
+    "nequi destino",
+    "recarga pse",
+    "de vuelta",
+    "devolucion",
+    "devuelto",
+    "devuelta",
+    "reversa",
+    "reverso",
+    "revertido",
+    "revertida",
+)
+
 
 def _nequi_field(payload, *names):
     for name in names:
@@ -9770,20 +9869,22 @@ def _make_nequi_fingerprint(payload, title, text, package, received_at):
 
 
 def _looks_like_nequi_payment(title, text, amount):
-    if amount is None:
+    try:
+        parsed_amount = Decimal(amount)
+    except (InvalidOperation, TypeError, ValueError):
         return False
+    if parsed_amount <= 0:
+        return False
+
     plain_text = _nequi_plain_text(f"{title} {text}")
-    payment_markers = (
-        "te envio",
-        "te enviaron",
-        "recibiste",
-        "recibido",
-        "depositaron",
-        "pagaron",
-        "transferencia",
-        "pago",
-    )
-    return any(marker in plain_text for marker in payment_markers)
+
+    def contains_marker(marker):
+        phrase = re.escape(marker).replace(r"\ ", r"\s+")
+        return re.search(rf"(?<!\w){phrase}(?!\w)", plain_text) is not None
+
+    if any(contains_marker(marker) for marker in NEQUI_OUTGOING_MARKERS):
+        return False
+    return any(contains_marker(marker) for marker in NEQUI_INCOMING_MARKERS)
 
 
 def _nequi_item_json(item):
@@ -9827,9 +9928,17 @@ def _nequi_sale_item_json(item):
 
 def _nequi_summary():
     today = timezone.localdate()
-    today_qs = NotificacionNequi.objects.filter(recibido_en__date=today)
+    today_qs = NotificacionNequi.objects.filter(
+        es_ingreso=True,
+        recibido_en__date=today,
+    )
     total = today_qs.aggregate(total=Sum("monto"))["total"] or Decimal("0")
-    last_item = NotificacionNequi.objects.order_by("-recibido_en", "-notificacionid").first()
+    last_item = (
+        NotificacionNequi.objects
+        .filter(es_ingreso=True)
+        .order_by("-recibido_en", "-notificacionid")
+        .first()
+    )
     return {
         "hoy_total": str(total.quantize(Decimal("0.01"))),
         "hoy_count": today_qs.count(),
@@ -9856,7 +9965,11 @@ class NequiNotificacionesView(LoginRequiredMixin, TemplateView):
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
-        items = NotificacionNequi.objects.order_by("-recibido_en", "-notificacionid")[:NEQUI_NOTIFICATION_LIMIT]
+        items = (
+            NotificacionNequi.objects
+            .filter(es_ingreso=True)
+            .order_by("-recibido_en", "-notificacionid")[:NEQUI_NOTIFICATION_LIMIT]
+        )
         context["notificaciones"] = items
         context["resumen_nequi"] = _nequi_summary()
         context["can_delete_nequi_notifications"] = user_can_access_url_name(
@@ -9868,7 +9981,11 @@ class NequiNotificacionesView(LoginRequiredMixin, TemplateView):
 
 class NequiNotificacionesDataView(LoginRequiredMixin, View):
     def get(self, request, *args, **kwargs):
-        items = NotificacionNequi.objects.order_by("-recibido_en", "-notificacionid")[:NEQUI_NOTIFICATION_LIMIT]
+        items = (
+            NotificacionNequi.objects
+            .filter(es_ingreso=True)
+            .order_by("-recibido_en", "-notificacionid")[:NEQUI_NOTIFICATION_LIMIT]
+        )
         return JsonResponse({
             "success": True,
             "summary": _nequi_summary(),
@@ -9942,7 +10059,12 @@ class NequiNotificacionesDisponiblesView(LoginRequiredMixin, View):
             return _nequi_api_disabled_response()
         items = list(
             NotificacionNequi.objects
-            .filter(venta__isnull=True, monto__isnull=False, monto__gt=0)
+            .filter(
+                es_ingreso=True,
+                venta__isnull=True,
+                monto__isnull=False,
+                monto__gt=0,
+            )
             .order_by("-recibido_en", "-notificacionid")[:120]
         )
         response = JsonResponse({
@@ -10044,17 +10166,30 @@ class NequiNotificationWebhookView(View):
             "app_package", "not_package", "not_package_name",
         )
 
-        amount = _parse_nequi_amount(f"{title} {text}")
-        joined = _nequi_plain_text(f"{title} {text} {app_name} {package}")
-        if "nequi" not in joined and not _looks_like_nequi_payment(title, text, amount):
+        if not text and not title:
+            return JsonResponse({
+                "success": False,
+                "error": "La notificacion llego sin titulo ni texto.",
+            }, status=400)
+
+        source = _nequi_plain_text(f"{app_name} {package}").strip()
+        if source and "nequi" not in source:
             return JsonResponse({
                 "success": True,
                 "ignored": True,
-                "reason": "La notificacion no parece venir de Nequi.",
+                "reason": "La notificacion no proviene de Nequi.",
             }, status=202)
 
-        if not text and not title:
-            return JsonResponse({"success": False, "error": "La notificacion llego sin titulo ni texto."}, status=400)
+        amount = _parse_nequi_amount(f"{title} {text}")
+        if not _looks_like_nequi_payment(title, text, amount):
+            return JsonResponse({
+                "success": True,
+                "ignored": True,
+                "reason": (
+                    "La notificacion no corresponde a dinero recibido "
+                    "por Nequi."
+                ),
+            }, status=202)
 
         received_at = _parse_nequi_received_at(payload)
         sender = _nequi_field(payload, "sender", "remitente") or _parse_nequi_sender_plain(text)
@@ -10073,6 +10208,7 @@ class NequiNotificationWebhookView(View):
                     "app": app_name[:120],
                     "paquete": package[:160],
                     "monto": amount,
+                    "es_ingreso": True,
                     "remitente": sender[:160],
                     "referencia": reference[:120],
                     "recibido_en": received_at,
@@ -11072,6 +11208,7 @@ def _sum_nequi_confirmado_api(turno: TurnoCaja) -> Decimal:
               SELECT 1
               FROM notificaciones_nequi nn
               WHERE nn.ventaid = v.ventaid
+                AND nn.es_ingreso
           )
     """
     sql_fallback = """
@@ -11090,6 +11227,7 @@ def _sum_nequi_confirmado_api(turno: TurnoCaja) -> Decimal:
               SELECT 1
               FROM notificaciones_nequi nn
               WHERE nn.ventaid = v.ventaid
+                AND nn.es_ingreso
           )
     """
 
@@ -11130,6 +11268,7 @@ def _nequi_sin_api_stats(turno: TurnoCaja) -> dict[str, Decimal | int]:
               SELECT 1
               FROM notificaciones_nequi nn
               WHERE nn.ventaid = v.ventaid
+                AND nn.es_ingreso
           )
     """
     sql_fallback = """
@@ -11148,6 +11287,7 @@ def _nequi_sin_api_stats(turno: TurnoCaja) -> dict[str, Decimal | int]:
               SELECT 1
               FROM notificaciones_nequi nn
               WHERE nn.ventaid = v.ventaid
+                AND nn.es_ingreso
           )
     """
 

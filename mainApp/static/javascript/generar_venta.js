@@ -3502,12 +3502,12 @@ $(function () {
     const needed = nequiPaymentAmountNeeded();
 
     if (nequiPaymentsLoading && !nequiSilentLoading){
-      $nequiStatus.text("Cargando envios de Nequi...");
+      $nequiStatus.text("Cargando pagos recibidos por Nequi...");
       return;
     }
 
     if (!nequiPaymentsCache.length){
-      $nequiStatus.text("No hay envios disponibles por ahora. Puedes cerrar sin asociar un envio.");
+      $nequiStatus.text("No hay pagos recibidos disponibles por ahora. Puedes cerrar sin asociar uno.");
       return;
     }
 
@@ -3536,8 +3536,8 @@ $(function () {
 
     $nequiStatus.text(
       needed > 0
-        ? `En vivo: si asocias un envio, debe cubrir ${money(needed)}.`
-        : "En vivo: seleccionar un envio es opcional."
+        ? `En vivo: si asocias un pago recibido, debe cubrir ${money(needed)}.`
+        : "En vivo: seleccionar un pago recibido es opcional."
     );
   }
 
@@ -3623,7 +3623,7 @@ $(function () {
 
     nequiPaymentsLoading = true;
     nequiSilentLoading = !!silent;
-    if (!silent) $nequiStatus.text("Cargando envios de Nequi...");
+    if (!silent) $nequiStatus.text("Cargando pagos recibidos por Nequi...");
 
     try {
       if (nequiLastFetchController) nequiLastFetchController.abort();
@@ -3640,7 +3640,7 @@ $(function () {
         disableNequiLinking(data.error || "La vinculación con Nequi está desactivada.");
         return;
       }
-      if (!response.ok || !data.success) throw new Error(data.error || "No se pudieron cargar los envios.");
+      if (!response.ok || !data.success) throw new Error(data.error || "No se pudieron cargar los pagos recibidos.");
 
       const items = Array.isArray(data.items) ? data.items : [];
       markNewNequiPayments(items);
@@ -3651,11 +3651,11 @@ $(function () {
       if (selectedNequiPayment && !nequiPaymentsCache.some((item) => String(item.id) === String(selectedNequiPayment.id))){
         selectedNequiPayment = null;
         $hidNequiNotification.val("");
-        showMixError("El envio de Nequi seleccionado ya no esta disponible.");
+        showMixError("El pago recibido por Nequi seleccionado ya no esta disponible.");
       }
     } catch (err) {
       if (err?.name === "AbortError") return;
-      if (!silent) $nequiStatus.text("No se pudieron cargar los envios de Nequi. Puedes cerrar sin asociar uno.");
+      if (!silent) $nequiStatus.text("No se pudieron cargar los pagos recibidos por Nequi. Puedes cerrar sin asociar uno.");
     } finally {
       nequiLastFetchController = null;
       nequiPaymentsLoading = false;
@@ -3700,7 +3700,7 @@ $(function () {
     const needed = nequiPaymentAmountNeeded();
     const amount = Number(selectedNequiPayment.monto_num || 0);
     if (needed > 0 && amount + 0.01 < needed){
-      return `El envio de Nequi seleccionado (${money(amount)}) no cubre el pago Nequi (${money(needed)}).`;
+      return `El pago recibido por Nequi seleccionado (${money(amount)}) no cubre el pago Nequi (${money(needed)}).`;
     }
     return "";
   }

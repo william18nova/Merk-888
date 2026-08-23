@@ -2034,7 +2034,7 @@ class SaleProductIdVisibilityTests(SimpleTestCase):
         self.assertIn(".ui-autocomplete .ac-product-id", styles)
         self.assertIn(".cart-product-id", styles)
         self.assertIn("generar_venta.css' %}?v=20", template)
-        self.assertIn("generar_venta.js' %}?v=31", template)
+        self.assertIn("generar_venta.js' %}?v=32", template)
 
 
 class GlobalBarcodeCameraTests(SimpleTestCase):
@@ -2364,7 +2364,7 @@ class SystemFeatureFlagTests(SimpleTestCase):
         ).read_text(encoding="utf-8")
         self.assertIn("window.nequiApiEnabled", sale_template)
         self.assertIn("system_features.nequi_api_recepcion", sale_template)
-        self.assertIn("generar_venta.js' %}?v=31", sale_template)
+        self.assertIn("generar_venta.js' %}?v=32", sale_template)
         self.assertIn("let nequiApiEnabled", sale_script)
         self.assertIn("data?.feature_disabled === NEQUI_FEATURE_KEY", sale_script)
         self.assertIn("disableNequiLinking", sale_script)

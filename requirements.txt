@@ -4,9 +4,11 @@ charset-normalizer==3.4.3       # requests/urllib3
 Django==5.1.1                   # framework principal
 django-autocomplete-light==3.11.0  # autocompletado en formularios
 django-widget-tweaks==1.5.0     # personalización de templates
+Flask>=3.0,<4                   # servidor HTTP para utilidades locales
 idna==3.10                      # requests
 psycopg2-binary==2.9.10         # conexión a PostgreSQL
 python-decouple==3.8            # manejo de variables de entorno (.env)
+pywin32>=306; sys_platform == "win32"  # integración nativa solo en Windows
 requests==2.32.5                # llamadas HTTP
 sqlparse==0.5.3                 # requerido por Django
 urllib3==2.5.0                  # requests

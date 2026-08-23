@@ -1376,6 +1376,12 @@ class NotificacionNequi(models.Model):
     app = models.CharField(max_length=120, blank=True)
     paquete = models.CharField(max_length=160, blank=True)
     monto = models.DecimalField(max_digits=14, decimal_places=2, null=True, blank=True)
+    es_ingreso = models.BooleanField(
+        default=False,
+        db_default=False,
+        db_index=True,
+        help_text="Indica que la notificación corresponde a dinero recibido.",
+    )
     remitente = models.CharField(max_length=160, blank=True)
     referencia = models.CharField(max_length=120, blank=True)
     recibido_en = models.DateTimeField(default=timezone.now)
