@@ -1,0 +1,152 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Registrar pago{% endblock %}
+
+{% block extra_head %}
+  <link rel="stylesheet" href="{% static 'css/registrar_egreso.css' %}?v=1">
+{% endblock %}
+
+{% block content %}
+<main class="expense-page" aria-labelledby="expense-title">
+  <header class="expense-hero">
+    <div>
+      <p class="expense-eyebrow">Caja y pagos</p>
+      <h1 id="expense-title">Registrar pago</h1>
+      <p class="expense-lead">
+        Registra el dinero que sale del negocio. Se guardarán el concepto, la
+        fecha, el medio utilizado y el usuario que agregó el pago.
+      </p>
+    </div>
+    <aside class="expense-today" aria-label="Total pagado hoy">
+      <span class="expense-today__icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24"><path d="M4 7h16v11H4zM4 10h16M8 15h3"/></svg>
+      </span>
+      <div>
+        <small>Pagado hoy</small>
+        <strong data-money>{{ today_total }}</strong>
+        <span>Total registrado en el sistema</span>
+      </div>
+    </aside>
+  </header>
+
+  {% if messages %}
+    <section class="expense-messages" aria-live="polite">
+      {% for message in messages %}
+        <div class="expense-message expense-message--{{ message.tags|default:'info' }}">
+          <span aria-hidden="true"></span>
+          <p>{{ message }}</p>
+        </div>
+      {% endfor %}
+    </section>
+  {% endif %}
+
+  {% if not migration_ready %}
+    <section class="expense-warning" role="alert">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8v5m0 3h.01"/><circle cx="12" cy="12" r="9"/></svg>
+      <div>
+        <strong>Falta habilitar el registro de pagos</strong>
+        <p>Aplica la migración 0034 y vuelve a cargar esta página.</p>
+      </div>
+    </section>
+  {% endif %}
+
+  <section class="expense-layout">
+    <article class="expense-panel expense-panel--form">
+      <header class="expense-panel__head">
+        <span class="expense-panel__icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24"><path d="M12 3v18M17 7.5c0-1.7-1.9-3-4.3-3S8.5 5.6 8.5 7.2c0 3.7 8.5 1.8 8.5 6.1 0 1.8-1.9 3.2-4.5 3.2S8 15.2 8 13.5"/></svg>
+        </span>
+        <div>
+          <p class="expense-eyebrow">Nuevo movimiento</p>
+          <h2>¿Qué se pagó?</h2>
+          <p>Este registro es informativo y no modifica ningún turno ni caja.</p>
+        </div>
+      </header>
+
+      <form method="post" class="expense-form" autocomplete="off" data-expense-form>
+        {% csrf_token %}
+
+        {% if form.non_field_errors %}
+          <div class="expense-form-errors" role="alert">
+            {% for error in form.non_field_errors %}<p>{{ error }}</p>{% endfor %}
+          </div>
+        {% endif %}
+
+        <label class="expense-field" for="{{ form.concepto.id_for_label }}">
+          <span>{{ form.concepto.label }}</span>
+          {{ form.concepto }}
+          <small>Elige una opción existente o escribe una nueva. Siempre se guardará en MAYÚSCULA.</small>
+          {% for error in form.concepto.errors %}<em>{{ error }}</em>{% endfor %}
+        </label>
+        <datalist id="conceptos-egreso-opciones">
+          {% for concepto in conceptos %}<option value="{{ concepto.nombre }}"></option>{% endfor %}
+        </datalist>
+
+        <div class="expense-form__row">
+          <label class="expense-field" for="{{ form.monto.id_for_label }}">
+            <span>{{ form.monto.label }}</span>
+            <span class="expense-money-input">
+              <b aria-hidden="true">$</b>
+              {{ form.monto }}
+            </span>
+            {% for error in form.monto.errors %}<em>{{ error }}</em>{% endfor %}
+          </label>
+
+          <label class="expense-field" for="{{ form.medio_pago.id_for_label }}">
+            <span>{{ form.medio_pago.label }}</span>
+            {{ form.medio_pago }}
+            {% for error in form.medio_pago.errors %}<em>{{ error }}</em>{% endfor %}
+          </label>
+        </div>
+
+        <div class="expense-audit-note">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 5 6v5c0 4.6 2.8 8.4 7 10 4.2-1.6 7-5.4 7-10V6l-7-3Z"/><path d="m9 12 2 2 4-4"/></svg>
+          <p>Quedará registrado automáticamente que este pago fue agregado por <strong>{{ nav_session_name }}</strong>.</p>
+        </div>
+
+        <button type="submit" class="expense-submit"
+                {% if not migration_ready %}disabled{% endif %}>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+          <span>Registrar pago</span>
+        </button>
+      </form>
+    </article>
+
+  </section>
+
+  <section class="expense-history" aria-labelledby="expense-history-title">
+    <header>
+      <div>
+        <p class="expense-eyebrow">Auditoría reciente</p>
+        <h2 id="expense-history-title">Últimos pagos registrados</h2>
+      </div>
+      <span>Últimos 30 movimientos del sistema</span>
+    </header>
+    <div class="expense-table-wrap">
+      <table>
+        <thead>
+          <tr><th>Fecha</th><th>Concepto</th><th>Medio</th><th>Usuario</th><th>Valor</th></tr>
+        </thead>
+        <tbody>
+          {% for item in history %}
+            <tr>
+              <td>{{ item.creado_en|date:"d/m/Y H:i" }}</td>
+              <td><strong>{{ item.concepto.nombre }}</strong></td>
+              <td><span class="expense-method">{{ item.medio_pago_label }}</span></td>
+              <td>{{ item.registrado_por_nombre }}</td>
+              <td data-money>{{ item.monto }}</td>
+            </tr>
+          {% empty %}
+            <tr><td colspan="5" class="expense-empty">Todavía no hay pagos registrados.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+</main>
+{% endblock %}
+
+{% block scripts %}
+  <script defer src="{% static 'javascript/registrar_egreso.js' %}?v=1"></script>
+{% endblock %}

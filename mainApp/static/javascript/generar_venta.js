@@ -154,6 +154,13 @@ $(function () {
     return s;
   };
 
+  const escapeHTML = (value) => String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+
   function safeNumber(x){
     const n = Number(x);
     return Number.isFinite(n) ? n : 0;
@@ -233,6 +240,921 @@ $(function () {
     isMerk2888: false
   };
   const cartAuditSessionItems = new Map();
+
+  /* ================== Borrador local recuperable ==================
+     Es solamente una ayuda de interfaz: la venta sigue siendo creada y
+     validada exclusivamente por el servidor. Nunca se guardan contraseñas,
+     claves de un solo uso, tokens ni la notificación seleccionada de Nequi. */
+  const SALE_DRAFT_VERSION = 2;
+  const SALE_DRAFT_PREFIX = `nova:venta-draft:v${SALE_DRAFT_VERSION}`;
+  const SALE_DRAFT_TTL_MS = 24 * 60 * 60 * 1000;
+  const SALE_DRAFT_MAX_ITEMS = 500;
+  const SALE_DRAFT_SAVE_DELAY_MS = 220;
+  const saleDraftUserID = String(window.ventaUsuarioId || "").match(/^\d+$/)?.[0] || "";
+  const saleDraftTurnID = String(window.ventaTurnoId || "sin_turno").match(/^\d+$/)?.[0] || "sin_turno";
+  function createSaleDraftID(){
+    try { return crypto.randomUUID(); } catch (_) {}
+    return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  }
+  const saleDraftTabID = createSaleDraftID();
+  let saleDraftActiveID = saleDraftTabID;
+  let saleDraftAutosaveReady = false;
+  let saleDraftRestoring = false;
+  let saleDraftSaveTimer = null;
+  let pendingSaleDraft = null;
+  let saleDraftPaymentState = null;
+  let saleDraftSubmissionPending = false;
+  let saleDraftSaleConfirmed = false;
+  let saleDraftSubmittedKey = "";
+  let saleDraftLastStorageKey = "";
+  let saleDraftAllowTakeoverOnce = false;
+  let saleDraftOwnershipLost = false;
+  let saleDraftValidationPending = false;
+  let saleDraftValidationError = "";
+  let saleDraftManagerSignature = "";
+  let saleDraftLastAnnouncedCount = 0;
+  const saleDraftInvalidProductIds = new Set();
+
+  function saleDraftScope(){
+    const pointId = String($("#puntopago_id").val() || "").match(/^\d+$/)?.[0] || "sin_punto";
+    return {
+      userId: saleDraftUserID,
+      sucursalId: String($("#sucursal_id").val() || sucursalID || "").match(/^\d+$/)?.[0] || "",
+      puntoPagoId: pointId,
+      turnoId: saleDraftTurnID,
+    };
+  }
+
+  function saleDraftScopeStorageKey(pointId = null){
+    const scope = saleDraftScope();
+    if (!scope.userId || !scope.sucursalId) return "";
+    const normalizedPoint = pointId === null
+      ? scope.puntoPagoId
+      : (String(pointId || "").match(/^\d+$/)?.[0] || "sin_punto");
+    return `${SALE_DRAFT_PREFIX}:u${scope.userId}:s${scope.sucursalId}:p${normalizedPoint}:t${scope.turnoId}`;
+  }
+
+  function saleDraftStorageKey(){
+    const scopeKey = saleDraftScopeStorageKey();
+    return scopeKey ? `${scopeKey}:d${saleDraftActiveID}` : "";
+  }
+
+  function saleDraftStorageKeyForPoint(pointId){
+    const scopeKey = saleDraftScopeStorageKey(pointId);
+    return scopeKey ? `${scopeKey}:d${saleDraftActiveID}` : "";
+  }
+
+  function saleDraftIDFromStorageKey(key){
+    const scopeKey = saleDraftScopeStorageKey();
+    const prefix = scopeKey ? `${scopeKey}:d` : "";
+    if (!prefix || !String(key || "").startsWith(prefix)) return "";
+    const candidate = String(key).slice(prefix.length);
+    return /^[a-zA-Z0-9_-]{1,100}$/.test(candidate) ? candidate : "";
+  }
+
+  function isSaleDraftKeyForCurrentScope(key){
+    const scopeKey = saleDraftScopeStorageKey();
+    const candidate = String(key || "");
+    return !!scopeKey && (candidate === scopeKey || candidate.startsWith(`${scopeKey}:d`));
+  }
+
+  function hasStoredSaleDraft(key){
+    if (!key) return false;
+    try {
+      const raw = JSON.parse(localStorage.getItem(key) || "null");
+      const updatedAt = Number(raw?.updated_at);
+      return !!(
+        raw
+        && raw.version === SALE_DRAFT_VERSION
+        && Array.isArray(raw.items)
+        && raw.items.length
+        && Number.isFinite(updatedAt)
+        && Date.now() - updatedAt <= SALE_DRAFT_TTL_MS
+      );
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function sanitizeDraftText(value, maxLength = 220){
+    return String(value || "").replace(/[\u0000-\u001f\u007f]/g, " ").trim().slice(0, maxLength);
+  }
+
+  function sanitizeSaleDraftItem(raw){
+    const productoId = String(raw?.producto_id || "").trim();
+    const cantidad = Number(raw?.cantidad);
+    const precio = Number(raw?.precio);
+    if (!/^\d+$/.test(productoId)) return null;
+    if (!Number.isInteger(cantidad) || cantidad === 0 || Math.abs(cantidad) > 1000000) return null;
+    if (!Number.isFinite(precio) || precio < 0 || precio > 1000000000000) return null;
+    return {
+      producto_id: productoId,
+      nombre: sanitizeDraftText(raw?.nombre || `Producto ${productoId}`),
+      cantidad,
+      precio,
+      codigo_barras: sanitizeDraftText(raw?.codigo_barras || "", 80),
+    };
+  }
+
+  function sanitizeSaleDraftClient(raw){
+    const id = String(raw?.id || "").trim();
+    if (!/^\d+$/.test(id)) return null;
+    return {
+      id,
+      // El autocomplete incluye el documento entre paréntesis. El borrador
+      // conserva únicamente el nombre visible y vuelve a consultar el cliente.
+      name: sanitizeDraftText(raw?.name || raw?.label || "")
+        .replace(/\s*\([^)]*\)\s*$/, "")
+        .trim(),
+    };
+  }
+
+  function sanitizeSaleDraftPayment(raw){
+    if (!raw || typeof raw !== "object") return null;
+    const seen = new Set();
+    const methods = [];
+    for (const entry of Array.isArray(raw.methods) ? raw.methods : []) {
+      const code = String(entry?.code || "").trim().toLowerCase();
+      if (!/^[a-z0-9_]{1,40}$/.test(code) || seen.has(code)) continue;
+      seen.add(code);
+      const amount = Number(entry?.amount);
+      methods.push({
+        code,
+        amount: Number.isFinite(amount) && amount > 0 && amount <= 1000000000000
+          ? to2(amount)
+          : "",
+      });
+    }
+    if (!methods.length) return null;
+    return { mixed: !!raw.mixed && methods.length > 1, methods };
+  }
+
+  function captureSaleDraftItems(){
+    const items = [];
+    for (let index = 0; index < productos.length; index += 1) {
+      const productoId = String(productos[index] || "").trim();
+      if (!/^\d+$/.test(productoId)) continue;
+      const $row = $tbody.find(`tr[data-pid='${productoId}']`).first();
+      const cached = productCache.get(productoId) || {};
+      const item = sanitizeSaleDraftItem({
+        producto_id: productoId,
+        nombre: $row.find(".cart-product-name").first().text() || cached.nombre || `Producto ${productoId}`,
+        cantidad: Number(cantidades[index]),
+        precio: Number($row.data("price")) || Number(cached.price) || 0,
+        codigo_barras: cached.barcode || "",
+      });
+      if (item) items.push(item);
+    }
+    return items;
+  }
+
+  function captureSaleDraftClient(){
+    const id = String($("#cliente_id").val() || "").trim();
+    if (!/^\d+$/.test(id)) return null;
+    return sanitizeSaleDraftClient({
+      id,
+      name: $inpCliente.val() || selectedClientLabel,
+    });
+  }
+
+  function captureSaleDraftPayment(){
+    const methods = $modal.find(".pm-check:checked").not("#mix-mode").map(function(){
+      const code = String(this.value || "").trim().toLowerCase();
+      const $check = $(this);
+      const $row = $check.closest(".mix-row, .pm-row, .payment-row, .form-check");
+      const amount = $row.find(`.pm-amt[data-medio='${code}'], .pm-amt`).first().val();
+      return { code, amount: String(amount || "") };
+    }).get();
+    return sanitizeSaleDraftPayment({
+      mixed: !!$("#mix-mode").prop("checked"),
+      methods,
+    });
+  }
+
+  function rememberSaleDraftPaymentUi(){
+    saleDraftPaymentState = captureSaleDraftPayment();
+    scheduleSaleDraftSave();
+  }
+
+  function updateSaleDraftStatus(message, state = ""){
+    const $status = $("#venta-draft-save-status");
+    if (!$status.length) return;
+    $status.removeClass("is-saved is-error");
+    if (state) $status.addClass(`is-${state}`);
+    $status.text(message || "El carrito se guarda automáticamente durante 24 horas en este equipo.");
+  }
+
+  function refreshSaleDraftGenerateButton(){
+    const $button = $("#generar-venta");
+    if (!$button.length) return;
+    const serverEnabled = String($button.attr("data-server-enabled") || "0") === "1";
+    const blocked = (
+      !serverEnabled
+      || saleDraftValidationPending
+      || !!saleDraftValidationError
+      || saleDraftInvalidProductIds.size > 0
+    );
+    $button.prop("disabled", blocked);
+    if (blocked) $button.attr("aria-disabled", "true");
+    else $button.removeAttr("aria-disabled");
+  }
+
+  function guardSaleDraftEditing(){
+    return true;
+  }
+
+  function setSaleDraftValidation({ pending = false, error = "" } = {}){
+    saleDraftValidationPending = !!pending;
+    saleDraftValidationError = String(error || "");
+    $("#venta-draft-retry-validation").prop("hidden", !saleDraftValidationError);
+    refreshSaleDraftGenerateButton();
+  }
+
+  function saleDraftReadyToCharge({ notify = true } = {}){
+    if (saleDraftValidationPending) {
+      if (notify) alert("La venta recuperada todavía está validando productos y precios actuales.");
+      return false;
+    }
+    if (saleDraftValidationError || saleDraftInvalidProductIds.size) {
+      if (notify) alert(saleDraftValidationError || "Hay productos recuperados que todavía no fueron validados.");
+      return false;
+    }
+    return true;
+  }
+
+  function closeSaleDraftPanel({ focusToggle = false } = {}){
+    const $toggle = $("#venta-draft-toggle");
+    $("#venta-draft-panel").prop("hidden", true);
+    $toggle.attr("aria-expanded", "false");
+    if (focusToggle && $toggle.is(":visible")) $toggle.trigger("focus");
+  }
+
+  function hideSaleDraftNotice(){
+    pendingSaleDraft = null;
+    saleDraftManagerSignature = "";
+    saleDraftLastAnnouncedCount = 0;
+    $("#venta-draft-center").prop("hidden", true);
+    $("#venta-draft-count").text("0");
+    $("#venta-draft-list").empty();
+    closeSaleDraftPanel();
+  }
+
+  function removeSaleDraftByKey(key){
+    if (!key) return false;
+    try {
+      localStorage.removeItem(key);
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function cleanupExpiredSaleDrafts(){
+    try {
+      const now = Date.now();
+      const keys = [];
+      for (let index = 0; index < localStorage.length; index += 1) {
+        const key = localStorage.key(index);
+        if (key && key.startsWith("nova:venta-draft:")) keys.push(key);
+      }
+      for (const key of keys) {
+        let raw = null;
+        try { raw = JSON.parse(localStorage.getItem(key) || "null"); } catch (_) {}
+        const updatedAt = Number(raw?.updated_at);
+        if (
+          !raw
+          || !Number.isFinite(updatedAt)
+          || updatedAt <= 0
+          || now - updatedAt > SALE_DRAFT_TTL_MS
+          || updatedAt - now > 5 * 60 * 1000
+        ) removeSaleDraftByKey(key);
+      }
+    } catch (_) {}
+  }
+
+  function clearSaleDraftForCurrentScope(keyOverride = ""){
+    if (saleDraftSaveTimer) clearTimeout(saleDraftSaveTimer);
+    saleDraftSaveTimer = null;
+    const key = keyOverride || saleDraftStorageKey();
+    const removed = removeSaleDraftByKey(key);
+    if (key && saleDraftLastStorageKey === key) saleDraftLastStorageKey = "";
+    saleDraftInvalidProductIds.clear();
+    setSaleDraftValidation();
+    queueMicrotask(offerSaleDraftForCurrentScope);
+    return removed;
+  }
+
+  function readSaleDraftByKey(key){
+    if (!key) return null;
+    let raw;
+    try {
+      raw = JSON.parse(localStorage.getItem(key) || "null");
+    } catch (_) {
+      removeSaleDraftByKey(key);
+      return null;
+    }
+    if (!raw || raw.version !== SALE_DRAFT_VERSION) {
+      if (raw) removeSaleDraftByKey(key);
+      return null;
+    }
+
+    const scope = saleDraftScope();
+    const updatedAt = Number(raw.updated_at);
+    const createdAt = Number(raw.created_at);
+    if (
+      String(raw.user_id || "") !== scope.userId
+      || String(raw.sucursal_id || "") !== scope.sucursalId
+      || String(raw.puntopago_id || "") !== scope.puntoPagoId
+      || String(raw.turno_id || "") !== scope.turnoId
+      || !Number.isFinite(updatedAt)
+      || updatedAt <= 0
+      || Date.now() - updatedAt > SALE_DRAFT_TTL_MS
+      || updatedAt - Date.now() > 5 * 60 * 1000
+    ) {
+      removeSaleDraftByKey(key);
+      return null;
+    }
+
+    if (!Array.isArray(raw.items) || raw.items.length > SALE_DRAFT_MAX_ITEMS) {
+      removeSaleDraftByKey(key);
+      return null;
+    }
+    const items = raw.items
+      .map(sanitizeSaleDraftItem)
+      .filter(Boolean);
+    if (!items.length) {
+      removeSaleDraftByKey(key);
+      return null;
+    }
+
+    return {
+      version: SALE_DRAFT_VERSION,
+      draft_id: sanitizeDraftText(raw.draft_id || saleDraftIDFromStorageKey(key), 100),
+      storage_key: key,
+      user_id: scope.userId,
+      sucursal_id: scope.sucursalId,
+      puntopago_id: scope.puntoPagoId,
+      turno_id: scope.turnoId,
+      owner_tab_id: sanitizeDraftText(raw.owner_tab_id || "", 100),
+      created_at: Number.isFinite(createdAt) && createdAt > 0 ? createdAt : updatedAt,
+      updated_at: updatedAt,
+      status: raw.status === "submission_pending" ? "submission_pending" : "active",
+      items,
+      client: sanitizeSaleDraftClient(raw.client),
+      payment: sanitizeSaleDraftPayment(raw.payment),
+    };
+  }
+
+  function listSaleDraftsForCurrentScope(){
+    const scopeKey = saleDraftScopeStorageKey();
+    if (!scopeKey) return [];
+    const keys = [];
+    try {
+      for (let index = 0; index < localStorage.length; index += 1) {
+        const key = localStorage.key(index);
+        if (isSaleDraftKeyForCurrentScope(key)) keys.push(key);
+      }
+    } catch (_) {
+      return [];
+    }
+
+    return keys
+      .map(readSaleDraftByKey)
+      .filter(Boolean)
+      .sort((left, right) => {
+        const leftUncertain = left.status === "submission_pending" ? 1 : 0;
+        const rightUncertain = right.status === "submission_pending" ? 1 : 0;
+        return rightUncertain - leftUncertain || right.updated_at - left.updated_at;
+      });
+  }
+
+  function readSaleDraftForCurrentScope(){
+    const drafts = listSaleDraftsForCurrentScope();
+    if (!drafts.length) return null;
+    return { ...drafts[0], pending_count: drafts.length };
+  }
+
+  function persistSaleDraftNow(){
+    if (!saleDraftAutosaveReady || saleDraftRestoring) return false;
+    let key = saleDraftStorageKey();
+    if (!key) return false;
+
+    if (saleDraftOwnershipLost) {
+      updateSaleDraftStatus(
+        "Otra pestaña tomó control de esta venta. Recarga la página antes de continuar.",
+        "error",
+      );
+      return false;
+    }
+
+    if (saleDraftSaleConfirmed) {
+      removeSaleDraftByKey(key);
+      return true;
+    }
+
+    if (productos.length > SALE_DRAFT_MAX_ITEMS) {
+      updateSaleDraftStatus(
+        `No se guardó el borrador: supera el límite de ${SALE_DRAFT_MAX_ITEMS} productos distintos.`,
+        "error",
+      );
+      return false;
+    }
+    const items = captureSaleDraftItems();
+    if (
+      items.length
+      && pendingSaleDraft
+      && pendingSaleDraft.storage_key === key
+      && !saleDraftAllowTakeoverOnce
+    ) {
+      // Si el cajero empieza otra venta sin recuperar la ofrecida, el carrito
+      // nuevo recibe su propia clave y jamás sobrescribe el pendiente.
+      saleDraftActiveID = createSaleDraftID();
+      key = saleDraftStorageKey();
+      saleDraftOwnershipLost = false;
+    }
+    if (!items.length) {
+      if (pendingSaleDraft?.storage_key === key && !saleDraftSaleConfirmed) {
+        queueMicrotask(offerSaleDraftForCurrentScope);
+        return true;
+      }
+      removeSaleDraftByKey(key);
+      if (saleDraftLastStorageKey === key) saleDraftLastStorageKey = "";
+      saleDraftInvalidProductIds.clear();
+      setSaleDraftValidation();
+      updateSaleDraftStatus(
+        pendingSaleDraft
+          ? "La venta pendiente sigue guardada. Puedes facturar otra normalmente."
+          : "El carrito se guarda automáticamente durante 24 horas en este equipo."
+      );
+      queueMicrotask(offerSaleDraftForCurrentScope);
+      return true;
+    }
+
+    let createdAt = Date.now();
+    let previous = null;
+    try {
+      previous = JSON.parse(localStorage.getItem(key) || "null");
+      if (previous && Number.isFinite(Number(previous.created_at))) {
+        createdAt = Number(previous.created_at);
+      }
+    } catch (_) {}
+
+    const previousOwner = sanitizeDraftText(previous?.owner_tab_id || "", 100);
+    if (
+      previous
+      && Array.isArray(previous.items)
+      && previous.items.length
+      && previousOwner
+      && previousOwner !== saleDraftTabID
+      && !saleDraftAllowTakeoverOnce
+    ) {
+      const conflict = "Otra pestaña tiene un borrador activo para esta caja. Recarga la página y elige cuál recuperar antes de continuar.";
+      setSaleDraftValidation({ error: conflict });
+      updateSaleDraftStatus(conflict, "error");
+      return false;
+    }
+
+    saleDraftPaymentState = captureSaleDraftPayment() || saleDraftPaymentState;
+    const scope = saleDraftScope();
+    const payload = {
+      version: SALE_DRAFT_VERSION,
+      draft_id: saleDraftActiveID,
+      user_id: scope.userId,
+      sucursal_id: scope.sucursalId,
+      puntopago_id: scope.puntoPagoId,
+      turno_id: scope.turnoId,
+      owner_tab_id: saleDraftTabID,
+      created_at: createdAt,
+      updated_at: Date.now(),
+      status: saleDraftSubmissionPending ? "submission_pending" : "active",
+      items,
+      client: captureSaleDraftClient(),
+      payment: sanitizeSaleDraftPayment(saleDraftPaymentState),
+    };
+
+    try {
+      localStorage.setItem(key, JSON.stringify(payload));
+      saleDraftAllowTakeoverOnce = false;
+      saleDraftOwnershipLost = false;
+      saleDraftLastStorageKey = key;
+      const stamp = new Date(payload.updated_at).toLocaleTimeString("es-CO", {
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+      updateSaleDraftStatus(`Borrador guardado en este equipo a las ${stamp}.`, "saved");
+      queueMicrotask(offerSaleDraftForCurrentScope);
+      return true;
+    } catch (_) {
+      updateSaleDraftStatus("No se pudo guardar el borrador en este navegador.", "error");
+      return false;
+    }
+  }
+
+  function scheduleSaleDraftSave(){
+    if (!saleDraftAutosaveReady || saleDraftRestoring) return;
+    if (saleDraftSaveTimer) clearTimeout(saleDraftSaveTimer);
+    saleDraftSaveTimer = setTimeout(() => {
+      saleDraftSaveTimer = null;
+      persistSaleDraftNow();
+    }, SALE_DRAFT_SAVE_DELAY_MS);
+  }
+
+  function listManagedSaleDrafts(){
+    const activeKey = productos.length ? saleDraftStorageKey() : "";
+    return listSaleDraftsForCurrentScope().filter(
+      (draft) => !activeKey || draft.storage_key !== activeKey,
+    );
+  }
+
+  function findManagedSaleDraft(storageKey){
+    const key = String(storageKey || "");
+    if (!key) return null;
+    return listManagedSaleDrafts().find((draft) => draft.storage_key === key) || null;
+  }
+
+  function renderSaleDraftManager(){
+    if (!saleDraftAutosaveReady || saleDraftRestoring) return;
+    const drafts = listManagedSaleDrafts();
+    if (!drafts.length) {
+      hideSaleDraftNotice();
+      return;
+    }
+
+    pendingSaleDraft = drafts[0];
+    const count = drafts.length;
+    const hasWarning = drafts.some((draft) => draft.status === "submission_pending");
+    const signature = drafts
+      .map((draft) => `${draft.storage_key}:${draft.updated_at}:${draft.status}`)
+      .join("|");
+    const $center = $("#venta-draft-center");
+    const $toggle = $("#venta-draft-toggle");
+    $("#venta-draft-count").text(String(count));
+    $toggle
+      .toggleClass("has-warning", hasWarning)
+      .attr(
+        "aria-label",
+        `${count} ${count === 1 ? "venta pendiente" : "ventas pendientes"}`,
+      );
+    $center.prop("hidden", false);
+
+    if (signature !== saleDraftManagerSignature) {
+      const $list = $("#venta-draft-list").empty();
+      for (const draft of drafts) {
+        const uncertain = draft.status === "submission_pending";
+        const itemCount = draft.items.length;
+        const total = draft.items.reduce(
+          (sum, item) => sum + Number(item.cantidad || 0) * Number(item.precio || 0),
+          0,
+        );
+        const when = new Date(draft.updated_at).toLocaleString("es-CO", {
+          dateStyle: "short",
+          timeStyle: "short",
+        });
+        const productNames = draft.items
+          .slice(0, 2)
+          .map((item) => item.nombre || `Producto ${item.producto_id}`)
+          .join(", ");
+        const remaining = Math.max(0, itemCount - 2);
+        const clientName = draft.client?.name ? ` · ${draft.client.name}` : "";
+
+        const $item = $("<article>", {
+          class: `venta-draft-item${uncertain ? " is-warning" : ""}`,
+          role: "listitem",
+        });
+        const $copy = $("<div>", { class: "venta-draft-item-copy" });
+        const $title = $("<span>", { class: "venta-draft-item-title" });
+        $title.append(
+          $("<i>", {
+            class: uncertain ? "fa-solid fa-triangle-exclamation" : "fa-solid fa-cart-shopping",
+            "aria-hidden": "true",
+          }),
+          $("<span>").text(uncertain ? "Confirmación pendiente" : `Guardada ${when}`),
+        );
+        $copy.append(
+          $title,
+          $("<small>", { class: "venta-draft-item-meta" }).text(
+            `${itemCount} ${itemCount === 1 ? "producto" : "productos"} · ${money(total)}${clientName}`,
+          ),
+          $("<small>", { class: "venta-draft-item-products" }).text(
+            `${productNames}${remaining ? ` y ${remaining} más` : ""}`,
+          ),
+        );
+
+        const $actions = $("<div>", { class: "venta-draft-item-actions" });
+        const $restore = $("<button>", {
+          type: "button",
+          class: "venta-draft-item-action js-draft-restore",
+          title: "Recuperar esta venta",
+          "aria-label": `Recuperar venta guardada ${when}`,
+        }).attr("data-draft-key", draft.storage_key).append(
+          $("<i>", { class: "fa-solid fa-rotate-left", "aria-hidden": "true" }),
+        );
+        const $discard = $("<button>", {
+          type: "button",
+          class: "venta-draft-item-action is-danger js-draft-discard",
+          title: "Descartar esta venta",
+          "aria-label": `Descartar venta guardada ${when}`,
+        }).attr("data-draft-key", draft.storage_key).append(
+          $("<i>", { class: "fa-solid fa-trash-can", "aria-hidden": "true" }),
+        );
+        $actions.append($restore, $discard);
+        $item.append($copy, $actions);
+        $list.append($item);
+      }
+      saleDraftManagerSignature = signature;
+    }
+
+    if (saleDraftLastAnnouncedCount !== count) {
+      $("#venta-draft-live").text(
+        `${count} ${count === 1 ? "venta pendiente guardada" : "ventas pendientes guardadas"}.`,
+      );
+      saleDraftLastAnnouncedCount = count;
+    }
+  }
+
+  function offerSaleDraftForCurrentScope(){
+    renderSaleDraftManager();
+  }
+
+  function continueWithNewSale(){
+    const pendingCount = listManagedSaleDrafts().length;
+    if (!productos.length) {
+      saleDraftActiveID = createSaleDraftID();
+      saleDraftLastStorageKey = "";
+      saleDraftOwnershipLost = false;
+      saleDraftAllowTakeoverOnce = false;
+    }
+    closeSaleDraftPanel(true);
+    renderSaleDraftManager();
+    updateSaleDraftStatus(
+      pendingCount > 1
+        ? `${pendingCount} ventas pendientes siguen guardadas. Puedes facturar normalmente.`
+        : "La venta pendiente sigue guardada. Puedes facturar normalmente.",
+      "saved",
+    );
+    queueMicrotask(() => {
+      if ($inpCode?.length && $inpCode.is(":visible")) $inpCode.trigger("focus");
+      else if ($inpNombre?.length) $inpNombre.trigger("focus");
+    });
+  }
+
+  function applySaleDraftPaymentState(raw){
+    const payment = sanitizeSaleDraftPayment(raw);
+    if (!payment) return false;
+    const available = [];
+    for (const entry of payment.methods) {
+      const $check = $modal.find(`.pm-check[value='${entry.code}']`).not("#mix-mode").first();
+      if (!$check.length || $check.prop("disabled")) continue;
+      $check.prop("checked", true);
+      available.push({ ...entry, $check });
+    }
+    if (!available.length) return false;
+
+    const mixed = payment.mixed && available.length > 1;
+    $("#mix-mode").prop("checked", mixed);
+    if (!mixed && available.length > 1) {
+      available.slice(1).forEach(({ $check }) => $check.prop("checked", false));
+    }
+    if (mixed) {
+      for (const entry of available) {
+        const $row = entry.$check.closest(".mix-row, .pm-row, .payment-row, .form-check");
+        const $amount = $row.find(`.pm-amt[data-medio='${entry.code}'], .pm-amt`).first();
+        if ($amount.length && entry.amount) $amount.val(entry.amount);
+      }
+    }
+    // Una asociación concreta de Nequi puede quedar obsoleta o ser consumida;
+    // por eso siempre se exige escogerla de nuevo.
+    $hidNequiNotification.val("");
+    return true;
+  }
+
+  async function mapSaleDraftWithConcurrency(items, worker, concurrency = 6){
+    const results = new Array(items.length);
+    let nextIndex = 0;
+    const runners = Array.from(
+      { length: Math.min(Math.max(1, concurrency), Math.max(1, items.length)) },
+      async () => {
+        while (nextIndex < items.length) {
+          const index = nextIndex;
+          nextIndex += 1;
+          results[index] = await worker(items[index], index);
+        }
+      },
+    );
+    await Promise.all(runners);
+    return results;
+  }
+
+  function verifyRestoredSaleDraftItem(item){
+    return asNativePromise($.post(VERIFICAR_URL, {
+      producto_id: item.producto_id,
+      cantidad: item.cantidad,
+      sucursal_id: sucursalID,
+      _ts: Date.now(),
+    })).then((response) => ({ item, response }));
+  }
+
+  async function revalidateRestoredSaleDraft(draft){
+    const items = (Array.isArray(draft?.items) ? draft.items : captureSaleDraftItems())
+      .map(sanitizeSaleDraftItem)
+      .filter(Boolean);
+    if (!items.length) {
+      saleDraftInvalidProductIds.clear();
+      setSaleDraftValidation();
+      return true;
+    }
+
+    saleDraftInvalidProductIds.clear();
+    setSaleDraftValidation({ pending: true });
+    updateSaleDraftStatus("Venta recuperada. Validando existencias, cantidades, precios y cliente actuales…");
+
+    try {
+      const productResults = await mapSaleDraftWithConcurrency(
+        items,
+        verifyRestoredSaleDraftItem,
+        6,
+      );
+      const restoredClient = draft?.client
+        ? await fetchSaleDraftClientById(draft.client.id)
+        : null;
+
+      const invalidItems = [];
+      const validItems = [];
+      for (const result of productResults) {
+        const item = result.item;
+        const response = result.response || {};
+        const price = Number(response.precio_unitario);
+        const available = Number(response.cantidad_disponible);
+        const insufficient = item.cantidad > 0 && (
+          !Number.isFinite(available) || available < item.cantidad
+        );
+        if (!response.exists || insufficient || !Number.isFinite(price) || price < 0) {
+          invalidItems.push(item);
+        } else {
+          validItems.push({ item, response, price });
+        }
+      }
+
+      saleDraftRestoring = true;
+      try {
+        for (const { item, response, price } of validItems) {
+          const pid = String(item.producto_id);
+          const $row = $tbody.find(`tr[data-pid='${pid}']`).first();
+          if (!$row.length) continue;
+          updateCache(pid, response);
+          const liveName = sanitizeDraftText(response.nombre || item.nombre || `Producto ${pid}`);
+          $row.find(".cart-product-name").first().text(liveName);
+          setRowPriceUI($row, price);
+          $row.find(".subtotal-cell").text(money(price * item.cantidad));
+          $row.data("counted", true);
+        }
+        for (const item of invalidItems) {
+          saleDraftInvalidProductIds.add(String(item.producto_id));
+          removeRowByPid(item.producto_id);
+        }
+
+        if (draft?.client) {
+          if (restoredClient) applySelectedClientItem(restoredClient);
+          else clearSelectedClient();
+        }
+        enforceTotalIntegrity();
+        syncHiddenFieldsNow();
+      } finally {
+        saleDraftRestoring = false;
+      }
+
+      const removedCount = invalidItems.length;
+      saleDraftInvalidProductIds.clear();
+      setSaleDraftValidation();
+      persistSaleDraftNow();
+      if (removedCount) {
+        updateSaleDraftStatus(
+          `Venta recuperada y actualizada. Se quitaron ${removedCount} producto(s) inexistentes o sin cantidad suficiente.`,
+          "error",
+        );
+      } else if (draft?.client && !restoredClient) {
+        updateSaleDraftStatus("Venta recuperada. El cliente guardado ya no existe y se quitó de la venta.", "error");
+      } else {
+        updateSaleDraftStatus("Venta recuperada y validada con la información actual.", "saved");
+      }
+      return true;
+    } catch (_) {
+      const message = "No se pudo validar la venta recuperada. Revisa la conexión y pulsa Revalidar antes de cobrar.";
+      setSaleDraftValidation({ error: message });
+      updateSaleDraftStatus(message, "error");
+      return false;
+    }
+  }
+
+  function restorePendingSaleDraft(draftOverride = null){
+    const draft = draftOverride || pendingSaleDraft;
+    if (!draft) return;
+    const sourceKey = String(draft.storage_key || "");
+    if (
+      draft.status === "submission_pending"
+      && !confirm("Esta venta pudo haberse registrado aunque la pestaña se cerrara. Revisa primero Visualizar ventas. ¿Ya verificaste y deseas recuperarla?")
+    ) return;
+    if (productos.length) {
+      if (!confirm("La venta que tienes abierta también quedará guardada como pendiente. ¿Cambiar a la venta seleccionada?")) return;
+      if (!persistSaleDraftNow()) {
+        alert("No se pudo guardar la venta actual. No se cambiará de carrito para evitar perderla.");
+        return;
+      }
+    }
+
+    const keyDraftID = saleDraftIDFromStorageKey(sourceKey);
+    const payloadDraftID = String(draft.draft_id || "");
+    saleDraftActiveID = keyDraftID
+      || (/^[a-zA-Z0-9_-]{1,100}$/.test(payloadDraftID) ? payloadDraftID : createSaleDraftID());
+
+    saleDraftRestoring = true;
+    saleDraftAllowTakeoverOnce = true;
+    saleDraftOwnershipLost = false;
+    if (saleDraftSaveTimer) clearTimeout(saleDraftSaveTimer);
+    saleDraftSaveTimer = null;
+    try {
+      clearCartAndTotals();
+      saleDraftPaymentState = sanitizeSaleDraftPayment(draft.payment);
+      saleDraftSubmissionPending = false;
+      selectedClientLabel = "";
+      selectedEmployeeClient = {
+        isEmployee: false,
+        employeeName: "",
+        documento: "",
+        employeeHasUser: false,
+        employeeIsWebMaster: false,
+        isMerk2888: false,
+      };
+      $("#cliente_id").val("");
+      $inpCliente.val("");
+
+      for (const item of draft.items) {
+        updateCache(item.producto_id, {
+          nombre: item.nombre,
+          barcode: item.codigo_barras,
+          precio_unitario: item.precio,
+        });
+        insertOrUpdateRowInstant(
+          item.producto_id,
+          item.cantidad,
+          `Producto ${item.producto_id}`,
+          item.precio,
+        );
+        const $row = $tbody.find(`tr[data-pid='${item.producto_id}']`).first();
+        $row.find(".cart-product-name").first().text(item.nombre || `Producto ${item.producto_id}`);
+        rememberCartAuditRow($row);
+      }
+
+      if (draft.client) {
+        selectedClientLabel = draft.client.name;
+        selectedEmployeeClient = {
+          isEmployee: false,
+          employeeName: "",
+          documento: "",
+          employeeHasUser: false,
+          employeeIsWebMaster: false,
+          isMerk2888: false,
+        };
+        $("#cliente_id").val(draft.client.id);
+        $inpCliente.val(draft.client.name);
+      }
+
+      // Las credenciales siempre quedan vacías y deben autorizarse otra vez.
+      $("#employee-password-input").val("");
+      $hidEmpleadoPassword.val("");
+      $("#merk2888-password-input").val("");
+      $hidMerk2888Password.val("");
+      $hidNequiNotification.val("");
+      refreshEmployeeDiscountUI();
+      enforceTotalIntegrity();
+      syncHiddenFieldsNow();
+      lastAddedPid = draft.items.length
+        ? String(draft.items[draft.items.length - 1].producto_id)
+        : null;
+      closeSaleDraftPanel();
+    } finally {
+      saleDraftRestoring = false;
+    }
+
+    const restoredKey = saleDraftStorageKey();
+    const saved = persistSaleDraftNow();
+    if (saved && sourceKey && sourceKey !== restoredKey) removeSaleDraftByKey(sourceKey);
+    saleDraftManagerSignature = "";
+    offerSaleDraftForCurrentScope();
+    void revalidateRestoredSaleDraft(draft);
+  }
+
+  function discardPendingSaleDraft(draftOverride = null){
+    const draft = draftOverride || pendingSaleDraft;
+    if (!draft) return;
+    if (!confirm("¿Descartar este borrador local? Esto no elimina ninguna venta ya registrada.")) return;
+    const discardedKey = draft.storage_key || saleDraftScopeStorageKey();
+    removeSaleDraftByKey(discardedKey);
+    pendingSaleDraft = null;
+    saleDraftManagerSignature = "";
+    updateSaleDraftStatus("Venta pendiente descartada. Tu venta actual no cambió.");
+    offerSaleDraftForCurrentScope();
+  }
 
   const PROMO_BAG_21 = "7318";
   const PROMO_BAG_8001 = "8001";
@@ -330,6 +1252,7 @@ $(function () {
       $modalTotal.text(money(saleTotalForPayment()));
     }
     syncHiddenFields();
+    scheduleSaleDraftSave();
   }
   function addToTotal(delta) {
     setTotal((Number(runningTotal) || 0) + (Number(delta) || 0));
@@ -686,6 +1609,10 @@ $(function () {
     $("#merk2888-password-input").val("");
     $hidNequiNotification.val("");
     resetNequiPaymentState({ clearCache: false });
+    $modal.find(".pm-check").prop("checked", false);
+    $modal.find(".pm-amt").val("").prop("disabled", true);
+    $("#mix-mode").prop("checked", false);
+    saleDraftPaymentState = null;
 
     $("#monto-recibido").val("");
     $("#cambio").text("");
@@ -717,6 +1644,7 @@ $(function () {
     $("#merk2888-password-input").val("");
     $hidMerk2888Password.val("");
     refreshEmployeeDiscountUI();
+    saleDraftSubmissionPending = false;
 
     // producto inputs + pid
     $inpNombre.val("");
@@ -741,6 +1669,7 @@ $(function () {
 
     // foco rápido para siguiente venta (prioridad: barras)
     queueMicrotask(() => {
+      offerSaleDraftForCurrentScope();
       if ($inpCode && $inpCode.length && $inpCode.is(":visible")) {
         $inpCode.focus(); $inpCode[0]?.select?.();
       } else if ($inpNombre && $inpNombre.length) {
@@ -750,10 +1679,11 @@ $(function () {
   }
 
   window.addEventListener("pageshow", (e) => {
-    if (e.persisted) clearCartAndTotals();
-    else {
-      if ($tbody.find("tr").length === 0) setTotal(0);
-      else enforceTotalIntegritySoft();
+    if ($tbody.find("tr").length === 0) setTotal(0);
+    else enforceTotalIntegritySoft();
+    if (e.persisted) {
+      persistSaleDraftNow();
+      offerSaleDraftForCurrentScope();
     }
   });
 
@@ -763,16 +1693,23 @@ $(function () {
     catalogPollTimer = null;
   }
   window.addEventListener("beforeunload", () => {
+    let cached = false;
     try {
-      if (productos.length) {
+      cached = persistSaleDraftNow();
+      // Conserva el registro anterior como respaldo únicamente si el navegador
+      // no permitió guardar el borrador local.
+      if (productos.length && !cached) {
         sendCartClearAudit(buildCartClearAuditPayload(), {
           beacon: true,
           keepalive: true,
         });
       }
     } catch (_) {}
-    try { clearCartAndTotals(); } catch (_){ }
     try { stopCatalogPolling(); } catch (_){ }
+  });
+
+  window.addEventListener("pagehide", () => {
+    try { persistSaleDraftNow(); } catch (_) {}
   });
 
   /* ================== Helpers: focus qty row ================== */
@@ -1318,8 +2255,8 @@ $(function () {
       `<tr data-pid="${pid}" data-price="${hasPrice ? cachedPrice : 0}" data-qty="${qty}" class="${pendingCls}">
          <td class="cart-product-cell">
            <div class="cart-product-info">
-             <span class="cart-product-name">${onlyName(name)}</span>
-             <small class="cart-product-id">ID ${pid}</small>
+             <span class="cart-product-name">${escapeHTML(onlyName(name))}</span>
+             <small class="cart-product-id">ID ${escapeHTML(pid)}</small>
            </div>
          </td>
          <td><input type="number" class="qty-input" step="1" inputmode="numeric" value="${qty}" /></td>
@@ -1335,6 +2272,7 @@ $(function () {
   }
 
   function removeRowByPid(pid){
+    if (!guardSaleDraftEditing() || (saleSubmitting && !saleDraftRestoring)) return false;
     const key = String(pid);
     const $r = $tbody.find(`tr[data-pid='${key}']`);
     if (!$r.length) return false;
@@ -1354,6 +2292,7 @@ $(function () {
   }
 
   function insertOrUpdateRowInstant(pid, qty, name, cachedPrice) {
+    if (!guardSaleDraftEditing() || saleSubmitting) return false;
     const key = String(pid);
     const idx = productos.indexOf(key);
     const hasPrice = Number.isFinite(cachedPrice) && cachedPrice > 0;
@@ -1405,6 +2344,7 @@ $(function () {
       enforceTotalIntegritySoft();
       rememberCartAuditRow($(row));
     }
+    return true;
   }
 
   /* ================== Agregado con “burst last-only” ================== */
@@ -2802,20 +3742,31 @@ $(function () {
       })();
     },
     onSelect: async ({ id, label }) => {
+      if (!guardSaleDraftEditing() || saleSubmitting) return;
+      if (productos.length) {
+        alert("Vacía o finaliza el carrito antes de cambiar de sucursal.");
+        return;
+      }
+      try { persistSaleDraftNow(); } catch (_) {}
       stopCatalogPolling();
 
       sucursalID = String(id).match(/\d+/)?.[0] || "";
       $("#sucursal_id").val(sucursalID);
       $("#sucursal_autocomplete").val(label);
-      localStorage.setItem("sucursalID", sucursalID);
-      localStorage.setItem("sucursalName", label);
+      try {
+        localStorage.setItem("sucursalID", sucursalID);
+        localStorage.setItem("sucursalName", label);
+      } catch (_) {}
 
-      const ppSuc = localStorage.getItem("puntopagoSucursalID");
+      let ppSuc = "";
+      try { ppSuc = localStorage.getItem("puntopagoSucursalID") || ""; } catch (_) {}
       if (ppSuc && ppSuc !== String(sucursalID)) {
         $("#puntopago_autocomplete").val(""); $("#puntopago_id").val("");
-        localStorage.removeItem("puntopagoID");
-        localStorage.removeItem("puntopagoName");
-        localStorage.removeItem("puntopagoSucursalID");
+        try {
+          localStorage.removeItem("puntopagoID");
+          localStorage.removeItem("puntopagoName");
+          localStorage.removeItem("puntopagoSucursalID");
+        } catch (_) {}
       }
 
       if ($cantidad && $cantidad.length) $cantidad.prop("disabled", true);
@@ -2826,6 +3777,10 @@ $(function () {
       await ensureCatalog(sucursalID, { force:true });
       initCatalogSignature(sucursalID);
       startCatalogPolling(sucursalID, { intervalMs: 2500 });
+      queueMicrotask(() => {
+        if (productos.length) scheduleSaleDraftSave();
+        else offerSaleDraftForCurrentScope();
+      });
     }
   });
 
@@ -2853,11 +3808,35 @@ $(function () {
       })();
     },
     onSelect: ({ id, label }) => {
+      if (!guardSaleDraftEditing() || saleSubmitting) return;
+      const previousDraftKey = saleDraftLastStorageKey || saleDraftStorageKey();
+      if (productos.length && !persistSaleDraftNow()) return;
+      const destinationDraftKey = saleDraftStorageKeyForPoint(id);
+      if (
+        productos.length
+        && destinationDraftKey !== previousDraftKey
+        && hasStoredSaleDraft(destinationDraftKey)
+      ) {
+        alert("Ese punto de pago ya tiene otra venta pendiente. Recupérala o descártala antes de mover este carrito.");
+        return;
+      }
       $("#puntopago_autocomplete").val(label);
       $("#puntopago_id").val(id);
-      localStorage.setItem("puntopagoID", id);
-      localStorage.setItem("puntopagoName", label);
-      localStorage.setItem("puntopagoSucursalID", sucursalID || "");
+      try {
+        localStorage.setItem("puntopagoID", id);
+        localStorage.setItem("puntopagoName", label);
+        localStorage.setItem("puntopagoSucursalID", sucursalID || "");
+      } catch (_) {}
+      queueMicrotask(() => {
+        if (productos.length) {
+          const saved = persistSaleDraftNow();
+          const currentDraftKey = saleDraftStorageKey();
+          if (saved && previousDraftKey && previousDraftKey !== currentDraftKey) {
+            removeSaleDraftByKey(previousDraftKey);
+          }
+        }
+        else offerSaleDraftForCurrentScope();
+      });
     }
   });
 
@@ -2866,6 +3845,8 @@ $(function () {
   // restaura automáticamente desde localStorage porque el mismo navegador
   // puede ser usado después por otro cajero.
   $("#puntopago_autocomplete").on("input", () => {
+    if (saleSubmitting) return;
+    try { persistSaleDraftNow(); } catch (_) {}
     $("#puntopago_id").val("");
     try {
       localStorage.removeItem("puntopagoID");
@@ -2899,6 +3880,64 @@ $(function () {
       ),
       isMerk2888: !!(c.is_merk2888 || c.isMerk2888)
     };
+  }
+
+  function clearSelectedClient(){
+    selectedClientLabel = "";
+    selectedEmployeeClient = {
+      isEmployee: false,
+      employeeName: "",
+      documento: "",
+      employeeHasUser: false,
+      employeeIsWebMaster: false,
+      isMerk2888: false,
+    };
+    $("#cliente_id").val("");
+    $inpCliente.val("");
+    $("#employee-password-input").val("");
+    $hidEmpleadoPassword.val("");
+    $("#merk2888-password-input").val("");
+    $hidMerk2888Password.val("");
+    refreshEmployeeDiscountUI();
+  }
+
+  function applySelectedClientItem(item){
+    if (!item || !/^\d+$/.test(String(item.id || ""))) {
+      clearSelectedClient();
+      return false;
+    }
+    const label = item.label || item.value || item.name || "";
+    selectedClientLabel = label;
+    selectedEmployeeClient = {
+      isEmployee: !!item.isEmployee,
+      employeeName: item.employeeName || label,
+      documento: item.documento || "",
+      employeeHasUser: !!item.employeeHasUser,
+      employeeIsWebMaster: !!item.employeeIsWebMaster,
+      isMerk2888: !!item.isMerk2888,
+    };
+    $inpCliente.val(label);
+    $("#cliente_id").val(item.id);
+    $("#employee-password-input").val("");
+    $hidEmpleadoPassword.val("");
+    $("#merk2888-password-input").val("");
+    $hidMerk2888Password.val("");
+    refreshEmployeeDiscountUI();
+    return true;
+  }
+
+  async function fetchSaleDraftClientById(clientId){
+    const id = String(clientId || "").trim();
+    if (!/^\d+$/.test(id)) return null;
+    const response = await fetch(
+      CLIENTE_URL + "?" + new URLSearchParams({ cliente_id: id, limit: 1 }),
+      { credentials: "same-origin", cache: "no-store" },
+    );
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const data = await response.json();
+    const raw = (Array.isArray(data?.results) ? data.results : [])
+      .find((row) => String(row?.id || "") === id);
+    return raw ? mapClienteAc(raw) : null;
   }
 
   function setClienteCache(key, items) {
@@ -2998,28 +4037,17 @@ $(function () {
       })();
     },
     onSelect: (item) => {
-      const id = item.id;
-      const label = item.label || item.value || "";
-      selectedClientLabel = label;
-      selectedEmployeeClient = {
-        isEmployee: !!item.isEmployee,
-        employeeName: item.employeeName || label,
-        documento: item.documento || "",
-        employeeHasUser: !!item.employeeHasUser,
-        employeeIsWebMaster: !!item.employeeIsWebMaster,
-        isMerk2888: !!item.isMerk2888
-      };
-      $inpCliente.val(label);
-      $("#cliente_id").val(id);
-      $("#employee-password-input").val("");
-      $hidEmpleadoPassword.val("");
-      $("#merk2888-password-input").val("");
-      $hidMerk2888Password.val("");
-      refreshEmployeeDiscountUI();
+      if (!guardSaleDraftEditing() || saleSubmitting) return;
+      applySelectedClientItem(item);
+      scheduleSaleDraftSave();
     }
   });
 
   $inpCliente.on("input.employeeDiscount", function(){
+    if (saleSubmitting) {
+      this.value = selectedClientLabel;
+      return;
+    }
     if (String(this.value || "") !== selectedClientLabel) {
       selectedClientLabel = "";
       selectedEmployeeClient = {
@@ -3036,6 +4064,7 @@ $(function () {
       $("#merk2888-password-input").val("");
       $hidMerk2888Password.val("");
       refreshEmployeeDiscountUI();
+      scheduleSaleDraftSave();
     }
   });
 
@@ -3117,6 +4146,7 @@ $(function () {
   }
 
   function applyQtyInstant($row, newQty){
+    if (!guardSaleDraftEditing() || saleSubmitting) return false;
     const pid = String($row.data("pid") || "");
     if (!pid) return;
 
@@ -3150,6 +4180,7 @@ $(function () {
       scheduleVerifyRowPrice($row, 140);
     }
     rememberCartAuditRow($row);
+    return true;
   }
 
   function sanitizeRowQtyInput(el){
@@ -3273,6 +4304,7 @@ $(function () {
 
   // ✅ Vaciar carrito (limpia pagos también)
   $btnVaciar.on("click", function(){
+    if (!guardSaleDraftEditing() || saleSubmitting) return;
     if (!productos.length) return;
     if (!confirm("¿Vaciar todo el carrito?")) return;
 
@@ -3288,6 +4320,8 @@ $(function () {
 
     $hidMedioPago.val("");
     $hidPagos.val("");
+    saleDraftPaymentState = null;
+    clearSaleDraftForCurrentScope();
     resetCartAuditSession();
   });
 
@@ -3825,6 +4859,7 @@ $(function () {
     }
 
     applyModeRules();
+    rememberSaleDraftPaymentUi();
   });
 
   function buildPagosJSONOrError(){
@@ -3883,6 +4918,7 @@ $(function () {
   });
 
   document.addEventListener("visibilitychange", () => {
+    if (document.hidden) persistSaleDraftNow();
     if (!document.hidden && shouldAutoRefreshNequi()){
       loadNequiPayments(true, { silent: true });
       startNequiAutoRefresh();
@@ -3928,6 +4964,8 @@ $(function () {
   /* ================== ✅ MODAL INSTANT / o BYPASS si total <= 0 ================== */
   let confirmSubmitting = false;
   $("#generar-venta").off("click").on("click", () => {
+    if (!saleDraftReadyToCharge()) return;
+    if (saleSubmitting) return;
     if (!productos.length) { alert("Agregue productos."); return; }
     if (!hasSucursal() || !$("#puntopago_id").val()) { alert("Seleccione sucursal y punto de pago."); return; }
 
@@ -3951,6 +4989,8 @@ $(function () {
     refreshEmployeeDiscountUI();
 
     $("#modal-total").text(money(saleTotalForPayment()));
+
+    const rememberedPayment = sanitizeSaleDraftPayment(saleDraftPaymentState);
 
     $hidPagos.val("");
     $hidMedioPago.val("");
@@ -3977,7 +5017,9 @@ $(function () {
       specialMerk2888Mode ? "Autorizar beneficio" : "Pagos"
     );
 
-    if (!specialMerk2888Mode) {
+    const paymentWasRestored = !specialMerk2888Mode
+      && applySaleDraftPaymentState(rememberedPayment);
+    if (!specialMerk2888Mode && !paymentWasRestored) {
       $modal.find(".pm-check[value='efectivo']").prop("checked", true);
     }
 
@@ -4224,6 +5266,7 @@ $(function () {
     } else if (!mixto && this.checked && medio === "efectivo") {
       queueMicrotask(()=>{ if ($amountIn.is(":visible")) { $amountIn.focus(); $amountIn[0]?.select?.(); } });
     }
+    rememberSaleDraftPaymentUi();
   });
 
   $modal.on("input", ".pm-amt", function(){
@@ -4232,6 +5275,7 @@ $(function () {
     refreshPendingUI();
     renderNequiSelected();
     renderNequiPaymentList();
+    rememberSaleDraftPaymentUi();
   });
 
   $(document).on("click", ".mix-row", function (e) {
@@ -4647,8 +5691,12 @@ Total: ${money(total)}${changeMessage}${specialMessage}${nequiMessage}`;
 
   $("#venta-form").off("submit").on("submit", function (e) {
     e.preventDefault();
+    if (!saleDraftReadyToCharge()) return;
     if (saleSubmitting) return;
     saleSubmitting = true;
+    saleDraftSubmittedKey = saleDraftStorageKey();
+    saleDraftSubmissionPending = true;
+    persistSaleDraftNow();
 
     if (FAST_SUBMIT_VERIFY_PENDING_PRICES) {
       const $bad = $tbody.find("tr").filter((_, tr) => {
@@ -4690,6 +5738,8 @@ Total: ${money(total)}${changeMessage}${specialMessage}${nequiMessage}`;
       if (!r || !r.success) {
         saleSubmitting = false;
         confirmSubmitting = false;
+        saleDraftSubmissionPending = false;
+        persistSaleDraftNow();
         $hidMerk2888Password.val("");
         $("#merk2888-password-input").val("");
         if ($submitBtn.length) $submitBtn.prop("disabled", false);
@@ -4699,6 +5749,14 @@ Total: ${money(total)}${changeMessage}${specialMessage}${nequiMessage}`;
         }
         return;
       }
+
+      // La confirmación del servidor es la única señal que permite borrar el
+      // borrador. Se hace antes de imprimir/mostrar alertas para que cerrar la
+      // pestaña en ese intervalo nunca ofrezca repetir una venta ya registrada.
+      saleDraftSaleConfirmed = true;
+      saleDraftSubmissionPending = false;
+      clearSaleDraftForCurrentScope(saleDraftSubmittedKey);
+      saleDraftSubmittedKey = "";
 
       const pagos = readPagosFromHidden();
       const hasServerTotal = r.sale_total !== undefined
@@ -4789,6 +5847,7 @@ Cambio: ${money(cambio)}` : "";
       const finishSaleUi = () => {
         // ✅ SIN RECARGAR: limpiar TODO para la siguiente venta.
         resetAfterSaleFast();
+        saleDraftSaleConfirmed = false;
         saleSubmitting = false;
         confirmSubmitting = false;
         if ($submitBtn.length) $submitBtn.prop("disabled", false);
@@ -4817,13 +5876,21 @@ Cambio: ${money(cambio)}` : "";
     .catch(() => {
       saleSubmitting = false;
       confirmSubmitting = false;
+      // Un corte de red no permite saber si el servidor alcanzó a confirmar la
+      // venta. Se conserva con advertencia para evitar reenvíos duplicados.
+      saleDraftSubmissionPending = true;
+      persistSaleDraftNow();
+      updateSaleDraftStatus(
+        "Venta sin confirmación de red: revisa Visualizar ventas antes de reintentar.",
+        "error",
+      );
       $hidMerk2888Password.val("");
       $("#merk2888-password-input").val("");
       if ($submitBtn.length) $submitBtn.prop("disabled", false);
       alert(
         isMerk2888ClientSelected()
           ? "No se recibió la confirmación de la venta. Antes de reintentar, revisa Visualizar ventas: la clave pudo haberse consumido correctamente."
-          : "Error de red"
+          : "No se recibió la confirmación de la venta. Antes de reintentar, revisa Visualizar ventas para evitar registrarla dos veces."
       );
     });
   });
@@ -5617,5 +6684,71 @@ Cambio: ${money(cambio)}` : "";
   if ($cantidad && $cantidad.length) $cantidad.prop("disabled", true);
   if ($agregar && $agregar.length)  $agregar.prop("disabled", true);
   if ($tbody.find("tr").length === 0) setTotal(0);
+  $("#venta-draft-toggle").on("click", function(){
+    const $panel = $("#venta-draft-panel");
+    const willOpen = $panel.prop("hidden");
+    $panel.prop("hidden", !willOpen);
+    $(this).attr("aria-expanded", willOpen ? "true" : "false");
+    if (willOpen) queueMicrotask(() => $panel.find(".js-draft-restore").first().trigger("focus"));
+  });
+  $("#venta-draft-close").on("click", () => closeSaleDraftPanel(true));
+  $("#venta-draft-new").on("click", continueWithNewSale);
+  $("#venta-draft-list").on("click", ".js-draft-restore", function(){
+    const draft = findManagedSaleDraft($(this).attr("data-draft-key"));
+    if (!draft) {
+      offerSaleDraftForCurrentScope();
+      return;
+    }
+    pendingSaleDraft = draft;
+    restorePendingSaleDraft(draft);
+  });
+  $("#venta-draft-list").on("click", ".js-draft-discard", function(){
+    const draft = findManagedSaleDraft($(this).attr("data-draft-key"));
+    if (!draft) {
+      offerSaleDraftForCurrentScope();
+      return;
+    }
+    pendingSaleDraft = draft;
+    discardPendingSaleDraft(draft);
+  });
+  $(document).on("click.ventaDraftManager", (event) => {
+    if (!$(event.target).closest("#venta-draft-center").length) closeSaleDraftPanel();
+  });
+  $(document).on("keydown.ventaDraftManager", (event) => {
+    if (event.key === "Escape" && !$("#venta-draft-panel").prop("hidden")) {
+      event.preventDefault();
+      closeSaleDraftPanel(true);
+    }
+  });
+  $("#venta-draft-retry-validation").on("click", () => {
+    void revalidateRestoredSaleDraft({
+      items: captureSaleDraftItems(),
+      client: captureSaleDraftClient(),
+    });
+  });
+  saleDraftAutosaveReady = true;
+  cleanupExpiredSaleDrafts();
+  refreshSaleDraftGenerateButton();
+  offerSaleDraftForCurrentScope();
+  window.addEventListener("storage", (event) => {
+    if (!event || !isSaleDraftKeyForCurrentScope(event.key) || saleDraftRestoring) return;
+    if (!productos.length) {
+      offerSaleDraftForCurrentScope();
+      return;
+    }
+    if (event.key !== saleDraftStorageKey()) {
+      offerSaleDraftForCurrentScope();
+      return;
+    }
+    let incoming = null;
+    try { incoming = JSON.parse(event.newValue || "null"); } catch (_) {}
+    const incomingOwner = sanitizeDraftText(incoming?.owner_tab_id || "", 100);
+    if (!incoming || (incomingOwner && incomingOwner !== saleDraftTabID)) {
+      const message = "Otra pestaña modificó la venta pendiente de esta caja. Recarga esta página antes de cobrar para evitar sobrescribirla.";
+      saleDraftOwnershipLost = true;
+      setSaleDraftValidation({ error: message });
+      updateSaleDraftStatus(message, "error");
+    }
+  });
   if (!POS_AGENT_TOKEN) console.warn("[POS_AGENT] Token vacío: el agente podría rechazar (401).");
 });

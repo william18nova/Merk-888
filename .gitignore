@@ -28,6 +28,7 @@ local_settings.py
 media/
 staticfiles/
 collected_static/
+outputs/
 
 # Local inventory-photo agent output
 inventario_agent_debug/

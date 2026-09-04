@@ -1,7 +1,7 @@
 # mainApp/forms.py
 
 from django import forms
-from .models import Categoria, Cliente, Empleado, Usuario, Sucursal, HorarioCaja, PuntosPago, HorariosNegocio, Producto, Proveedor, Rol, Inventario, PreciosProveedor, PedidoProveedor, DetallePedidoProveedor, Permiso
+from .models import Categoria, Cliente, Empleado, Usuario, Sucursal, HorarioCaja, PuntosPago, HorariosNegocio, Producto, Proveedor, Rol, Inventario, PreciosProveedor, PedidoProveedor, DetallePedidoProveedor, Permiso, normalizar_nombre_concepto_egreso
 import re
 import unicodedata
 from django.core.exceptions import ValidationError
@@ -21,6 +21,49 @@ MEDIOS_PAGO = tuple(
     (method["code"], method["label"])
     for method in DEFAULT_PAYMENT_METHODS
 )
+
+
+class RegistrarEgresoForm(forms.Form):
+    concepto = forms.CharField(
+        max_length=160,
+        label="¿Qué se pagó?",
+        widget=forms.TextInput(attrs={
+            "autocomplete": "off",
+            "list": "conceptos-egreso-opciones",
+            "placeholder": "EJ. SERVICIO DE AGUA",
+            "autocapitalize": "characters",
+            "spellcheck": "false",
+        }),
+    )
+    monto = forms.DecimalField(
+        max_digits=14,
+        decimal_places=2,
+        min_value=Decimal("0.01"),
+        label="Valor pagado",
+        widget=forms.NumberInput(attrs={
+            "min": "0.01",
+            "step": "0.01",
+            "inputmode": "decimal",
+            "placeholder": "0",
+        }),
+    )
+    medio_pago = forms.ChoiceField(label="Medio de pago", choices=())
+
+    def __init__(self, *args, payment_methods=(), **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["medio_pago"].choices = [
+            (row["code"], row["label"])
+            for row in payment_methods
+            if row.get("active")
+        ]
+
+    def clean_concepto(self):
+        concepto = normalizar_nombre_concepto_egreso(
+            self.cleaned_data.get("concepto")
+        )
+        if not concepto:
+            raise forms.ValidationError("Escribe qué se pagó.")
+        return concepto
 
 
 # Nombres de rol que otorgan acceso administrativo. La normalización se
@@ -46,6 +89,19 @@ def _normalize_role_name(value):
 
 def _is_privileged_role_name(value):
     return _normalize_role_name(value) in _PRIVILEGED_ROLE_NAMES
+
+
+def _normalize_category_name(value):
+    """Compara categorías sin depender de mayúsculas, espacios o tildes."""
+
+    text = unicodedata.normalize("NFKD", str(value or "").strip())
+    text = "".join(
+        character for character in text if not unicodedata.combining(character)
+    )
+    return " ".join(text.split()).casefold()
+
+
+_UNCATEGORIZED_CATEGORY_KEY = _normalize_category_name("Sin categoría")
 
 
 def _assignable_roles_queryset(allow_privileged_roles=False):
@@ -226,7 +282,11 @@ class CategoriaForm(forms.ModelForm):
     # validación de duplicados (nombre UTF-8 sin distinción de mayúsculas)
     def clean_nombre(self):
         nombre = self.cleaned_data["nombre"].strip()
-        if Categoria.objects.filter(nombre__iexact=nombre).exists():
+        normalized = _normalize_category_name(nombre)
+        if any(
+            _normalize_category_name(existing) == normalized
+            for existing in Categoria.objects.values_list("nombre", flat=True)
+        ):
             raise forms.ValidationError("El nombre de la categoría ya está registrado.")
         return nombre
 
@@ -247,11 +307,27 @@ class EditarCategoriaForm(forms.ModelForm):
         }
 
     def clean_nombre(self):
-        nombre = self.cleaned_data["nombre"]
-        qs = Categoria.objects.filter(nombre__iexact=nombre)
+        nombre = self.cleaned_data["nombre"].strip()
+        normalized = _normalize_category_name(nombre)
+        original_name = ""
         if self.instance.pk:
-            qs = qs.exclude(pk=self.instance.pk)
-        if qs.exists():
+            original_name = (
+                Categoria.objects.filter(pk=self.instance.pk)
+                .values_list("nombre", flat=True)
+                .first()
+                or ""
+            )
+        if (
+            _normalize_category_name(original_name) == _UNCATEGORIZED_CATEGORY_KEY
+            and normalized != _UNCATEGORIZED_CATEGORY_KEY
+        ):
+            raise forms.ValidationError(
+                'La categoría "Sin categoría" es obligatoria y no se puede renombrar.'
+            )
+        existing_names = Categoria.objects.exclude(pk=self.instance.pk).values_list(
+            "nombre", flat=True
+        )
+        if any(_normalize_category_name(existing) == normalized for existing in existing_names):
             raise forms.ValidationError(
                 "El nombre de la categoría ya está registrado."
             )
@@ -877,6 +953,16 @@ class EditarHorarioCajaForm(forms.Form):
 
     
 class ProductoForm(forms.ModelForm):
+    categoria = forms.ModelChoiceField(
+        queryset=Categoria.objects.none(),
+        required=True,
+        label="Categoría",
+        widget=forms.HiddenInput(),
+        error_messages={
+            "required": "Debes seleccionar una categoría.",
+            "invalid_choice": "La categoría seleccionada no existe.",
+        },
+    )
     
     codigo_de_barras = forms.CharField(
         required=False,
@@ -999,6 +1085,7 @@ class ProductoForm(forms.ModelForm):
     def __init__(self, *args, **kw):
         super().__init__(*args, **kw)
         self._instance_pk = getattr(self.instance, "productoid", None)
+        self.fields["categoria"].queryset = Categoria.objects.order_by("nombre")
 
     def clean_nombre(self):
         nombre = self.cleaned_data["nombre"]

@@ -96,6 +96,8 @@
       active_customers: num(summary.active_customers),
       cash_total: money(summary.cash_total),
       non_cash_total: money(summary.non_cash_total),
+      expenses_total: money(summary.expenses_total),
+      remaining_total: money(summary.remaining_total),
       negative_stock_count: num(summary.negative_stock_count)
     };
 
@@ -261,6 +263,21 @@
 
   function renderTables(data) {
     const tables = data.tables || {};
+    renderRows("table-payment-balance", tables.payment_balance, [
+      { value: (r) => r.label },
+      { value: (r) => money(r.sales) },
+      { value: (r) => money(r.expenses) },
+      { value: (r) => money(r.remaining), className: (r) => Number(r.remaining) < 0 ? "is-negative" : "is-positive" }
+    ], "Sin movimientos por medios de pago en este rango.");
+
+    renderRows("table-expenses", tables.expenses, [
+      { value: (r) => r.fecha },
+      { value: (r) => r.concepto },
+      { value: (r) => r.medio },
+      { value: (r) => r.usuario },
+      { value: (r) => money(r.monto) }
+    ], "Sin pagos registrados en este rango.");
+
     renderRows("table-products", tables.top_products, [
       { value: (r) => r.producto },
       { value: (r) => num(r.cantidad) },

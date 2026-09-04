@@ -18,7 +18,7 @@ from .services.feature_flags import (
 WEB_MASTER_ROLE_NAMES = {"web_master", "webmaster"}
 ADMIN_ROLE_NAMES = {"admin", "administrador", "administradora", "supervisor"}
 PUBLIC_URL_NAMES = {"login", "logout", "visor_barcode", "visor_barcode_buscar", "visor_barcode_lookup", "macrodroid_nequi_webhook"}
-ALWAYS_ALLOWED_URL_NAMES = {"home"}
+ALWAYS_ALLOWED_URL_NAMES = {"home", "registrar_egreso"}
 WEB_MASTER_ONLY_URL_NAMES = {
     "ventas_no_realizadas",
     "claves_descuento_merk2888",
@@ -914,6 +914,7 @@ NAV_GROUPS = [
         "label": "Caja",
         "children": [
             {"label": "Turno de caja", "url_name": "turno_caja"},
+            {"label": "Registrar pago", "url_name": "registrar_egreso"},
             {"label": "Retiro base de caja", "url_name": "turno_caja_retiro_actual"},
             {"label": "Dashboard turnos", "url_name": "turnos_caja_dashboard"},
             {"label": "Admin turnos", "url_name": "turnos_caja_admin"},

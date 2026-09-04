@@ -209,6 +209,16 @@ body{
   box-shadow:0 0 18px rgba(255,91,107,.70);
 }
 
+.metric-card--expense::before{
+  background:var(--yellow);
+  box-shadow:0 0 18px rgba(255,209,102,.58);
+}
+
+.metric-card--balance::before{
+  background:var(--green);
+  box-shadow:0 0 18px rgba(50,213,131,.58);
+}
+
 .metric-card span,
 .chart-head span{
   color:#c8dcf5;
@@ -278,8 +288,22 @@ body{
   padding:18px;
 }
 
+.table-card--wide{
+  grid-column:1 / -1;
+}
+
+.metrics-expenses-table{
+  min-width:760px;
+}
+
 .table-card h2{
   margin-bottom:14px;
+}
+
+.table-card > p{
+  margin:-5px 0 14px;
+  color:#c8dcf5;
+  font-size:13px;
 }
 
 .table-wrap,
@@ -328,6 +352,10 @@ td:last-child{
 
 .is-negative{
   color:#ffd7db;
+}
+
+.is-positive{
+  color:#a7f3d0;
 }
 
 @media (max-width:1180px){

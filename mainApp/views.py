@@ -1,7 +1,7 @@
 from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib.auth.decorators import login_required
 from django.contrib import messages
-from .models import Usuario, Sucursal, Categoria, Producto, Inventario, Proveedor, PreciosProveedor, PuntosPago, Rol, Empleado, HorariosNegocio, HorarioCaja, Cliente, Venta, DetalleVenta, PedidoProveedor, DetallePedidoProveedor, CambioDevolucion, ReintegroVenta, Permiso, RolPermiso, UsuarioPermiso, PagoVenta, TurnoCaja, TurnoCajaMedio, NotificacionNequi, VentaCarritoAudit, ClienteEspecial, AutorizacionDescuentoEspecial, CambioConfiguracionFuncionalidad, ConfiguracionImpresion, MetodoPago
+from .models import Usuario, Sucursal, Categoria, Producto, Inventario, Proveedor, PreciosProveedor, PuntosPago, Rol, Empleado, HorariosNegocio, HorarioCaja, Cliente, Venta, DetalleVenta, PedidoProveedor, DetallePedidoProveedor, CambioDevolucion, ReintegroVenta, Permiso, RolPermiso, UsuarioPermiso, PagoVenta, TurnoCaja, TurnoCajaMedio, NotificacionNequi, VentaCarritoAudit, ClienteEspecial, AutorizacionDescuentoEspecial, CambioConfiguracionFuncionalidad, ConfiguracionImpresion, MetodoPago, ConceptoEgreso, Egreso, normalizar_nombre_concepto_egreso
 from django.db.models import Count, Sum, Exists, OuterRef, Q, F, ExpressionWrapper, DecimalField, Value, IntegerField, Case, When, CharField
 from django.http import JsonResponse, HttpResponseBadRequest, HttpResponseForbidden, HttpRequest, HttpResponse
 from django.contrib.auth import authenticate, login as auth_login
@@ -67,6 +67,7 @@ from .forms import (
     ReintegroMixtoFormSet,
     InventarioFotosForm,
     InventarioFotosConfirmarForm,
+    RegistrarEgresoForm,
 
 )
 from dal import autocomplete
@@ -756,14 +757,42 @@ class CategoriaListView(LoginRequiredMixin, ListView):
 
 @login_required
 def eliminar_categoria(request, categoria_id):
-    categoria = get_object_or_404(Categoria, categoriaid=categoria_id)
-    nombre_categoria = categoria.nombre
     if request.method == 'POST':
-        productos_asociados = Producto.objects.filter(categoria=categoria)
-        productos_asociados.update(categoria=None)
+        with transaction.atomic():
+            categoria = get_object_or_404(
+                Categoria.objects.select_for_update(),
+                categoriaid=categoria_id,
+            )
+            nombre_categoria = categoria.nombre
+            normalized_name = unicodedata.normalize("NFKD", nombre_categoria or "")
+            normalized_name = "".join(
+                character
+                for character in normalized_name
+                if not unicodedata.combining(character)
+            )
+            if " ".join(normalized_name.split()).casefold() == "sin categoria":
+                messages.error(
+                    request,
+                    'La categoría "Sin categoría" es obligatoria y no se puede eliminar.',
+                )
+                return redirect('visualizar_categorias')
+            productos_asociados = Producto.objects.filter(categoria=categoria)
+            if productos_asociados.exists():
+                messages.error(
+                    request,
+                    (
+                        f'No se puede eliminar la categoría "{nombre_categoria}" '
+                        "mientras tenga productos asociados. Reasigna primero "
+                        "esos productos a otra categoría."
+                    ),
+                )
+                return redirect('visualizar_categorias')
 
-        categoria.delete()
-        messages.success(request, f'La categoría "{nombre_categoria}" ha sido eliminada exitosamente.')
+            categoria.delete()
+            messages.success(
+                request,
+                f'La categoría "{nombre_categoria}" ha sido eliminada exitosamente.',
+            )
         return redirect('visualizar_categorias')
     return render(request, 'visualizar_categorias.html', {'categorias': Categoria.objects.all()})
 
@@ -6908,6 +6937,13 @@ class ClienteAutocompleteView(PaginatedAutocompleteMixin):
 
     def get(self, request, *args, **kwargs):
         term = request.GET.get("term", "").strip()
+        exact_cliente_id = None
+        if "cliente_id" in request.GET:
+            raw_cliente_id = str(request.GET.get("cliente_id") or "").strip()
+            if not raw_cliente_id.isdigit():
+                return JsonResponse({"results": [], "has_more": False})
+            exact_cliente_id = int(raw_cliente_id)
+
         try:
             page = max(int(request.GET.get("page", 1)), 1)
         except (TypeError, ValueError):
@@ -6916,7 +6952,10 @@ class ClienteAutocompleteView(PaginatedAutocompleteMixin):
             limit = max(1, min(int(request.GET.get("limit", self.per_page)), 30))
         except (TypeError, ValueError):
             limit = self.per_page
-        start, end = (page - 1) * limit, page * limit
+        if exact_cliente_id is None:
+            start, end = (page - 1) * limit, page * limit
+        else:
+            start, end = 0, 1
 
         qs = Cliente.objects.annotate(
             is_merk2888=Exists(
@@ -6927,7 +6966,9 @@ class ClienteAutocompleteView(PaginatedAutocompleteMixin):
                 )
             )
         )
-        if term:
+        if exact_cliente_id is not None:
+            qs = qs.filter(pk=exact_cliente_id)
+        elif term:
             qs = qs.filter(
                 Q(nombre__icontains=term)  |
                 Q(apellido__icontains=term)|
@@ -10225,6 +10266,146 @@ class NequiNotificationWebhookView(View):
 
 
 
+class RegistrarEgresoView(LoginRequiredMixin, View):
+    """Registra pagos independientes de los turnos y cajas operativas."""
+
+    template_name = "registrar_egreso.html"
+
+    def _page_context(self, request, *, form=None):
+        metodos = payment_method_options(active_only=True)
+        ledger_ready = _egreso_ledger_ready()
+        if form is None:
+            form = RegistrarEgresoForm(
+                payment_methods=metodos,
+            )
+
+        history = (
+            list(
+                Egreso.objects
+                .select_related("concepto", "registrado_por")[:30]
+            )
+            if ledger_ready
+            else []
+        )
+        method_labels = payment_method_label_map(
+            include_codes=[item.medio_pago for item in history],
+        )
+        for item in history:
+            item.medio_pago_label = payment_method_label(
+                item.medio_pago,
+                labels=method_labels,
+            )
+        today_total = Decimal("0.00")
+        if ledger_ready:
+            today_total = (
+                Egreso.objects
+                .filter(creado_en__date=timezone.localdate())
+                .aggregate(total=Sum("monto"))["total"]
+                or Decimal("0.00")
+            )
+        return {
+            "form": form,
+            "conceptos": (
+                ConceptoEgreso.objects.order_by("nombre")
+                if ledger_ready
+                else ConceptoEgreso.objects.none()
+            ),
+            "payment_method_labels": {
+                row["code"]: row["label"] for row in metodos
+            },
+            "migration_ready": ledger_ready,
+            "history": history,
+            "today_total": today_total,
+        }
+
+    def get(self, request, *args, **kwargs):
+        return render(request, self.template_name, self._page_context(request))
+
+    def post(self, request, *args, **kwargs):
+        metodos = payment_method_options(active_only=True)
+        form = RegistrarEgresoForm(
+            request.POST,
+            payment_methods=metodos,
+        )
+        if not form.is_valid():
+            return render(
+                request,
+                self.template_name,
+                self._page_context(request, form=form),
+                status=400,
+            )
+        if not _egreso_ledger_ready():
+            form.add_error(
+                None,
+                "Debes aplicar la migración 0034 antes de registrar pagos.",
+            )
+            return render(
+                request,
+                self.template_name,
+                self._page_context(request, form=form),
+                status=503,
+            )
+
+        concepto_nombre = form.cleaned_data["concepto"]
+        monto = form.cleaned_data["monto"].quantize(Decimal("0.01"))
+        metodo = normalize_payment_method_code(form.cleaned_data["medio_pago"])
+
+        try:
+            with transaction.atomic():
+                if payment_method_table_ready():
+                    metodo_activo = (
+                        MetodoPago.objects
+                        .select_for_update()
+                        .filter(pk=metodo, activo=True)
+                        .exists()
+                    )
+                else:
+                    metodo_activo = metodo in {
+                        row["code"]
+                        for row in DEFAULT_PAYMENT_METHODS
+                        if row["active"]
+                    }
+                if not metodo_activo:
+                    form.add_error(
+                        "medio_pago",
+                        "Ese medio de pago fue desactivado. Selecciona otro.",
+                    )
+                    raise ValueError("invalid_form")
+
+                concepto, _created = ConceptoEgreso.objects.get_or_create(
+                    nombre=normalizar_nombre_concepto_egreso(concepto_nombre),
+                    defaults={"creado_por": request.user},
+                )
+                egreso = Egreso.objects.create(
+                    concepto=concepto,
+                    monto=monto,
+                    medio_pago=metodo,
+                    registrado_por=request.user,
+                    registrado_por_nombre=(
+                        getattr(request.user, "nombreusuario", "")
+                        or str(request.user)
+                    )[:160],
+                )
+        except ValueError as exc:
+            if str(exc) != "invalid_form":
+                raise
+            return render(
+                request,
+                self.template_name,
+                self._page_context(request, form=form),
+                status=400,
+            )
+
+        messages.success(
+            request,
+            (
+                f"Pago #{egreso.pk} registrado: {concepto.nombre} por "
+                f"${monto:,.2f}."
+            ),
+        )
+        return redirect("registrar_egreso")
+
+
 class MetricasNegocioView(LoginRequiredMixin, View):
     template_name = "metricas_negocio.html"
 
@@ -10406,6 +10587,12 @@ class MetricasNegocioDataView(LoginRequiredMixin, View):
         if puntopago_id:
             cambios_qs = cambios_qs.filter(Q(venta__puntopagoid_id=puntopago_id) | Q(venta__isnull=True))
 
+        egresos_qs = (
+            Egreso.objects.filter(creado_en__date__range=(start, end))
+            if _egreso_ledger_ready()
+            else Egreso.objects.none()
+        )
+
         line_total = _sale_line_revenue_expr()
 
         daily_map = {
@@ -10505,50 +10692,114 @@ class MetricasNegocioDataView(LoginRequiredMixin, View):
             if month_day_occurrences.get(day, 0) > 0
         ]
 
-        payment_rows = list(
-            PagoVenta.objects.filter(ventaid__in=ventas_ids)
-            .values("medio_pago")
-            .annotate(total=Sum("monto"), cantidad=Count("id"))
-            .order_by("-total")
-        )
-        metric_payment_labels = payment_method_label_map(
-            include_codes=[row["medio_pago"] for row in payment_rows],
-        )
-        payments = [
-            {
-                "label": payment_method_label(
-                    row["medio_pago"],
-                    labels=metric_payment_labels,
-                ),
-                "total": self._dec(row["total"]),
-                "cantidad": self._int(row["cantidad"]),
-            }
-            for row in payment_rows
-        ]
-        if not payments:
-            fallback_payment_rows = list(
-                ventas_qs.values("mediopago")
+        def sales_by_payment_method(sales_queryset):
+            sale_ids = sales_queryset.values("ventaid")
+            payment_rows = list(
+                PagoVenta.objects.filter(ventaid__in=sale_ids)
+                .values("medio_pago")
+                .annotate(total=Sum("monto"), cantidad=Count("id"))
+                .order_by("-total")
+            )
+            legacy_sales = sales_queryset.annotate(
+                has_payment_rows=Exists(
+                    PagoVenta.objects.filter(ventaid_id=OuterRef("pk"))
+                )
+            ).filter(has_payment_rows=False)
+            fallback_rows = list(
+                legacy_sales.values("mediopago")
                 .annotate(total=Sum("total"), cantidad=Count("ventaid"))
                 .order_by("-total")
             )
-            fallback_labels = payment_method_label_map(
-                include_codes=[row["mediopago"] for row in fallback_payment_rows],
+
+            totals = {}
+            counts = {}
+            for row in payment_rows:
+                code = normalize_payment_method_code(row["medio_pago"])
+                totals[code] = (
+                    totals.get(code, Decimal("0.00"))
+                    + (row["total"] or Decimal("0.00"))
+                )
+                counts[code] = counts.get(code, 0) + int(row["cantidad"] or 0)
+            for row in fallback_rows:
+                code = normalize_payment_method_code(row["mediopago"])
+                totals[code] = (
+                    totals.get(code, Decimal("0.00"))
+                    + (row["total"] or Decimal("0.00"))
+                )
+                counts[code] = counts.get(code, 0) + int(row["cantidad"] or 0)
+            return totals, counts
+
+        sales_by_method, sales_count_by_method = sales_by_payment_method(
+            ventas_qs
+        )
+        global_sales_qs = self._sales_qs(start, end)
+        balance_sales_by_method, _balance_sales_counts = (
+            sales_by_payment_method(global_sales_qs)
+        )
+
+        expense_by_method = {
+            normalize_payment_method_code(row["medio_pago"]): row["total"] or Decimal("0.00")
+            for row in egresos_qs.values("medio_pago")
+            .annotate(total=Sum("monto"))
+        }
+        movement_codes = (
+            set(sales_by_method)
+            | set(balance_sales_by_method)
+            | set(expense_by_method)
+        )
+        metric_payment_labels = payment_method_label_map(
+            include_codes=movement_codes,
+        )
+        ordered_codes = [
+            row["code"]
+            for row in payment_method_options(
+                active_only=False,
+                include_codes=movement_codes,
             )
-            payments = [
-                {
-                    "label": (
-                        "Mixto"
-                        if (row["mediopago"] or "").strip().lower() == "mixto"
-                        else payment_method_label(
-                            row["mediopago"],
-                            labels=fallback_labels,
-                        )
-                    ),
-                    "total": self._dec(row["total"]),
-                    "cantidad": self._int(row["cantidad"]),
-                }
-                for row in fallback_payment_rows
-            ]
+            if row["code"] in movement_codes
+        ]
+        ordered_codes.extend(sorted(movement_codes - set(ordered_codes)))
+
+        def metric_method_label(code):
+            if code == "mixto":
+                return "Mixto"
+            return payment_method_label(code, labels=metric_payment_labels)
+
+        payments = [
+            {
+                "code": code,
+                "label": metric_method_label(code),
+                "total": self._dec(sales_by_method.get(code)),
+                "cantidad": self._int(sales_count_by_method.get(code)),
+            }
+            for code in ordered_codes
+            if sales_by_method.get(code, Decimal("0.00")) != 0
+        ]
+        payment_balance = []
+        for code in ordered_codes:
+            ingresos = balance_sales_by_method.get(code, Decimal("0.00"))
+            pagado = expense_by_method.get(code, Decimal("0.00"))
+            payment_balance.append({
+                "code": code,
+                "label": metric_method_label(code),
+                "sales": self._dec(ingresos),
+                "expenses": self._dec(pagado),
+                "remaining": self._dec(ingresos - pagado),
+            })
+
+        expense_detail = []
+        for expense in egresos_qs.select_related(
+            "concepto",
+        ).order_by("-creado_en", "-egresoid")[:50]:
+            expense_detail.append({
+                "fecha": timezone.localtime(expense.creado_en).strftime("%d/%m/%Y %H:%M"),
+                "concepto": expense.concepto.nombre,
+                "medio": metric_method_label(
+                    normalize_payment_method_code(expense.medio_pago)
+                ),
+                "usuario": expense.registrado_por_nombre,
+                "monto": self._dec(expense.monto),
+            })
 
         top_products = [
             {
@@ -10606,6 +10857,17 @@ class MetricasNegocioDataView(LoginRequiredMixin, View):
             for row in cambios_qs.values("tipo", "estado").annotate(cantidad=Count("cambioid")).order_by("tipo", "estado")
         ]
 
+        collected_total = sum(
+            balance_sales_by_method.values(),
+            Decimal("0.00"),
+        )
+        balance_sales_total = (
+            global_sales_qs.aggregate(total=Sum("total"))["total"]
+            or Decimal("0.00")
+        )
+        expenses_total = sum(expense_by_method.values(), Decimal("0.00"))
+        remaining_total = balance_sales_total - expenses_total
+
         summary = {
             **{key: self._dec(value) if isinstance(value, Decimal) else value for key, value in summary_raw.items()},
             "inventory_value": self._dec(inventory_raw["inventory_value"]),
@@ -10614,6 +10876,10 @@ class MetricasNegocioDataView(LoginRequiredMixin, View):
             "orders_total": self._dec(pedidos_agg["total"]),
             "orders_count": pedidos_agg["cantidad"] or 0,
             "returns_count": cambios_qs.count(),
+            "collected_total": self._dec(collected_total),
+            "balance_sales_total": self._dec(balance_sales_total),
+            "expenses_total": self._dec(expenses_total),
+            "remaining_total": self._dec(remaining_total),
         }
 
         return JsonResponse({
@@ -10648,6 +10914,8 @@ class MetricasNegocioDataView(LoginRequiredMixin, View):
                 "by_month_day": by_month_day,
                 "orders": pedidos_estado,
                 "returns": cambios_estado,
+                "payment_balance": payment_balance,
+                "expenses": expense_detail,
             },
         })
 
@@ -10965,6 +11233,15 @@ def _sum_reintegros_por_metodo(turno: TurnoCaja) -> dict[str, Decimal]:
     return out
 
 
+def _egreso_ledger_ready() -> bool:
+    """Evita afectar los cierres durante un despliegue previo a la migración."""
+
+    try:
+        return Egreso._meta.db_table in connection.introspection.table_names()
+    except Exception:
+        return False
+
+
 def _aplicar_reintegros_a_esperados(expected, reintegros):
     resultado = {
         _normalize_metodo(metodo): _to_decimal(total)
@@ -10994,7 +11271,12 @@ def _turno_identity_payload(turno):
         },
     }
 
-def _medios_payload(turno, auto_confirmados=None, manuales_sin_api=None, reintegros=None):
+def _medios_payload(
+    turno,
+    auto_confirmados=None,
+    manuales_sin_api=None,
+    reintegros=None,
+):
     auto_confirmados = auto_confirmados or {}
     manuales_sin_api = manuales_sin_api or {}
     reintegros = _sum_reintegros_por_metodo(turno) if reintegros is None else reintegros
@@ -11385,7 +11667,6 @@ def _expected_por_metodo(turno: TurnoCaja) -> tuple[dict[str, Decimal], Decimal,
         expected,
         _sum_reintegros_por_metodo(turno),
     )
-
     normalized_expected = {}
     for raw_method, amount in expected.items():
         method = _normalize_metodo(raw_method)
@@ -13228,17 +13509,112 @@ class GestionInventarioMasivaView(LoginRequiredMixin, View):
         if not isinstance(payload, list):
             return JsonResponse({"success": False, "error": "Payload debe ser lista."}, status=400)
 
+        # Valida el lote completo antes de modificar la primera fila. Devolver
+        # un JSON 400 dentro de ``atomic`` no provoca rollback por sí solo, por
+        # eso precios, IVA, productos y categorías se comprueban aquí primero.
+        parsed_rows = []
+        product_ids = []
+        seen_product_ids = set()
+        for row in payload:
+            if not isinstance(row, dict):
+                return JsonResponse(
+                    {"success": False, "error": "Cada fila debe ser un objeto."},
+                    status=400,
+                )
+            product_id = self._to_int_or_none(row.get("productId"))
+            if not product_id:
+                return JsonResponse(
+                    {"success": False, "error": "Cada fila debe indicar un producto válido."},
+                    status=400,
+                )
+            if product_id in seen_product_ids:
+                return JsonResponse(
+                    {
+                        "success": False,
+                        "error": f"El producto #{product_id} está repetido en el lote.",
+                    },
+                    status=400,
+                )
+            seen_product_ids.add(product_id)
+            product_ids.append(product_id)
+            pdata = row.get("producto") or {}
+            if not isinstance(pdata, dict):
+                return JsonResponse(
+                    {"success": False, "error": "Los datos del producto son inválidos."},
+                    status=400,
+                )
+            if "precio" in pdata and self._to_decimal_or_none(pdata.get("precio")) is None:
+                return JsonResponse(
+                    {"success": False, "error": f"Precio inválido en producto #{product_id}."},
+                    status=400,
+                )
+            if "iva" in pdata and self._to_float_or_none(pdata.get("iva")) is None:
+                return JsonResponse(
+                    {"success": False, "error": f"IVA inválido en producto #{product_id}."},
+                    status=400,
+                )
+            parsed_rows.append((row, product_id, pdata))
+
+        products_by_id = Producto.objects.select_for_update().in_bulk(product_ids)
+        missing_product_ids = sorted(set(product_ids) - set(products_by_id))
+        if missing_product_ids:
+            return JsonResponse(
+                {
+                    "success": False,
+                    "error": (
+                        "Los siguientes productos no existen: "
+                        + ", ".join(map(str, missing_product_ids))
+                        + "."
+                    ),
+                },
+                status=400,
+            )
+
+        requested_category_ids = set()
+        for _row, product_id, pdata in parsed_rows:
+            category_id = (
+                self._to_int_or_none(pdata.get("categoria_id"))
+                if "categoria_id" in pdata
+                else products_by_id[product_id].categoria_id
+            )
+            if category_id is None:
+                return JsonResponse(
+                    {
+                        "success": False,
+                        "error": (
+                            f"El producto #{product_id} debe tener una categoría válida."
+                        ),
+                    },
+                    status=400,
+                )
+            requested_category_ids.add(category_id)
+
+        existing_category_ids = set(
+            Categoria.objects.filter(pk__in=requested_category_ids).values_list(
+                "pk", flat=True
+            )
+        )
+        missing_category_ids = sorted(
+            requested_category_ids - existing_category_ids
+        )
+        if missing_category_ids:
+            return JsonResponse(
+                {
+                    "success": False,
+                    "error": (
+                        "Las siguientes categorías no existen: "
+                        + ", ".join(map(str, missing_category_ids))
+                        + "."
+                    ),
+                },
+                status=400,
+            )
+
         updated = 0
 
-        for row in payload:
-            pid = self._to_int_or_none(row.get("productId"))
-            if not pid:
-                continue
-
+        for row, pid, pdata in parsed_rows:
             ingresado_int = self._to_int_default(row.get("ingresado"), default=0)  # puede ser negativo/0
-            pdata = row.get("producto") or {}
-
-            producto = get_object_or_404(Producto, pk=pid)
+            producto = products_by_id[pid]
 
             # --------- Producto: map completo según tu SQL ----------
             # nombre (required)
@@ -13255,7 +13631,7 @@ class GestionInventarioMasivaView(LoginRequiredMixin, View):
             if hasattr(producto, "codigo_de_barras") and "codigo_de_barras" in pdata:
                 producto.codigo_de_barras = (pdata.get("codigo_de_barras") or "").strip() or None
 
-            # categoria_id (nullable int)
+            # categoria_id (obligatoria cuando viene en el lote)
             if hasattr(producto, "categoria_id") and "categoria_id" in pdata:
                 producto.categoria_id = self._to_int_or_none(pdata.get("categoria_id"))
 
@@ -13299,6 +13675,7 @@ class GestionInventarioMasivaView(LoginRequiredMixin, View):
             try:
                 producto.save()
             except IntegrityError as e:
+                transaction.set_rollback(True)
                 return JsonResponse({
                     "success": False,
                     "error": f"Error guardando producto #{pid}: {str(e)}"
@@ -13348,6 +13725,17 @@ class GestionInventarioMasivaView(LoginRequiredMixin, View):
         precio_anterior = self._to_decimal_or_none(request.POST.get("precio_anterior"))
 
         cantidad_inicial = self._to_int_default(request.POST.get("cantidad_inicial"), default=0)
+
+        if categoria_id is None:
+            return JsonResponse(
+                {"success": False, "error": "La categoría es obligatoria."},
+                status=400,
+            )
+        if not Categoria.objects.filter(pk=categoria_id).exists():
+            return JsonResponse(
+                {"success": False, "error": "La categoría seleccionada no existe."},
+                status=400,
+            )
 
         producto = Producto()
         # Asignaciones (según tu SQL)

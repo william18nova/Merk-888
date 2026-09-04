@@ -8,6 +8,14 @@ from django.forms import ValidationError
 from django.utils import timezone
 from django.db.models import F
 from django.db.models.functions import Lower, Trim
+import unicodedata
+
+
+def normalizar_nombre_concepto_egreso(value):
+    """Conserva tildes, compacta espacios y almacena el concepto en mayúscula."""
+
+    text = unicodedata.normalize("NFKC", str(value or ""))
+    return " ".join(text.split()).upper()
 
 class Sucursal(models.Model):
     sucursalid = models.AutoField(primary_key=True)
@@ -37,7 +45,7 @@ class Producto(models.Model):
     nombre = models.CharField(max_length=100, unique=True, db_index=True)
     descripcion = models.TextField(null=True, blank=True)
     precio = models.DecimalField(max_digits=10, decimal_places=2)
-    categoria = models.ForeignKey(Categoria, on_delete=models.CASCADE, null=True, blank=True)
+    categoria = models.ForeignKey(Categoria, on_delete=models.PROTECT)
     codigo_de_barras = models.CharField(max_length=100, null=True, blank=True, db_index=True)
     iva = models.FloatField(default=0.0)
 
@@ -839,6 +847,76 @@ class MetodoPago(models.Model):
     def __str__(self):
         estado = "activo" if self.activo else "inactivo"
         return f"{self.nombre} ({self.codigo}) · {estado}"
+
+
+class ConceptoEgreso(models.Model):
+    """Catálogo reutilizable de aquello que se paga desde el negocio."""
+
+    conceptoid = models.BigAutoField(primary_key=True, db_column="conceptoid")
+    nombre = models.CharField(max_length=160, unique=True)
+    creado_por = models.ForeignKey(
+        Usuario,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        db_column="creado_por_id",
+        related_name="conceptos_egreso_creados",
+    )
+    creado_en = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "conceptos_egreso"
+        ordering = ["nombre"]
+        constraints = [
+            models.CheckConstraint(
+                condition=~Q(nombre=""),
+                name="concepto_egreso_nombre_no_vacio",
+            ),
+        ]
+
+    def save(self, *args, **kwargs):
+        self.nombre = normalizar_nombre_concepto_egreso(self.nombre)
+        return super().save(*args, **kwargs)
+
+    def __str__(self):
+        return self.nombre
+
+
+class Egreso(models.Model):
+    """Salida de dinero auditada por concepto, medio, fecha y usuario."""
+
+    egresoid = models.BigAutoField(primary_key=True, db_column="egresoid")
+    concepto = models.ForeignKey(
+        ConceptoEgreso,
+        on_delete=models.PROTECT,
+        db_column="conceptoid",
+        related_name="egresos",
+    )
+    monto = models.DecimalField(max_digits=14, decimal_places=2)
+    medio_pago = models.CharField(max_length=50, db_column="medio_pago", db_index=True)
+    registrado_por = models.ForeignKey(
+        Usuario,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        db_column="registrado_por_id",
+        related_name="egresos_registrados",
+    )
+    registrado_por_nombre = models.CharField(max_length=160)
+    creado_en = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        db_table = "egresos"
+        ordering = ["-creado_en", "-egresoid"]
+        constraints = [
+            models.CheckConstraint(
+                condition=Q(monto__gt=0),
+                name="egreso_monto_positivo",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.concepto} - {self.medio_pago} - {self.monto}"
 
 
 class CambioConfiguracionFuncionalidad(models.Model):

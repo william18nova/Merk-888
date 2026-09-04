@@ -5,7 +5,7 @@
 
 {% block extra_head %}
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"/>
-  <link rel="stylesheet" href="{% static 'css/metricas_negocio.css' %}">
+  <link rel="stylesheet" href="{% static 'css/metricas_negocio.css' %}?v=2">
 {% endblock %}
 
 {% block content %}
@@ -93,6 +93,16 @@
       <strong data-metric="non_cash_total">$ 0</strong>
       <small>Pagos no efectivos</small>
     </article>
+    <article class="metric-card metric-card--expense">
+      <span>Total pagado</span>
+      <strong data-metric="expenses_total">$ 0</strong>
+      <small>Egresos registrados en el período</small>
+    </article>
+    <article class="metric-card metric-card--balance">
+      <span>Dinero restante</span>
+      <strong data-metric="remaining_total">$ 0</strong>
+      <small>Balance global del intervalo: ventas − pagos</small>
+    </article>
     <article class="metric-card metric-card--alert">
       <span>Stock negativo</span>
       <strong data-metric="negative_stock_count">0</strong>
@@ -153,6 +163,25 @@
   </section>
 
   <section class="tables-layout">
+    <article class="table-card table-card--wide">
+      <h2>Balance por medio de pago</h2>
+      <p>Este balance es global por fecha porque los pagos no están vinculados a una sucursal, punto de pago o turno.</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Medio</th><th>Ingresó por ventas</th><th>Pagado</th><th>Dinero restante</th></tr></thead>
+          <tbody id="table-payment-balance"></tbody>
+        </table>
+      </div>
+    </article>
+    <article class="table-card table-card--wide">
+      <h2>Pagos registrados</h2>
+      <div class="table-wrap">
+        <table class="metrics-expenses-table">
+          <thead><tr><th>Fecha</th><th>Concepto</th><th>Medio</th><th>Usuario</th><th>Valor</th></tr></thead>
+          <tbody id="table-expenses"></tbody>
+        </table>
+      </div>
+    </article>
     <article class="table-card">
       <h2>Top productos</h2>
       <div class="table-wrap">
@@ -200,5 +229,5 @@
   window.metricasNegocioDataUrl = "{% url 'metricas_negocio_data' %}";
 </script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-<script defer src="{% static 'javascript/metricas_negocio.js' %}?v=6"></script>
+<script defer src="{% static 'javascript/metricas_negocio.js' %}?v=7"></script>
 {% endblock %}

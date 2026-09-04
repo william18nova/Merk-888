@@ -273,6 +273,7 @@ urlpatterns = [
      path("ventas/diarias/stats/", views.VentasDiariasStatsView.as_view(), name="ventas_diarias_stats"),
      path("reportes/metricas/", views.MetricasNegocioView.as_view(), name="metricas_negocio"),
      path("reportes/metricas/data/", views.MetricasNegocioDataView.as_view(), name="metricas_negocio_data"),
+     path("caja/registrar-pago/", views.RegistrarEgresoView.as_view(), name="registrar_egreso"),
      path("nequi/notificaciones/", views.NequiNotificacionesView.as_view(), name="nequi_notificaciones"),
      path("nequi/notificaciones/data/", views.NequiNotificacionesDataView.as_view(), name="nequi_notificaciones_data"),
      path("nequi/notificaciones/<int:notificacion_id>/eliminar/", views.NequiNotificacionEliminarView.as_view(), name="nequi_notificacion_eliminar"),

@@ -6,8 +6,8 @@
 
 {% block extra_head %}
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"/>
-  <link rel="stylesheet" href="https://code.jquery.com/ui/1.13.2/themes/base/jquery-ui.css"/>
-  <link rel="stylesheet" href="{% static 'css/generar_venta.css' %}?v=20">
+  <link rel="stylesheet" href="{% static 'vendor/jquery-ui/jquery-ui-1.13.2.min.css' %}?v=1"/>
+  <link rel="stylesheet" href="{% static 'css/generar_venta.css' %}?v=24">
   <link rel="stylesheet" href="{% static 'css/modal_venta.css' %}?v=19">
 {% endblock %}
 
@@ -187,6 +187,7 @@
           type="button"
           class="btn btn-primary"
           id="generar-venta"
+          data-server-enabled="{% if venta_habilitada %}1{% else %}0{% endif %}"
           {% if not venta_habilitada %}disabled aria-disabled="true"{% endif %}
         >
           <i class="fa-solid fa-receipt"></i> Generar Venta
@@ -224,6 +225,17 @@
     </div>
 
     <div class="right-footer">
+      <small id="venta-draft-save-status" class="hint venta-draft-save-status" aria-live="polite">
+        El carrito se guarda automáticamente durante 24 horas en este equipo.
+      </small>
+      <button
+        type="button"
+        id="venta-draft-retry-validation"
+        class="venta-draft-retry-validation"
+        hidden
+      >
+        <i class="fa-solid fa-rotate" aria-hidden="true"></i> Revalidar venta recuperada
+      </button>
       <small class="hint">
         Enter en el modal confirma pago • Alt+Espacio abre/confirmar • Alt+7 cámara
       </small>
@@ -232,11 +244,42 @@
 
 </div>
 
+<aside id="venta-draft-center" class="venta-draft-center" aria-label="Gestor de ventas pendientes" hidden>
+  <button
+    type="button"
+    id="venta-draft-toggle"
+    class="venta-draft-toggle"
+    aria-expanded="false"
+    aria-controls="venta-draft-panel"
+  >
+    <i class="fa-solid fa-clock-rotate-left" aria-hidden="true"></i>
+    <span>Ventas pendientes</span>
+    <span id="venta-draft-count" class="venta-draft-count">0</span>
+  </button>
+
+  <section id="venta-draft-panel" class="venta-draft-panel" aria-label="Ventas pendientes" hidden>
+    <header class="venta-draft-panel-header">
+      <div>
+        <strong>Ventas pendientes</strong>
+        <small>Guardadas durante 24 horas en este equipo</small>
+      </div>
+      <button type="button" id="venta-draft-close" class="venta-draft-close" aria-label="Cerrar ventas pendientes">
+        <i class="fa-solid fa-xmark" aria-hidden="true"></i>
+      </button>
+    </header>
+    <div id="venta-draft-list" class="venta-draft-list" role="list"></div>
+    <button type="button" id="venta-draft-new" class="venta-draft-continue">
+      <i class="fa-solid fa-cart-plus" aria-hidden="true"></i> Seguir facturando
+    </button>
+  </section>
+</aside>
+<span id="venta-draft-live" class="venta-draft-live" role="status" aria-live="polite"></span>
+
 {% include "modal_venta.html" %}
 
 <!-- libs -->
-<script src="https://code.jquery.com/jquery-3.6.4.min.js"></script>
-<script src="https://code.jquery.com/ui/1.13.2/jquery-ui.min.js"></script>
+<script src="{% static 'vendor/jquery/jquery-3.6.4.min.js' %}?v=1"></script>
+<script src="{% static 'vendor/jquery-ui/jquery-ui-1.13.2.min.js' %}?v=1"></script>
 
 <!-- endpoints -->
 <script>
@@ -263,6 +306,8 @@
   window.ventaPuntoPagoIdServidor        = "{{ form.initial.puntopago|default:''|escapejs }}";
   window.ventaSucursalNombreServidor     = "{{ sucursal_nombre|default:''|escapejs }}";
   window.ventaPuntoPagoNombreServidor    = "{{ puntopago_nombre|default:''|escapejs }}";
+  window.ventaUsuarioId                  = "{{ request.user.pk|default:''|escapejs }}";
+  window.ventaTurnoId                    = "{{ turno_id|default:'sin_turno'|escapejs }}";
 </script>
 
 <!-- POS Agent -->
@@ -272,5 +317,5 @@
   if (!/^https?:\/\//.test(window.POS_AGENT_URL)) window.POS_AGENT_URL = "http://127.0.0.1:8787";
 </script>
 
-<script src="{% static 'javascript/generar_venta.js' %}?v=32"></script>
+<script src="{% static 'javascript/generar_venta.js' %}?v=38"></script>
 {% endblock %}
