@@ -2,6 +2,12 @@ from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib.auth.decorators import login_required
 from django.contrib import messages
 from .models import Usuario, Sucursal, Categoria, Producto, Inventario, Proveedor, PreciosProveedor, PuntosPago, Rol, Empleado, HorariosNegocio, HorarioCaja, Cliente, Venta, DetalleVenta, PedidoProveedor, DetallePedidoProveedor, CambioDevolucion, ReintegroVenta, Permiso, RolPermiso, UsuarioPermiso, PagoVenta, TurnoCaja, TurnoCajaMedio, NotificacionNequi, VentaCarritoAudit, ClienteEspecial, AutorizacionDescuentoEspecial, CambioConfiguracionFuncionalidad, ConfiguracionImpresion, MetodoPago, ConceptoEgreso, Egreso, normalizar_nombre_concepto_egreso
+from .models import (
+    TelegramAccionPendiente,
+    TelegramActualizacion,
+    TelegramAuditoria,
+    TelegramUsuario,
+)
 from django.db.models import Count, Sum, Exists, OuterRef, Q, F, ExpressionWrapper, DecimalField, Value, IntegerField, Case, When, CharField
 from django.http import JsonResponse, HttpResponseBadRequest, HttpResponseForbidden, HttpRequest, HttpResponse
 from django.contrib.auth import authenticate, login as auth_login
@@ -120,6 +126,7 @@ from .services.special_discount import (
 )
 from .services.feature_flags import (
     NEQUI_API_FEATURE,
+    TELEGRAM_BOT_FEATURE,
     TURN_REQUIRED_FEATURE,
     FeatureFlagError,
     feature_rows,
@@ -153,6 +160,17 @@ from .services.payment_methods import (
     payment_method_options,
     payment_method_table_ready,
     validate_new_payment_method_code,
+)
+from .services.operational_expenses import (
+    OperationalExpenseError,
+    register_operational_expense,
+)
+from .services.telegram_bot import (
+    TelegramApiClient,
+    TelegramBotError,
+    generate_link_code,
+    integration_status as telegram_integration_status,
+    normalize_webhook_update,
 )
 
 def _round_account_peso(value) -> Decimal:
@@ -10266,6 +10284,195 @@ class NequiNotificationWebhookView(View):
 
 
 
+def _telegram_tables_ready():
+    required = {
+        "telegram_actualizaciones",
+        "telegram_usuarios",
+        "telegram_codigos_vinculacion",
+        "telegram_acciones_pendientes",
+        "telegram_auditoria",
+    }
+    try:
+        return required.issubset(set(connection.introspection.table_names()))
+    except DatabaseError:
+        return False
+
+
+@method_decorator(csrf_exempt, name="dispatch")
+class TelegramWebhookView(View):
+    """Entrada pública mínima: valida el secreto y encola sin llamar a la IA."""
+
+    http_method_names = ["post", "options"]
+
+    def post(self, request, *args, **kwargs):
+        if not is_feature_enabled(TELEGRAM_BOT_FEATURE, fresh=True):
+            return JsonResponse({"ok": True, "ignored": "feature_disabled"})
+
+        expected = str(getattr(settings, "TELEGRAM_WEBHOOK_SECRET", "") or "")
+        received = str(request.headers.get("X-Telegram-Bot-Api-Secret-Token") or "")
+        if not expected:
+            return JsonResponse(
+                {"ok": False, "error": "webhook_not_configured"},
+                status=503,
+            )
+        if not hmac.compare_digest(received, expected):
+            return JsonResponse({"ok": False, "error": "forbidden"}, status=403)
+
+        try:
+            content_length = int(request.META.get("CONTENT_LENGTH") or 0)
+        except (TypeError, ValueError):
+            content_length = 0
+        if content_length > 262144:
+            return JsonResponse({"ok": False, "error": "payload_too_large"}, status=413)
+        try:
+            payload = json.loads(request.body.decode("utf-8"))
+            normalized = normalize_webhook_update(payload)
+        except (UnicodeDecodeError, json.JSONDecodeError, TelegramBotError) as exc:
+            return JsonResponse({"ok": False, "error": str(exc)}, status=400)
+        if not _telegram_tables_ready():
+            return JsonResponse(
+                {"ok": False, "error": "migration_0036_required"},
+                status=503,
+            )
+        try:
+            _update, created = TelegramActualizacion.objects.get_or_create(
+                update_id=normalized.pop("update_id"),
+                defaults=normalized,
+            )
+        except DatabaseError:
+            logger.exception("No se pudo encolar una actualización de Telegram")
+            return JsonResponse({"ok": False, "error": "queue_unavailable"}, status=503)
+        return JsonResponse({"ok": True, "created": created}, status=202 if created else 200)
+
+
+@method_decorator(never_cache, name="dispatch")
+@method_decorator(sensitive_post_parameters("password_web_master"), name="dispatch")
+class ConfiguracionTelegramBotView(LoginRequiredMixin, View):
+    template_name = "configuracion_telegram_bot.html"
+
+    def dispatch(self, request, *args, **kwargs):
+        if (
+            getattr(request.user, "is_authenticated", False)
+            and not is_web_master_role(request.user)
+        ):
+            return HttpResponseForbidden(
+                "Solo el rol Web Master puede administrar el bot de Telegram."
+            )
+        return super().dispatch(request, *args, **kwargs)
+
+    @staticmethod
+    def _no_store(response):
+        response["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        response["Pragma"] = "no-cache"
+        return response
+
+    def _context(self, *, error="", generated_code="", generated_for=None, expires=None):
+        ready = _telegram_tables_ready()
+        profiles = []
+        recent_updates = []
+        recent_audit = []
+        pending_count = 0
+        error_count = 0
+        if ready:
+            profiles = list(
+                TelegramUsuario.objects
+                .select_related("usuario", "usuario__rolid")
+                .order_by("usuario__nombreusuario")
+            )
+            recent_updates = list(TelegramActualizacion.objects.order_by("-recibido_en")[:20])
+            recent_audit = list(
+                TelegramAuditoria.objects
+                .select_related("usuario")
+                .order_by("-creado_en")[:20]
+            )
+            pending_count = TelegramActualizacion.objects.filter(estado="PENDIENTE").count()
+            error_count = TelegramActualizacion.objects.filter(estado="ERROR").count()
+        webhook_url = str(getattr(settings, "TELEGRAM_WEBHOOK_URL", "") or "").strip()
+        if not webhook_url:
+            webhook_url = self.request.build_absolute_uri(reverse("telegram_webhook"))
+            if not settings.DEBUG and webhook_url.startswith("http://"):
+                webhook_url = "https://" + webhook_url[len("http://"):]
+        return {
+            "integration": telegram_integration_status(),
+            "migration_ready": ready,
+            "users": Usuario.objects.filter(is_active=True).order_by("nombreusuario"),
+            "profiles": profiles,
+            "recent_updates": recent_updates,
+            "recent_audit": recent_audit,
+            "pending_count": pending_count,
+            "error_count": error_count,
+            "webhook_url": webhook_url,
+            "generated_code": generated_code,
+            "generated_for": generated_for,
+            "generated_expires": expires,
+            "error": error or ("Debes aplicar la migración 0036." if not ready else ""),
+        }
+
+    def _render(self, request, *, status=200, **kwargs):
+        response = render(request, self.template_name, self._context(**kwargs), status=status)
+        return self._no_store(response)
+
+    def get(self, request, *args, **kwargs):
+        return self._render(request)
+
+    def post(self, request, *args, **kwargs):
+        if not _telegram_tables_ready():
+            return self._render(request, error="Debes aplicar la migración 0036.", status=503)
+        if not request.user.check_password(request.POST.get("password_web_master") or ""):
+            return self._render(
+                request,
+                error="La contraseña del Web Master no es correcta.",
+                status=400,
+            )
+        action = str(request.POST.get("action") or "").strip()
+        try:
+            if action == "generate_code":
+                raw_user_id = str(request.POST.get("user_id") or "").strip()
+                if not raw_user_id.isdigit():
+                    raise TelegramBotError("Selecciona un usuario válido.")
+                target = Usuario.objects.filter(pk=int(raw_user_id), is_active=True).first()
+                if target is None:
+                    raise TelegramBotError("El usuario no existe o está inactivo.")
+                code, expires = generate_link_code(user=target, created_by=request.user)
+                return self._render(
+                    request,
+                    generated_code=code,
+                    generated_for=target,
+                    expires=expires,
+                )
+            if action in {"deactivate", "reactivate"}:
+                raw_profile_id = str(request.POST.get("profile_id") or "").strip()
+                if not raw_profile_id.isdigit():
+                    raise TelegramBotError("El vínculo indicado no es válido.")
+                profile = TelegramUsuario.objects.filter(pk=int(raw_profile_id)).first()
+                if profile is None:
+                    raise TelegramBotError("El vínculo ya no existe.")
+                profile.activo = action == "reactivate"
+                profile.save(update_fields=["activo"])
+                messages.success(
+                    request,
+                    "Vínculo activado correctamente." if profile.activo else "Vínculo desactivado correctamente.",
+                )
+            elif action == "configure_webhook":
+                if not is_feature_enabled(TELEGRAM_BOT_FEATURE, fresh=True):
+                    raise TelegramBotError(
+                        "Primero activa el Bot inteligente de Telegram en Funcionalidades del sistema."
+                    )
+                webhook_url = self._context()["webhook_url"]
+                if not webhook_url.startswith("https://"):
+                    raise TelegramBotError("Telegram exige una URL pública HTTPS para el webhook.")
+                TelegramApiClient().configure_webhook(webhook_url)
+                messages.success(request, "Webhook y comandos de Telegram configurados correctamente.")
+            elif action == "remove_webhook":
+                TelegramApiClient().remove_webhook()
+                messages.success(request, "Webhook retirado de Telegram.")
+            else:
+                raise TelegramBotError("La acción solicitada no es válida.")
+        except TelegramBotError as exc:
+            return self._render(request, error=str(exc), status=400)
+        return self._no_store(redirect("configuracion_telegram_bot"))
+
+
 class RegistrarEgresoView(LoginRequiredMixin, View):
     """Registra pagos independientes de los turnos y cajas operativas."""
 
@@ -10351,44 +10558,14 @@ class RegistrarEgresoView(LoginRequiredMixin, View):
         metodo = normalize_payment_method_code(form.cleaned_data["medio_pago"])
 
         try:
-            with transaction.atomic():
-                if payment_method_table_ready():
-                    metodo_activo = (
-                        MetodoPago.objects
-                        .select_for_update()
-                        .filter(pk=metodo, activo=True)
-                        .exists()
-                    )
-                else:
-                    metodo_activo = metodo in {
-                        row["code"]
-                        for row in DEFAULT_PAYMENT_METHODS
-                        if row["active"]
-                    }
-                if not metodo_activo:
-                    form.add_error(
-                        "medio_pago",
-                        "Ese medio de pago fue desactivado. Selecciona otro.",
-                    )
-                    raise ValueError("invalid_form")
-
-                concepto, _created = ConceptoEgreso.objects.get_or_create(
-                    nombre=normalizar_nombre_concepto_egreso(concepto_nombre),
-                    defaults={"creado_por": request.user},
-                )
-                egreso = Egreso.objects.create(
-                    concepto=concepto,
-                    monto=monto,
-                    medio_pago=metodo,
-                    registrado_por=request.user,
-                    registrado_por_nombre=(
-                        getattr(request.user, "nombreusuario", "")
-                        or str(request.user)
-                    )[:160],
-                )
-        except ValueError as exc:
-            if str(exc) != "invalid_form":
-                raise
+            egreso = register_operational_expense(
+                user=request.user,
+                concept=concepto_nombre,
+                amount=monto,
+                payment_method=metodo,
+            )
+        except OperationalExpenseError as exc:
+            form.add_error("medio_pago", str(exc))
             return render(
                 request,
                 self.template_name,
@@ -10399,7 +10576,7 @@ class RegistrarEgresoView(LoginRequiredMixin, View):
         messages.success(
             request,
             (
-                f"Pago #{egreso.pk} registrado: {concepto.nombre} por "
+                f"Pago #{egreso.pk} registrado: {egreso.concepto.nombre} por "
                 f"${monto:,.2f}."
             ),
         )

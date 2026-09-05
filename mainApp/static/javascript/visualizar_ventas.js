@@ -4,9 +4,10 @@ $(function () {
 
   // ✅ solo visual: mapa de slugs -> etiqueta bonita
   const MP_LABELS = {
-    "banco_caja_social": "Banco Caja Social",
-    "Banco_Caja_Social": "Banco Caja Social",  // por si llega así
-    "BANCO_CAJA_SOCIAL": "Banco Caja Social",
+    "tarjeta": "Tarjeta / Banco Caja Social",
+    "banco_caja_social": "Tarjeta / Banco Caja Social",
+    "Banco_Caja_Social": "Tarjeta / Banco Caja Social",
+    "BANCO_CAJA_SOCIAL": "Tarjeta / Banco Caja Social",
   };
 
   function prettyMedioPago(v){

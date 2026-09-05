@@ -2,6 +2,7 @@ from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, Permis
 from django.db import models
 from decimal import Decimal
 from datetime import date
+from uuid import uuid4
 from django.db import models, transaction
 from django.db.models import Q
 from django.forms import ValidationError
@@ -917,6 +918,183 @@ class Egreso(models.Model):
 
     def __str__(self):
         return f"{self.concepto} - {self.medio_pago} - {self.monto}"
+
+
+class TelegramUsuario(models.Model):
+    """Identidad de Telegram vinculada a un usuario real del sistema."""
+
+    id = models.BigAutoField(primary_key=True)
+    usuario = models.OneToOneField(
+        Usuario,
+        on_delete=models.CASCADE,
+        related_name="telegram_perfil",
+    )
+    telegram_user_id = models.BigIntegerField(unique=True)
+    telegram_chat_id = models.BigIntegerField(unique=True)
+    telegram_username = models.CharField(max_length=80, blank=True, default="")
+    nombre_telegram = models.CharField(max_length=160, blank=True, default="")
+    activo = models.BooleanField(default=True, db_index=True)
+    vinculado_en = models.DateTimeField(auto_now_add=True)
+    ultimo_uso_en = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "telegram_usuarios"
+        ordering = ["usuario__nombreusuario"]
+
+    def __str__(self):
+        return f"{self.usuario} ↔ Telegram {self.telegram_user_id}"
+
+
+class TelegramCodigoVinculacion(models.Model):
+    """Código de un solo uso para enlazar Telegram sin exponer contraseñas."""
+
+    id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
+    usuario = models.ForeignKey(
+        Usuario,
+        on_delete=models.CASCADE,
+        related_name="codigos_vinculacion_telegram",
+    )
+    codigo_hash = models.CharField(max_length=64, unique=True)
+    vence_en = models.DateTimeField(db_index=True)
+    usado_en = models.DateTimeField(null=True, blank=True)
+    creado_en = models.DateTimeField(auto_now_add=True)
+    creado_por = models.ForeignKey(
+        Usuario,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="codigos_telegram_creados",
+    )
+
+    class Meta:
+        db_table = "telegram_codigos_vinculacion"
+        ordering = ["-creado_en"]
+
+    def __str__(self):
+        return f"Código Telegram para {self.usuario}"
+
+
+class TelegramActualizacion(models.Model):
+    """Bandeja idempotente de mensajes recibidos por el webhook."""
+
+    ESTADOS = (
+        ("PENDIENTE", "Pendiente"),
+        ("PROCESANDO", "Procesando"),
+        ("PROCESADO", "Procesado"),
+        ("IGNORADO", "Ignorado"),
+        ("ERROR", "Error"),
+    )
+    TIPOS = (
+        ("TEXTO", "Texto"),
+        ("VOZ", "Voz"),
+        ("CALLBACK", "Botón"),
+        ("OTRO", "Otro"),
+    )
+
+    update_id = models.BigIntegerField(primary_key=True)
+    telegram_user_id = models.BigIntegerField(null=True, blank=True, db_index=True)
+    telegram_chat_id = models.BigIntegerField(null=True, blank=True, db_index=True)
+    telegram_username = models.CharField(max_length=80, blank=True, default="")
+    nombre_telegram = models.CharField(max_length=160, blank=True, default="")
+    chat_type = models.CharField(max_length=20, blank=True, default="")
+    tipo = models.CharField(max_length=12, choices=TIPOS, default="OTRO")
+    texto = models.TextField(blank=True, default="")
+    voice_file_id = models.CharField(max_length=255, blank=True, default="")
+    voice_file_size = models.PositiveBigIntegerField(null=True, blank=True)
+    callback_query_id = models.CharField(max_length=160, blank=True, default="")
+    estado = models.CharField(
+        max_length=12,
+        choices=ESTADOS,
+        default="PENDIENTE",
+        db_index=True,
+    )
+    intentos = models.PositiveSmallIntegerField(default=0)
+    intencion = models.CharField(max_length=80, blank=True, default="")
+    transcripcion = models.TextField(blank=True, default="")
+    respuesta = models.TextField(blank=True, default="")
+    error = models.TextField(blank=True, default="")
+    recibido_en = models.DateTimeField(auto_now_add=True, db_index=True)
+    iniciado_en = models.DateTimeField(null=True, blank=True)
+    procesado_en = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "telegram_actualizaciones"
+        ordering = ["recibido_en", "update_id"]
+
+    def __str__(self):
+        return f"Telegram update {self.update_id}: {self.estado}"
+
+
+class TelegramAccionPendiente(models.Model):
+    """Acción propuesta por la IA que requiere confirmación humana."""
+
+    ESTADOS = (
+        ("PENDIENTE", "Pendiente"),
+        ("CONFIRMADA", "Confirmada"),
+        ("CANCELADA", "Cancelada"),
+        ("EXPIRADA", "Expirada"),
+        ("ERROR", "Error"),
+    )
+
+    id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
+    telegram_usuario = models.ForeignKey(
+        TelegramUsuario,
+        on_delete=models.CASCADE,
+        related_name="acciones_pendientes",
+    )
+    actualizacion = models.ForeignKey(
+        TelegramActualizacion,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="acciones_propuestas",
+    )
+    accion = models.CharField(max_length=80)
+    argumentos = models.JSONField(default=dict)
+    resumen = models.CharField(max_length=500)
+    estado = models.CharField(
+        max_length=12,
+        choices=ESTADOS,
+        default="PENDIENTE",
+        db_index=True,
+    )
+    vence_en = models.DateTimeField(db_index=True)
+    creado_en = models.DateTimeField(auto_now_add=True)
+    resuelto_en = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "telegram_acciones_pendientes"
+        ordering = ["-creado_en"]
+
+    def __str__(self):
+        return f"{self.accion}: {self.estado}"
+
+
+class TelegramAuditoria(models.Model):
+    """Registro durable de las herramientas consultadas o ejecutadas."""
+
+    id = models.BigAutoField(primary_key=True)
+    usuario = models.ForeignKey(
+        Usuario,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="auditoria_telegram",
+    )
+    telegram_user_id = models.BigIntegerField(null=True, blank=True)
+    telegram_chat_id = models.BigIntegerField(null=True, blank=True)
+    accion = models.CharField(max_length=80, db_index=True)
+    argumentos = models.JSONField(default=dict, blank=True)
+    exitoso = models.BooleanField(default=True, db_index=True)
+    detalle = models.TextField(blank=True, default="")
+    creado_en = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        db_table = "telegram_auditoria"
+        ordering = ["-creado_en", "-id"]
+
+    def __str__(self):
+        return f"{self.accion}: {'OK' if self.exitoso else 'ERROR'}"
 
 
 class CambioConfiguracionFuncionalidad(models.Model):

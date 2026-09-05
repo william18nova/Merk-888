@@ -1,6 +1,7 @@
 # settings.py – perfil simple para runserver local
 from pathlib import Path
 import os
+from decouple import Config, RepositoryEnv
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -200,3 +201,35 @@ PRICE_SYNC_STATEMENT_TIMEOUT_MS = os.getenv(
 )
 # Bloquea saltos extremos (por ejemplo, confundir precio por gramo y unidad).
 PRICE_SYNC_MAX_PRICE_FACTOR = os.getenv("PRICE_SYNC_MAX_PRICE_FACTOR", "5")
+
+# Bot inteligente de Telegram. Además del entorno del proceso, Django puede
+# leer el mismo archivo privado que usa la tarea Always-on. Así no hay que
+# copiar claves dentro de settings.py ni del archivo WSGI.
+TELEGRAM_ENV_FILE = os.getenv(
+    "TELEGRAM_ENV_FILE",
+    str(Path.home() / ".telegram_bot.env"),
+).strip()
+_telegram_private_config = (
+    Config(RepositoryEnv(TELEGRAM_ENV_FILE))
+    if TELEGRAM_ENV_FILE and Path(TELEGRAM_ENV_FILE).is_file()
+    else None
+)
+
+
+def _telegram_setting(name, default=""):
+    value = os.getenv(name)
+    if value is None and _telegram_private_config is not None:
+        value = _telegram_private_config(name, default=default)
+    return str(default if value is None else value).strip()
+
+
+TELEGRAM_BOT_TOKEN = _telegram_setting("TELEGRAM_BOT_TOKEN")
+TELEGRAM_WEBHOOK_SECRET = _telegram_setting("TELEGRAM_WEBHOOK_SECRET")
+TELEGRAM_WEBHOOK_URL = _telegram_setting("TELEGRAM_WEBHOOK_URL")
+GEMINI_API_KEY = _telegram_setting("GEMINI_API_KEY")
+GEMINI_MODEL = _telegram_setting("GEMINI_MODEL", "gemini-2.5-flash")
+GROQ_API_KEY = _telegram_setting("GROQ_API_KEY")
+GROQ_WHISPER_MODEL = _telegram_setting(
+    "GROQ_WHISPER_MODEL",
+    "whisper-large-v3-turbo",
+)

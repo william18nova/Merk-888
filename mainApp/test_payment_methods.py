@@ -144,6 +144,11 @@ class PaymentMethodCatalogServiceTests(SimpleTestCase):
         default_codes = {row["code"] for row in DEFAULT_PAYMENT_METHODS}
         by_code = {row["code"]: row for row in options}
         self.assertTrue(default_codes.issubset(by_code))
+        self.assertNotIn("banco_caja_social", by_code)
+        self.assertEqual(
+            by_code["tarjeta"]["label"],
+            "Tarjeta / Banco Caja Social",
+        )
         self.assertIn("bono_historico", by_code)
         self.assertFalse(by_code["bono_historico"]["active"])
 
@@ -168,8 +173,8 @@ class PaymentMethodCatalogServiceTests(SimpleTestCase):
             "DAVI PLATA": "daviplata",
             "cash": "efectivo",
             "TC": "tarjeta",
-            "Caja Social": "banco_caja_social",
-            "Banco-Caja/Social": "banco_caja_social",
+            "Caja Social": "tarjeta",
+            "Banco-Caja/Social": "tarjeta",
         }
 
         for raw, expected in cases.items():
@@ -207,6 +212,7 @@ class PaymentMethodCatalogServiceTests(SimpleTestCase):
             "credito",
             "davi plata",
             "bcs",
+            "banco caja social",
         ):
             with self.subTest(reserved=reserved):
                 with self.assertRaises(PaymentMethodCodeError):

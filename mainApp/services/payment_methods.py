@@ -48,22 +48,11 @@ DEFAULT_PAYMENT_METHODS = (
     },
     {
         "code": "tarjeta",
-        "label": "Tarjeta",
+        "label": "Tarjeta / Banco Caja Social",
         "active": True,
         "is_cash": False,
         "is_system": True,
         "order": 40,
-        "version": 1,
-        "updated_at": None,
-        "updated_by": "",
-    },
-    {
-        "code": "banco_caja_social",
-        "label": "Banco Caja Social",
-        "active": True,
-        "is_cash": False,
-        "is_system": True,
-        "order": 50,
         "version": 1,
         "updated_at": None,
         "updated_by": "",
@@ -81,8 +70,9 @@ _LEGACY_ALIASES = {
     "debito": "tarjeta",
     "tarjeta_credito": "tarjeta",
     "tarjeta_debito": "tarjeta",
-    "caja_social": "banco_caja_social",
-    "bcs": "banco_caja_social",
+    "banco_caja_social": "tarjeta",
+    "caja_social": "tarjeta",
+    "bcs": "tarjeta",
 }
 
 SYSTEM_PAYMENT_CODES = frozenset(
@@ -169,6 +159,12 @@ def payment_method_label_from_code(code) -> str:
     normalized = normalize_payment_method_code(code)
     if not normalized:
         return "Sin pago"
+    default_labels = {
+        row["code"]: row["label"]
+        for row in DEFAULT_PAYMENT_METHODS
+    }
+    if normalized in default_labels:
+        return default_labels[normalized]
     return normalized.replace("_", " ").title()
 
 

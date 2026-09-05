@@ -78,6 +78,16 @@ urlpatterns = [
         views.ConfiguracionMetodosPagoView.as_view(),
         name="configuracion_metodos_pago",
     ),
+    path(
+        "configuracion/telegram/",
+        views.ConfiguracionTelegramBotView.as_view(),
+        name="configuracion_telegram_bot",
+    ),
+    path(
+        "api/telegram/webhook/",
+        views.TelegramWebhookView.as_view(),
+        name="telegram_webhook",
+    ),
 
     path('agregar_sucursal/', SucursalCreateAJAXView.as_view(), name='agregar_sucursal'),
     path("visualizar_sucursales/", SucursalListView.as_view(), name="visualizar_sucursales"),

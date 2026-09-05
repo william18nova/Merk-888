@@ -8,6 +8,7 @@ from django.db import DatabaseError, transaction
 
 TURN_REQUIRED_FEATURE = "ventas_exigir_turno_caja"
 NEQUI_API_FEATURE = "nequi_api_recepcion"
+TELEGRAM_BOT_FEATURE = "telegram_bot_inteligente"
 FEATURE_CACHE_SECONDS = 3
 
 
@@ -54,6 +55,31 @@ FEATURE_REGISTRY = {
             "Se podrán seguir registrando ventas con Nequi como no vinculadas.",
         ],
         "default_enabled": True,
+        "critical": True,
+    },
+    TELEGRAM_BOT_FEATURE: {
+        "key": TELEGRAM_BOT_FEATURE,
+        "category": "Integraciones",
+        "label": "Bot inteligente de Telegram",
+        "description": (
+            "Permite consultar el sistema por texto o audio y preparar pagos "
+            "que siempre requieren confirmación explícita."
+        ),
+        "enabled_help": (
+            "El webhook recibe mensajes y el procesador atiende únicamente a "
+            "cuentas de Telegram vinculadas con usuarios activos."
+        ),
+        "disabled_help": (
+            "Telegram no incorporará mensajes nuevos. Los vínculos, la "
+            "auditoría y el historial se conservan."
+        ),
+        "impacts": [
+            "Los permisos de cada usuario también se aplican dentro del bot.",
+            "Los pagos necesitan un botón de confirmación de un solo uso.",
+            "Las conversaciones privadas son las únicas admitidas.",
+            "Las credenciales se mantienen fuera del código mediante variables de entorno.",
+        ],
+        "default_enabled": False,
         "critical": True,
     },
 }

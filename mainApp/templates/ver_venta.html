@@ -49,7 +49,7 @@
           <input
             readonly
             {% if not beneficio_merk2888 %}data-payment-method-code="{{ venta.mediopago|lower }}"{% endif %}
-            value="{% if beneficio_merk2888 %}Sin pago · beneficio 100%{% else %}{{ venta.mediopago|cut:'_'|title }}{% endif %}">
+            value="{% if beneficio_merk2888 %}Sin pago · beneficio 100%{% elif venta.mediopago == 'tarjeta' or venta.mediopago == 'banco_caja_social' %}Tarjeta / Banco Caja Social{% else %}{{ venta.mediopago|cut:'_'|title }}{% endif %}">
         {% else %}
         {% with mp=venta.mediopago|lower %}
         <select name="mediopago" id="id_mediopago">
@@ -64,8 +64,7 @@
           <option value="efectivo" {% if mp == "efectivo" %}selected{% endif %}>Efectivo</option>
           <option value="nequi" {% if mp == "nequi" %}selected{% endif %}>Nequi</option>
           <option value="daviplata" {% if mp == "daviplata" %}selected{% endif %}>Daviplata</option>
-          <option value="tarjeta" {% if mp == "tarjeta" %}selected{% endif %}>Tarjeta</option>
-          <option value="banco_caja_social" {% if mp == "banco_caja_social" %}selected{% endif %}>Banco Caja Social</option>
+          <option value="tarjeta" {% if mp == "tarjeta" or mp == "banco_caja_social" %}selected{% endif %}>Tarjeta / Banco Caja Social</option>
           {% endfor %}
           <option value="mixto" {% if mp == "mixto" %}selected{% endif %}>Mixto</option>
         </select>

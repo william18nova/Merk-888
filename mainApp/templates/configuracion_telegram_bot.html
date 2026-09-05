@@ -1,0 +1,139 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Bot inteligente de Telegram{% endblock %}
+
+{% block extra_head %}
+  <link rel="stylesheet" href="{% static 'css/configuracion_telegram_bot.css' %}?v=1">
+{% endblock %}
+
+{% block content %}
+<section class="tg-page" aria-labelledby="tg-title">
+  <header class="tg-hero">
+    <div>
+      <p class="tg-eyebrow">Configuración Web Master</p>
+      <h1 id="tg-title">Bot inteligente de Telegram</h1>
+      <p>Consulta Nova por texto o audio. Cada cuenta conserva los permisos de su usuario y los pagos requieren confirmación.</p>
+    </div>
+    <a class="tg-link" href="{% url 'configuracion_funcionalidades' %}">Administrar funcionalidad</a>
+  </header>
+
+  {% if messages %}
+    {% for message in messages %}<div class="tg-alert tg-alert--ok">{{ message }}</div>{% endfor %}
+  {% endif %}
+  {% if error %}<div class="tg-alert tg-alert--error">{{ error }}</div>{% endif %}
+
+  <div class="tg-status-grid" aria-label="Estado de la integración">
+    <article><span class="tg-dot {% if integration.enabled %}is-ok{% endif %}"></span><small>Funcionalidad</small><strong>{% if integration.enabled %}Activada{% else %}Desactivada{% endif %}</strong></article>
+    <article><span class="tg-dot {% if integration.telegram_token and integration.webhook_secret %}is-ok{% endif %}"></span><small>Telegram</small><strong>{% if integration.telegram_token and integration.webhook_secret %}Configurado{% else %}Faltan variables{% endif %}</strong></article>
+    <article><span class="tg-dot {% if integration.gemini_key %}is-ok{% endif %}"></span><small>Texto inteligente</small><strong>{% if integration.gemini_key %}Gemini listo{% else %}Falta Gemini{% endif %}</strong></article>
+    <article><span class="tg-dot {% if integration.groq_key %}is-ok{% endif %}"></span><small>Notas de voz</small><strong>{% if integration.groq_key %}Groq listo{% else %}Falta Groq{% endif %}</strong></article>
+  </div>
+
+  {% if generated_code %}
+    <section class="tg-code" aria-live="polite">
+      <div>
+        <p class="tg-eyebrow">Código de un solo uso para {{ generated_for.nombreusuario }}</p>
+        <strong>{{ generated_code }}</strong>
+        <p>En Telegram debe enviar <b>/vincular {{ generated_code }}</b>. Vence {{ generated_expires|date:"d/m/Y, h:i a" }} y no volverá a mostrarse.</p>
+      </div>
+    </section>
+  {% endif %}
+
+  <div class="tg-grid">
+    <section class="tg-card">
+      <div class="tg-card__heading">
+        <div><p class="tg-eyebrow">Acceso</p><h2>Vincular un usuario</h2></div>
+        <span>{{ profiles|length }} vínculo{{ profiles|length|pluralize }}</span>
+      </div>
+      <p class="tg-muted">Genera un código temporal. Nunca compartas la contraseña de Nova ni el token del bot.</p>
+      <form method="post" class="tg-form">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="generate_code">
+        <label>Usuario activo
+          <select name="user_id" required>
+            <option value="">Selecciona…</option>
+            {% for user_item in users %}<option value="{{ user_item.pk }}">{{ user_item.nombreusuario }}</option>{% endfor %}
+          </select>
+        </label>
+        <label>Contraseña Web Master
+          <input type="password" name="password_web_master" autocomplete="current-password" required>
+        </label>
+        <button type="submit">Generar código de 10 minutos</button>
+      </form>
+    </section>
+
+    <section class="tg-card">
+      <div class="tg-card__heading">
+        <div><p class="tg-eyebrow">Conexión</p><h2>Webhook de Telegram</h2></div>
+      </div>
+      <p class="tg-muted">Destino público configurado:</p>
+      <code class="tg-url">{{ webhook_url }}</code>
+      <div class="tg-actions">
+        <form method="post">
+          {% csrf_token %}<input type="hidden" name="action" value="configure_webhook">
+          <input type="password" name="password_web_master" placeholder="Contraseña Web Master" autocomplete="current-password" required>
+          <button type="submit">Configurar webhook</button>
+        </form>
+        <form method="post">
+          {% csrf_token %}<input type="hidden" name="action" value="remove_webhook">
+          <input type="password" name="password_web_master" placeholder="Contraseña Web Master" autocomplete="current-password" required>
+          <button class="tg-button--ghost" type="submit">Retirar webhook</button>
+        </form>
+      </div>
+      <div class="tg-worker">
+        <small>Procesador continuo en PythonAnywhere</small>
+        <code>/bin/bash /home/Merk888/Merk-888/scripts/run_telegram_bot.sh</code>
+      </div>
+    </section>
+  </div>
+
+  <section class="tg-card tg-card--wide">
+    <div class="tg-card__heading">
+      <div><p class="tg-eyebrow">Identidades</p><h2>Usuarios vinculados</h2></div>
+    </div>
+    <div class="tg-table-wrap">
+      <table>
+        <thead><tr><th>Usuario Nova</th><th>Telegram</th><th>Último uso</th><th>Estado</th><th>Acción</th></tr></thead>
+        <tbody>
+          {% for profile in profiles %}
+            <tr>
+              <td><strong>{{ profile.usuario.nombreusuario }}</strong><small>{{ profile.usuario.rolid.nombre|default:"Sin rol" }}</small></td>
+              <td>{{ profile.nombre_telegram|default:"Sin nombre" }}<small>{% if profile.telegram_username %}@{{ profile.telegram_username }} · {% endif %}ID {{ profile.telegram_user_id }}</small></td>
+              <td>{{ profile.ultimo_uso_en|date:"d/m/Y h:i a"|default:"Sin uso" }}</td>
+              <td><span class="tg-badge {% if profile.activo %}is-active{% endif %}">{% if profile.activo %}Activo{% else %}Inactivo{% endif %}</span></td>
+              <td>
+                <form method="post" class="tg-inline-form">
+                  {% csrf_token %}<input type="hidden" name="profile_id" value="{{ profile.pk }}">
+                  <input type="hidden" name="action" value="{% if profile.activo %}deactivate{% else %}reactivate{% endif %}">
+                  <input type="password" name="password_web_master" placeholder="Contraseña" autocomplete="current-password" required>
+                  <button class="tg-button--small" type="submit">{% if profile.activo %}Desactivar{% else %}Activar{% endif %}</button>
+                </form>
+              </td>
+            </tr>
+          {% empty %}<tr><td colspan="5" class="tg-empty">Todavía no hay cuentas vinculadas.</td></tr>{% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <div class="tg-grid">
+    <section class="tg-card">
+      <div class="tg-card__heading"><div><p class="tg-eyebrow">Cola</p><h2>Mensajes recientes</h2></div><span>{{ pending_count }} pendientes · {{ error_count }} errores</span></div>
+      <div class="tg-list">
+        {% for item in recent_updates %}
+          <article><div><strong>#{{ item.update_id }} · {{ item.get_tipo_display }}</strong><small>{{ item.recibido_en|date:"d/m/Y h:i:s a" }}</small></div><span class="tg-badge {% if item.estado == 'PROCESADO' %}is-active{% elif item.estado == 'ERROR' %}is-error{% endif %}">{{ item.get_estado_display }}</span></article>
+        {% empty %}<p class="tg-empty">No se han recibido mensajes.</p>{% endfor %}
+      </div>
+    </section>
+    <section class="tg-card">
+      <div class="tg-card__heading"><div><p class="tg-eyebrow">Seguridad</p><h2>Auditoría reciente</h2></div></div>
+      <div class="tg-list">
+        {% for item in recent_audit %}
+          <article><div><strong>{{ item.accion }}</strong><small>{{ item.usuario.nombreusuario|default:"Sin usuario" }} · {{ item.creado_en|date:"d/m/Y h:i:s a" }}</small></div><span class="tg-badge {% if item.exitoso %}is-active{% else %}is-error{% endif %}">{% if item.exitoso %}Correcto{% else %}Error{% endif %}</span></article>
+        {% empty %}<p class="tg-empty">No hay acciones auditadas.</p>{% endfor %}
+      </div>
+    </section>
+  </div>
+</section>
+{% endblock %}

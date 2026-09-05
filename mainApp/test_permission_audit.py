@@ -77,6 +77,7 @@ class PermissionCatalogAuditTests(SimpleTestCase):
             "configuracion_funcionalidades",
             "configuracion_impresion",
             "configuracion_metodos_pago",
+            "configuracion_telegram_bot",
         }
         system_only_codes = {
             code
@@ -114,6 +115,7 @@ class PermissionCatalogAuditTests(SimpleTestCase):
             "Ventas no realizadas",
             "Configurar impresión",
             "Administrar métodos de pago",
+            "Administrar bot inteligente de Telegram",
             "Visor Barcode",
         ):
             with self.subTest(permission_name=permission_name):

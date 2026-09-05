@@ -17,7 +17,7 @@ from .services.feature_flags import (
 
 WEB_MASTER_ROLE_NAMES = {"web_master", "webmaster"}
 ADMIN_ROLE_NAMES = {"admin", "administrador", "administradora", "supervisor"}
-PUBLIC_URL_NAMES = {"login", "logout", "visor_barcode", "visor_barcode_buscar", "visor_barcode_lookup", "macrodroid_nequi_webhook"}
+PUBLIC_URL_NAMES = {"login", "logout", "visor_barcode", "visor_barcode_buscar", "visor_barcode_lookup", "macrodroid_nequi_webhook", "telegram_webhook"}
 ALWAYS_ALLOWED_URL_NAMES = {"home", "registrar_egreso"}
 WEB_MASTER_ONLY_URL_NAMES = {
     "ventas_no_realizadas",
@@ -25,6 +25,7 @@ WEB_MASTER_ONLY_URL_NAMES = {
     "configuracion_funcionalidades",
     "configuracion_impresion",
     "configuracion_metodos_pago",
+    "configuracion_telegram_bot",
 }
 PERMISSION_CACHE_SECONDS = 300
 NAV_CACHE_SECONDS = 300
@@ -573,6 +574,17 @@ PERMISSION_DEFINITIONS = [
             "medios de pago",
         ],
     },
+    {
+        "code": "configuracion_telegram_bot",
+        "label": "Administrar bot inteligente de Telegram",
+        "assignable": False,
+        "system_only": True,
+        "description": (
+            "Permite vincular usuarios, configurar el webhook y revisar la "
+            "operación del bot. Uso exclusivo Web Master."
+        ),
+        "aliases": ["configuracion_telegram_bot", "bot de telegram"],
+    },
 ]
 
 
@@ -768,6 +780,7 @@ ROUTE_PERMISSIONS = {
     "configuracion_funcionalidades": "configuracion_funcionalidades",
     "configuracion_impresion": "configuracion_impresion",
     "configuracion_metodos_pago": "configuracion_metodos_pago",
+    "configuracion_telegram_bot": "configuracion_telegram_bot",
 }
 
 
@@ -933,6 +946,7 @@ NAV_GROUPS = [
             {"label": "Funcionalidades del sistema", "url_name": "configuracion_funcionalidades"},
             {"label": "Configuración de impresión", "url_name": "configuracion_impresion"},
             {"label": "Métodos de pago", "url_name": "configuracion_metodos_pago"},
+            {"label": "Bot inteligente de Telegram", "url_name": "configuracion_telegram_bot"},
         ],
     },
     {"label": "Visor Barcode", "url_name": "visor_barcode"},

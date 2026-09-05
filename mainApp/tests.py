@@ -880,7 +880,7 @@ class RefundPaymentMethodTests(SimpleTestCase):
             is_valid=lambda: True,
             cleaned_data=[
                 {"medio_pago": medio, "monto": Decimal("0.00")}
-                for medio in ("efectivo", "nequi", "daviplata", "tarjeta", "banco_caja_social")
+                for medio in ("efectivo", "nequi", "daviplata", "tarjeta")
             ],
         )
 
@@ -2033,8 +2033,8 @@ class SaleProductIdVisibilityTests(SimpleTestCase):
         self.assertIn('.find(".cart-product-name")', script)
         self.assertIn(".ui-autocomplete .ac-product-id", styles)
         self.assertIn(".cart-product-id", styles)
-        self.assertIn("generar_venta.css' %}?v=21", template)
-        self.assertIn("generar_venta.js' %}?v=34", template)
+        self.assertIn("generar_venta.css' %}?v=24", template)
+        self.assertIn("generar_venta.js' %}?v=38", template)
 
 
 class GlobalBarcodeCameraTests(SimpleTestCase):
@@ -2364,7 +2364,7 @@ class SystemFeatureFlagTests(SimpleTestCase):
         ).read_text(encoding="utf-8")
         self.assertIn("window.nequiApiEnabled", sale_template)
         self.assertIn("system_features.nequi_api_recepcion", sale_template)
-        self.assertIn("generar_venta.js' %}?v=34", sale_template)
+        self.assertIn("generar_venta.js' %}?v=38", sale_template)
         self.assertIn("let nequiApiEnabled", sale_script)
         self.assertIn("data?.feature_disabled === NEQUI_FEATURE_KEY", sale_script)
         self.assertIn("disableNequiLinking", sale_script)
