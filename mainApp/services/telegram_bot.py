@@ -73,7 +73,7 @@ def integration_status():
         "groq_key": groq_key,
         "gemini_model": _configured("GEMINI_MODEL") or "gemini-2.5-flash",
         "groq_model": _configured("GROQ_WHISPER_MODEL") or "whisper-large-v3-turbo",
-        "groq_chat_model": _configured("GROQ_CHAT_MODEL") or "llama-3.3-70b-versatile",
+        "groq_chat_model": _configured("GROQ_CHAT_MODEL") or "openai/gpt-oss-120b",
         "text_provider": "Gemini" if gemini_key else ("Groq" if groq_key else ""),
         "enabled": is_feature_enabled(TELEGRAM_BOT_FEATURE),
     }
@@ -856,7 +856,7 @@ def _groq_function_call(user_text, history=None):
             "La comprensión libre no está disponible: faltan las claves de Gemini y Groq. "
             "Usa /ayuda para ver los comandos."
         )
-    model = _configured("GROQ_CHAT_MODEL") or "llama-3.3-70b-versatile"
+    model = _configured("GROQ_CHAT_MODEL") or "openai/gpt-oss-120b"
     messages = [{"role": "system", "content": _assistant_system_prompt()}]
     for item in history or []:
         role = "assistant" if item.get("role") == "model" else "user"

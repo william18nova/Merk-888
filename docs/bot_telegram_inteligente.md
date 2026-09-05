@@ -33,7 +33,7 @@ TELEGRAM_WEBHOOK_URL='https://merk888.pythonanywhere.com/api/telegram/webhook/'
 GEMINI_API_KEY='CLAVE_REAL'
 GEMINI_MODEL='gemini-2.5-flash'
 GROQ_API_KEY='CLAVE_REAL'
-GROQ_CHAT_MODEL='llama-3.3-70b-versatile'
+GROQ_CHAT_MODEL='openai/gpt-oss-120b'
 GROQ_WHISPER_MODEL='whisper-large-v3-turbo'
 ```
 

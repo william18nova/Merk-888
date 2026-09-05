@@ -36,7 +36,7 @@ from .services.telegram_bot import (
     TELEGRAM_WEBHOOK_SECRET="webhook-secret-for-tests",
     GEMINI_API_KEY="gemini-test-key",
     GROQ_API_KEY="groq-test-key",
-    GROQ_CHAT_MODEL="llama-3.3-70b-versatile",
+    GROQ_CHAT_MODEL="openai/gpt-oss-120b",
 )
 class TelegramBotTests(TestCase):
     def setUp(self):
