@@ -76,7 +76,7 @@ def integration_status():
         "webhook_secret": bool(_configured("TELEGRAM_WEBHOOK_SECRET")),
         "gemini_key": gemini_key,
         "groq_key": groq_key,
-        "gemini_model": _configured("GEMINI_MODEL") or "gemini-2.5-flash",
+        "gemini_model": _configured("GEMINI_MODEL") or "gemini-3.8-flash",
         "groq_model": _configured("GROQ_WHISPER_MODEL") or "whisper-large-v3-turbo",
         "groq_chat_model": _configured("GROQ_CHAT_MODEL") or "openai/gpt-oss-120b",
         "text_provider": "Gemini + Groq" if gemini_key and groq_key else (
@@ -816,7 +816,7 @@ def _gemini_function_call(user_text, history=None):
         raise TelegramConfigurationError(
             "La comprensión libre no está disponible: falta GEMINI_API_KEY. Usa /ayuda para ver los comandos."
         )
-    model = _configured("GEMINI_MODEL") or "gemini-2.5-flash"
+    model = _configured("GEMINI_MODEL") or "gemini-3.8-flash"
     system = _assistant_system_prompt()
     contents = []
     for item in history or []:
