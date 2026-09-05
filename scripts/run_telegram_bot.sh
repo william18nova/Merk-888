@@ -38,8 +38,8 @@ if (( ${#missing[@]} > 0 )); then
     echo "ERROR: faltan variables privadas: ${missing[*]}."
     exit 2
 fi
-if [[ -z "${GEMINI_API_KEY:-}" ]]; then
-    echo "AVISO: falta GEMINI_API_KEY; solo funcionarán comandos explícitos."
+if [[ -z "${GEMINI_API_KEY:-}" && -z "${GROQ_API_KEY:-}" ]]; then
+    echo "AVISO: faltan GEMINI_API_KEY y GROQ_API_KEY; solo funcionarán comandos explícitos."
 fi
 if [[ -z "${GROQ_API_KEY:-}" ]]; then
     echo "AVISO: falta GROQ_API_KEY; las notas de voz no funcionarán."

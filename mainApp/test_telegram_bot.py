@@ -21,6 +21,8 @@ from .models import (
 from .services.feature_flags import TELEGRAM_BOT_FEATURE, clear_feature_cache
 from .services.telegram_bot import (
     _gemini_function_call,
+    _groq_function_call,
+    _intelligent_function_call,
     _handle_callback,
     generate_link_code,
     link_telegram_identity,
@@ -34,6 +36,7 @@ from .services.telegram_bot import (
     TELEGRAM_WEBHOOK_SECRET="webhook-secret-for-tests",
     GEMINI_API_KEY="gemini-test-key",
     GROQ_API_KEY="groq-test-key",
+    GROQ_CHAT_MODEL="llama-3.3-70b-versatile",
 )
 class TelegramBotTests(TestCase):
     def setUp(self):
@@ -211,6 +214,57 @@ class TelegramBotTests(TestCase):
         self.assertEqual(text, "")
         self.assertEqual(post.call_args.kwargs["headers"]["x-goog-api-key"], "gemini-test-key")
         self.assertNotIn("gemini-test-key", post.call_args.args[0])
+
+    def test_groq_key_is_bearer_and_function_call_is_parsed(self):
+        response = SimpleNamespace(
+            status_code=200,
+            ok=True,
+            json=lambda: {
+                "choices": [{
+                    "message": {
+                        "tool_calls": [{
+                            "function": {
+                                "name": "buscar_producto",
+                                "arguments": json.dumps({"consulta": "tomate"}),
+                            }
+                        }]
+                    }
+                }]
+            },
+        )
+        with patch("mainApp.services.telegram_bot.requests.post", return_value=response) as post:
+            name, arguments, text = _groq_function_call("¿Cuánto vale el tomate?")
+        self.assertEqual(name, "buscar_producto")
+        self.assertEqual(arguments, {"consulta": "tomate"})
+        self.assertEqual(text, "")
+        self.assertEqual(
+            post.call_args.kwargs["headers"]["Authorization"],
+            "Bearer groq-test-key",
+        )
+        self.assertNotIn("groq-test-key", post.call_args.args[0])
+
+    def test_groq_is_used_when_gemini_rejects_request(self):
+        rejected = SimpleNamespace(
+            status_code=401,
+            ok=False,
+            json=lambda: {"error": {"message": "Gemini unavailable"}},
+        )
+        accepted = SimpleNamespace(
+            status_code=200,
+            ok=True,
+            json=lambda: {
+                "choices": [{"message": {"content": "Listo, dime qué necesitas."}}]
+            },
+        )
+        with patch(
+            "mainApp.services.telegram_bot.requests.post",
+            side_effect=[rejected, accepted],
+        ) as post:
+            name, arguments, text = _intelligent_function_call("Hola")
+        self.assertEqual(name, "")
+        self.assertEqual(arguments, {})
+        self.assertEqual(text, "Listo, dime qué necesitas.")
+        self.assertEqual(post.call_count, 2)
 
     def test_only_webmaster_can_open_configuration(self):
         client = Client()

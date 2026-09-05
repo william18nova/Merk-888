@@ -1,7 +1,8 @@
 # Bot inteligente de Telegram
 
 El bot consulta Nova mediante los permisos del usuario vinculado. El texto libre
-usa Gemini y las notas de voz usan Whisper en Groq. Un pago nunca se registra
+usa Gemini y, si no está disponible, Groq como respaldo automático. Las notas de
+voz usan Whisper en Groq. Un pago nunca se registra
 directamente: se crea una propuesta que vence en 10 minutos y solo se ejecuta al
 pulsar **Confirmar** en Telegram.
 
@@ -32,6 +33,7 @@ TELEGRAM_WEBHOOK_URL='https://merk888.pythonanywhere.com/api/telegram/webhook/'
 GEMINI_API_KEY='CLAVE_REAL'
 GEMINI_MODEL='gemini-2.5-flash'
 GROQ_API_KEY='CLAVE_REAL'
+GROQ_CHAT_MODEL='llama-3.3-70b-versatile'
 GROQ_WHISPER_MODEL='whisper-large-v3-turbo'
 ```
 
@@ -88,4 +90,6 @@ tail -n 100 /home/Merk888/logs/telegram_bot.log
 ```
 
 Los comandos `/ventas`, `/producto`, `/inventario`, `/pagos`, `/balance`, `/turnos` y
-`/estado` siguen disponibles aunque Gemini falle. Los audios sí necesitan Groq.
+`/estado` siguen disponibles aunque los proveedores inteligentes fallen. Con una
+clave de Groq válida, el texto libre y los audios continúan funcionando aunque
+Gemini no esté disponible.

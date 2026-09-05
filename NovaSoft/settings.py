@@ -229,6 +229,10 @@ TELEGRAM_WEBHOOK_URL = _telegram_setting("TELEGRAM_WEBHOOK_URL")
 GEMINI_API_KEY = _telegram_setting("GEMINI_API_KEY")
 GEMINI_MODEL = _telegram_setting("GEMINI_MODEL", "gemini-2.5-flash")
 GROQ_API_KEY = _telegram_setting("GROQ_API_KEY")
+GROQ_CHAT_MODEL = _telegram_setting(
+    "GROQ_CHAT_MODEL",
+    "llama-3.3-70b-versatile",
+)
 GROQ_WHISPER_MODEL = _telegram_setting(
     "GROQ_WHISPER_MODEL",
     "whisper-large-v3-turbo",
