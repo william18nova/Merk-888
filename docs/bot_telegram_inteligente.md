@@ -6,6 +6,17 @@ voz usan Whisper en Groq. Un pago nunca se registra
 directamente: se crea una propuesta que vence en 10 minutos y solo se ejecuta al
 pulsar **Confirmar** en Telegram.
 
+Al configurar ambas claves, Gemini interpreta primero el texto y Groq toma el
+relevo si Gemini falla, agota cuota o devuelve una respuesta vacía o inválida.
+El proveedor que falle descansa cinco minutos en cada proceso antes de volver a
+probarse; cambiar su clave o modelo permite reintentarlo inmediatamente. La acción
+se ejecuta una sola vez, después de obtener una respuesta válida. El panel muestra
+los proveedores configurados; tener una clave guardada no garantiza su validez.
+
+Las notas de voz se transcriben con Groq y el texto resultante pasa por esa misma
+combinación Gemini/Groq. No es necesario enviar cada solicitud a ambos si el
+primer proveedor responde correctamente.
+
 ## 1. Crear las credenciales
 
 1. En Telegram abre `@BotFather`, crea el bot con `/newbot` y copia el token.
@@ -78,6 +89,17 @@ El código se guarda únicamente como hash, vence en 10 minutos y sirve una sola
 vez. Si desactivas el vínculo, el bot deja de aceptar solicitudes de esa cuenta.
 
 ## 5. Prueba manual
+
+Para verificar las claves y la interpretación real de cada proveedor, sin ventas
+ni registros de pago de prueba:
+
+```bash
+python manage.py comprobar_ia_telegram
+python manage.py comprobar_ia_telegram --provider gemini
+```
+
+El comando solo envía un texto genérico y comprueba la función seleccionada; no
+ejecuta consultas del negocio ni imprime claves.
 
 ```bash
 set -a

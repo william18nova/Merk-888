@@ -26,7 +26,7 @@
   <div class="tg-status-grid" aria-label="Estado de la integración">
     <article><span class="tg-dot {% if integration.enabled %}is-ok{% endif %}"></span><small>Funcionalidad</small><strong>{% if integration.enabled %}Activada{% else %}Desactivada{% endif %}</strong></article>
     <article><span class="tg-dot {% if integration.telegram_token and integration.webhook_secret %}is-ok{% endif %}"></span><small>Telegram</small><strong>{% if integration.telegram_token and integration.webhook_secret %}Configurado{% else %}Faltan variables{% endif %}</strong></article>
-    <article><span class="tg-dot {% if integration.text_provider %}is-ok{% endif %}"></span><small>Texto inteligente</small><strong>{% if integration.text_provider %}{{ integration.text_provider }} listo{% else %}Falta proveedor IA{% endif %}</strong></article>
+    <article><span class="tg-dot {% if integration.text_provider %}is-ok{% endif %}"></span><small>Proveedores de texto configurados</small><strong>{% if integration.text_provider %}{{ integration.text_provider }}{% else %}Falta proveedor IA{% endif %}</strong></article>
     <article><span class="tg-dot {% if integration.groq_key %}is-ok{% endif %}"></span><small>Notas de voz</small><strong>{% if integration.groq_key %}Groq listo{% else %}Falta Groq{% endif %}</strong></article>
   </div>
 
