@@ -15,7 +15,7 @@ from uuid import UUID
 import requests
 from django.conf import settings
 from django.core.exceptions import PermissionDenied
-from django.db import close_old_connections, transaction
+from django.db import DatabaseError, close_old_connections, transaction
 from django.db.models import Count, Exists, OuterRef, Q, Sum
 from django.utils import timezone
 from django.utils.dateparse import parse_date

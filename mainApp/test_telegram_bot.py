@@ -205,6 +205,40 @@ class TelegramBotTests(TestCase):
         self.assertEqual(update.intencion, "estado")
         fake_client.send_message.assert_called_once()
 
+    def test_worker_handles_internal_and_database_errors_without_stopping(self):
+        from django.db import DatabaseError
+
+        for index, (failure, expected) in enumerate((
+            (ValueError("detalle interno de prueba"), "ERROR"),
+            (DatabaseError("conexion interrumpida"), "PENDIENTE"),
+        )):
+            with self.subTest(error=type(failure).__name__):
+                update = TelegramActualizacion.objects.create(
+                    update_id=70100 + index,
+                    telegram_user_id=9003,
+                    telegram_chat_id=9003,
+                    chat_type="private",
+                    tipo="TEXTO",
+                    texto="Consulta de prueba",
+                )
+                client = SimpleNamespace(send_message=MagicMock())
+                with patch("mainApp.services.telegram_bot.TelegramApiClient", return_value=client), \
+                        patch("mainApp.services.telegram_bot.build_reply", side_effect=failure), \
+                        patch("mainApp.services.telegram_bot.logger.exception"):
+                    self.assertTrue(process_next_update())
+                update.refresh_from_db()
+                self.assertEqual(update.estado, expected)
+                self.assertEqual(update.intentos, 1)
+                self.assertEqual(update.error, str(failure))
+                if expected == "ERROR":
+                    client.send_message.assert_called_once()
+                    sent = client.send_message.call_args.args[1]
+                    self.assertIn("error interno", sent)
+                    self.assertNotIn("detalle interno de prueba", sent)
+                else:
+                    client.send_message.assert_not_called()
+                    self.assertIsNone(update.procesado_en)
+
     def test_gemini_key_is_header_and_function_call_is_parsed(self):
         response = SimpleNamespace(
             status_code=200,
