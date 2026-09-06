@@ -7736,9 +7736,8 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin, View):
         return user_has_permission(user, self.view_permission)
 
     def _can_edit_venta(self, user) -> bool:
-        if self._is_cajero_role(user):
-            return False
-        return user_has_permission(user, self.edit_permission)
+        from .permissions import user_can_change_sale
+        return user_can_change_sale(user)
 
     def _can_print_venta(self, user, venta=None) -> bool:
         if self._is_cajero_role(user):

@@ -33,6 +33,13 @@ from mainApp.services.payment_methods import (
     payment_method_label_map,
     payment_method_options,
 )
+from mainApp.services.telegram_operations import (
+    TOOL_DEFINITIONS as OPERATIONS_DEFINITIONS,
+    TOOL_FUNCTIONS as OPERATIONS_FUNCTIONS,
+    confirm_catalog,
+    validate_arguments as validate_operation_arguments,
+)
+from mainApp.services.telegram_returns import command_prepare_return, confirm_return
 
 
 logger = logging.getLogger(__name__)
@@ -42,7 +49,10 @@ ACTION_TTL_MINUTES = 10
 LINK_CODE_TTL_MINUTES = 10
 AI_PROVIDER_COOLDOWN_SECONDS = 300
 LIST_PAGE_SIZE = 5
-PAGINATED_READ_TOOLS = frozenset({"consultar_pagos", "listar_empleados"})
+PAGINATED_READ_TOOLS = frozenset({
+    "consultar_pagos", "listar_empleados", "consultar_registros",
+    "consultar_detalle_operativo", "ranking_productos", "buscar_vistas",
+})
 # El trabajador evita repetir una petición fallida por cada mensaje. Cambiar la
 # clave o el modelo permite probar inmediatamente la configuración corregida.
 _AI_PROVIDER_FAILURES = {}
@@ -319,6 +329,10 @@ class TelegramApiClient:
                 {"command": "empleados", "description": "Listar o buscar empleados"},
                 {"command": "balance", "description": "Ver ventas menos pagos"},
                 {"command": "turnos", "description": "Consultar turnos"},
+                {"command": "acciones", "description": "Ver capacidades y campos editables"},
+                {"command": "catalogo", "description": "Consultar un catálogo del sistema"},
+                {"command": "vistas", "description": "Buscar páginas disponibles"},
+                {"command": "devolver", "description": "Preparar devolución de productos de una venta"},
                 {"command": "estado", "description": "Ver cuenta vinculada"},
                 {"command": "cancelar", "description": "Cancelar acciones pendientes"},
             ]
@@ -655,13 +669,15 @@ def tool_expenses(profile, arguments):
     if minimum is not None and maximum is not None and minimum > maximum:
         raise TelegramBotError("El monto mínimo no puede ser mayor que el máximo.")
     summary = rows.aggregate(count=Count("egresoid"), total=Sum("monto"))
-    grouped = rows.values("medio_pago").annotate(total=Sum("monto")).order_by("medio_pago")
+    show_details = arguments.get("detalle") is True
+    show_methods = arguments.get("desglose_por_medio") is True
     labels = payment_method_label_map()
     lines = [
         f"Pagos registrados del {start:%d/%m/%Y} al {end:%d/%m/%Y}:",
-        f"• {summary['count'] or 0} registro(s)",
         f"• Total pagado: {_list_money(summary['total'])}",
     ]
+    if show_details:
+        lines.insert(1, f"• {summary['count'] or 0} registro(s)")
     filters = []
     if method:
         filters.append(f"Medio: {_list_text(payment_method_label(method, labels=labels), 60)}")
@@ -673,21 +689,27 @@ def tool_expenses(profile, arguments):
         filters.append(f"Desde {_list_money(minimum)}")
     if maximum is not None:
         filters.append(f"Hasta {_list_money(maximum)}")
+    if not show_details and not show_methods:
+        period = f"{start:%d/%m/%Y}" if start == end else f"{start:%d/%m/%Y} al {end:%d/%m/%Y}"
+        scope = "; " + " · ".join(filters) if filters else ""
+        return f"Total pagado: {_list_money(summary['total'])} ({period}{scope})."
     if filters:
         lines.append("Filtros: " + " · ".join(filters))
-    methods = {}
-    for row in grouped:
-        code = normalize_payment_method_code(row["medio_pago"])
-        methods[code] = methods.get(code, Decimal("0")) + row["total"]
-    if methods:
-        lines.append("Totales del intervalo por medio:")
-    for code, amount in sorted(methods.items())[:10]:
-        lines.append(
-            f"• {_list_text(payment_method_label(code, labels=labels), 60)}: {_list_money(amount)}"
-        )
-    if len(methods) > 10:
-        lines.append(f"Otros {len(methods) - 10} medios incluidos en el total pagado.")
-    if arguments.get("detalle") is False:
+    if show_methods:
+        grouped = rows.values("medio_pago").annotate(total=Sum("monto")).order_by("medio_pago")
+        methods = {}
+        for row in grouped:
+            code = normalize_payment_method_code(row["medio_pago"])
+            methods[code] = methods.get(code, Decimal("0")) + row["total"]
+        if methods:
+            lines.append("Totales del intervalo por medio:")
+        for code, amount in sorted(methods.items())[:10]:
+            lines.append(
+                f"• {_list_text(payment_method_label(code, labels=labels), 60)}: {_list_money(amount)}"
+            )
+        if len(methods) > 10:
+            lines.append(f"Otros {len(methods) - 10} medios incluidos en el total pagado.")
+    if not show_details:
         return "\n".join(lines)
     page, pages, offset = _list_page(arguments, summary["count"])
     if not summary["count"]:
@@ -701,7 +723,7 @@ def tool_expenses(profile, arguments):
             f"  {_list_money(expense.monto)} · {_list_text(payment_method_label(expense.medio_pago, labels=labels), 60)}",
             f"  {paid_at:%d/%m/%Y %H:%M} · Registró: {_list_text(expense.registrado_por_nombre, 80) or 'Sin usuario registrado'}",
         ])
-    query = dict(arguments, desde=start.isoformat(), hasta=end.isoformat(), pagina=page)
+    query = dict(arguments, desde=start.isoformat(), hasta=end.isoformat(), pagina=page, detalle=True)
     return BotReply("\n".join(lines), "consultar_pagos", pagination={
         "page": page, "pages": pages, "arguments": query,
     })
@@ -898,6 +920,7 @@ TOOL_FUNCTIONS = {
     "consultar_balance": tool_balance,
     "consultar_turnos": tool_cash_shifts,
     "preparar_registro_pago": tool_prepare_expense,
+    **OPERATIONS_FUNCTIONS,
 }
 
 
@@ -929,7 +952,7 @@ GEMINI_TOOLS = [{"functionDeclarations": [
     },
     {
         "name": "consultar_pagos",
-        "description": "Lista pagos/egresos con concepto, monto, medio, fecha y quién los registró; incluye totales de todos los resultados filtrados. No registra pagos nuevos.",
+        "description": "Consulta pagos/egresos. Por defecto responde solo el total. Puede desglosar por medio o listar registros únicamente si el usuario lo pide. No registra pagos nuevos.",
         "parameters": {"type": "OBJECT", "properties": {
             "desde": {"type": "STRING", "description": "Fecha inicial YYYY-MM-DD; por defecto hoy en Colombia."},
             "hasta": {"type": "STRING", "description": "Fecha final inclusive YYYY-MM-DD."},
@@ -938,7 +961,9 @@ GEMINI_TOOLS = [{"functionDeclarations": [
             "usuario": {"type": "STRING", "description": "Nombre del usuario que registró el pago."},
             "monto_min": {"type": "NUMBER", "description": "Monto mínimo inclusive, en pesos."},
             "monto_max": {"type": "NUMBER", "description": "Monto máximo inclusive, en pesos."},
-            "detalle": {"type": "BOOLEAN", "description": "Por defecto true. false solo si pide únicamente resumen o total."},
+            "detalle": {"type": "BOOLEAN", "description": "Por defecto false. true solo si pide lista, detalle o ver cada pago. 'Cuánto he pagado' requiere false."},
+            "desglose_por_medio": {"type": "BOOLEAN", "description": "Por defecto false. true solo si pide separar/agrupar totales por método de pago. Filtrar por Nequi no requiere desglose."},
+            "usar_consulta_anterior": {"type": "BOOLEAN", "description": "true para continuaciones como 'ahora sepáralo por medio' o 'ahora solo el total'. Conserva fechas y filtros anteriores; envía solo los filtros que el usuario cambie explícitamente."},
             "pagina": {"type": "INTEGER", "description": "Página desde 1. Para continuar conserva todos los filtros anteriores."},
         }},
     },
@@ -977,6 +1002,7 @@ GEMINI_TOOLS = [{"functionDeclarations": [
         }, "required": ["concepto", "monto", "medio_pago"]},
     },
 ]}]
+GEMINI_TOOLS[0]["functionDeclarations"].extend(OPERATIONS_DEFINITIONS)
 
 
 def _assistant_system_prompt():
@@ -989,11 +1015,44 @@ def _assistant_system_prompt():
         "ya fue registrado. Conserva el concepto que dijo el usuario: la herramienta busca conceptos "
         "parecidos y ofrece botones para elegir uno existente o crear uno nuevo. "
         "Si hay una elección pendiente, pide usar esos botones, no inventes que se ha elegido. "
-        "Para 'muéstrame los pagos de hoy' usa consultar_pagos con detalle=true; consultar no es registrar. "
+        "Responde solo con la información solicitada, sin añadir desgloses ni listas automáticamente. "
+        "Para 'cuánto he pagado hoy' usa consultar_pagos con detalle=false y desglose_por_medio=false: solo total. "
+        "Para 'cuánto he pagado por método de pago' usa detalle=false y desglose_por_medio=true. "
+        "Para 'muéstrame los pagos de hoy' usa detalle=true y desglose_por_medio=false: lista individual. "
+        "Para 'pagos en Nequi' filtra medio_pago=nequi, sin añadir un desglose por medios. "
+        "Si pide lista y desglose juntos, activa ambos. Consultar nunca es registrar. "
+        "En continuaciones sobre pagos ('ahora sepáralo por medio', 'ahora solo el total', 'dame la lista'), "
+        "usa usar_consulta_anterior=true y el formato recién solicitado. No reenvíes fechas ni filtros "
+        "anteriores: el sistema los conserva. Incluye únicamente cambios explícitos del usuario. "
         "Resuelve ayer, esta semana y este mes a fechas de Colombia usando la fecha actual. "
         "Para listas o búsquedas de empleados usa listar_empleados. No necesitas un nombre si pide todos. "
         "Si pide la siguiente página, conserva los filtros de la consulta previa y aumenta pagina. "
-        "Solo puedes consultar las herramientas disponibles; no inventes listas ni capacidades. "
+        "Para listas, búsquedas o conteos de catálogos, ventas, pedidos, devoluciones, reintegros, "
+        "Nequi, usuarios, roles, permisos, horarios o configuración usa consultar_registros; "
+        "solo_total=true si pregunta cuántos o cuánto y no pide la lista. Los eventos son de hoy "
+        "por defecto; indica las fechas cuando pida otro intervalo. Para productos nunca vendidos "
+        "usa recurso=productos y sin_ventas=true, sin fechas. Para agotados usa inventario y stock_max=0. "
+        "Para productos más vendidos usa ranking_productos; para los detalles de una venta, pedido "
+        "o turno usa consultar_detalle_operativo con el ID real. No inventes IDs. "
+        "Para crear o editar productos, categorías, clientes, proveedores o sucursales usa "
+        "preparar_cambio_catalogo; esto solo prepara, nunca confirma. Envía únicamente campos "
+        "solicitados, no alteres otros datos. Pregunta los obligatorios que falten y usa "
+        "consultar_capacidades para conocerlos. Conserva códigos y documentos como texto, "
+        "incluidos ceros iniciales. Nunca inventes nombres, teléfonos, correos, precios o categorías. "
+        "Un 'sí' escrito o en audio no sustituye el botón de confirmación de una acción. "
+        "Para devolver productos de una venta usa preparar_devolucion_venta con venta_id, los "
+        "productos concretos y sus cantidades explícitas. Puedes usar producto_id, nombre exacto "
+        "o detalle_id cuando hay varios renglones del mismo producto; usa solo un identificador "
+        "por renglón y nunca confundas el ID de producto con el ID de detalle. Si faltan venta "
+        "o cantidades, pregunta; no asumas devolver todos los productos ni cantidades completas. "
+        "Si no indica medio de reintegro omítelo: será efectivo, NO el medio original de la venta. "
+        "No inventes el monto ni aceptes uno dictado: lo calcula el dominio respetando descuentos. "
+        "La herramienta solo prepara; el usuario debe pulsar Confirmar devolución. Se registra "
+        "la salida y el inventario, pero NO se envía dinero por Nequi ni se reversa una tarjeta. "
+        "No ejecutes eliminaciones, cierres, ventas, ajustes manuales de stock, contraseñas o permisos: "
+        "usa buscar_vistas para ofrecer la página correspondiente y aclara que no se ejecutó nada. "
+        "Para 'qué puedes hacer' usa consultar_capacidades. Mantén estas mismas reglas para audios. "
+        "Solo puedes usar las herramientas disponibles; no inventes listas ni capacidades. "
         "Si faltan datos esenciales, pregunta por ellos sin llamar herramientas."
     )
 
@@ -1188,12 +1247,44 @@ def _intelligent_function_call(user_text, history=None):
     )
 
 
+def _expense_query_arguments(profile, arguments):
+    from mainApp.models import TelegramAuditoria
+
+    arguments = dict(arguments)
+    reuse_previous = arguments.pop("usar_consulta_anterior", False)
+    if reuse_previous is True:
+        previous = TelegramAuditoria.objects.filter(
+            usuario=profile.usuario,
+            telegram_user_id=profile.telegram_user_id,
+            telegram_chat_id=profile.telegram_chat_id,
+            accion="consultar_pagos", exitoso=True,
+            creado_en__gte=timezone.now() - timedelta(hours=24),
+        ).order_by("-creado_en", "-pk").first()
+        if previous is None:
+            raise TelegramBotError("No hay una consulta de pagos reciente para continuar. Indica qué fecha o intervalo quieres consultar.")
+        # Se conserva el alcance, no el formato ni la página de la respuesta previa.
+        filter_names = ("desde", "hasta", "medio_pago", "concepto", "usuario", "monto_min", "monto_max")
+        inherited = {key: previous.argumentos[key] for key in filter_names if key in previous.argumentos}
+        # Compatibilidad con consultas antiguas que no guardaban las fechas resueltas.
+        inherited.setdefault("desde", timezone.localtime(previous.creado_en).date().isoformat())
+        inherited.setdefault("hasta", inherited["desde"])
+        arguments = dict(inherited, **arguments)
+    start, end = _date_range(arguments)
+    arguments.update(desde=start.isoformat(), hasta=end.isoformat())
+    return arguments
+
+
 def _execute_tool(profile, tool_name, arguments, update=None):
     function = TOOL_FUNCTIONS.get(tool_name)
     if function is None:
         raise TelegramBotError("La acción solicitada no está permitida.")
     try:
-        if tool_name == "preparar_registro_pago":
+        if tool_name in OPERATIONS_FUNCTIONS:
+            validate_operation_arguments(tool_name, arguments)
+        if tool_name == "consultar_pagos":
+            _require_access(profile, "registrar_egreso")
+            arguments = _expense_query_arguments(profile, arguments)
+        if tool_name in {"preparar_registro_pago", "preparar_cambio_catalogo", "preparar_devolucion_venta"}:
             result = function(profile, arguments, update=update)
         else:
             result = function(profile, arguments)
@@ -1219,8 +1310,8 @@ def _execute_tool(profile, tool_name, arguments, update=None):
 
 
 HELP_TEXT = (
-    "Puedo consultar ventas, productos, inventario, pagos, empleados y turnos según tus permisos. "
-    "También puedo preparar un pago para que tú lo confirmes. Puedes escribir normalmente o usar:\n"
+    "Puedo consultar catálogos, ventas, inventario, pagos, empleados, pedidos, Nequi y más según tus permisos. "
+    "También preparo pagos, devoluciones y cambios de catálogo con confirmación. Puedes escribir, enviar audio o usar:\n"
     "• /ventas — ventas de hoy\n"
     "• /producto NOMBRE_O_ID\n"
     "• /inventario NOMBRE_O_ID\n"
@@ -1228,6 +1319,10 @@ HELP_TEXT = (
     "• /empleados [NOMBRE] — lista o búsqueda de empleados\n"
     "• /balance — ventas menos pagos de hoy\n"
     "• /turnos — turnos abiertos\n"
+    "• /devolver VENTA PRODUCTO:CANTIDAD [MEDIO] — preparar devolución; efectivo por defecto\n"
+    "• /acciones [ENTIDAD] — capacidades y campos para crear/editar\n"
+    "• /catalogo RECURSO [BUSQUEDA] — por ejemplo, /catalogo proveedores\n"
+    "• /vistas [PALABRA] — enlaces a las páginas que puedes usar\n"
     "• /estado — cuenta vinculada\n"
     "• /cancelar — cancela propuestas pendientes\n\n"
     "Ejemplos: Muéstrame los pagos de hoy; pagos en Nequi de esta semana; "
@@ -1302,6 +1397,9 @@ def _handle_list_page_callback(update, profile, client):
     client.answer_callback(update.callback_query_id, "Consultando página…")
     # Solo herramientas de lectura, con filtros originales y permisos reevaluados.
     arguments = dict(audit.argumentos, pagina=int(page))
+    if audit.accion == "consultar_pagos":
+        # También conserva las listas abiertas antes de que el total fuera el formato predeterminado.
+        arguments["detalle"] = True
     return _execute_tool(profile, audit.accion, arguments, update)
 
 
@@ -1341,13 +1439,21 @@ def _handle_callback(update, profile, client):
             action.estado = "EXPIRADA"
             action.resuelto_en = timezone.now()
             action.save(update_fields=["estado", "resuelto_en"])
-            message = "La confirmación venció. Solicita registrar el pago nuevamente."
+            message = "La confirmación venció. Solicita la operación nuevamente."
         elif verb == "cancel":
             action.estado = "CANCELADA"
             action.resuelto_en = timezone.now()
             action.save(update_fields=["estado", "resuelto_en"])
-            _audit(profile, "cancelar_registro_pago", {"accion_id": str(action.pk)})
-            message = "Acción cancelada. No se registró ningún pago."
+            cancel_intent = {"registrar_pago": "cancelar_registro_pago", "devolver_venta": "cancelar_devolucion_venta"}.get(action.accion, "cancelar_cambio_catalogo")
+            _audit(profile, cancel_intent, {"accion_id": str(action.pk)})
+            message = "Acción cancelada. No se guardó ningún cambio, pago ni devolución."
+        elif action.accion == "devolver_venta":
+            message = confirm_return(profile, action) if verb == "confirm" else "Usa Confirmar devolución o Cancelar en esta propuesta."
+        elif action.accion == "cambio_catalogo":
+            if verb != "confirm":
+                message = "Usa Confirmar cambio o Cancelar en la propuesta del catálogo."
+            else:
+                message = confirm_catalog(profile, action)
         elif action.accion != "registrar_pago":
             action.estado = "ERROR"
             action.resuelto_en = timezone.now()
@@ -1425,13 +1531,25 @@ def _handle_command(update, profile, text):
     if command == "/inventario":
         return _execute_tool(profile, "consultar_inventario", {"consulta": remainder}, update)
     if command == "/pagos":
-        return _execute_tool(profile, "consultar_pagos", {"pagina": remainder or 1}, update)
+        return _execute_tool(profile, "consultar_pagos", {"pagina": remainder or 1, "detalle": True}, update)
     if command == "/empleados":
         return _execute_tool(profile, "listar_empleados", {"consulta": remainder}, update)
     if command == "/balance":
         return _execute_tool(profile, "consultar_balance", {}, update)
     if command == "/turnos":
         return _execute_tool(profile, "consultar_turnos", {"estado": "ABIERTO"}, update)
+    if command == "/acciones":
+        entity = _normalized_text(remainder).replace(" ", "_")
+        return _execute_tool(profile, "consultar_capacidades", {"entidad": entity} if entity else {}, update)
+    if command == "/vistas":
+        return _execute_tool(profile, "buscar_vistas", {"consulta": remainder}, update)
+    if command == "/devolver":
+        return command_prepare_return(profile, remainder, update)
+    if command == "/catalogo":
+        resource, _, query = remainder.partition(" ")
+        if not resource:
+            return BotReply("Usa /catalogo RECURSO, por ejemplo /catalogo proveedores. Consulta /acciones para ver los catálogos disponibles.", "ayuda_catalogo")
+        return _execute_tool(profile, "consultar_registros", {"recurso": _normalized_text(resource), "consulta": query}, update)
     return BotReply("No reconozco ese comando. Usa /ayuda.", "comando_desconocido")
 
 

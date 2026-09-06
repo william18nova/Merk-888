@@ -1276,6 +1276,15 @@ def user_has_permission(user, code: Optional[str]) -> bool:
     return False
 
 
+def user_can_change_sale(user) -> bool:
+    """Misma política para cambios/devoluciones web y Telegram."""
+    if not getattr(user, "is_authenticated", False) or not getattr(user, "is_active", False):
+        return False
+    role = str(getattr(getattr(user, "rolid", None), "nombre", "") or "").strip().lower()
+    # El rol Cajero conserva acceso solo de consulta/impresión de facturas.
+    return role != "cajero" and user_has_permission(user, "ventas_cambios")
+
+
 def route_permission_for_url_name(url_name: Optional[str]) -> Optional[str]:
     if not url_name or url_name in PUBLIC_URL_NAMES or url_name in ALWAYS_ALLOWED_URL_NAMES:
         return None

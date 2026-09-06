@@ -55,6 +55,8 @@ class TelegramQueryListTests(TestCase):
         return employee
 
     def query(self, tool="consultar_pagos", **arguments):
+        if tool == "consultar_pagos":
+            arguments.setdefault("detalle", True)
         return _execute_tool(self.profile, tool, arguments)
 
     def navigate(self, reply, label="Siguiente", profile=None):
