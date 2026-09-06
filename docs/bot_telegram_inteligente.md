@@ -6,6 +6,20 @@ voz usan Whisper en Groq. Un pago nunca se registra
 directamente: se crea una propuesta que vence en 10 minutos y solo se ejecuta al
 pulsar **Confirmar** en Telegram.
 
+Al preparar un pago, el bot busca conceptos existentes parecidos, sin distinguir
+tildes, espacios o guiones y admitiendo pequeñas diferencias de escritura. Por
+ejemplo, para «pago de 1 en efectivo a cocacola», si existe **COCA-COLA**, ofrece
+**Usar COCA-COLA** o **Crear nuevo: COCACOLA**. Puede mostrar hasta cinco opciones.
+La elección no crea conceptos ni pagos: primero muestra el resumen y pide
+**Confirmar**. Si el nombre ya coincide exactamente, pasa directamente al resumen.
+Los conceptos nuevos se guardan en mayúsculas solo al confirmar; el monto y el
+medio de pago se conservan. Esto funciona igual con texto y notas de voz.
+
+La propuesta completa conserva su vencimiento de diez minutos, aunque se elija
+un concepto. Los botones antiguos no pueden cambiar una elección ya realizada;
+si el concepto elegido fue eliminado o renombrado, se debe solicitar el pago otra
+vez. No se registra dos veces al pulsar varias veces **Confirmar**.
+
 Al configurar ambas claves, Gemini interpreta primero el texto y Groq toma el
 relevo si Gemini falla, agota cuota o devuelve una respuesta vacía o inválida.
 El proveedor que falle descansa cinco minutos en cada proceso antes de volver a

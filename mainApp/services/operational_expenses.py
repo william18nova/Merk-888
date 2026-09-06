@@ -1,4 +1,6 @@
 from decimal import Decimal, InvalidOperation
+from difflib import SequenceMatcher
+import unicodedata
 
 from django.db import transaction
 
@@ -19,7 +21,35 @@ class OperationalExpenseError(ValueError):
     pass
 
 
-def register_operational_expense(*, user, concept, amount, payment_method):
+def _concept_search_key(name):
+    text = unicodedata.normalize("NFKD", normalizar_nombre_concepto_egreso(name))
+    return "".join(char for char in text if char.isalnum())
+
+
+def find_similar_expense_concepts(name, *, limit=5):
+    """Sugiere conceptos reales sin modificar el catálogo ni elegir por el usuario."""
+    normalized = normalizar_nombre_concepto_egreso(name)
+    key = _concept_search_key(normalized)
+    if not key or limit <= 0:
+        return []
+    matches = []
+    for concept in ConceptoEgreso.objects.only("conceptoid", "nombre").iterator():
+        candidate = _concept_search_key(concept.nombre)
+        if not candidate:
+            continue
+        score = SequenceMatcher(None, key, candidate, autojunk=False).ratio()
+        # Los nombres cortos requieren igualdad para evitar sugerencias accidentales.
+        if key != candidate and (min(len(key), len(candidate)) < 4 or score < 0.78):
+            continue
+        matches.append((
+            concept.nombre != normalized, -score, concept.nombre, concept.pk,
+        ))
+        matches.sort()
+        del matches[limit:]
+    return [{"id": pk, "nombre": label} for _, _, label, pk in matches]
+
+
+def register_operational_expense(*, user, concept, amount, payment_method, concept_id=None):
     """Única ruta de dominio para registrar pagos desde web o Telegram."""
 
     concept_name = normalizar_nombre_concepto_egreso(concept)
@@ -31,7 +61,7 @@ def register_operational_expense(*, user, concept, amount, payment_method):
         normalized_amount = Decimal(str(amount)).quantize(Decimal("0.01"))
     except (InvalidOperation, TypeError, ValueError):
         raise OperationalExpenseError("El valor pagado no es válido.")
-    if normalized_amount <= 0:
+    if not normalized_amount.is_finite() or normalized_amount <= 0:
         raise OperationalExpenseError("El valor pagado debe ser mayor que cero.")
     if normalized_amount >= Decimal("1000000000000"):
         raise OperationalExpenseError("El valor pagado es demasiado grande.")
@@ -59,10 +89,21 @@ def register_operational_expense(*, user, concept, amount, payment_method):
                 "Ese medio de pago está desactivado. Selecciona otro."
             )
 
-        expense_concept, _created = ConceptoEgreso.objects.get_or_create(
-            nombre=concept_name,
-            defaults={"creado_por": user},
-        )
+        if concept_id is not None:
+            expense_concept = (
+                ConceptoEgreso.objects.select_for_update()
+                .filter(pk=concept_id, nombre=concept_name)
+                .first()
+            )
+            if expense_concept is None:
+                raise OperationalExpenseError(
+                    "El concepto elegido cambió o ya no existe. Solicita el pago nuevamente."
+                )
+        else:
+            expense_concept, _created = ConceptoEgreso.objects.get_or_create(
+                nombre=concept_name,
+                defaults={"creado_por": user},
+            )
         expense = Egreso.objects.create(
             concepto=expense_concept,
             monto=normalized_amount,
