@@ -77,6 +77,7 @@
   const mDeuda = $("#mDeuda");
   const mEf = $("#mEf");
   const mNoEf = $("#mNoEf");
+  const mFacturasPagadas = $("#mFacturasPagadas");
 
   const btnSave = $("#btnSave");
   const btnDelete = $("#btnDelete");
@@ -230,6 +231,8 @@
 
     ppName.textContent = TURNO.puntopago || "—";
     cajName.textContent = TURNO.cajero || "—";
+    // Dato informativo: el contado de Efectivo ya incluye estas facturas.
+    mFacturasPagadas.textContent = money2(TURNO.facturas_pagadas ?? 0);
 
     buildMediosTable();
     editor.style.display = "block";

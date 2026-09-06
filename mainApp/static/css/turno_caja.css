@@ -106,6 +106,13 @@ h2 i{ color:var(--brand); margin-right:8px; }
 }
 .tc-grid-compact{ margin-top:6px; }
 
+.tc-invoice-help{
+  grid-column:1 / -1;
+  margin:0;
+  color:var(--muted);
+  font-size:13px;
+}
+
 .tc-label{ font-weight:800; color:var(--muted); }
 
 .tc-field{ position:relative; }

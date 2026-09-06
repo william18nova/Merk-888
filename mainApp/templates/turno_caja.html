@@ -7,7 +7,7 @@
 {% block extra_head %}
   <link rel="stylesheet"
         href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"/>
-  <link rel="stylesheet" href="{% static 'css/turno_caja.css' %}?v=12">
+  <link rel="stylesheet" href="{% static 'css/turno_caja.css' %}?v=13">
 {% endblock %}
 
 {% block content %}
@@ -162,6 +162,26 @@
           <div class="info-row"><span>Cierre iniciado:</span> <b id="infoCierre">—</b></div>
         </div>
 
+        <div id="closePaidInvoices" class="tc-grid tc-grid-compact">
+          <label class="tc-label" for="facturas_pagadas">Facturas pagadas</label>
+          <div class="tc-field">
+            <i class="fa-solid fa-file-invoice-dollar" aria-hidden="true"></i>
+            <input id="facturas_pagadas"
+                   name="facturas_pagadas"
+                   form="formClose"
+                   class="tc-input no-spin"
+                   type="number"
+                   step="0.01"
+                   min="0"
+                   inputmode="decimal"
+                   placeholder="0.00"
+                   aria-describedby="facturas_pagadas_help">
+          </div>
+          <p id="facturas_pagadas_help" class="tc-invoice-help">
+            Total de facturas pagadas con efectivo de este turno. Se suma al efectivo contado para el cuadre.
+          </p>
+        </div>
+
         <div id="closeCashStep" class="tc-close-step">
           <div class="tc-close-subtitle">
             <i class="fa-solid fa-money-bills" aria-hidden="true"></i>
@@ -208,17 +228,6 @@
                    readonly>
           </div>
 
-          <label class="tc-label" for="facturas_pagadas">Facturas pagadas</label>
-          <div class="tc-field">
-            <i class="fa-solid fa-file-invoice-dollar" aria-hidden="true"></i>
-            <input id="facturas_pagadas"
-                   class="tc-input no-spin"
-                   type="number"
-                   step="0.01"
-                   min="0"
-                   inputmode="decimal"
-                   placeholder="0.00">
-          </div>
         </form>
 
         <div class="tc-table-wrap">

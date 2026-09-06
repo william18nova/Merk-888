@@ -13371,9 +13371,18 @@ class TurnoCajaAdminDetailAPI(LoginRequiredMixin, View):
         if not _can_edit_turnos(request.user):
             return JsonResponse({"success": False, "error": "No tienes permiso para editar turnos."}, status=403)
         turno = get_object_or_404(TurnoCaja.objects.select_related("puntopago", "cajero"), pk=turno_id)
+        medios_rows = list(TurnoCajaMedio.objects.filter(turno=turno))
+        facturas_pagadas = sum(
+            (
+                medio.contado or Decimal("0.00")
+                for medio in medios_rows
+                if _normalize_metodo(medio.metodo) == FACTURAS_PAGADAS_METODO
+            ),
+            Decimal("0.00"),
+        )
         medios = [
             medio
-            for medio in TurnoCajaMedio.objects.filter(turno=turno)
+            for medio in medios_rows
             if _normalize_metodo(medio.metodo) not in INTERNAL_PAYMENT_CODES
         ]
         codes = _turn_payment_method_codes(
@@ -13401,6 +13410,7 @@ class TurnoCajaAdminDetailAPI(LoginRequiredMixin, View):
                 "inicio_local": _iso_dt_local_input(turno.inicio),
                 "cierre_iniciado_local": _iso_dt_local_input(turno.cierre_iniciado),
                 "fin_local": _iso_dt_local_input(turno.fin),
+                "facturas_pagadas": float(facturas_pagadas),
                 "saldo_apertura_efectivo": float(getattr(turno, "saldo_apertura_efectivo", Decimal("0")) or 0),
                 "efectivo_real": float(getattr(turno, "efectivo_real", Decimal("0")) or 0) if getattr(turno, "efectivo_real", None) is not None else None,
                 "esperado_total": float(getattr(turno, "esperado_total", Decimal("0")) or 0),

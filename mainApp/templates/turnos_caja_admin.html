@@ -105,6 +105,11 @@
               <div class="k">No efectivo</div>
               <div id="mNoEf" class="v">—</div>
             </div>
+            <div class="m">
+              <div class="k">Facturas pagadas (caja)</div>
+              <div id="mFacturasPagadas" class="v">—</div>
+              <div class="k">Incluidas en el cuadre de efectivo.</div>
+            </div>
           </div>
         </div>
       </div>
@@ -153,5 +158,5 @@
   const API_DELETE = (id) => "{% url 'api_admin_turno_delete' 999999 %}".replace("999999", String(id));
 </script>
 
-<script defer src="{% static 'javascript/turnos_caja_admin.js' %}?v=4"></script>
+<script defer src="{% static 'javascript/turnos_caja_admin.js' %}?v=5"></script>
 {% endblock %}
