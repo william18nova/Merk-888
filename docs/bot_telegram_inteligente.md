@@ -59,6 +59,20 @@ pedir una lista.
 
 ### Catálogos, operaciones y páginas del sistema
 
+Para consultar una venta concreta puedes escribir `/venta 142266`,
+`/factura 142266` o «Muéstrame la venta de ID 142266». Estos mensajes claros
+se resuelven directamente, sin consultar a Gemini/Groq ni depender de su cuota.
+También funciona con el texto transcrito de un audio (transcribir sí requiere
+Groq). Se muestran fecha, hora, cliente, cajero, sucursal, punto de pago, total,
+medios de pago y productos con sus IDs, cantidades y precios. Las listas largas
+tienen botones de paginación. El ID se busca en todo el historial, no solo hoy.
+
+La cuenta debe estar vinculada y tener permiso de consulta/impresión de ventas;
+no necesita permiso de devoluciones para verlas. Un cajero solo puede consultar
+ventas de su sucursal. Consultar no modifica la venta ni crea una devolución.
+`/ventas` sigue mostrando el resumen de hoy. Si el ID no existe o la cuenta no
+tiene acceso, el bot lo indica sin inventar información.
+
 Además de las consultas anteriores, el bot puede listar, buscar y contar estos
 22 recursos, siempre con el permiso correspondiente de la aplicación:
 
@@ -321,7 +335,7 @@ python manage.py procesar_telegram_bot --once
 tail -n 100 /home/Merk888/logs/telegram_bot.log
 ```
 
-Los comandos `/ventas`, `/producto`, `/inventario`, `/pagos`, `/empleados`,
+Los comandos `/ventas`, `/venta ID`, `/factura ID`, `/producto`, `/inventario`, `/pagos`, `/empleados`,
 `/balance`, `/turnos`, `/acciones`, `/catalogo`, `/vistas`, `/devolver` y `/estado` siguen
 disponibles aunque los proveedores inteligentes fallen. Con una
 clave de Groq válida, el texto libre y los audios continúan funcionando aunque

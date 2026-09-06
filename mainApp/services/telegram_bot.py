@@ -323,6 +323,7 @@ class TelegramApiClient:
                 {"command": "start", "description": "Abrir el asistente"},
                 {"command": "ayuda", "description": "Ver lo que puede hacer"},
                 {"command": "ventas", "description": "Consultar ventas de hoy"},
+                {"command": "venta", "description": "Ver una venta por su ID"},
                 {"command": "producto", "description": "Buscar un producto"},
                 {"command": "inventario", "description": "Consultar inventario"},
                 {"command": "pagos", "description": "Consultar pagos registrados"},
@@ -1034,6 +1035,10 @@ def _assistant_system_prompt():
         "usa recurso=productos y sin_ventas=true, sin fechas. Para agotados usa inventario y stock_max=0. "
         "Para productos más vendidos usa ranking_productos; para los detalles de una venta, pedido "
         "o turno usa consultar_detalle_operativo con el ID real. No inventes IDs. "
+        "Sí puedes consultar una venta/factura por ID: por ejemplo 'muéstrame la venta de ID 142266' "
+        "usa consultar_detalle_operativo con tipo=venta e id=142266, sin filtrar por hoy. "
+        "El ID es suficiente: no pidas además fecha, período, cliente o sucursal para buscar esa venta. "
+        "No afirmes que no puedes ver ventas sin consultar la herramienta: ella comprueba los permisos. "
         "Para crear o editar productos, categorías, clientes, proveedores o sucursales usa "
         "preparar_cambio_catalogo; esto solo prepara, nunca confirma. Envía únicamente campos "
         "solicitados, no alteres otros datos. Pregunta los obligatorios que falten y usa "
@@ -1313,6 +1318,7 @@ HELP_TEXT = (
     "Puedo consultar catálogos, ventas, inventario, pagos, empleados, pedidos, Nequi y más según tus permisos. "
     "También preparo pagos, devoluciones y cambios de catálogo con confirmación. Puedes escribir, enviar audio o usar:\n"
     "• /ventas — ventas de hoy\n"
+    "• /venta ID — detalle, productos y pagos de una venta (también /factura ID)\n"
     "• /producto NOMBRE_O_ID\n"
     "• /inventario NOMBRE_O_ID\n"
     "• /pagos — lista de pagos de hoy con detalle y totales\n"
@@ -1489,8 +1495,36 @@ def _handle_callback(update, profile, client):
     return reply or BotReply(message, f"callback_{verb}")
 
 
+def _sale_detail_request(text):
+    """Resuelve consultas inequívocas por ID, sin interpretar cambios ni otros filtros."""
+    normalized = re.sub(r"\s+", " ", _normalized_text(text)).strip(" ¿¡")
+    if len(normalized) > 400:
+        return None
+    match = re.fullmatch(
+        r"(?:(?:hola|oye|por favor)[, ]+)*"
+        r"(?:(?:(?:me )?(?:puedes|podrias) )?"
+        r"(?:muestrame|muestra|mostrarme|mostrar|me muestras|ver|consultar|consulta|"
+        r"busca|buscame|buscar|dame|ensename|ensenar|"
+        r"(?:quiero|necesito) (?:ver|consultar|que me muestres)) )?"
+        r"(?:(?:los|el|la|una|todos los|toda la) )?"
+        r"(?:(?:datos|detalles?|informacion|productos|resumen)(?: completos?)? "
+        r"(?:de|del|sobre) (?:la )?)?"
+        r"(?:venta|factura)\s*"
+        r"(?:(?:con|de|del) )?(?:el )?"
+        r"(?:(?:id|numero|nro\.?|no\.?)\s*)?[:#]?\s*"
+        r"(?P<id>[0-9]{1,19})"
+        r"(?:[, ]+(?:por favor|gracias))?[.!?]*",
+        normalized,
+    )
+    if match is None:
+        return None
+    return {"tipo": "venta", "id": int(match["id"])}
+
+
 def _handle_command(update, profile, text):
-    command, _, remainder = str(text or "").strip().partition(" ")
+    parts = str(text or "").strip().split(None, 1)
+    command = parts[0] if parts else ""
+    remainder = parts[1] if len(parts) > 1 else ""
     command = command.split("@", 1)[0].lower()
     remainder = remainder.strip()
     if command in {"/start", "/ayuda", "/help"}:
@@ -1526,6 +1560,12 @@ def _handle_command(update, profile, text):
         return BotReply(f"Cancelé {changed} acción(es) pendiente(s).", "cancelar")
     if command == "/ventas":
         return _execute_tool(profile, "consultar_ventas", {}, update)
+    if command in {"/venta", "/factura"}:
+        if not re.fullmatch(r"#?[0-9]{1,19}", remainder) or int(remainder.lstrip("#")) <= 0:
+            return BotReply("Usa /venta ID, por ejemplo /venta 142266. Indica un solo ID numérico de venta.", "ayuda_venta")
+        return _execute_tool(profile, "consultar_detalle_operativo", {
+            "tipo": "venta", "id": int(remainder.lstrip("#")),
+        }, update)
     if command == "/producto":
         return _execute_tool(profile, "buscar_producto", {"consulta": remainder}, update)
     if command == "/inventario":
@@ -1575,6 +1615,9 @@ def build_reply(update, client):
         return BotReply("Primero vincula tu cuenta con /vincular CODIGO. Usa /ayuda si lo necesitas.", "sin_vinculo")
     if not text:
         return BotReply("Envíame texto o una nota de voz con tu solicitud.", "sin_texto")
+    sale_arguments = _sale_detail_request(text)
+    if sale_arguments is not None:
+        return _execute_tool(profile, "consultar_detalle_operativo", sale_arguments, update)
     from mainApp.models import TelegramActualizacion
 
     previous = list(

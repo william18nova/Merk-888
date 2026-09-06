@@ -12,7 +12,7 @@ from django.utils import timezone
 from mainApp.models import (
     Categoria, Cliente, DetallePedidoProveedor, DetalleVenta, Empleado,
     Inventario, NotificacionNequi, PagoVenta, PedidoProveedor, Producto,
-    Proveedor, PuntosPago, Rol, Sucursal, TelegramAccionPendiente,
+    Proveedor, PuntosPago, Rol, Sucursal, TelegramAccionPendiente, TelegramActualizacion,
     TelegramAuditoria, TelegramUsuario, TurnoCaja, TurnoCajaMedio, Usuario, Venta,
 )
 from mainApp.services import telegram_bot as bot
@@ -53,6 +53,146 @@ class TelegramOperationsTests(TestCase):
         sale = Venta.objects.create(fecha=day or timezone.localdate(), hora="12:00", empleadoid=self.employee, sucursalid=self.branch, puntopagoid=self.point, total="3001", mediopago="nequi")
         DetalleVenta.objects.create(ventaid=sale, productoid=product or self.product, cantidad=quantity, preciounitario="1500.50")
         return sale
+
+    def message(self, text, voice=False):
+        return TelegramActualizacion.objects.create(
+            update_id=20000 + TelegramActualizacion.objects.count(),
+            telegram_user_id=self.profile.telegram_user_id,
+            telegram_chat_id=self.profile.telegram_chat_id,
+            tipo="VOZ" if voice else "TEXTO",
+            texto="" if voice else text,
+            transcripcion=text if voice else "",
+        )
+
+    def test_clear_sale_id_queries_work_without_ai_for_text_and_voice(self):
+        sale = self.sale(day=timezone.localdate() - timedelta(days=90))
+        PagoVenta.objects.create(ventaid=sale, medio_pago="nequi", monto=3001)
+        requests = (
+            "Muéstrame la venta de id {id}", "muestrame la venta {id}",
+            "¿Me puedes mostrar la factura número {id}?",
+            "Quiero ver la venta con el ID: {id}",
+            "Dame los datos de la venta #{id}", "Detalle de la venta {id}",
+            "Muéstrame los detalles de la venta {id}.",
+            "Muéstrame los detalles de la venta {id}.",
+            "Por favor, muestra los productos de la venta {id}",
+            "VENTA {id}", "factura #{id}", "¿Puedes mostrarme la venta {id}?",
+            "Necesito consultar la venta {id}",
+            "Muestra la información de la venta {id}, por favor.",
+            "Hola, me muestras la venta {id}",
+        )
+        with patch.object(bot, "_intelligent_function_call", side_effect=bot.TelegramConfigurationError("IA no disponible")) as ai:
+            for voice in (False, True):
+                for text in requests:
+                    with self.subTest(text=text, voice=voice):
+                        reply = bot.build_reply(self.message(text.format(id=sale.pk), voice), self.callback_client)
+                        self.assertEqual(reply.intent, "consultar_detalle_operativo")
+                        self.assertIn(f"Venta #{sale.pk}", reply.text)
+                        self.assertIn(self.product.nombre, reply.text)
+                        self.assertIn("$3.001", reply.text)
+                        self.assertIn("Nequi", reply.text)
+                        self.assertIn("Ana Pérez", reply.text)
+                        self.assertIn(self.point.nombre, reply.text)
+                        self.assertIn("Hora: 12:00:00", reply.text)
+            ai.assert_not_called()
+        sale.refresh_from_db()
+        self.assertEqual(sale.total, Decimal("3001"))
+        self.assertFalse(TelegramAccionPendiente.objects.exists())
+        self.assertTrue(TelegramAuditoria.objects.filter(accion="consultar_detalle_operativo", exitoso=True).exists())
+
+    def test_sale_and_invoice_commands_support_id_and_bot_mention(self):
+        sale = self.sale()
+        with patch.object(bot, "_intelligent_function_call") as ai:
+            for command in (f"/venta {sale.pk}", f"/factura #{sale.pk}", f"/venta@Merk2888Bot\n{sale.pk}"):
+                with self.subTest(command=command):
+                    reply = bot.build_reply(self.message(command), self.callback_client)
+                    self.assertIn(f"Venta #{sale.pk}", reply.text)
+            ai.assert_not_called()
+
+    def test_sale_command_rejects_missing_multiple_or_invalid_ids(self):
+        with patch.object(bot, "_execute_tool") as tool:
+            for value in ("", "xxxxx", "0", "-12", "12.5", "12 13", "1 OR 1=1", "1" * 40):
+                with self.subTest(value=value):
+                    reply = bot.build_reply(self.message(f"/venta {value}"), self.callback_client)
+                    self.assertEqual(reply.intent, "ayuda_venta")
+            tool.assert_not_called()
+
+    def test_direct_sale_parser_does_not_override_other_actions_or_filters(self):
+        requests = (
+            "Devuelve de la venta 142266 el producto 12 cantidad 1 en efectivo",
+            "Anula la venta 142266", "Cambia la venta 142266", "Paga la factura 142266",
+            "Muestra la venta 142266 y devuelve un producto", "Muestra la venta 142266 y 142267",
+            "Muestra la venta 142266 de ayer", "Muestra las ventas de hoy",
+            "Cuánto vendí hoy", "Detalle del pedido 142266", "Venta -142266",
+            "venta 142266.5", "venta 142266 OR 1=1", "142266", "venta xxxxx",
+        )
+        for text in requests:
+            with self.subTest(text=text):
+                self.assertIsNone(bot._sale_detail_request(text))
+        update = self.message(requests[0])
+        args = {"venta_id": 142266, "productos": [{"producto_id": 12, "cantidad": 1}]}
+        with patch.object(bot, "_intelligent_function_call", return_value=("preparar_devolucion_venta", args, "")), patch.object(bot, "_execute_tool", return_value=bot.BotReply("Preparar")) as execute:
+            bot.build_reply(update, self.callback_client)
+        execute.assert_called_once()
+        self.assertEqual(execute.call_args.args[1:3], ("preparar_devolucion_venta", args))
+
+    def test_sale_queries_require_link_and_route_permission_not_edit_permission(self):
+        sale = self.sale()
+        update = self.message(f"Muéstrame la venta {sale.pk}")
+        with patch.object(bot, "user_can_access_url_name", return_value=False), patch.object(bot, "_intelligent_function_call") as ai:
+            with self.assertRaises(PermissionDenied):
+                bot.build_reply(update, self.callback_client)
+            ai.assert_not_called()
+        with patch.object(bot, "user_can_access_url_name", side_effect=lambda user, name: name == "ver_venta"):
+            reply = bot.build_reply(update, self.callback_client)
+            self.assertIn(f"Venta #{sale.pk}", reply.text)
+        self.profile.activo = False
+        self.profile.save(update_fields=["activo"])
+        with patch.object(bot, "_execute_tool") as tool:
+            self.assertEqual(bot.build_reply(update, self.callback_client).intent, "sin_vinculo")
+            tool.assert_not_called()
+
+    def test_nonexistent_sale_does_not_fall_back_to_ai_or_create_records(self):
+        with patch.object(bot, "_intelligent_function_call") as ai:
+            with self.assertRaisesMessage(bot.TelegramBotError, "No encontré esa venta"):
+                bot.build_reply(self.message("Muéstrame la venta 999999"), self.callback_client)
+            ai.assert_not_called()
+        self.assertFalse(Venta.objects.exists())
+        self.assertFalse(TelegramAccionPendiente.objects.exists())
+
+    def test_sale_details_page_buttons_retain_sale_id(self):
+        sale = self.sale()
+        for _ in range(6):
+            DetalleVenta.objects.create(ventaid=sale, productoid=self.product, cantidad=1, preciounitario="1500.50")
+        first = bot.build_reply(self.message(f"/venta {sale.pk}"), self.callback_client)
+        second = self.callback(first, "Siguiente")
+        self.assertIn("página 2 de 2", second.text)
+        self.assertIn(f"Venta #{sale.pk}", second.text)
+        self.assertEqual(second.pagination["arguments"]["id"], sale.pk)
+
+    def test_cashier_sale_details_and_lists_stay_in_assigned_branch(self):
+        sale = self.sale()
+        other_sale = self.sale()
+        other_branch = Sucursal.objects.create(nombre="Privada")
+        other_sale.sucursalid = other_branch
+        other_sale.save(update_fields=["sucursalid"])
+        self.user.rolid = Rol.objects.create(nombre="Cajero")
+        self.user.save(update_fields=["rolid"])
+        Empleado.objects.filter(pk=self.employee.pk).update(usuarioid=self.user)
+        with patch.object(bot, "user_can_access_url_name", return_value=True):
+            reply = bot.build_reply(self.message(f"/venta {sale.pk}"), self.callback_client)
+            self.assertIn(f"Venta #{sale.pk}", reply.text)
+            with self.assertRaisesMessage(bot.TelegramBotError, "No encontré esa venta"):
+                bot.build_reply(self.message(f"/venta {other_sale.pk}"), self.callback_client)
+            self.assertNotIn("Privada", self.query(recurso="ventas").text)
+            Empleado.objects.filter(pk=self.employee.pk).update(usuarioid=None)
+            with self.assertRaises(bot.TelegramBotError):
+                bot.build_reply(self.message(f"/venta {sale.pk}"), self.callback_client)
+
+    def test_plural_sales_command_still_returns_today_summary(self):
+        update = self.message("/ventas")
+        with patch.object(bot, "_execute_tool", return_value=bot.BotReply("Ventas hoy")) as execute:
+            bot.build_reply(update, self.callback_client)
+        self.assertEqual(execute.call_args.args[1:3], ("consultar_ventas", {}))
 
     def test_every_registered_resource_uses_existing_model_fields_and_permissions(self):
         for name, spec in ops.RESOURCES.items():

@@ -75,6 +75,17 @@ def _model(name):
     return apps.get_model("mainApp", name)
 
 
+def _sale_branch_scope(profile, rows, branch_field="sucursalid"):
+    """El cajero solo consulta facturas de su sucursal, igual que en la web."""
+    role = str(getattr(getattr(profile.usuario, "rolid", None), "nombre", "") or "").strip().lower()
+    if role != "cajero":
+        return rows
+    branch_id = _model("Empleado").objects.filter(
+        usuarioid_id=profile.usuario.pk,
+    ).values_list("sucursalid_id", flat=True).first()
+    return rows.filter(**{branch_field: branch_id}) if branch_id else rows.none()
+
+
 def _pk(model, value):
     try:
         if value in (None, "") or isinstance(value, bool):
@@ -127,6 +138,8 @@ def tool_records(profile, arguments):
     bot._require_access(profile, spec.permission)
     model = _model(spec.model)
     rows = model.objects.all()
+    if name in {"ventas", "reintegros"}:
+        rows = _sale_branch_scope(profile, rows, spec.branch)
     heading = name.replace("_", " ").capitalize()
     if args.get("registro_id") not in (None, ""):
         rows = rows.filter(pk=_pk(model, args["registro_id"]))
@@ -225,8 +238,13 @@ def tool_detail(profile, arguments):
     model_name, permissions, line_model, fk = specs[kind]
     bot._require_access(profile, *permissions)
     model = _model(model_name)
-    row = model.objects.filter(pk=_pk(model, arguments.get("id"))).first()
+    rows = model.objects.filter(pk=_pk(model, arguments.get("id")))
+    if kind == "venta":
+        rows = _sale_branch_scope(profile, rows).select_related("clienteid", "sucursalid", "empleadoid", "puntopagoid")
+    row = rows.first()
     if row is None:
+        if kind == "venta":
+            raise bot.TelegramBotError("No encontré esa venta o no tienes acceso a su sucursal. Comprueba el ID.")
         raise bot.TelegramBotError("No existe ese registro. Comprueba su ID.")
     heading = f"{kind.capitalize()} #{row.pk}"
     if kind == "turno":
@@ -238,7 +256,9 @@ def tool_detail(profile, arguments):
         total = row.total if kind == "venta" else row.costototal
         heading += f" · Total: {bot._list_money(total)}"
         if kind == "venta":
-            heading += f"\nFecha: {_format(row.fecha)} · Cliente: {_format(row.clienteid)} · Sucursal: {_format(row.sucursalid.nombre)}"
+            heading += f"\nFecha: {_format(row.fecha)} · Hora: {_format(row.hora)}"
+            heading += f"\nCliente: {_format(row.clienteid)} · Sucursal: {_format(row.sucursalid.nombre)}"
+            heading += f"\nCajero: {_format(row.empleadoid)} · Punto de pago: {_format(row.puntopagoid.nombre)}"
             payments = list(_model("PagoVenta").objects.filter(ventaid=row).values("medio_pago").annotate(total=Sum("monto")).order_by("medio_pago"))
             heading += "\nPagos: " + (", ".join(f"{bot.payment_method_label(p['medio_pago'])}: {bot._list_money(p['total'])}" for p in payments[:10]) if payments else bot.payment_method_label(row.mediopago))
             if len(payments) > 10:
