@@ -20,6 +20,29 @@ un concepto. Los botones antiguos no pueden cambiar una elección ya realizada;
 si el concepto elegido fue eliminado o renombrado, se debe solicitar el pago otra
 vez. No se registra dos veces al pulsar varias veces **Confirmar**.
 
+### Consultas con listas y filtros
+
+- «Muéstrame los pagos de hoy»: muestra cada pago con ID, concepto, monto,
+  medio de pago, fecha/hora de Colombia y usuario que lo registró. Incluye el
+  total de todo el intervalo, no solo el de la página visible.
+- «Pagos de esta semana en Nequi registrados por William»: combina fechas,
+  medio y usuario. También se puede filtrar por concepto y montos mínimo/máximo.
+- «Solo el total pagado ayer»: devuelve el resumen sin la lista individual.
+- «Lista de empleados» o «Cajeros de la sucursal Yerbabuena»: muestra ID,
+  nombre, cargo, sucursal y usuario vinculado, sin documentos, direcciones,
+  teléfonos ni correos. Requiere el permiso `visualizar_empleados`.
+
+Las listas se muestran de cinco en cinco, con **Anterior** y **Siguiente**.
+Los botones conservan los filtros y las fechas originales, vencen a las 24 horas
+y solo funcionan para el usuario que hizo la consulta. Cada página vuelve a
+comprobar los permisos y consulta los datos actuales; no es una foto congelada
+de la base de datos. La navegación solo ejecuta consultas de lectura.
+
+También puedes usar `/pagos`, `/pagos 2`, `/empleados` o `/empleados NOMBRE`
+sin consultar a Gemini/Groq. Las preguntas naturales funcionan tanto escritas
+como mediante notas de voz. No se ejecuta SQL arbitrario ni se crean pagos por
+pedir una lista.
+
 Al configurar ambas claves, Gemini interpreta primero el texto y Groq toma el
 relevo si Gemini falla, agota cuota o devuelve una respuesta vacía o inválida.
 El proveedor que falle descansa cinco minutos en cada proceso antes de volver a

@@ -41,6 +41,8 @@ TELEGRAM_FILE_LIMIT = 20 * 1024 * 1024
 ACTION_TTL_MINUTES = 10
 LINK_CODE_TTL_MINUTES = 10
 AI_PROVIDER_COOLDOWN_SECONDS = 300
+LIST_PAGE_SIZE = 5
+PAGINATED_READ_TOOLS = frozenset({"consultar_pagos", "listar_empleados"})
 # El trabajador evita repetir una petición fallida por cada mensaje. Cambiar la
 # clave o el modelo permite probar inmediatamente la configuración corregida.
 _AI_PROVIDER_FAILURES = {}
@@ -63,6 +65,7 @@ class BotReply:
     text: str
     intent: str = ""
     reply_markup: dict | None = None
+    pagination: dict | None = None
 
 
 def _configured(name):
@@ -313,6 +316,7 @@ class TelegramApiClient:
                 {"command": "producto", "description": "Buscar un producto"},
                 {"command": "inventario", "description": "Consultar inventario"},
                 {"command": "pagos", "description": "Consultar pagos registrados"},
+                {"command": "empleados", "description": "Listar o buscar empleados"},
                 {"command": "balance", "description": "Ver ventas menos pagos"},
                 {"command": "turnos", "description": "Consultar turnos"},
                 {"command": "estado", "description": "Ver cuenta vinculada"},
@@ -410,8 +414,20 @@ def _normalized_text(value):
 
 def _date_range(arguments):
     today = timezone.localdate()
-    start = parse_date(str(arguments.get("desde") or "")) or today
-    end = parse_date(str(arguments.get("hasta") or "")) or start
+    def read_date(key, default):
+        value = str(arguments.get(key) or "").strip()
+        if not value:
+            return default
+        try:
+            parsed = parse_date(value)
+        except ValueError:
+            parsed = None
+        if parsed is None:
+            raise TelegramBotError("Indica fechas válidas con formato YYYY-MM-DD.")
+        return parsed
+
+    start = read_date("desde", today)
+    end = read_date("hasta", start)
     if end < start:
         raise TelegramBotError("La fecha final no puede ser anterior a la inicial.")
     if (end - start).days > 366:
@@ -430,7 +446,7 @@ def _require_access(profile, *url_names):
 def _audit(profile, action, arguments, *, successful=True, detail=""):
     from mainApp.models import TelegramAuditoria
 
-    TelegramAuditoria.objects.create(
+    return TelegramAuditoria.objects.create(
         usuario=profile.usuario if profile else None,
         telegram_user_id=(profile.telegram_user_id if profile else None),
         telegram_chat_id=(profile.telegram_chat_id if profile else None),
@@ -574,6 +590,39 @@ def tool_inventory(profile, arguments):
     return "\n".join(lines)
 
 
+def _list_page(arguments, total):
+    raw_page = str(arguments.get("pagina", 1))
+    if not re.fullmatch(r"[1-9][0-9]{0,5}", raw_page):
+        raise TelegramBotError("La página debe ser un número entero mayor que cero.")
+    page = int(raw_page)
+    pages = max(1, (total + LIST_PAGE_SIZE - 1) // LIST_PAGE_SIZE)
+    if page > pages:
+        raise TelegramBotError(f"Solo hay {pages} página(s) con esos filtros. Solicita la lista nuevamente.")
+    return page, pages, (page - 1) * LIST_PAGE_SIZE
+
+
+def _list_text(value, limit=160):
+    text = " ".join(str(value or "").split())
+    return text if len(text) <= limit else text[:limit - 1] + "…"
+
+
+def _list_money(value):
+    amount = Decimal(value or 0).quantize(Decimal("0.01"))
+    if amount == amount.to_integral_value():
+        return _money(amount)
+    return "$" + f"{amount:,.2f}".translate(str.maketrans(",.", ".,"))
+
+
+def _expense_amount_filter(value):
+    try:
+        amount = Decimal(str(value))
+        if not amount.is_finite() or amount < 0 or amount >= Decimal("1000000000000"):
+            raise ValueError
+        return amount
+    except (InvalidOperation, ValueError, TypeError):
+        raise TelegramBotError("Los límites de monto deben ser números válidos no negativos.")
+
+
 def tool_expenses(profile, arguments):
     from mainApp.models import Egreso
 
@@ -582,21 +631,125 @@ def tool_expenses(profile, arguments):
     rows = Egreso.objects.filter(creado_en__date__range=(start, end))
     method = normalize_payment_method_code(arguments.get("medio_pago"))
     if method:
-        rows = rows.filter(medio_pago=method)
+        # Incluye códigos históricos como caja_social junto al medio canónico tarjeta.
+        stored_codes = rows.order_by().values_list("medio_pago", flat=True).distinct()
+        rows = rows.filter(medio_pago__in=[
+            code for code in stored_codes if normalize_payment_method_code(code) == method
+        ])
+    concept = str(arguments.get("concepto") or "").strip()
+    user = str(arguments.get("usuario") or "").strip()
+    if concept:
+        rows = rows.filter(concepto__nombre__icontains=concept)
+    if user:
+        rows = rows.filter(
+            Q(registrado_por_nombre__icontains=user)
+            | Q(registrado_por__nombreusuario__icontains=user)
+        )
+    minimum = maximum = None
+    if arguments.get("monto_min") is not None:
+        minimum = _expense_amount_filter(arguments["monto_min"])
+        rows = rows.filter(monto__gte=minimum)
+    if arguments.get("monto_max") is not None:
+        maximum = _expense_amount_filter(arguments["monto_max"])
+        rows = rows.filter(monto__lte=maximum)
+    if minimum is not None and maximum is not None and minimum > maximum:
+        raise TelegramBotError("El monto mínimo no puede ser mayor que el máximo.")
     summary = rows.aggregate(count=Count("egresoid"), total=Sum("monto"))
     grouped = rows.values("medio_pago").annotate(total=Sum("monto")).order_by("medio_pago")
     labels = payment_method_label_map()
     lines = [
         f"Pagos registrados del {start:%d/%m/%Y} al {end:%d/%m/%Y}:",
         f"• {summary['count'] or 0} registro(s)",
-        f"• Total pagado: {_money(summary['total'])}",
+        f"• Total pagado: {_list_money(summary['total'])}",
     ]
+    filters = []
+    if method:
+        filters.append(f"Medio: {_list_text(payment_method_label(method, labels=labels), 60)}")
+    if concept:
+        filters.append(f"Concepto: {_list_text(concept, 100)}")
+    if user:
+        filters.append(f"Usuario: {_list_text(user, 80)}")
+    if minimum is not None:
+        filters.append(f"Desde {_list_money(minimum)}")
+    if maximum is not None:
+        filters.append(f"Hasta {_list_money(maximum)}")
+    if filters:
+        lines.append("Filtros: " + " · ".join(filters))
+    methods = {}
     for row in grouped:
+        code = normalize_payment_method_code(row["medio_pago"])
+        methods[code] = methods.get(code, Decimal("0")) + row["total"]
+    if methods:
+        lines.append("Totales del intervalo por medio:")
+    for code, amount in sorted(methods.items())[:10]:
         lines.append(
-            f"• {payment_method_label(row['medio_pago'], labels=labels)}: "
-            f"{_money(row['total'])}"
+            f"• {_list_text(payment_method_label(code, labels=labels), 60)}: {_list_money(amount)}"
         )
-    return "\n".join(lines)
+    if len(methods) > 10:
+        lines.append(f"Otros {len(methods) - 10} medios incluidos en el total pagado.")
+    if arguments.get("detalle") is False:
+        return "\n".join(lines)
+    page, pages, offset = _list_page(arguments, summary["count"])
+    if not summary["count"]:
+        return "\n".join(lines + ["No hay pagos con esos filtros."])
+    lines.append(f"\nDetalle · página {page} de {pages}:")
+    expenses = rows.select_related("concepto").order_by("-creado_en", "-egresoid")
+    for expense in expenses[offset:offset + LIST_PAGE_SIZE]:
+        paid_at = timezone.localtime(expense.creado_en)
+        lines.extend([
+            f"• #{expense.pk} · {_list_text(expense.concepto.nombre)}",
+            f"  {_list_money(expense.monto)} · {_list_text(payment_method_label(expense.medio_pago, labels=labels), 60)}",
+            f"  {paid_at:%d/%m/%Y %H:%M} · Registró: {_list_text(expense.registrado_por_nombre, 80) or 'Sin usuario registrado'}",
+        ])
+    query = dict(arguments, desde=start.isoformat(), hasta=end.isoformat(), pagina=page)
+    return BotReply("\n".join(lines), "consultar_pagos", pagination={
+        "page": page, "pages": pages, "arguments": query,
+    })
+
+
+def tool_employees(profile, arguments):
+    from mainApp.models import Empleado
+
+    _require_access(profile, "visualizar_empleados")
+    employees = Empleado.objects.select_related("sucursalid", "usuarioid")
+    query = str(arguments.get("consulta") or "").strip()
+    position = str(arguments.get("cargo") or "").strip()
+    branch = _find_branch(arguments.get("sucursal"))
+    if query:
+        if query.isascii() and query.isdigit():
+            employees = employees.filter(pk=int(query))
+        else:
+            for word in query.split():
+                employees = employees.filter(
+                    Q(nombre__icontains=word) | Q(apellido__icontains=word)
+                    | Q(usuarioid__nombreusuario__icontains=word)
+                )
+    if position:
+        employees = employees.filter(puesto__icontains=position)
+    if branch:
+        employees = employees.filter(sucursalid=branch)
+    count = employees.count()
+    page, pages, offset = _list_page(arguments, count)
+    lines = [f"Empleados encontrados: {count}."]
+    if query:
+        lines.append(f"Búsqueda: {_list_text(query, 100)}")
+    if position:
+        lines.append(f"Cargo: {_list_text(position, 50)}")
+    if branch:
+        lines.append(f"Sucursal: {_list_text(branch.nombre, 100)}")
+    if not count:
+        return "\n".join(lines + ["No hay empleados con esos filtros."])
+    lines.append(f"Página {page} de {pages}:")
+    for employee in employees.order_by("nombre", "apellido", "empleadoid")[offset:offset + LIST_PAGE_SIZE]:
+        lines.extend([
+            f"• ID {employee.pk} · {_list_text(f'{employee.nombre} {employee.apellido}', 201)}",
+            f"  Cargo: {_list_text(employee.puesto, 50) or 'Sin cargo'} · "
+            f"Sucursal: {_list_text(getattr(employee.sucursalid, 'nombre', None), 100) or 'Sin sucursal'}",
+            f"  Usuario: {_list_text(getattr(employee.usuarioid, 'nombreusuario', None), 100) or 'Sin usuario vinculado'}",
+        ])
+    return BotReply("\n".join(lines), "listar_empleados", pagination={
+        "page": page, "pages": pages, "arguments": dict(arguments, pagina=page),
+    })
 
 
 def tool_balance(profile, arguments):
@@ -741,6 +894,7 @@ TOOL_FUNCTIONS = {
     "buscar_producto": tool_find_product,
     "consultar_inventario": tool_inventory,
     "consultar_pagos": tool_expenses,
+    "listar_empleados": tool_employees,
     "consultar_balance": tool_balance,
     "consultar_turnos": tool_cash_shifts,
     "preparar_registro_pago": tool_prepare_expense,
@@ -775,11 +929,27 @@ GEMINI_TOOLS = [{"functionDeclarations": [
     },
     {
         "name": "consultar_pagos",
-        "description": "Consulta pagos o egresos operativos registrados por intervalo.",
+        "description": "Lista pagos/egresos con concepto, monto, medio, fecha y quién los registró; incluye totales de todos los resultados filtrados. No registra pagos nuevos.",
         "parameters": {"type": "OBJECT", "properties": {
-            "desde": {"type": "STRING"},
-            "hasta": {"type": "STRING"},
+            "desde": {"type": "STRING", "description": "Fecha inicial YYYY-MM-DD; por defecto hoy en Colombia."},
+            "hasta": {"type": "STRING", "description": "Fecha final inclusive YYYY-MM-DD."},
             "medio_pago": {"type": "STRING"},
+            "concepto": {"type": "STRING", "description": "Parte del concepto que se pagó."},
+            "usuario": {"type": "STRING", "description": "Nombre del usuario que registró el pago."},
+            "monto_min": {"type": "NUMBER", "description": "Monto mínimo inclusive, en pesos."},
+            "monto_max": {"type": "NUMBER", "description": "Monto máximo inclusive, en pesos."},
+            "detalle": {"type": "BOOLEAN", "description": "Por defecto true. false solo si pide únicamente resumen o total."},
+            "pagina": {"type": "INTEGER", "description": "Página desde 1. Para continuar conserva todos los filtros anteriores."},
+        }},
+    },
+    {
+        "name": "listar_empleados",
+        "description": "Lista empleados reales con ID, nombre, cargo, sucursal y usuario. Permite buscar y filtrar; no crea ni modifica empleados.",
+        "parameters": {"type": "OBJECT", "properties": {
+            "consulta": {"type": "STRING", "description": "Nombre, apellido, usuario o ID del empleado. Omitir para listar todos."},
+            "sucursal": {"type": "STRING"},
+            "cargo": {"type": "STRING"},
+            "pagina": {"type": "INTEGER"},
         }},
     },
     {
@@ -819,6 +989,11 @@ def _assistant_system_prompt():
         "ya fue registrado. Conserva el concepto que dijo el usuario: la herramienta busca conceptos "
         "parecidos y ofrece botones para elegir uno existente o crear uno nuevo. "
         "Si hay una elección pendiente, pide usar esos botones, no inventes que se ha elegido. "
+        "Para 'muéstrame los pagos de hoy' usa consultar_pagos con detalle=true; consultar no es registrar. "
+        "Resuelve ayer, esta semana y este mes a fechas de Colombia usando la fecha actual. "
+        "Para listas o búsquedas de empleados usa listar_empleados. No necesitas un nombre si pide todos. "
+        "Si pide la siguiente página, conserva los filtros de la consulta previa y aumenta pagina. "
+        "Solo puedes consultar las herramientas disponibles; no inventes listas ni capacidades. "
         "Si faltan datos esenciales, pregunta por ellos sin llamar herramientas."
     )
 
@@ -1022,7 +1197,21 @@ def _execute_tool(profile, tool_name, arguments, update=None):
             result = function(profile, arguments, update=update)
         else:
             result = function(profile, arguments)
-        _audit(profile, tool_name, arguments, successful=True)
+        pagination = result.pagination if isinstance(result, BotReply) else None
+        audit = _audit(
+            profile, tool_name,
+            pagination["arguments"] if pagination else arguments,
+            successful=True,
+        )
+        if pagination and tool_name in PAGINATED_READ_TOOLS:
+            page, pages = pagination["page"], pagination["pages"]
+            buttons = []
+            if page > 1:
+                buttons.append({"text": "⬅️ Anterior", "callback_data": f"page:{audit.pk}:{page - 1}"})
+            if page < pages:
+                buttons.append({"text": "Siguiente ➡️", "callback_data": f"page:{audit.pk}:{page + 1}"})
+            if buttons:
+                result.reply_markup = {"inline_keyboard": [buttons]}
         return result if isinstance(result, BotReply) else BotReply(str(result), tool_name)
     except Exception as exc:
         _audit(profile, tool_name, arguments, successful=False, detail=str(exc))
@@ -1030,16 +1219,20 @@ def _execute_tool(profile, tool_name, arguments, update=None):
 
 
 HELP_TEXT = (
-    "Puedo consultar ventas, productos, inventario, pagos y turnos según tus permisos. "
+    "Puedo consultar ventas, productos, inventario, pagos, empleados y turnos según tus permisos. "
     "También puedo preparar un pago para que tú lo confirmes. Puedes escribir normalmente o usar:\n"
     "• /ventas — ventas de hoy\n"
     "• /producto NOMBRE_O_ID\n"
     "• /inventario NOMBRE_O_ID\n"
-    "• /pagos — pagos de hoy\n"
+    "• /pagos — lista de pagos de hoy con detalle y totales\n"
+    "• /empleados [NOMBRE] — lista o búsqueda de empleados\n"
     "• /balance — ventas menos pagos de hoy\n"
     "• /turnos — turnos abiertos\n"
     "• /estado — cuenta vinculada\n"
-    "• /cancelar — cancela propuestas pendientes"
+    "• /cancelar — cancela propuestas pendientes\n\n"
+    "Ejemplos: Muéstrame los pagos de hoy; pagos en Nequi de esta semana; "
+    "pagos registrados por William desde 50.000; empleados de la sucursal Yerbabuena. "
+    "Las listas largas tienen botones Anterior y Siguiente."
 )
 
 
@@ -1089,10 +1282,35 @@ def _select_expense_concept(action, verb, option_index):
     return _expense_confirmation_reply(action)
 
 
+def _handle_list_page_callback(update, profile, client):
+    from mainApp.models import TelegramAuditoria
+
+    match = re.fullmatch(r"page:([1-9][0-9]{0,17}):([1-9][0-9]{0,5})", str(update.texto or ""))
+    if not match or profile is None:
+        client.answer_callback(update.callback_query_id, "Consulta no disponible")
+        return BotReply("Vincula tu cuenta y solicita la lista nuevamente.", "pagina_invalida")
+    audit_id, page = match.groups()
+    audit = TelegramAuditoria.objects.filter(
+        pk=int(audit_id), usuario=profile.usuario,
+        telegram_user_id=profile.telegram_user_id,
+        accion__in=PAGINATED_READ_TOOLS, exitoso=True,
+        creado_en__gte=timezone.now() - timedelta(hours=24),
+    ).first()
+    if audit is None:
+        client.answer_callback(update.callback_query_id, "Consulta vencida o no disponible")
+        return BotReply("Esa lista venció o no pertenece a tu cuenta. Solicítala nuevamente.", "pagina_invalida")
+    client.answer_callback(update.callback_query_id, "Consultando página…")
+    # Solo herramientas de lectura, con filtros originales y permisos reevaluados.
+    arguments = dict(audit.argumentos, pagina=int(page))
+    return _execute_tool(profile, audit.accion, arguments, update)
+
+
 def _handle_callback(update, profile, client):
     from mainApp.models import TelegramAccionPendiente
 
     data = str(update.texto or "")
+    if data.startswith("page:"):
+        return _handle_list_page_callback(update, profile, client)
     match = re.fullmatch(r"(confirm|cancel|concept|newconcept):([0-9a-fA-F-]{36})(?::([0-9]{1,2}))?", data)
     if not match or (match.group(1) == "concept") != (match.group(3) is not None):
         client.answer_callback(update.callback_query_id, "Botón no reconocido")
@@ -1207,7 +1425,9 @@ def _handle_command(update, profile, text):
     if command == "/inventario":
         return _execute_tool(profile, "consultar_inventario", {"consulta": remainder}, update)
     if command == "/pagos":
-        return _execute_tool(profile, "consultar_pagos", {}, update)
+        return _execute_tool(profile, "consultar_pagos", {"pagina": remainder or 1}, update)
+    if command == "/empleados":
+        return _execute_tool(profile, "listar_empleados", {"consulta": remainder}, update)
     if command == "/balance":
         return _execute_tool(profile, "consultar_balance", {}, update)
     if command == "/turnos":
