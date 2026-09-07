@@ -314,14 +314,70 @@ el menú de comandos de Telegram; los comandos escritos funcionan sin ese paso.
 
 Al configurar ambas claves, Gemini interpreta primero el texto y Groq toma el
 relevo si Gemini falla, agota cuota o devuelve una respuesta vacía o inválida.
-El proveedor que falle descansa cinco minutos en cada proceso antes de volver a
-probarse; cambiar su clave o modelo permite reintentarlo inmediatamente. La acción
-se ejecuta una sola vez, después de obtener una respuesta válida. El panel muestra
-los proveedores configurados; tener una clave guardada no garantiza su validez.
+La pausa depende del fallo: una respuesta vacía, JSON inválido o error de esquema
+no bloquea al proveedor para las siguientes solicitudes. Los fallos de conexión
+o servicio tienen pausas progresivas de 10 a 60 segundos; se respeta una espera
+mayor indicada por el proveedor. Para cuota se respetan `Retry-After`, los tiempos
+de recuperación de Groq o `RetryInfo` de Gemini; si no hay indicación, se esperan
+60 segundos (una hora cuando se identifica explícitamente cuota diaria agotada).
+Esa espera permite volver a probar, no garantiza que la cuota ya se haya renovado.
+Credenciales rechazadas o modelos inexistentes mantienen cinco minutos de pausa;
+cambiar la clave o el modelo permite reintentarlo inmediatamente. Las pausas son
+por proveedor/configuración dentro del proceso del trabajador.
+
+Se prueba primero el proveedor alternativo. Si ambos fallan por problemas
+transitorios o respuestas inválidas, se permite un único reintento adicional con
+una espera de 0,4–0,8 segundos, hasta **tres llamadas de interpretación por mensaje**.
+No se reintenta inmediatamente un 429, una clave inválida, un modelo inexistente
+ni un error con espera explícita. Tampoco se hace ese intento extra si ya han
+transcurrido 35 segundos. Las conexiones tienen timeout de 5 segundos y las
+lecturas de 18; no es un límite absoluto de duración total de la solicitud.
+
+Agotados esos intentos, el trabajador informa la causa sin repetir toda la
+interpretación otras tres veces. Los registros muestran proveedor, categoría,
+código HTTP, pausa y tamaño de la solicitud, **nunca las claves, el texto del
+usuario ni el cuerpo de respuesta del proveedor en esos mensajes de diagnóstico**.
+El texto habitual del chat sigue sujeto al historial y auditoría existentes.
+La acción se despacha solo después de una interpretación válida; los cambios
+siguen requiriendo sus botones de confirmación. El panel muestra proveedores
+configurados; tener una clave guardada no garantiza su validez.
 
 Las notas de voz se transcriben con Groq y el texto resultante pasa por esa misma
 combinación Gemini/Groq. No es necesario enviar cada solicitud a ambos si el
 primer proveedor responde correctamente.
+
+### Menor consumo y continuidad de las conversaciones
+
+- Para un tema identificado se envían solo las herramientas relacionadas y las
+  reglas correspondientes. Las peticiones de varios temas conservan herramientas
+  de ambos y las consultas múltiples. Si el tema es incierto, se mantiene el
+  catálogo completo para no eliminar capacidades.
+- El contexto reciente de la misma cuenta/chat se limita a ocho mensajes, hasta
+  1.200 caracteres por mensaje y 6.000 en total. No se comparten conversaciones
+  ni se reutilizan resultados financieros en caché.
+- Frases sencillas como «cuánto he pagado hoy», «muéstrame los pagos de hoy»,
+  «cuánto pagué este mes por método de pago», «lista de empleados», «mi horario
+  mañana» y «cuánto vendimos ayer» se resuelven directamente, con los mismos
+  permisos y datos actuales. Solo las coincidencias completas son atajos: si hay
+  filtros, acciones o ambigüedades adicionales, se conserva la interpretación IA.
+- Una conversación espera a su mensaje anterior. Si hay varios trabajadores,
+  otra conversación puede avanzar; no se fusionan mensajes ni acciones.
+  El trabajador revisa mensajes abandonados cada minuto. Un último intento
+  interrumpido se marca como error para no bloquear el chat indefinidamente.
+- Una nota de voz ya transcrita no vuelve a enviarse a la API de transcripción
+  al reintentar ese mismo mensaje. Un audio nuevo todavía necesita transcripción.
+
+Esta mejora no necesita nuevas claves, dependencias ni migraciones. **Para
+activarla hay que subir el código, hacer `git pull` y reiniciar el trabajador
+Always-on existente**; no crear otro trabajador duplicado. Recarga también la Web.
+Las pruebas automatizadas usan API simuladas, sin consumir cuota ni datos reales:
+
+```bash
+python manage.py test mainApp.test_telegram_ai_resilience mainApp.test_telegram_bot --settings=NovaSoft.test_settings
+```
+
+Referencias de la política de recuperación: [cabeceras y límites de Groq](https://console.groq.com/docs/rate-limits)
+y [errores y reintentos de Gemini](https://ai.google.dev/gemini-api/docs/troubleshooting).
 
 ## 1. Crear las credenciales
 
@@ -419,6 +475,6 @@ tail -n 100 /home/Merk888/logs/telegram_bot.log
 
 Los comandos `/resumen`, `/ranking`, `/pendientes`, `/ventas`, `/venta ID`, `/factura ID`, `/producto`, `/inventario`, `/pagos`, `/empleados`,
 `/balance`, `/turnos`, `/acciones`, `/catalogo`, `/vistas`, `/devolver` y `/estado` siguen
-disponibles aunque los proveedores inteligentes fallen. Con una
-clave de Groq válida, el texto libre y los audios continúan funcionando aunque
-Gemini no esté disponible.
+disponibles aunque los proveedores inteligentes fallen. Con una clave de Groq
+válida, cuota disponible y el servicio operativo, el texto libre y los audios
+pueden continuar funcionando aunque Gemini no esté disponible.

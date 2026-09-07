@@ -38,6 +38,7 @@ class Command(BaseCommand):
         self.stdout.write("Procesador del bot de Telegram iniciado.")
         try:
             recover_stale_updates()
+            last_recovery = time.monotonic()
             while True:
                 close_old_connections()
                 if not is_feature_enabled(TELEGRAM_BOT_FEATURE, fresh=True):
@@ -47,6 +48,9 @@ class Command(BaseCommand):
                     time.sleep(max(sleep_seconds, 10.0))
                     continue
                 try:
+                    if time.monotonic() - last_recovery >= 60:
+                        recover_stale_updates()
+                        last_recovery = time.monotonic()
                     found = process_next_update()
                 except DatabaseError as exc:
                     self.stderr.write(f"Base de datos no disponible: {exc}")

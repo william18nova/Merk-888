@@ -321,6 +321,7 @@ def common_read_request(text):
     bot = _bot()
     normalized = re.sub(r"\s+", " ", bot._normalized_text(text)).strip(" ¿?¡!.")
     normalized = re.sub(r"^jarvis[, ]+", "", normalized)
+    normalized = re.sub(r"^por favor[, ]+|[, ]+por favor$", "", normalized)
     sale = bot._sale_detail_request(normalized)
     if sale is not None:
         return "consultar_detalle_operativo", sale
@@ -333,6 +334,9 @@ def common_read_request(text):
     if normalized in {"mi horario de hoy", "mi horario hoy", "cuando trabajo hoy"}:
         today = timezone.localdate().isoformat()
         return "consultar_horarios_empleados", {"desde": today, "hasta": today}
+    if normalized in {"mi horario manana", "mi horario de manana", "cuando trabajo manana", "muestrame mi horario manana"}:
+        tomorrow = (timezone.localdate() + timedelta(days=1)).isoformat()
+        return "consultar_horarios_empleados", {"desde": tomorrow, "hasta": tomorrow}
     if normalized in {"mi horario esta semana", "mi horario de esta semana", "mis turnos de esta semana"}:
         today = timezone.localdate()
         start = today - timedelta(days=today.weekday())
@@ -342,6 +346,28 @@ def common_read_request(text):
     if normalized in {"siguiente", "siguiente pagina", "anterior", "pagina anterior"}:
         return "continuar_consulta", {"navegacion": "anterior" if "anterior" in normalized else "siguiente"}
     periods = r"hoy|ayer|esta semana|este mes|la semana pasada|el mes pasado"
+    if re.fullmatch(r"(?:(?:muestrame|dame|quiero ver|ver) )?(?:la )?lista de (?:los )?empleados|(?:muestrame|dame|quiero ver|ver) (?:todos )?(?:los )?empleados", normalized):
+        return "listar_empleados", {}
+    payment_total = r"(?:cuanto (?:(?:he|hemos|se ha) pagado|pague|pagamos|se pago)|(?:(?:dame|muestrame|cual es) )?(?:el )?total (?:de )?(?:los )?pagos)"
+    payment_list = r"(?:(?:muestrame|dame|lista|quiero ver|ver) (?:la lista de )?(?:los )?pagos|(?:la )?lista de (?:los )?pagos)"
+    payment = re.fullmatch(
+        r"(?P<request>" + payment_total + "|" + payment_list + r")"
+        r"(?: (?:(?:de|del|durante|en) )?(?P<period>" + periods + r"))?"
+        r"(?: (?P<breakdown>por (?:metodos? de pago|medios? de pago|medios?)))?"
+        r"(?: en (?P<method>nequi|efectivo|tarjeta|caja social|banco caja social))?", normalized,
+    )
+    if payment:
+        start, end = _period_dates(payment["period"] or "hoy")
+        arguments = {"desde": start.isoformat(), "hasta": end.isoformat(),
+                     "detalle": re.fullmatch(payment_list, payment["request"]) is not None,
+                     "desglose_por_medio": bool(payment["breakdown"])}
+        if payment["method"]:
+            arguments["medio_pago"] = bot.normalize_payment_method_code(payment["method"])
+        return "consultar_pagos", arguments
+    sales = re.fullmatch(r"cuanto (?:vendimos|hemos vendido|se ha vendido|se vendio)(?: (" + periods + r"))?", normalized)
+    if sales:
+        start, end = _period_dates(sales[1] or "hoy")
+        return "consultar_ventas", {"desde": start.isoformat(), "hasta": end.isoformat()}
     match = re.fullmatch(r"(?:y|ahora|pero) (" + periods + r")", normalized)
     if match:
         start, end = _period_dates(match[1])

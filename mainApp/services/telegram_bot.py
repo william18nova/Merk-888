@@ -4,6 +4,7 @@ import io
 import json
 import logging
 import math
+import random
 import re
 import secrets
 import time
@@ -43,6 +44,7 @@ from mainApp.services.telegram_operations import (
 from mainApp.services.telegram_returns import command_prepare_return, confirm_return
 from mainApp.services.telegram_schedule import confirm_schedule
 from mainApp.services.telegram_assistant import DATE_TOOLS, common_read_request, resolve_continuation
+from mainApp.services.telegram_ai_policy import compact_history, compact_prompt, response_failure, selected_tool_names
 
 
 logger = logging.getLogger(__name__)
@@ -50,7 +52,8 @@ logger = logging.getLogger(__name__)
 TELEGRAM_FILE_LIMIT = 20 * 1024 * 1024
 ACTION_TTL_MINUTES = 10
 LINK_CODE_TTL_MINUTES = 10
-AI_PROVIDER_COOLDOWN_SECONDS = 300
+AI_MAX_ATTEMPTS = 3
+AI_RETRY_BUDGET_SECONDS = 35
 LIST_PAGE_SIZE = 5
 PAGINATED_READ_TOOLS = frozenset({
     "consultar_pagos", "listar_empleados", "consultar_registros",
@@ -71,6 +74,34 @@ class TelegramExternalError(TelegramBotError):
 
 
 class TelegramConfigurationError(TelegramBotError):
+    retryable = False
+
+
+class TelegramAIProviderError(TelegramExternalError):
+    """Error seguro y clasificado; nunca incluye el cuerpo ni las claves de la API."""
+
+    def __init__(self, provider, kind, *, status=None, delay=0, retry_soon=None):
+        self.provider, self.kind, self.status, self.delay = provider, kind, status, delay
+        self.retry_soon = kind in {"connection", "invalid_response"} if retry_soon is None else retry_soon
+        reasons = {
+            "rate_limit": "alcanzó un límite de uso",
+            "quota": "alcanzó su cuota diaria",
+            "authentication": "rechazó la clave o sus permisos",
+            "model": "no tiene disponible el modelo configurado",
+            "request": "rechazó el formato o la configuración de la solicitud",
+            "unavailable": "presenta un fallo temporal del servicio",
+            "connection": "no respondió a tiempo o falló la conexión",
+            "invalid_response": "devolvió una respuesta que no se pudo interpretar",
+        }
+        message = f"{provider}: {reasons[kind]}"
+        if status is not None:
+            message += f" (HTTP {status})"
+        super().__init__(message)
+
+
+class TelegramAIUnavailable(TelegramBotError):
+    # La interpretación ya agotó su presupuesto de intentos. El trabajador no
+    # debe volver a llamarla inmediatamente otras tres veces con el mismo texto.
     retryable = False
 
 
@@ -1144,6 +1175,33 @@ GROQ_CHAT_TOOLS = [
 ]
 
 
+def _ai_request_context(user_text, history=None):
+    names = selected_tool_names(user_text, history, TOOL_FUNCTIONS)
+    definitions = [item for item in GEMINI_TOOLS[0]["functionDeclarations"] if item["name"] in names]
+    system = _assistant_system_prompt() if names == set(TOOL_FUNCTIONS) else compact_prompt(timezone.localdate().isoformat(), names)
+    return definitions, system, compact_history(history)
+
+
+def _ai_response(provider, url, **kwargs):
+    payload = kwargs.get("json", {})
+    logger.info("IA Telegram proveedor=%s caracteres_solicitud=%s", provider, len(json.dumps(payload, ensure_ascii=False)))
+    try:
+        response = requests.post(url, timeout=(5, 18), **kwargs)
+    except requests.RequestException:
+        raise TelegramAIProviderError(provider, "connection", delay=10) from None
+    try:
+        data = response.json()
+    except ValueError:
+        data = None
+    failure = response_failure(response, data)
+    if failure:
+        kind, delay, retry_soon = failure
+        raise TelegramAIProviderError(provider, kind, status=response.status_code, delay=delay, retry_soon=retry_soon)
+    if not isinstance(data, dict):
+        raise TelegramAIProviderError(provider, "invalid_response")
+    return data
+
+
 def _gemini_function_call(user_text, history=None):
     api_key = _configured("GEMINI_API_KEY")
     if not api_key:
@@ -1151,7 +1209,7 @@ def _gemini_function_call(user_text, history=None):
             "La comprensión libre no está disponible: falta GEMINI_API_KEY. Usa /ayuda para ver los comandos."
         )
     model = _configured("GEMINI_MODEL") or "gemini-3.8-flash"
-    system = _assistant_system_prompt()
+    definitions, system, history = _ai_request_context(user_text, history)
     contents = []
     for item in history or []:
         role = "model" if item.get("role") == "model" else "user"
@@ -1162,24 +1220,16 @@ def _gemini_function_call(user_text, history=None):
     payload = {
         "systemInstruction": {"parts": [{"text": system}]},
         "contents": contents,
-        "tools": GEMINI_TOOLS,
+        "tools": [{"functionDeclarations": definitions}],
         "toolConfig": {"functionCallingConfig": {"mode": "AUTO"}},
         "generationConfig": {"temperature": 0.1, "maxOutputTokens": 1400},
     }
-    try:
-        response = requests.post(
-            f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
-            headers={"x-goog-api-key": api_key, "Content-Type": "application/json"},
-            json=payload,
-            timeout=45,
-        )
-        data = response.json()
-    except (requests.RequestException, ValueError) as exc:
-        raise TelegramExternalError("Gemini no respondió correctamente.") from exc
-    if response.status_code >= 500 or response.status_code == 429:
-        raise TelegramExternalError("Gemini está temporalmente ocupado. Intenta nuevamente.")
-    if not response.ok:
-        raise TelegramBotError(f"Gemini rechazó la solicitud (HTTP {response.status_code}).")
+    data = _ai_response(
+        "Gemini",
+        f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+        headers={"x-goog-api-key": api_key, "Content-Type": "application/json"},
+        json=payload,
+    )
     try:
         candidate = data["candidates"][0]
         if candidate.get("finishReason") in {"MAX_TOKENS", "SAFETY", "RECITATION"}:
@@ -1191,7 +1241,7 @@ def _gemini_function_call(user_text, history=None):
         if calls:
             if len(calls) != 1 or not isinstance(calls[0], dict):
                 raise ValueError("Se esperaba una sola función")
-            return _validated_ai_call(calls[0].get("name"), calls[0].get("args", {}))
+            return _validated_ai_call(calls[0].get("name"), calls[0].get("args", {}), {item["name"] for item in definitions})
         answer = "\n".join(
             part["text"] for part in parts
             if isinstance(part.get("text"), str) and not part.get("thought")
@@ -1199,13 +1249,17 @@ def _gemini_function_call(user_text, history=None):
         if not answer:
             raise ValueError("Respuesta vacía")
         return "", {}, answer
-    except (KeyError, IndexError, TypeError, AttributeError, ValueError) as exc:
-        raise TelegramExternalError("Gemini devolvió una respuesta no utilizable.") from exc
+    except (KeyError, IndexError, TypeError, AttributeError, ValueError):
+        raise TelegramAIProviderError("Gemini", "invalid_response") from None
 
 
-def _validated_ai_call(name, arguments):
-    if not isinstance(name, str) or name not in TOOL_FUNCTIONS or not isinstance(arguments, dict):
+def _validated_ai_call(name, arguments, allowed=None):
+    if not isinstance(name, str) or name not in TOOL_FUNCTIONS or (allowed is not None and name not in allowed) or not isinstance(arguments, dict):
         raise ValueError("Función o argumentos inválidos")
+    try:
+        validate_operation_arguments(name, arguments)
+    except TelegramBotError:
+        raise ValueError("Argumentos de la IA no conformes al esquema") from None
     return name, arguments, ""
 
 
@@ -1217,7 +1271,9 @@ def _groq_function_call(user_text, history=None):
             "Usa /ayuda para ver los comandos."
         )
     model = _configured("GROQ_CHAT_MODEL") or "openai/gpt-oss-120b"
-    messages = [{"role": "system", "content": _assistant_system_prompt()}]
+    definitions, system, history = _ai_request_context(user_text, history)
+    names = {item["name"] for item in definitions}
+    messages = [{"role": "system", "content": system}]
     for item in history or []:
         role = "assistant" if item.get("role") == "model" else "user"
         text = str(item.get("text") or "").strip()
@@ -1227,28 +1283,20 @@ def _groq_function_call(user_text, history=None):
     payload = {
         "model": model,
         "messages": messages,
-        "tools": GROQ_CHAT_TOOLS,
+        "tools": [item for item in GROQ_CHAT_TOOLS if item["function"]["name"] in names],
         "tool_choice": "auto",
         "temperature": 0.1,
         "max_completion_tokens": 1400,
     }
-    try:
-        response = requests.post(
-            "https://api.groq.com/openai/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-            },
-            json=payload,
-            timeout=45,
-        )
-        data = response.json()
-    except (requests.RequestException, ValueError) as exc:
-        raise TelegramExternalError("Groq no respondió correctamente.") from exc
-    if response.status_code >= 500 or response.status_code == 429:
-        raise TelegramExternalError("Groq está temporalmente ocupado. Intenta nuevamente.")
-    if not response.ok:
-        raise TelegramBotError(f"Groq rechazó la solicitud (HTTP {response.status_code}).")
+    data = _ai_response(
+        "Groq",
+        "https://api.groq.com/openai/v1/chat/completions",
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        json=payload,
+    )
     try:
         choice = data["choices"][0]
         if choice.get("finish_reason") in {"length", "content_filter"}:
@@ -1261,13 +1309,13 @@ def _groq_function_call(user_text, history=None):
             function = tool_calls[0]["function"]
             raw_arguments = function.get("arguments", "{}")
             arguments = raw_arguments if isinstance(raw_arguments, dict) else json.loads(raw_arguments)
-            return _validated_ai_call(function.get("name"), arguments)
+            return _validated_ai_call(function.get("name"), arguments, names)
         answer = message.get("content")
         if not isinstance(answer, str) or not answer.strip():
             raise ValueError("Respuesta vacía")
         return "", {}, answer.strip()
-    except (KeyError, IndexError, TypeError, AttributeError, ValueError) as exc:
-        raise TelegramExternalError("Groq devolvió una respuesta no utilizable.") from exc
+    except (KeyError, IndexError, TypeError, AttributeError, ValueError):
+        raise TelegramAIProviderError("Groq", "invalid_response") from None
 
 
 def _intelligent_function_call(user_text, history=None):
@@ -1281,29 +1329,71 @@ def _intelligent_function_call(user_text, history=None):
             "La comprensión libre no está disponible: faltan las claves de Gemini y Groq. "
             "Usa /ayuda para ver los comandos."
         )
-    last_error = None
-    for name, key_setting, model_setting, function in configured:
+    started, attempts = time.monotonic(), 0
+    errors, retry_candidates = {}, []
+
+    def attempt(provider, fingerprint):
+        nonlocal attempts
+        name, _, _, function = provider
+        attempts += 1
+        try:
+            result = function(user_text, history=history)
+        except TelegramBotError as raw:
+            exc = raw if isinstance(raw, TelegramAIProviderError) else TelegramAIProviderError(
+                name, "unavailable" if raw.retryable else "request", delay=10 if raw.retryable else 0,
+                retry_soon=bool(raw.retryable),
+            )
+            old = _AI_PROVIDER_FAILURES.get(name)
+            count = old[3] + 1 if old and old[0] == fingerprint and old[2].kind == exc.kind else 1
+            cooldown = exc.delay
+            if exc.kind in {"connection", "unavailable"}:
+                cooldown = max(cooldown, min(60, 10 * (2 ** min(count - 1, 3))))
+            if cooldown:
+                _AI_PROVIDER_FAILURES[name] = (fingerprint, time.monotonic() + cooldown, exc, count)
+            else:
+                # Un JSON inválido es un fallo de esta respuesta, no una caída
+                # del proveedor para todos los mensajes de los próximos minutos.
+                _AI_PROVIDER_FAILURES.pop(name, None)
+            errors[name] = exc
+            logger.warning("IA Telegram proveedor=%s tipo=%s http=%s pausa_segundos=%s intento=%s", name, exc.kind, exc.status or "-", math.ceil(cooldown), attempts)
+            return None, exc
+        _AI_PROVIDER_FAILURES.pop(name, None)
+        return result, None
+
+    for provider in configured:
+        name, key_setting, model_setting, _ = provider
         fingerprint = hashlib.sha256(
             (_configured(key_setting) + "\0" + _configured(model_setting)).encode("utf-8")
         ).hexdigest()
         failed = _AI_PROVIDER_FAILURES.get(name)
         if failed and failed[0] == fingerprint and failed[1] > time.monotonic():
+            errors[name] = failed[2]
             continue
-        try:
-            result = function(user_text, history=history)
-        except TelegramBotError as exc:
-            last_error = exc
-            _AI_PROVIDER_FAILURES[name] = (fingerprint, time.monotonic() + AI_PROVIDER_COOLDOWN_SECONDS)
-            logger.warning("%s no está disponible; se usará el otro proveedor configurado.", name)
-            continue
-        _AI_PROVIDER_FAILURES.pop(name, None)
-        return result
-    if last_error is not None:
-        raise last_error
-    raise TelegramExternalError(
-        "Los proveedores inteligentes están temporalmente ocupados. "
-        "Intenta en unos minutos o usa /ayuda para consultar los comandos."
-    )
+        result, error = attempt(provider, fingerprint)
+        if error is None:
+            return result
+        if error.retry_soon:
+            retry_candidates.append((provider, fingerprint))
+    # Cambiar de proveedor tiene prioridad sobre repetir uno fallido. Solo un
+    # reintento extra, nunca por 429, credenciales, modelo o Retry-After explícito.
+    if retry_candidates and attempts < AI_MAX_ATTEMPTS and time.monotonic() - started < AI_RETRY_BUDGET_SECONDS:
+        time.sleep(random.uniform(0.4, 0.8))
+        result, error = attempt(*retry_candidates[0])
+        if error is None:
+            return result
+    details = []
+    for name, error in errors.items():
+        message = str(error)
+        failed = _AI_PROVIDER_FAILURES.get(name)
+        if failed and error.kind in {"rate_limit", "quota", "connection", "unavailable"}:
+            remaining = max(1, math.ceil(failed[1] - time.monotonic()))
+            message += f"; se podrá volver a intentar en aproximadamente {remaining} s"
+        elif error.kind in {"authentication", "model"}:
+            message += "; el Web Master debe revisar la configuración"
+        elif error.kind == "request":
+            message += "; prueba una petición más corta; si persiste, pide al Web Master revisar la configuración"
+        details.append(message)
+    raise TelegramAIUnavailable("No pude interpretar la solicitud con la IA. " + ". ".join(details) + ". Puedes usar /ayuda para los comandos; las consultas sencillas siguen disponibles sin IA")
 
 
 def _expense_query_arguments(profile, arguments):
@@ -1739,6 +1829,9 @@ def recover_stale_updates():
     from mainApp.models import TelegramActualizacion
 
     threshold = timezone.now() - timedelta(minutes=10)
+    TelegramActualizacion.objects.filter(
+        estado="PROCESANDO", iniciado_en__lt=threshold, intentos__gte=3,
+    ).update(estado="ERROR", procesado_en=timezone.now(), error="El trabajador se interrumpió en el último intento. Revisa el resultado antes de repetir una acción.")
     return TelegramActualizacion.objects.filter(
         estado="PROCESANDO",
         iniciado_en__lt=threshold,
@@ -1753,10 +1846,17 @@ def process_next_update():
         return False
     close_old_connections()
     with transaction.atomic():
+        # Una conversación espera a su mensaje anterior, incluso si otro
+        # trabajador lo tiene bloqueado. Otras conversaciones sí pueden avanzar.
+        earlier = TelegramActualizacion.objects.filter(
+            telegram_chat_id=OuterRef("telegram_chat_id"),
+            estado__in=["PENDIENTE", "PROCESANDO"],
+        ).filter(Q(recibido_en__lt=OuterRef("recibido_en")) | Q(recibido_en=OuterRef("recibido_en"), update_id__lt=OuterRef("update_id")))
         update = (
             TelegramActualizacion.objects
             .select_for_update(skip_locked=True)
             .filter(estado="PENDIENTE")
+            .filter(~Exists(earlier))
             .order_by("recibido_en", "update_id")
             .first()
         )
@@ -1785,7 +1885,7 @@ def process_next_update():
             update.respuesta = reply.text
         else:
             client = TelegramApiClient()
-            if update.tipo == "VOZ":
+            if update.tipo == "VOZ" and not update.transcripcion:
                 if update.voice_file_size and update.voice_file_size > TELEGRAM_FILE_LIMIT:
                     raise TelegramBotError("El audio supera el límite de 20 MB.")
                 update.transcripcion = transcribe_voice(client.download_voice(update.voice_file_id))
@@ -1815,7 +1915,7 @@ def process_next_update():
                     safe_error = "ocurrió un error interno. El Web Master puede revisarlo en la auditoría"
                 (client or TelegramApiClient()).send_message(
                     update.telegram_chat_id,
-                    f"No pude completar la solicitud: {safe_error}.",
+                    f"No pude completar la solicitud: {safe_error.rstrip('.')}.",
                 )
             except TelegramBotError:
                 logger.exception("Tampoco se pudo notificar el error por Telegram")
