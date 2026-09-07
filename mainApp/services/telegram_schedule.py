@@ -9,6 +9,7 @@ from django.utils import timezone
 
 from mainApp.models import Empleado, Sucursal, TelegramAccionPendiente, TurnoEmpleado
 from . import employee_schedule as schedule
+from . import employee_rotation as rotation
 
 
 def _bot():
@@ -69,18 +70,21 @@ def tool_schedule(profile, arguments):
             args["sucursal"] = str(args["sucursal_id"])
         if personal and schedule.own_employee(user) is None:
             return bot.BotReply("Tu usuario no tiene una ficha de empleado vinculada. Pide al administrador que la vincule para consultar tu horario.", "consultar_horarios_empleados")
-        rows = schedule.schedule_rows(user, args, personal=personal)
-        count = rows.count()
+        rows = rotation.calendar_events(user, args, personal=personal)
+        count = len(rows)
         pages = max(1, (count + bot.LIST_PAGE_SIZE - 1) // bot.LIST_PAGE_SIZE)
         page = schedule.positive_id(args.get("pagina", 1), "número de página")
         if page > pages:
             raise bot.TelegramBotError(f"La consulta tiene {pages} página(s).")
         lines = [f"{'Mi horario' if personal else 'Horarios de empleados'} · {start:%d/%m/%Y} – {end:%d/%m/%Y}", f"{count} turno(s) · página {page}/{pages} · hora Colombia"]
         for turn in rows[(page - 1) * bot.LIST_PAGE_SIZE:page * bot.LIST_PAGE_SIZE]:
-            begin, finish = turn.inicio.astimezone(schedule.COLOMBIA), turn.fin.astimezone(schedule.COLOMBIA)
-            lines.append(f"• Turno #{turn.pk} · {bot._list_text(str(turn.empleado), 80)}\n  {begin:%d/%m %H:%M} → {finish:%d/%m %H:%M} · {bot._list_text(turn.sucursal.nombre, 80)}")
-            if turn.notas:
-                lines.append("  " + bot._list_text(turn.notas, 160))
+            begin, finish = schedule.parse_time(turn["inicio"]), schedule.parse_time(turn["fin"])
+            hours = "Descanso · día completo" if turn.get("descanso") else f"{begin:%d/%m %H:%M} → {finish:%d/%m %H:%M}"
+            lines.append(f"• Turno #{turn['id']} · {bot._list_text(turn['empleado'], 80)}\n  {begin:%d/%m} · {hours} · {bot._list_text(turn['sucursal'], 80)}")
+            if turn.get("rotacion_id"):
+                lines.append(f"  Semana {turn['semana_rotacion']}/{turn['semanas_ciclo']} · {'excepción puntual' if turn['excepcion'] else 'rotación'}")
+            if turn["notas"]:
+                lines.append("  " + bot._list_text(turn["notas"], 160))
         if not count:
             lines.append("No hay jornadas programadas en este intervalo.")
         canonical = {key: value for key, value in args.items() if key in READ_PROPERTIES}
@@ -98,15 +102,26 @@ def tool_prepare_schedule(profile, arguments, update=None):
         operation = arguments.get("operacion")
         payload = {"operacion": operation}
         if operation != "crear":
-            turn = TurnoEmpleado.objects.filter(pk=schedule.positive_id(arguments.get("turno_id"), "ID de turno")).first()
-            if turn is None:
-                raise bot.TelegramBotError("No encontré ese turno de empleado.")
-            payload.update(id=turn.pk, version=turn.version)
-        elif arguments.get("turno_id") is not None:
+            if arguments.get("turno_referencia"):
+                if arguments.get("turno_id") is not None:
+                    raise bot.TelegramBotError("Usa solo turno_id o turno_referencia, no ambos.")
+                _, _, _, turn = rotation.occurrence(arguments["turno_referencia"])
+                payload.update(id=turn["id"], version=turn["version"], alcance=arguments.get("alcance"))
+                rotation._scope(payload)
+            else:
+                if arguments.get("alcance") not in {None, "fecha"} or "descanso" in arguments:
+                    raise bot.TelegramBotError("Ese turno es independiente; para cambiar la rotación indica su referencia r… y el alcance.")
+                turn = TurnoEmpleado.objects.filter(pk=schedule.positive_id(arguments.get("turno_id"), "ID de turno")).first()
+                if turn is None:
+                    raise bot.TelegramBotError("No encontré ese turno de empleado.")
+                payload.update(id=turn.pk, version=turn.version)
+        elif arguments.get("turno_id") is not None or arguments.get("turno_referencia") is not None:
             raise bot.TelegramBotError("No indiques ID de turno al crear una jornada.")
-        if operation == "cancelar" and set(arguments) - {"operacion", "turno_id"}:
+        elif arguments.get("alcance") not in {None, "fecha"} or "descanso" in arguments:
+            raise bot.TelegramBotError("Crear desde el bot asigna una jornada independiente; para modificar el ciclo usa una referencia de la rotación.")
+        if operation == "cancelar" and set(arguments) - {"operacion", "turno_id", "turno_referencia", "alcance"}:
             raise bot.TelegramBotError("Para cancelar indica solo el ID del turno; no cambios de horario.")
-        if operation == "editar" and not set(arguments) & {"empleado", "sucursal", "inicio", "fin", "notas"}:
+        if operation == "editar" and not set(arguments) & {"empleado", "sucursal", "inicio", "fin", "notas", "descanso"}:
             raise bot.TelegramBotError("Indica qué fecha, hora, empleado, sucursal o nota quieres modificar.")
         if "empleado" in arguments or operation == "crear":
             employee = _employee(user, arguments.get("empleado"))
@@ -115,7 +130,7 @@ def tool_prepare_schedule(profile, arguments, update=None):
                 payload["sucursal_id"] = employee.sucursalid_id
         if "sucursal" in arguments:
             payload["sucursal_id"] = _branch(arguments["sucursal"]).pk
-        for field in ("inicio", "fin", "notas"):
+        for field in ("inicio", "fin", "notas", "descanso"):
             if field in arguments:
                 payload[field] = arguments[field]
         before, after = schedule.preview_change(user, payload)
@@ -125,6 +140,8 @@ def tool_prepare_schedule(profile, arguments, update=None):
         lines.append(f"{'Horario a cancelar' if operation == 'cancelar' else 'Horario propuesto'}: {after['inicio'][:16]} → {after['fin'][:16]} (Colombia)")
         if after.get("notas"):
             lines.append("Notas: " + bot._list_text(after["notas"], 300))
+        if payload.get("alcance"):
+            lines.append("Alcance: SOLO ESTA FECHA." if payload["alcance"] == "fecha" else f"Alcance: ESTA FECHA Y LAS SIGUIENTES REPETICIONES de esta jornada, cada {after['semanas_ciclo']} semanas. Las otras jornadas y el historial anterior no cambian.")
         lines.append("Todavía no se ha guardado. Confirma con el botón; vence en 10 minutos. Esto no abre ni modifica una caja.")
         pending = TelegramAccionPendiente.objects.create(
             telegram_usuario=profile, actualizacion=update, accion="turno_empleado",
@@ -147,11 +164,13 @@ def confirm_schedule(profile, action):
         with transaction.atomic():
             payload = dict(action.argumentos["payload"], solicitud_id=str(action.pk))
             turn, _ = schedule.save_change(profile.usuario, payload, source="TELEGRAM")
+            event = schedule.serialize(turn)
             action.estado = "CONFIRMADA"
             action.resuelto_en = timezone.now()
             action.save(update_fields=["estado", "resuelto_en"])
-            bot._audit(profile, "confirmar_turno_empleado", action.argumentos, detail=f"Turno de empleado #{turn.pk}")
-        return f"Turno de empleado #{turn.pk} {'cancelado' if turn.cancelado else 'guardado'} correctamente. Ya se refleja en el calendario y en Mi horario. No se modificó ninguna caja."
+            bot._audit(profile, "confirmar_turno_empleado", action.argumentos, detail=f"Turno de empleado #{event['id']}")
+        scope = " Se actualizó esta fecha y sus siguientes repeticiones." if payload.get("alcance") == "futuro" else ""
+        return f"Turno de empleado #{event['id']} {'cancelado' if event['cancelado'] else 'guardado'} correctamente.{scope} Ya se refleja en el calendario y en Mi horario. No se modificó ninguna caja."
     except (schedule.ScheduleError, DatabaseError) as exc:
         message = str(exc) if isinstance(exc, schedule.ScheduleError) else "No fue posible guardar el horario. Revisa el calendario y solicita una nueva propuesta."
         action.estado = "ERROR"
@@ -171,9 +190,12 @@ READ_PROPERTIES = {
 }
 TOOL_DEFINITIONS = [
     {"name": "consultar_horarios_empleados", "description": "Consulta jornadas laborales PLANIFICADAS, no turnos financieros de caja. Por defecto consulta MI horario de los próximos siete días. Otros empleados requieren permiso. Devuelve IDs de turno para editar o cancelar.", "parameters": {"type": "OBJECT", "properties": READ_PROPERTIES}},
-    {"name": "preparar_turno_empleado", "description": "Propone crear, editar o cancelar UNA jornada laboral. Solo guarda al pulsar Confirmar. Usa ID de turno laboral, no de turno de caja. No asume horas ni repeticiones; solicita datos faltantes. Crear usa por defecto la sucursal de la ficha del empleado y la muestra antes de confirmar.", "parameters": {"type": "OBJECT", "properties": {
+    {"name": "preparar_turno_empleado", "description": "Propone crear, editar o cancelar una jornada laboral. Solo guarda al pulsar Confirmar. Usa turno_id para jornadas independientes o turno_referencia para una jornada de rotación; en rotaciones exige alcance explícito, fecha o futuro, para esa misma jornada. No asume horas ni repeticiones; solicita datos faltantes. Crear usa por defecto la sucursal de la ficha del empleado y la muestra antes de confirmar. No opera turnos de caja.", "parameters": {"type": "OBJECT", "properties": {
         "operacion": {"type": "STRING", "enum": ["crear", "editar", "cancelar"]},
-        "turno_id": {"type": "INTEGER", "description": "Obligatorio al editar o cancelar; ID real obtenido del calendario/consulta de horarios."},
+        "turno_id": {"type": "INTEGER", "description": "Solo para editar o cancelar jornadas independientes: ID real de la consulta de horarios. Para jornadas de rotación usa turno_referencia EN LUGAR de este campo; nunca envíes ambos."},
+        "turno_referencia": {"type": "STRING", "description": "Para turnos de rotación, referencia completa rID-CLAVE-AAAAMMDD obtenida de consultar_horarios_empleados. Alternativa a turno_id."},
+        "alcance": {"type": "STRING", "enum": ["fecha", "futuro"], "description": "OBLIGATORIO en rotaciones: fecha=solo esta ocurrencia; futuro=esta y siguientes repeticiones de la misma jornada. Si no lo dice explícitamente, PREGUNTAR, no asumir."},
+        "descanso": {"type": "BOOLEAN", "description": "Solo para editar una ocurrencia de rotación. true exige inicio 00:00 y fin 00:00 del día siguiente; false la convierte en jornada de trabajo con horas explícitas."},
         "empleado": {"type": "STRING", "description": "ID o nombre único. Obligatorio al crear."},
         "sucursal": {"type": "STRING"},
         "inicio": {"type": "STRING", "description": "Fecha y hora explícitas YYYY-MM-DDTHH:MM en Colombia; obligatorio al crear."},

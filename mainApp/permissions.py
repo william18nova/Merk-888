@@ -702,6 +702,7 @@ ROUTE_PERMISSIONS = {
     "calendario_empleados": "horarios_empleados_ver",
     "calendario_empleados_datos": "horarios_empleados_ver",
     "guardar_turno_empleado": "horarios_empleados_editar",
+    "crear_rotacion_empleados": "horarios_empleados_editar",
     "horarios_sucursal_autocomplete": "horarios_crear",
     "visualizar_horarios": "horarios_ver",
     "sucursal_horario_visualizar_autocomplete": "horarios_ver",

@@ -15,8 +15,9 @@
   const addDays = (str, count) => iso(new Date(date(str).getTime() + count * dayMs));
   const niceDate = str => date(str).toLocaleDateString("es-CO", {timeZone: "UTC", day: "numeric", month: "long", year: "numeric"});
   let focus = today, view = "week", events = [], selected = null, busy = false;
-  let request = null, pendingWrite = null;
+  let request = null, pendingWrite = null, rotations = [];
   const fields = ["shift-employee", "shift-branch", "shift-start", "shift-end", "shift-notes"];
+  if (config.editable) fields.push("shift-scope", "shift-rest");
 
   function node(tag, className, text) {
     const item = document.createElement(tag);
@@ -78,6 +79,10 @@
       if (!response.ok) throw new Error(data.error || "No se pudo consultar el calendario.");
       if (current !== request) return;
       events = data.eventos;
+      rotations = data.rotaciones || [];
+      const rotationInfo = $("rotation-status");
+      rotationInfo.textContent = rotations.length ? rotations.map(item => `${item.nombre} · ${item.semana_actual ? "Semana actual " + item.semana_actual + "/" + item.semanas : "Comienza " + item.inicio} · inicio ${niceDate(item.inicio)}`).join(" | ") : events.some(item => item.rotacion_id) ? "Tu horario incluye jornadas de una rotación repetitiva. Los descansos no suman horas de trabajo." : "";
+      rotationInfo.hidden = !rotationInfo.textContent;
       render();
       status(events.length ? "" : "No hay jornadas programadas para este intervalo y los filtros seleccionados.");
       return true;
@@ -105,9 +110,16 @@
     card.type = "button";
     const startTime = event.inicio.slice(11, 16), endTime = event.fin.slice(11, 16);
     const overnight = event.inicio.slice(0, 10) !== event.fin.slice(0, 10);
-    card.append(node("span", "sch-event-time", `${startTime} – ${endTime}${overnight ? " · nocturno" : ""}`), node("strong", "", event.empleado), node("small", "", event.sucursal));
+    const continuation = day > event.inicio.slice(0, 10);
+    const timeLabel = event.descanso ? "Descanso · día completo" : continuation
+      ? `00:00 – ${endTime} · continúa del día anterior`
+      : `${startTime} – ${endTime}${overnight ? " · nocturno" : ""}`;
+    card.classList.toggle("is-rest", !!event.descanso);
+    card.classList.toggle("is-continuation", continuation);
+    card.append(node("span", "sch-event-time", timeLabel), node("strong", "", event.empleado), node("small", "", event.sucursal));
+    if (event.rotacion_id) card.append(node("small", "sch-repeat-label", `${event.excepcion ? "Excepción" : "↻ Rotación"} · semana ${event.semana_rotacion}/${event.semanas_ciclo}`));
     card.title = `${event.empleado} · ${niceDate(event.inicio.slice(0, 10))} ${startTime} a ${niceDate(event.fin.slice(0, 10))} ${endTime}. ${event.notas}`;
-    card.setAttribute("aria-label", `${event.empleado}, ${day}, ${startTime} a ${endTime}, ${event.sucursal}. Ver turno`);
+    card.setAttribute("aria-label", `${event.empleado}, ${day}, ${timeLabel}, ${event.sucursal}. Ver turno`);
     const colors = ["#80c5ff", "#6ed7c4", "#bbabef", "#f0bc86", "#8bd0d8"];
     card.style.borderLeftColor = colors[event.empleado_id % colors.length];
     let pointer = null, suppressClick = false;
@@ -160,7 +172,7 @@
     const rangeStart = new Date(`${start}T00:00:00-05:00`).getTime();
     const rangeEnd = new Date(`${addDays(end, 1)}T00:00:00-05:00`).getTime();
     $("schedule-count").textContent = events.length;
-    const hours = events.reduce((total, item) => total + Math.max(0, Math.min(new Date(item.fin).getTime(), rangeEnd) - Math.max(new Date(item.inicio).getTime(), rangeStart)) / 3600000, 0);
+    const hours = events.reduce((total, item) => total + (item.descanso ? 0 : Math.max(0, Math.min(new Date(item.fin).getTime(), rangeEnd) - Math.max(new Date(item.inicio).getTime(), rangeStart)) / 3600000), 0);
     $("schedule-hours").textContent = `${hours.toLocaleString("es-CO", {maximumFractionDigits: 1})} h`;
     root.replaceChildren();
     if (view === "list") {
@@ -228,6 +240,14 @@
     $("shift-start").value = shifted?.inicio || event?.inicio.slice(0, 16) || `${day}T08:00`;
     $("shift-end").value = shifted?.fin || event?.fin.slice(0, 16) || `${day}T17:00`;
     $("shift-notes").value = event?.notas || "";
+    if (config.editable) {
+      $("schedule-scope-box").hidden = !event?.rotacion_id;
+      $("shift-scope").required = !!event?.rotacion_id;
+      $("shift-scope").value = "";
+      $("schedule-rest-box").hidden = !event?.rotacion_id;
+      $("shift-rest").checked = !!event?.descanso;
+      $("schedule-scope-help").textContent = event?.rotacion_id ? `Esta jornada pertenece a la semana ${event.semana_rotacion}/${event.semanas_ciclo}. «Siguientes repeticiones» modifica esta misma jornada cada ${event.semanas_ciclo} semanas; no las otras jornadas ni las fechas anteriores. Las excepciones puntuales de otras fechas se conservan.` : "";
+    }
     fields.forEach(id => $(id).disabled = !config.editable);
     $("schedule-audit").textContent = event ? `Turno #${event.id} · Último cambio: ${event.actualizado_por || "administración"}${event.actualizado_en ? ", " + new Date(event.actualizado_en).toLocaleString("es-CO", {timeZone: "America/Bogota"}) : ""}` : "";
     if ($("schedule-cancel-turn")) $("schedule-cancel-turn").hidden = !event;
@@ -242,6 +262,12 @@
     const employee = config.empleados.find(item => item.id === Number($("shift-employee").value));
     if (employee?.sucursal_id) $("shift-branch").value = employee.sucursal_id;
   });
+  $("shift-rest")?.addEventListener("change", () => {
+    const day = $("shift-start").value.slice(0, 10) || focus;
+    $("shift-start").value = `${day}T${$("shift-rest").checked ? "00:00" : "07:00"}`;
+    $("shift-end").value = $("shift-rest").checked ? `${addDays(day, 1)}T00:00` : `${day}T14:00`;
+    if ($("shift-notes").value === "Descanso" || !$("shift-notes").value) $("shift-notes").value = $("shift-rest").checked ? "Descanso" : "";
+  });
 
   function uuid() {
     if (crypto.randomUUID) return crypto.randomUUID();
@@ -250,6 +276,11 @@
   async function save(cancel = false) {
     if (busy || !config.editable) return;
     const payload = {operacion: cancel ? "cancelar" : selected ? "editar" : "crear"};
+    if (selected?.rotacion_id) {
+      if (!$("shift-scope").value) { $("schedule-form-error").textContent = "Elige si el cambio es solo para esta fecha o para esta y las siguientes repeticiones."; $("shift-scope").focus(); return; }
+      payload.alcance = $("shift-scope").value;
+      if (!cancel) payload.descanso = $("shift-rest").checked;
+    }
     if (selected) Object.assign(payload, {id: selected.id, version: selected.version});
     if (!cancel) Object.assign(payload, {empleado_id: Number($("shift-employee").value), sucursal_id: Number($("shift-branch").value), inicio: $("shift-start").value, fin: $("shift-end").value, notas: $("shift-notes").value});
     const signature = JSON.stringify(payload);
@@ -266,7 +297,7 @@
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || "No se pudo guardar el turno.");
       dialog.close();
-      if (await refresh()) status(cancel ? "Turno cancelado. Se conserva su historial de cambios." : "Turno guardado. Ya está disponible en el horario del empleado.");
+      if (await refresh()) status((cancel ? "Turno cancelado." : "Turno guardado.") + (payload.alcance === "futuro" ? " Se actualizó esta jornada y sus siguientes repeticiones." : " El cambio corresponde solo a esta fecha."));
     } catch (error) {
       $("schedule-form-error").textContent = error.name === "AbortError" || error instanceof TypeError ? "No se recibió confirmación del servidor. Reintenta sin cambiar los datos para evitar duplicar la solicitud." : error.message;
     } finally {
@@ -301,5 +332,66 @@
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden && !busy && !dialog.open) refresh();
   });
+  if (config.editable && config.plantilla) {
+    const preset = config.plantilla, rotationDialog = $("rotation-dialog");
+    let rotationBusy = false, rotationRequest = null;
+    $("rotation-name").value = preset.nombre;
+    $("rotation-start").value = preset.inicio_sugerido;
+    config.sucursales.forEach(branch => option($("rotation-branch"), branch.sucursalid, branch.nombre));
+    const suggested = config.sucursales.find(branch => branch.nombre.toLowerCase() === preset.sucursal_sugerida.toLowerCase());
+    if (suggested) $("rotation-branch").value = suggested.sucursalid;
+    preset.personas.forEach((name, index) => {
+      const label = node("label", "", name), select = node("select");
+      select.id = `rotation-person-${index}`;
+      select.required = true;
+      option(select, "", "Selecciona el empleado real");
+      config.empleados.forEach(employee => option(select, employee.id, `${employee.nombre} · #${employee.id}`));
+      select.value = config.mapeoSugerido[name] || "";
+      label.append(select); $("rotation-mapping").append(label);
+    });
+    preset.semanas.forEach((week, weekIndex) => {
+      $("rotation-preview").append(node("h3", "", `Semana ${weekIndex + 1}`));
+      const scroll = node("div", "sch-template-scroll"), table = node("table", "sch-template-table"), head = node("tr");
+      ["Día", ...preset.columnas].forEach(label => head.append(node("th", "", label)));
+      table.append(head);
+      week.forEach((groups, day) => {
+        const row = node("tr"); row.append(node("th", "", preset.dias[day]));
+        groups.forEach((names, shift) => row.append(node("td", "", (names.join(", ") || "—") + (shift === 2 ? day === 4 ? " · 15:00–00:00" : " · 20:00–01:00" : ""))));
+        table.append(row);
+      });
+      scroll.append(table); $("rotation-preview").append(scroll);
+    });
+    $("rotation-open").addEventListener("click", () => {
+      $("rotation-error").textContent = "";
+      $("rotation-existing").textContent = rotations.length ? "Rotaciones ya guardadas: " + rotations.map(item => item.nombre).join(", ") + ". Para ajustarlas, cierra este panel y selecciona sus jornadas; no vuelvas a importarlas." : "Revisa las fechas, sucursal y nombres antes de activar. No modifica ni reemplaza jornadas anteriores.";
+      rotationDialog.showModal();
+    });
+    ["rotation-close", "rotation-dismiss"].forEach(id => $(id).addEventListener("click", () => { if (!rotationBusy) rotationDialog.close(); }));
+    rotationDialog.addEventListener("cancel", e => { if (rotationBusy) e.preventDefault(); });
+    $("rotation-form").addEventListener("submit", async e => {
+      e.preventDefault();
+      if (rotationBusy || !$("rotation-form").reportValidity()) return;
+      const payload = {nombre: $("rotation-name").value, inicio: $("rotation-start").value, sucursal_id: Number($("rotation-branch").value), empleados: {}};
+      preset.personas.forEach((name, index) => payload.empleados[name] = Number($(`rotation-person-${index}`).value));
+      const signature = JSON.stringify(payload);
+      if (!rotationRequest || rotationRequest.signature !== signature) rotationRequest = {signature, id: uuid()};
+      payload.solicitud_id = rotationRequest.id;
+      rotationBusy = true; $("rotation-error").textContent = "";
+      rotationDialog.querySelectorAll("input, select, button").forEach(el => el.disabled = true);
+      const controller = new AbortController(), timeout = setTimeout(() => controller.abort(), 30000);
+      try {
+        const response = await fetch(config.rotacionUrl, {signal: controller.signal, method: "POST", headers: {"Content-Type": "application/json", Accept: "application/json", "X-CSRFToken": document.querySelector("#schedule-form [name=csrfmiddlewaretoken]").value}, body: JSON.stringify(payload)});
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error || "No fue posible activar la rotación.");
+        rotationDialog.close(); focus = payload.inicio; $("schedule-date").value = focus;
+        if (await refresh()) status("Rotación activada: 1 → 2 → 3 → 4 → 1. Ya aparece en los horarios individuales.");
+      } catch (error) {
+        $("rotation-error").textContent = error.name === "AbortError" || error instanceof TypeError ? "No se recibió confirmación. Reintenta sin cambiar los datos para evitar duplicados." : error.message;
+      } finally {
+        clearTimeout(timeout); rotationBusy = false;
+        rotationDialog.querySelectorAll("input, select, button").forEach(el => el.disabled = false);
+      }
+    });
+  }
   refresh();
 })();

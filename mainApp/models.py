@@ -966,7 +966,7 @@ class CambioTurnoEmpleado(models.Model):
 
 
 class RotacionEmpleado(models.Model):
-    """Ciclo de cinco semanas, sin materializar infinitas jornadas."""
+    """Ciclo semanal repetitivo, sin materializar infinitas jornadas."""
 
     nombre = models.CharField(max_length=120)
     inicio = models.DateField()

@@ -13,6 +13,7 @@ from django.views.decorators.http import require_GET, require_POST
 from .models import Empleado, Sucursal
 from .permissions import user_can_access_url_name
 from .services import employee_schedule as schedule
+from .services import employee_rotation as rotation
 
 
 @login_required
@@ -31,6 +32,9 @@ def calendar_page(request, personal=False):
         "personal": personal, "editable": editable,
         "datosUrl": reverse("mi_horario_datos" if personal else "calendario_empleados_datos"),
         "guardarUrl": reverse("guardar_turno_empleado") if editable else "",
+        "rotacionUrl": reverse("crear_rotacion_empleados") if editable else "",
+        "plantilla": rotation.preset() if editable else None,
+        "mapeoSugerido": rotation.suggested_mapping() if editable else {},
         "empleados": [{"id": emp.pk, "nombre": str(emp), "sucursal_id": emp.sucursalid_id} for emp in employees],
         "sucursales": list(Sucursal.objects.order_by("nombre").values("sucursalid", "nombre")) if not personal else [],
         "empleadoNombre": str(employee) if employee else "", "sinVinculo": personal and employee is None,
@@ -50,16 +54,19 @@ def calendar_data(request, personal=False):
             # Nunca confiar en un empleado recibido del navegador en esta vista.
             args.pop("empleado_id", None)
         args["incluir_cancelados"] = args.get("incluir_cancelados") == "1"
-        rows = schedule.schedule_rows(request.user, args, personal=personal)
-        if rows.count() > 2000:
+        events = rotation.calendar_events(request.user, args, personal=personal)
+        if len(events) > 2000:
             return JsonResponse({"error": "Hay demasiados turnos; filtra por empleado o consulta un intervalo menor."}, status=400)
-        return JsonResponse({"eventos": [schedule.serialize(turn) for turn in rows]})
+        result = {"eventos": events}
+        if not personal:
+            result["rotaciones"] = [rotation.metadata(item) for item in rotation.RotacionEmpleado.objects.all()]
+        return JsonResponse(result)
     except schedule.ScheduleError as exc:
         return JsonResponse({"error": str(exc)}, status=exc.status)
     except PermissionDenied as exc:
         return JsonResponse({"error": str(exc)}, status=403)
     except DatabaseError:
-        return JsonResponse({"error": "No se pudo cargar el calendario. Revisa la conexión y que esté aplicada la migración 0037."}, status=503)
+        return JsonResponse({"error": "No se pudo cargar el calendario. Revisa la conexión y que estén aplicadas las migraciones 0037 y 0038."}, status=503)
 
 
 @login_required
@@ -81,4 +88,26 @@ def calendar_save(request):
     except PermissionDenied as exc:
         return JsonResponse({"error": str(exc)}, status=403)
     except DatabaseError:
-        return JsonResponse({"error": "No fue posible guardar el turno. Actualiza el calendario antes de reintentar; revisa la conexión y la migración 0037."}, status=503)
+        return JsonResponse({"error": "No fue posible guardar el turno. Actualiza el calendario antes de reintentar; revisa la conexión y las migraciones 0037 y 0038."}, status=503)
+
+
+@login_required
+@never_cache
+@require_POST
+def rotation_create(request):
+    try:
+        schedule.require_access(request.user, write=True)
+        if len(request.body) > 16000:
+            raise schedule.ScheduleError("La solicitud es demasiado grande.")
+        try:
+            payload = json.loads(request.body)
+        except (ValueError, UnicodeDecodeError):
+            raise schedule.ScheduleError("La solicitud no contiene JSON válido.") from None
+        result, created = rotation.create_rotation(request.user, payload)
+        return JsonResponse({"rotacion": result, "guardado": created})
+    except schedule.ScheduleError as exc:
+        return JsonResponse({"error": str(exc)}, status=exc.status)
+    except PermissionDenied as exc:
+        return JsonResponse({"error": str(exc)}, status=403)
+    except DatabaseError:
+        return JsonResponse({"error": "No se pudo guardar la rotación. Revisa la conexión y la migración 0038; no se guardaron cambios parciales."}, status=503)

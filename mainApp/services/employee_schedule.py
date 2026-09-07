@@ -74,6 +74,8 @@ def date_window(args):
 
 
 def serialize(turn):
+    if isinstance(turn, dict):
+        return turn
     return {
         "id": turn.pk, "empleado_id": turn.empleado_id, "empleado": str(turn.empleado),
         "sucursal_id": turn.sucursal_id, "sucursal": turn.sucursal.nombre,
@@ -157,11 +159,17 @@ def _prepare(user, payload, *, lock=False):
     conflict = overlap.first()
     if conflict:
         raise ScheduleConflict(f"{employees[employee_id]} ya tiene un turno que se cruza con ese horario (turno #{conflict.pk}).")
+    from .employee_rotation import assert_free
+    assert_free(employee_id, start, end)
     values = {"empleado": employees[employee_id], "sucursal": branch, "inicio": start, "fin": end, "notas": notes.strip()}
     return turn, before, values, operation
 
 
 def preview_change(user, payload):
+    from . import employee_rotation as rotation
+    if isinstance(payload, dict) and rotation.is_reference(payload.get("id")):
+        _, _, _, before, after, _ = rotation.prepare_occurrence(user, payload)
+        return before, after
     turn, before, values, operation = _prepare(user, payload)
     after = dict(before)
     if operation == "cancelar":
@@ -176,12 +184,17 @@ def save_change(user, payload, *, source="WEB"):
     require_access(user, write=True)
     if not isinstance(payload, dict) or source not in {"WEB", "TELEGRAM"}:
         raise ScheduleError("La solicitud no es válida.")
+    from . import employee_rotation as rotation
+    if rotation.is_reference(payload.get("id")):
+        return rotation.save_occurrence(user, payload, source=source)
     try:
         request_id = UUID(str(payload.get("solicitud_id")))
     except (ValueError, TypeError, AttributeError):
         raise ScheduleError("Falta un identificador válido de solicitud. Vuelve a intentarlo desde el calendario.") from None
     # Serializa reintentos del mismo administrador; la auditoría UUID es única.
     Usuario.objects.select_for_update().get(pk=user.pk)
+    if rotation.CambioRotacionEmpleado.objects.filter(solicitud_id=request_id).exists():
+        raise ScheduleConflict("El identificador de solicitud ya fue utilizado en una rotación.")
     previous = CambioTurnoEmpleado.objects.select_related("turno").filter(solicitud_id=request_id).first()
     if previous:
         if previous.usuario_id != user.pk or previous.peticion != payload:

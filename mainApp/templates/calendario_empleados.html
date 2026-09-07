@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% load static %}
 {% block title %}{% if personal %}Mi horario{% else %}Calendario de empleados{% endif %}{% endblock %}
-{% block extra_head %}<link rel="stylesheet" href="{% static 'css/calendario_empleados.css' %}?v=1">{% endblock %}
+{% block extra_head %}<link rel="stylesheet" href="{% static 'css/calendario_empleados.css' %}?v=3">{% endblock %}
 {% block content %}
 <section class="schedule-page" aria-labelledby="schedule-title">
   <header class="schedule-heading">
@@ -11,14 +11,14 @@
     </div>
     <div class="schedule-heading-actions">
       {% if not personal %}<a class="sch-btn sch-btn-quiet" href="{% url 'mi_horario' %}">Mi horario ↗</a>{% endif %}
-      {% if editable %}<button type="button" class="sch-btn sch-btn-primary" id="schedule-new">＋ Asignar turno</button>{% endif %}
+      {% if editable %}<button type="button" class="sch-btn sch-btn-quiet" id="rotation-open">↻ Rotación de 4 semanas</button><button type="button" class="sch-btn sch-btn-primary" id="schedule-new">＋ Asignar turno</button>{% endif %}
     </div>
   </header>
 
   {% if personal and not employee %}<div class="schedule-notice" role="status">Tu usuario aún no está vinculado a un empleado. Pide al administrador que vincule tu ficha para poder ver tus horarios.</div>{% endif %}
 
   <div class="schedule-summary">
-    <article><span class="sch-summary-icon" aria-hidden="true">▦</span><div><small>Turnos en pantalla</small><strong id="schedule-count">—</strong></div></article>
+    <article><span class="sch-summary-icon" aria-hidden="true">▦</span><div><small>Jornadas y descansos</small><strong id="schedule-count">—</strong></div></article>
     <article><span class="sch-summary-icon" aria-hidden="true">◷</span><div><small>Horas en el intervalo</small><strong id="schedule-hours">—</strong></div></article>
     <article class="sch-summary-note"><span class="sch-summary-icon sch-icon-green" aria-hidden="true">●</span><div><small>{% if personal %}Tu calendario personal{% else %}Planificación compartida{% endif %}</small><p>{% if personal %}{{ employee|default:'Sin empleado vinculado' }}{% else %}Los cambios quedan registrados con su autor.{% endif %}</p></div></article>
   </div>
@@ -38,6 +38,7 @@
       <span class="schedule-timezone">Hora Colombia · UTC−5</span>
     </div>
     <div id="schedule-status" class="schedule-status" role="status" aria-live="polite"></div>
+    <div id="rotation-status" class="sch-rotation-status" hidden></div>
     <div id="schedule-calendar" class="schedule-calendar" aria-busy="true"></div>
     <footer class="schedule-footer"><span><i></i> Jornadas programadas</span><p>{% if editable %}Arrastra un turno a otro día o selecciónalo para ajustar sus horas.{% else %}Selecciona un turno para ver sus detalles.{% endif %}</p><small>No modifica los turnos de caja.</small></footer>
   </section>
@@ -47,6 +48,13 @@
       {% csrf_token %}
       <div class="sch-dialog-heading"><div><p class="schedule-eyebrow">JORNADA LABORAL</p><h2 id="schedule-dialog-title">Asignar turno</h2></div><button class="sch-btn sch-btn-icon" id="schedule-close" type="button" aria-label="Cerrar">×</button></div>
       <p id="schedule-dialog-hint" class="schedule-subtitle">Define el empleado, la sucursal y el intervalo de trabajo.</p>
+      {% if editable %}
+      <label id="schedule-scope-box" class="sch-scope-box" hidden>¿Dónde aplicar este cambio?
+        <select id="shift-scope"><option value="">Selecciona una opción antes de guardar</option><option value="fecha">Solo esta fecha (excepción)</option><option value="futuro">Esta fecha y las siguientes repeticiones</option></select>
+        <small id="schedule-scope-help">No modifica las fechas anteriores ni otras jornadas de la rotación.</small>
+      </label>
+      <label id="schedule-rest-box" class="sch-rest-box" hidden><input type="checkbox" id="shift-rest"> Día de descanso (00:00 al día siguiente)</label>
+      {% endif %}
       <div class="sch-form-grid">
         <label>Empleado<select id="shift-employee" required></select></label>
         <label>Sucursal<select id="shift-branch" required></select></label>
@@ -64,8 +72,23 @@
       </div>
     </form>
   </dialog>
+  {% if editable %}
+  <dialog id="rotation-dialog" class="schedule-dialog sch-rotation-dialog" aria-labelledby="rotation-title">
+    <form id="rotation-form">
+      <div class="sch-dialog-heading"><div><p class="schedule-eyebrow">PLANTILLA REPETITIVA</p><h2 id="rotation-title">Rotación de cuatro semanas</h2></div><button class="sch-btn sch-btn-icon" id="rotation-close" type="button" aria-label="Cerrar rotación">×</button></div>
+      <p class="schedule-subtitle">1 → 2 → 3 → 4 → 1. Mañana 07:00–14:00 · Tarde 14:00–21:00 · Claudia 20:00–01:00 · Duvan viernes 15:00–00:00. Se incluyen los descansos indicados; “x2” no añade descansos.</p>
+      <div class="sch-form-grid"><label>Nombre<input id="rotation-name" maxlength="120" required></label><label>Lunes inicial de la semana 1<input type="date" id="rotation-start" required min="2000-01-01" max="2100-12-31"></label><label>Sucursal<select id="rotation-branch" required></select></label></div>
+      <h3>Relacionar con empleados reales</h3><p class="sch-form-help">Revisa las coincidencias sugeridas. Cada persona debe corresponder a una ficha distinta; no se crean empleados nuevos.</p>
+      <div id="rotation-mapping" class="sch-form-grid"></div>
+      <details class="sch-template-details"><summary>Revisar las cuatro tablas completas</summary><div id="rotation-preview"></div></details>
+      <p id="rotation-existing" class="sch-form-help"></p>
+      <p id="rotation-error" class="sch-form-error" role="alert"></p>
+      <div class="sch-dialog-actions"><button type="button" id="rotation-dismiss" class="sch-btn sch-btn-quiet">Cerrar</button><button type="submit" id="rotation-save" class="sch-btn sch-btn-primary">Activar rotación</button></div>
+    </form>
+  </dialog>
+  {% endif %}
   <noscript><p class="schedule-notice">Activa JavaScript para consultar y utilizar el calendario interactivo.</p></noscript>
 </section>
 {{ calendar_config|json_script:"schedule-config" }}
 {% endblock %}
-{% block scripts %}<script defer src="{% static 'javascript/calendario_empleados.js' %}?v=1"></script>{% endblock %}
+{% block scripts %}<script defer src="{% static 'javascript/calendario_empleados.js' %}?v=3"></script>{% endblock %}

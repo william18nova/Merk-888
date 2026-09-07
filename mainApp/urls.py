@@ -67,6 +67,7 @@ urlpatterns = [
     path("horarios/empleados/", schedule_views.calendar_page, name="calendario_empleados"),
     path("horarios/empleados/datos/", schedule_views.calendar_data, name="calendario_empleados_datos"),
     path("horarios/empleados/guardar/", schedule_views.calendar_save, name="guardar_turno_empleado"),
+    path("horarios/empleados/rotacion/", schedule_views.rotation_create, name="crear_rotacion_empleados"),
     path("mi-horario/", schedule_views.calendar_page, {"personal": True}, name="mi_horario"),
     path("mi-horario/datos/", schedule_views.calendar_data, {"personal": True}, name="mi_horario_datos"),
     path(

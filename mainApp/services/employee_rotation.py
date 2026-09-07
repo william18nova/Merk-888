@@ -1,4 +1,4 @@
-"""Rotaciones de 35 días y excepciones auditadas, calculadas al consultar.
+"""Rotaciones semanales y excepciones auditadas, calculadas al consultar.
 
 Las modificaciones de plantilla tienen vigencia por fecha base de ocurrencia.
 No se generan filas infinitas, ni se alteran retrospectivamente otras semanas.
@@ -6,6 +6,8 @@ No se generan filas infinitas, ni se alteran retrospectivamente otras semanas.
 
 import json
 import re
+import math
+import unicodedata
 from collections import defaultdict
 from datetime import date, datetime, time, timedelta
 from functools import lru_cache
@@ -22,17 +24,35 @@ from mainApp.models import (
 )
 from . import employee_schedule as schedule
 
-CYCLE_DAYS = 35
+MAX_OFFSET_DAYS = 34
 
 
 @lru_cache(maxsize=1)
 def preset():
-    return json.loads((Path(__file__).resolve().parents[1] / "data" / "employee_rotation_five_weeks.json").read_text(encoding="utf-8"))
+    return json.loads((Path(__file__).resolve().parents[1] / "data" / "employee_rotation_four_weeks.json").read_text(encoding="utf-8"))
+
+
+def cycle_days(rotation):
+    return 7 * max(slot["semana"] for slot in rotation.patron)
+
+
+def suggested_mapping():
+    def normalized(value):
+        return "".join(char for char in unicodedata.normalize("NFKD", str(value).lower()) if not unicodedata.combining(char))
+    employees = list(Empleado.objects.all())
+    result = {}
+    for name in preset()["personas"]:
+        matches = [employee for employee in employees if normalized(name) in normalized(employee.nombre).split()]
+        result[name] = matches[0].pk if len(matches) == 1 else None
+    return result
 
 
 def _date(raw):
     try:
-        result = parse_date(str(raw))
+        value = str(raw)
+        if re.fullmatch(r"[0-9]{8}", value):
+            value = f"{value[:4]}-{value[4:6]}-{value[6:]}"
+        result = parse_date(value)
         if result is None or not 2000 <= result.year <= 2100:
             raise ValueError
         return result
@@ -81,7 +101,10 @@ def _log(rotation, user, payload, before, after, *, key=0, base=None, scope="cre
 
 
 def metadata(rotation):
-    return {"id": rotation.pk, "nombre": rotation.nombre, "inicio": rotation.inicio.isoformat(), "version": rotation.version}
+    weeks = cycle_days(rotation) // 7
+    today = timezone.localdate(timezone=schedule.COLOMBIA)
+    current = ((today - rotation.inicio).days // 7) % weeks + 1 if today >= rotation.inicio else None
+    return {"id": rotation.pk, "nombre": rotation.nombre, "inicio": rotation.inicio.isoformat(), "version": rotation.version, "semanas": weeks, "semana_actual": current}
 
 
 def _loaded_rotations(employee_ids=None):
@@ -94,7 +117,7 @@ def _loaded_rotations(employee_ids=None):
 def _event(rotation, slot, base, changes, members):
     data = dict(slot)
     future = [item for item in changes if item.alcance == "futuro" and item.fecha_base <= base]
-    revision = max(future, key=lambda item: (item.fecha_base, item.pk), default=None)
+    revision = max(future, key=lambda item: item.pk, default=None)
     if revision:
         data.update(revision.datos)
     exact = [item for item in changes if item.fecha_base == base and item.alcance in {"fecha", "futuro"}]
@@ -113,6 +136,7 @@ def _event(rotation, slot, base, changes, members):
         "cancelado": data.get("cancelado", False), "descanso": data.get("descanso", False),
         "version": rotation.version, "rotacion_id": rotation.pk, "rotacion_nombre": rotation.nombre,
         "semana_rotacion": slot["semana"], "fecha_base": base.isoformat(), "excepcion": exceptional,
+        "semanas_ciclo": cycle_days(rotation) // 7,
         "actualizado_por": revision.usuario_nombre if revision else getattr(rotation.creado_por, "nombreusuario", ""),
         "actualizado_en": (revision.creado_en if revision else rotation.creado_en).isoformat(),
     }
@@ -135,7 +159,7 @@ def occurrence(ref):
     if slot is None:
         raise schedule.ScheduleError("No encontré esa jornada en la plantilla.")
     first = rotation.inicio + timedelta(days=(slot["semana"] - 1) * 7 + slot["dia"])
-    if base < first or (base - first).days % CYCLE_DAYS or base < _date(slot.get("desde", first.isoformat())):
+    if base < first or (base - first).days % cycle_days(rotation) or base < _date(slot.get("desde", first.isoformat())):
         raise schedule.ScheduleError("La fecha no corresponde a una repetición de esa jornada.")
     members, changes = _parts(rotation)
     return rotation, slot, base, _event(rotation, slot, base, changes[key], members)
@@ -146,18 +170,19 @@ def events_between(start, end, *, employee_ids=None, include_cancelled=False):
     first_day = start.astimezone(schedule.COLOMBIA).date() - timedelta(days=35)
     last_day = end.astimezone(schedule.COLOMBIA).date() + timedelta(days=35)
     for rotation in _loaded_rotations(employee_ids).select_related("creado_por"):
+        period = cycle_days(rotation)
         members, changes = _parts(rotation)
         for slot in rotation.patron:
             first = rotation.inicio + timedelta(days=(slot["semana"] - 1) * 7 + slot["dia"])
             since = _date(slot.get("desde", first.isoformat()))
-            base = first + timedelta(days=max(0, (first_day - first).days // CYCLE_DAYS) * CYCLE_DAYS)
+            base = first + timedelta(days=max(0, (first_day - first).days // period) * period)
             while base <= last_day:
                 if base >= since:
                     event = _event(rotation, slot, base, changes[slot["clave"]], members)
                     if (include_cancelled or not event["cancelado"]) and (employee_ids is None or event["empleado_id"] in employee_ids):
                         if schedule.parse_time(event["inicio"]) < end and schedule.parse_time(event["fin"]) > start:
                             result.append(event)
-                base += timedelta(days=CYCLE_DAYS)
+                base += timedelta(days=period)
     return result
 
 
@@ -196,11 +221,12 @@ def _check_events(events):
 def validate_future(employee_ids, since):
     """Revisa dos ciclos alrededor de cada frontera y todas las fechas puntuales.
 
-    Entre fronteras las plantillas tienen el mismo período de 35 días: dos
-    ciclos cubren cruces en sus bordes. No hay un horizonte finito ignorado.
+    Entre fronteras se usa el mínimo común múltiplo de los períodos. Esto
+    también conserva compatibilidad con patrones históricos de cinco semanas.
     """
     points = {since}
     rotation_ids = list(RotacionEmpleado.objects.filter(miembros__empleado_id__in=employee_ids).values_list("pk", flat=True).distinct())
+    period = math.lcm(*(cycle_days(item) for item in RotacionEmpleado.objects.filter(pk__in=rotation_ids))) if rotation_ids else 28
     points.update(day for day in RotacionEmpleado.objects.filter(pk__in=rotation_ids).values_list("inicio", flat=True) if day >= since)
     points.update(CambioRotacionEmpleado.objects.filter(rotacion_id__in=rotation_ids, fecha_base__gte=since - timedelta(days=35)).values_list("fecha_base", flat=True))
     for start, end in TurnoEmpleado.objects.filter(empleado_id__in=employee_ids, cancelado=False, fin__gte=_midnight(since)).values_list("inicio", "fin"):
@@ -210,7 +236,7 @@ def validate_future(employee_ids, since):
         points.update(_date(slot["desde"]) for slot in pattern if slot.get("desde") and _date(slot["desde"]) >= since)
     windows = []
     for point in sorted(points):
-        left, right = max(date(2000, 1, 1), point - timedelta(days=35)), min(date(2100, 12, 31), point + timedelta(days=71))
+        left, right = max(date(2000, 1, 1), point - timedelta(days=MAX_OFFSET_DAYS + 1)), min(date(2100, 12, 31), point + timedelta(days=period * 2 + MAX_OFFSET_DAYS + 2))
         if windows and left <= windows[-1][1]:
             windows[-1] = (windows[-1][0], max(right, windows[-1][1]))
         else:
@@ -225,30 +251,23 @@ def assert_free(employee_id, start, end):
         raise schedule.ScheduleConflict(f"Ya existe un turno o descanso iterativo para {events[0]['empleado']} en ese intervalo ({events[0]['id']}). Edita esa jornada en el calendario.")
 
 
-def _preset_slots(mapping, branch_id, join_saturday):
-    if join_saturday is not True:
-        raise schedule.ScheduleError("Confirma cómo resolver los sábados: Cristian y Santiago tienen mañana y tarde superpuestas. Puedes autorizar unirlas en una jornada de 07:00 a 22:00.")
+def _preset_slots(mapping, branch_id):
     slots = []
     for week_index, week in enumerate(preset()["semanas"], 1):
         for day, groups in enumerate(week):
-            combined = set(groups[0]) & set(groups[1]) if day == 5 else set()
             for shift, names in enumerate(groups):
                 for name in names:
-                    if shift == 1 and name in combined:
-                        continue
-                    minute, duration = [(420, 480), (840, 480), ((960 if day == 4 else 1080 if day == 6 else 1200), (480 if day == 4 else 360 if day == 6 else 240)), (0, 1440)][shift]
-                    if shift == 0 and name in combined:
-                        minute, duration = 420, 900
+                    minute, duration = [(420, 420), (840, 420), ((900 if day == 4 else 1200), (540 if day == 4 else 300)), (0, 1440)][shift]
                     slots.append({"clave": len(slots) + 1, "semana": week_index, "dia": day, "empleado_id": mapping[name], "sucursal_id": branch_id,
                                   "minuto": minute, "duracion": duration, "desplazamiento": 0, "descanso": shift == 3, "cancelado": False,
-                                  "notas": "Mañana y tarde" if name in combined and shift == 0 else preset()["columnas"][shift]})
+                                  "notas": "Descanso" if shift == 3 else "Especial · 15:00–00:00" if shift == 2 and day == 4 else "Noche · 20:00–01:00" if shift == 2 else preset()["columnas"][shift]})
     return slots
 
 
 @transaction.atomic
 def create_rotation(user, payload):
     schedule.require_access(user, write=True)
-    if not isinstance(payload, dict) or set(payload) - {"inicio", "nombre", "empleados", "sucursal_id", "unificar_sabados", "solicitud_id"}:
+    if not isinstance(payload, dict) or set(payload) - {"inicio", "nombre", "empleados", "sucursal_id", "solicitud_id"}:
         raise schedule.ScheduleError("Datos de rotación no válidos.")
     Usuario.objects.select_for_update().get(pk=user.pk)
     previous = _repeat(user, payload)
@@ -259,12 +278,12 @@ def create_rotation(user, payload):
         raise schedule.ScheduleError("La semana 1 debe comenzar un lunes.")
     mapping = payload.get("empleados")
     if not isinstance(mapping, dict) or set(mapping) != set(preset()["personas"]):
-        raise schedule.ScheduleError("Relaciona las ocho personas de las tablas con sus empleados reales.")
+        raise schedule.ScheduleError("Relaciona las nueve personas de las tablas con sus empleados reales.")
     mapping = {name: schedule.positive_id(value, "ID de empleado") for name, value in mapping.items()}
     if len(set(mapping.values())) != len(mapping):
         raise schedule.ScheduleError("Cada nombre de la plantilla debe corresponder a un empleado diferente.")
     employees = list(Empleado.objects.filter(pk__in=mapping.values()).order_by("pk").select_for_update())
-    if len(employees) != 8:
+    if len(employees) != len(preset()["personas"]):
         raise schedule.ScheduleError("Uno de los empleados seleccionados no existe.")
     branch = Sucursal.objects.filter(pk=schedule.positive_id(payload.get("sucursal_id"))).first()
     if branch is None:
@@ -272,7 +291,7 @@ def create_rotation(user, payload):
     name = payload.get("nombre", preset()["nombre"])
     if not isinstance(name, str) or not name.strip() or len(name) > 120:
         raise schedule.ScheduleError("El nombre de la rotación debe tener entre 1 y 120 caracteres.")
-    rotation = RotacionEmpleado.objects.create(nombre=name.strip(), inicio=start, creado_por=user, patron=_preset_slots(mapping, branch.pk, payload.get("unificar_sabados")))
+    rotation = RotacionEmpleado.objects.create(nombre=name.strip(), inicio=start, creado_por=user, patron=_preset_slots(mapping, branch.pk))
     MiembroRotacionEmpleado.objects.bulk_create([MiembroRotacionEmpleado(rotacion=rotation, empleado=employee, sucursal=branch) for employee in employees])
     validate_future(list(mapping.values()), start)
     result = metadata(rotation)
@@ -283,7 +302,7 @@ def create_rotation(user, payload):
 def _scope(payload):
     scope = payload.get("alcance")
     if scope not in {"fecha", "futuro"}:
-        raise schedule.ScheduleError("Elige el alcance: solo esta fecha o esta y las siguientes repeticiones de la misma jornada (cada 5 semanas).")
+        raise schedule.ScheduleError("Elige el alcance: solo esta fecha o esta y las siguientes repeticiones de la misma jornada.")
     return scope
 
 
@@ -320,8 +339,8 @@ def prepare_occurrence(user, payload):
         raise schedule.ScheduleError("Un descanso ocupa el día completo: de 00:00 a 00:00 del día siguiente.")
     minutes = int((end - start).total_seconds() // 60)
     offset = (start.date() - base).days
-    if not 0 < minutes <= 1440 or abs(offset) > 34:
-        raise schedule.ScheduleError("La jornada debe durar hasta 24 horas y moverse menos de 35 días respecto a su fecha base.")
+    if not 0 < minutes <= 1440 or abs(offset) >= cycle_days(rotation):
+        raise schedule.ScheduleError(f"La jornada debe durar hasta 24 horas y moverse menos de {cycle_days(rotation)} días respecto a su fecha base.")
     if scope == "futuro" and start.date() < timezone.localdate(timezone=schedule.COLOMBIA):
         raise schedule.ScheduleError("Una modificación de plantilla no puede comenzar en una fecha pasada.")
     after.update(empleado_id=employee.pk, empleado=str(employee), sucursal_id=branch.pk, sucursal=branch.nombre, inicio=start.isoformat(), fin=end.isoformat(), notas=after["notas"].strip())
@@ -348,7 +367,7 @@ def save_occurrence(user, payload, *, source="WEB"):
     MiembroRotacionEmpleado.objects.get_or_create(rotacion=rotation, empleado_id=after["empleado_id"], sucursal_id=after["sucursal_id"])
     rotation.version += 1
     rotation.save(update_fields=["version"])
-    after.update(version=rotation.version, excepcion=payload["alcance"] == "fecha")
+    after.update(version=rotation.version, excepcion=payload["alcance"] == "fecha", actualizado_por=user.nombreusuario, actualizado_en=timezone.now().isoformat())
     _log(rotation, user, payload, before, after, key=slot["clave"], base=base, scope=payload["alcance"], data=data, source=source)
     if payload["alcance"] == "futuro":
         validate_future(employee_ids, base)

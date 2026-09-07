@@ -1,0 +1,46 @@
+{
+  "nombre": "Yerbabuena · rotación de 4 semanas",
+  "inicio_sugerido": "2026-09-07",
+  "sucursal_sugerida": "Yerbabuena",
+  "personas": ["Jackeline", "Cristian", "Bibiana", "Camila", "Cristina", "Claudia", "Santiago", "Duvan", "Alejandra"],
+  "dias": ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"],
+  "columnas": ["Mañana · 07:00–14:00", "Tarde · 14:00–21:00", "Noche / Especial", "Descansan"],
+  "semanas": [
+    [
+      [["Jackeline", "Cristian", "Bibiana"], ["Camila", "Cristina"], ["Claudia"], ["Santiago"]],
+      [["Jackeline", "Cristian", "Camila", "Cristina"], ["Santiago", "Bibiana"], ["Claudia"], []],
+      [["Jackeline", "Cristian", "Santiago", "Bibiana"], ["Camila", "Cristina"], ["Claudia"], []],
+      [["Jackeline", "Cristian", "Santiago", "Camila"], ["Bibiana", "Cristina"], ["Claudia"], []],
+      [["Jackeline", "Cristian", "Santiago", "Cristina"], ["Camila"], ["Duvan"], ["Bibiana"]],
+      [["Jackeline", "Cristian", "Santiago", "Bibiana"], ["Camila", "Cristina"], ["Claudia"], []],
+      [["Alejandra", "Camila"], ["Bibiana", "Santiago"], ["Claudia"], ["Cristian", "Cristina", "Jackeline"]]
+    ],
+    [
+      [["Jackeline", "Cristian", "Cristina"], ["Santiago", "Bibiana"], ["Claudia"], ["Camila"]],
+      [["Jackeline", "Cristian", "Santiago", "Cristina"], ["Bibiana", "Camila"], ["Claudia"], []],
+      [["Jackeline", "Cristian", "Santiago", "Bibiana"], ["Camila", "Cristina"], ["Claudia"], []],
+      [["Jackeline", "Cristian", "Santiago", "Camila"], ["Bibiana", "Cristina"], ["Claudia"], []],
+      [["Jackeline", "Cristian", "Santiago", "Bibiana"], ["Camila"], ["Duvan"], ["Cristina"]],
+      [["Jackeline", "Santiago", "Bibiana", "Cristina"], ["Cristian", "Camila"], ["Claudia"], []],
+      [["Alejandra", "Santiago"], ["Bibiana", "Cristina"], ["Claudia"], ["Cristian", "Camila", "Jackeline"]]
+    ],
+    [
+      [["Jackeline", "Cristian", "Camila"], ["Bibiana", "Cristina"], ["Claudia"], ["Santiago"]],
+      [["Jackeline", "Cristian", "Camila", "Cristina"], ["Santiago", "Bibiana"], ["Claudia"], []],
+      [["Jackeline", "Cristian", "Santiago", "Camila"], ["Bibiana", "Cristina"], ["Claudia"], []],
+      [["Jackeline", "Cristian", "Santiago", "Cristina"], ["Bibiana", "Camila"], ["Claudia"], []],
+      [["Jackeline", "Cristian", "Santiago", "Bibiana"], ["Cristina"], ["Duvan"], ["Camila"]],
+      [["Jackeline", "Santiago", "Bibiana", "Camila"], ["Cristian", "Cristina"], ["Claudia"], []],
+      [["Alejandra", "Camila"], ["Bibiana", "Santiago"], ["Claudia"], ["Cristian", "Cristina", "Jackeline"]]
+    ],
+    [
+      [["Jackeline", "Cristian", "Cristina"], ["Santiago", "Camila"], ["Claudia"], ["Bibiana"]],
+      [["Jackeline", "Cristian", "Santiago", "Cristina"], ["Bibiana", "Camila"], ["Claudia"], []],
+      [["Jackeline", "Cristian", "Santiago", "Bibiana"], ["Camila", "Cristina"], ["Claudia"], []],
+      [["Jackeline", "Cristian", "Santiago", "Camila"], ["Bibiana", "Cristina"], ["Claudia"], []],
+      [["Jackeline", "Cristian", "Santiago", "Camila"], ["Bibiana"], ["Duvan"], ["Cristina"]],
+      [["Jackeline", "Cristian", "Santiago", "Cristina"], ["Bibiana", "Camila"], ["Claudia"], []],
+      [["Alejandra", "Santiago"], ["Camila", "Cristina"], ["Claudia"], ["Cristian", "Bibiana", "Jackeline"]]
+    ]
+  ]
+}
