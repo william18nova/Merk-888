@@ -9,6 +9,8 @@ from django.core.exceptions import PermissionDenied
 from django.db.models import Avg, Count, Q, Sum
 from django.db.models.functions import TruncDate
 from django.utils import timezone
+from .telegram_search import resolve_name
+from .telegram_queries import QUERY_DEFINITION, SOURCES
 
 
 def _bot():
@@ -17,6 +19,7 @@ def _bot():
 
 
 READ_TOOLS = (
+    "consultar_datos",
     "consultar_ventas", "buscar_producto", "consultar_inventario", "consultar_pagos",
     "listar_empleados", "consultar_balance", "consultar_turnos", "consultar_registros",
     "consultar_detalle_operativo", "ranking_productos", "buscar_vistas",
@@ -44,17 +47,7 @@ GROUPS = {
 def _employee(raw):
     from mainApp.models import Empleado
     bot = _bot()
-    value = str(raw).strip()
-    rows = Empleado.objects.all()
-    if value.isascii() and value.isdigit():
-        rows = rows.filter(pk=int(value))
-    else:
-        for word in value.split():
-            rows = rows.filter(Q(nombre__icontains=word) | Q(apellido__icontains=word))
-    matches = list(rows.order_by("pk")[:2])
-    if not value or len(matches) != 1:
-        raise bot.TelegramBotError("Indica el ID o un nombre único del empleado; no elegí uno al azar.")
-    return matches[0]
+    return resolve_name(Empleado.objects.all(), raw, ("nombre", "apellido"), entity="un empleado")
 
 
 def _report_rows(profile, args):
@@ -79,10 +72,11 @@ def _report_rows(profile, args):
         rows, date_field, amount = Egreso.objects.all(), "creado_en__date", "monto"
         if args.get("sucursal") or args.get("empleado"):
             raise bot.TelegramBotError("Los pagos operativos no están asociados a sucursales ni empleados; puedes filtrar por usuario que los registró.")
+        rows, concept, user = bot._filter_expense_names(rows, args.get("concepto", ""), args.get("usuario", ""))
         if args.get("concepto"):
-            rows = rows.filter(concepto__nombre__icontains=args["concepto"])
+            args["concepto"] = concept
         if args.get("usuario"):
-            rows = rows.filter(Q(registrado_por_nombre__icontains=args["usuario"]) | Q(registrado_por__nombreusuario__icontains=args["usuario"]))
+            args["usuario"] = user
         if args.get("medio_pago"):
             method = bot.normalize_payment_method_code(args["medio_pago"])
             codes = rows.order_by().values_list("medio_pago", flat=True).distinct()
@@ -266,6 +260,12 @@ def resolve_continuation(profile, arguments):
     args = dict(last.argumentos)
     changes = arguments.get("cambios", {})
     name = last.accion
+    if name == "consultar_datos":
+        changes = dict(changes)
+        if "grupos" in changes:
+            changes["agrupar"] = changes.pop("grupos")
+        elif "agrupar" in changes:
+            changes["agrupar"] = [changes["agrupar"]]
     if "agrupar" in changes and name in {"consultar_ventas", "consultar_pagos"}:
         args["fuente"] = "ventas" if name == "consultar_ventas" else "pagos"
         name = "consultar_informe"
@@ -273,7 +273,7 @@ def resolve_continuation(profile, arguments):
             args.pop(key, None)
     for key in ("usar_consulta_anterior",):
         args.pop(key, None)
-    if name in DATE_TOOLS:
+    if name in DATE_TOOLS or (name == "consultar_datos" and SOURCES.get(args.get("fuente")) and SOURCES[args["fuente"]].date_field):
         args.setdefault("desde", timezone.localtime(last.creado_en).date().isoformat())
         args.setdefault("hasta", args["desde"])
     args.update(changes)
@@ -403,6 +403,8 @@ TOOL_DEFINITIONS = [
         "navegacion": {"type": "STRING", "enum": ["siguiente", "anterior"]},
         "cambios": {"type": "OBJECT", "properties": {
             **REPORT_FIELDS,
+            **{key: value for key, value in QUERY_DEFINITION["parameters"]["properties"].items() if key not in {"fuente", "desde", "hasta", "sucursal", "pagina", "agrupar"}},
+            "grupos": QUERY_DEFINITION["parameters"]["properties"]["agrupar"],
             **{key: {"type": "STRING"} for key in ("consulta", "categoria", "estado", "cargo")},
             **{key: {"type": "BOOLEAN"} for key in ("detalle", "solo_total", "desglose_por_medio", "solo_bajo", "sin_ventas", "vinculado", "incluir_contacto")},
             "stock_max": {"type": "INTEGER"}, "monto_min": {"type": "NUMBER"}, "monto_max": {"type": "NUMBER"},

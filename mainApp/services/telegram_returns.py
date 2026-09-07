@@ -15,6 +15,7 @@ from mainApp.models import (
 )
 from mainApp.permissions import user_can_change_sale
 from .feature_flags import TURN_REQUIRED_FEATURE, is_feature_enabled, locked_feature_enabled
+from .telegram_search import choose_match, rank_candidates
 from .payment_methods import (
     CASH_PAYMENT_CODE, INTERNAL_PAYMENT_CODES, normalize_payment_method_code, payment_method_label,
     payment_method_options, payment_method_table_ready,
@@ -69,11 +70,16 @@ def _select_lines(details, items):
         quantity = _positive_int(item.get("cantidad"), "La cantidad")
         identifiers = [key for key in ("detalle_id", "producto_id", "producto") if item.get(key) is not None]
         if len(identifiers) != 1 or set(item) - {"detalle_id", "producto_id", "producto", "cantidad"}:
-            raise bot.TelegramBotError("Identifica cada renglón por ID de producto, ID de detalle o nombre exacto, no por varios a la vez.")
+            raise bot.TelegramBotError("Identifica cada renglón por ID de producto, ID de detalle o nombre, no por varios a la vez.")
         key = identifiers[0]
         if key == "producto":
-            name = bot._normalized_text(item[key])
-            matches = [detail for detail in details if name and detail.cantidad > 0 and bot._normalized_text(detail.productoid.nombre) == name]
+            available = {detail.productoid_id: detail.productoid.nombre for detail in details if detail.cantidad > 0}
+            candidates = rank_candidates(item[key], ((pk, name, ()) for pk, name in available.items()))
+            if candidates:
+                selected = choose_match(item[key], candidates, entity="un producto de esta venta")
+                matches = [detail for detail in details if detail.cantidad > 0 and detail.productoid_id == selected.pk]
+            else:
+                matches = []
         else:
             value = _positive_int(item[key], "El identificador del producto/detalle")
             matches = [detail for detail in details if detail.cantidad > 0 and (detail.pk if key == "detalle_id" else detail.productoid_id) == value]
@@ -94,7 +100,7 @@ def _select_lines(details, items):
 
 def _method(raw, *, lock=False):
     bot = _bot()
-    code = normalize_payment_method_code(raw if raw is not None else CASH_PAYMENT_CODE)
+    code = bot._resolve_payment_method(raw if raw is not None else CASH_PAYMENT_CODE, active_only=True)
     if lock and payment_method_table_ready():
         # La configuración web bloquea estas mismas filas al retirarlas.
         list(MetodoPago.objects.select_for_update().filter(codigo=code))

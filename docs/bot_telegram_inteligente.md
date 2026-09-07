@@ -48,6 +48,64 @@ python manage.py test mainApp.test_telegram_human_responses --settings=NovaSoft.
 
 ## Asistente operativo tipo «Jarvis»
 
+### Nombres parecidos y consultas flexibles
+
+La búsqueda de nombres ignora acentos, mayúsculas y separadores y tolera pequeños
+errores de escritura y palabras intercambiadas. Por ejemplo, «cocacola» puede
+encontrar «COCA-COLA» y «aroz diana» puede encontrar «ARROZ DIANA 500 G».
+Las listas ponen primero las coincidencias más cercanas. Los IDs y códigos
+explícitos no se sustituyen por otros parecidos ni se mezclan presentaciones
+numéricas distintas (500 g y 1000 g).
+
+Se aplica a productos, inventario, empleados, sucursales, categorías, búsquedas
+de catálogos, conceptos de pago y usuarios que registraron pagos. Las propuestas
+de cambio pueden localizar un nombre parecido, mostrando el registro real antes
+de confirmar. Una devolución busca únicamente entre los productos de esa venta.
+Si dos nombres son muy parecidos o la coincidencia es débil, pregunta cuál usar
+y muestra sus IDs. La pregunta y la solicitud original permanecen en el contexto
+del chat para responder con el ID sin repetir todo. Nunca confirma un cambio por
+haber encontrado un nombre parecido.
+
+El motor `consultar_datos` permite expresar nuevas combinaciones de consultas sin
+programar una función por frase: listar, contar registros o valores distintos,
+sumar, promediar y obtener mínimos/máximos. Admite hasta ocho filtros y dos
+agrupaciones en ventas, productos vendidos, pagos, productos, inventario,
+empleados y pedidos. También puede combinarse con hasta cuatro consultas de
+lectura mediante `consultar_varias` y continuar con fechas o agrupaciones nuevas.
+
+Ejemplos:
+
+- «Cuántas unidades de arroz Diana vendimos este mes por sucursal».
+- «Suma los pagos de cocacola de esta semana por medio de pago».
+- «Muéstrame los productos con precio entre 1000 y 3000».
+- «Cuál fue el pago más alto de ayer».
+- «Cuántos clientes distintos compraron este mes».
+- «Cambia el precio de aroz Diana a 3000» prepara el cambio; si hay varias
+  presentaciones, primero pide elegir y después exige Confirmar.
+
+El modelo propone la fuente, filtros y operación; **el servidor valida campos y
+permisos y construye consultas ORM parametrizadas**. No acepta SQL, código,
+tablas, joins o rutas arbitrarias del chat. Los cálculos y los resultados se
+obtienen del sistema, no de texto inventado por la IA. Los pagos de Tarjeta/Caja
+Social se agrupan juntos aunque usen códigos históricos diferentes.
+
+Los eventos son de hoy salvo fechas explícitas y las consultas temporales no
+superan un año. Productos e inventario muestran su estado actual. Los importes
+de renglones vendidos no equivalen al neto cobrado: se avisa que no descuentan
+descuentos globales ni reintegros. Los totales se calculan sobre todos los
+registros que cumplen los filtros, no solo sobre la página visible. Si una
+búsqueda por similitud es demasiado amplia, pide afinarla sin dar un total
+recortado. No accede a contraseñas, claves API ni registros fuera de los permisos.
+
+Esto amplía las consultas y la resolución de nombres; no convierte al bot en un
+ejecutor ilimitado de acciones nuevas. Las escrituras siguen usando las
+funciones permitidas y su confirmación. No necesita migraciones ni dependencias
+nuevas. Para activarlo, despliega el código y reinicia el trabajador existente.
+
+```bash
+python manage.py test mainApp.test_telegram_smart_queries --settings=NovaSoft.test_settings
+```
+
 El nombre «Jarvis» es opcional: puedes anteponerlo a tus solicitudes. No supone
 acceso sin límites: cada consulta y cada cambio siguen los permisos de Nova.
 No ejecuta código, SQL, comandos del servidor ni acciones arbitrarias dictadas

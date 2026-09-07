@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 
 from .telegram_wording import CONVERSATION_STYLE
+from .telegram_queries import SMART_QUERY_RULES
 
 
 def normalized(text):
@@ -107,7 +108,7 @@ def selected_tool_names(text, history, available):
     matches = [names for pattern, names in domains if re.search(pattern, query)]
     if not matches:
         return set(available)
-    result = {"consultar_capacidades", "buscar_vistas", "consultar_pendientes"}.union(*matches)
+    result = {"consultar_capacidades", "buscar_vistas", "consultar_pendientes", "consultar_datos"}.union(*matches)
     if len(matches) > 1:
         result.add("consultar_varias")
     if continuation:
@@ -162,7 +163,7 @@ def compact_prompt(today, names):
                      "Conserva códigos/documentos como texto con ceros iniciales. Empleados requieren usuarioid y sucursalid existentes; no crea cuentas ni cambia claves/roles.")
     if "preparar_devolucion_venta" in names:
         rules.append("Devoluciones requieren venta_id, productos y cantidades explícitas; pregunta si faltan, no asumas devolver todo. "
-                     "Usa solo producto_id, nombre exacto o detalle_id por renglón, sin confundir IDs. El servidor calcula el monto; no aceptes uno dictado. "
+                     "Usa solo producto_id, nombre indicado o detalle_id por renglón, sin confundir IDs. El servidor busca coincidencias solo dentro de esa venta. El servidor calcula el monto; no aceptes uno dictado. "
                      "Si omite medio de reintegro será efectivo, nunca el medio original. Requiere Confirmar devolución; no transfiere Nequi ni reversa tarjetas.")
     if "consultar_horarios_empleados" in names:
         rules.append("Mi horario/cuándo trabajo usa consultar_horarios_empleados, no turnos de caja. Por defecto próximas siete fechas de la cuenta vinculada. "
@@ -176,4 +177,4 @@ def compact_prompt(today, names):
         rules.append("Varias preguntas independientes => consultar_varias con hasta cuatro herramientas de SOLO LECTURA y argumentos JSON según sus esquemas; jamás escrituras ni consultas anidadas.")
     if "continuar_consulta" in names:
         rules.append("Para 'y ayer', 'ahora por sucursal' o páginas usa continuar_consulta con SOLO cambios explícitos; el servidor hereda filtros de la misma cuenta/chat. Si hay varias consultas posibles, pregunta cuál.")
-    return "\n".join([CONVERSATION_STYLE, *rules])
+    return "\n".join([CONVERSATION_STYLE, SMART_QUERY_RULES, *rules])

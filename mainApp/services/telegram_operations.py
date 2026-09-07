@@ -21,6 +21,8 @@ from django.utils import timezone
 from .telegram_returns import RETURN_TOOL_DEFINITION, tool_prepare_return
 from .telegram_assistant import TOOL_DEFINITIONS as ASSISTANT_DEFINITIONS, TOOL_FUNCTIONS as ASSISTANT_FUNCTIONS
 from .telegram_schedule import TOOL_DEFINITIONS as SCHEDULE_DEFINITIONS, TOOL_FUNCTIONS as SCHEDULE_FUNCTIONS
+from .telegram_search import ranked_queryset, resolve_name
+from .telegram_queries import QUERY_DEFINITION, tool_query
 
 
 @dataclass(frozen=True)
@@ -152,7 +154,8 @@ def tool_records(profile, arguments):
         condition = Q()
         for field in spec.search:
             condition |= Q(**{field + "__icontains": query})
-        rows = rows.filter(condition)
+        exact_rows = rows.filter(condition)
+        rows = exact_rows if spec.date_field and exact_rows.exists() else ranked_queryset(rows, query, spec.search)
         heading += f" · búsqueda: {bot._list_text(query, 60)}"
     if args.get("sucursal"):
         if not spec.branch:
@@ -191,12 +194,7 @@ def tool_records(profile, arguments):
         if name not in {"productos", "inventario", "precios_proveedor"}:
             raise bot.TelegramBotError("El filtro de categoría aplica a productos, inventario y precios de proveedor.")
         raw_category = str(args["categoria"]).strip()
-        category_model = _model("Categoria")
-        category_rows = category_model.objects.filter(pk=int(raw_category)) if raw_category.isdecimal() and len(raw_category) < 12 else category_model.objects.filter(nombre__iexact=raw_category)
-        categories = list(category_rows[:2])
-        if len(categories) != 1:
-            raise bot.TelegramBotError("No encontré una categoría única. Consulta las categorías e indica su ID.")
-        category = categories[0]
+        category = resolve_name(_model("Categoria").objects.all(), raw_category, entity="una categoría")
         rows = rows.filter(**{"categoria" if name == "productos" else "productoid__categoria": category.pk})
         args["categoria"] = str(category.pk)
         heading += f" · categoría: {_format(category.nombre)}"
@@ -225,7 +223,7 @@ def tool_records(profile, arguments):
         count = rows.count()
         return bot.BotReply(f"{heading}\nEncontré {count} {'registro' if count == 1 else 'registros'}." + (f"\n{summary}" if summary else ""), "consultar_registros")
     ordering = ("-" + spec.date_field.removesuffix("__date"), "-pk") if spec.date_field else ("pk",)
-    return _page_reply("consultar_registros", args, heading, rows.order_by(*ordering), fields, summary)
+    return _page_reply("consultar_registros", args, heading, rows if query else rows.order_by(*ordering), fields, summary)
 
 
 def tool_detail(profile, arguments):
@@ -401,17 +399,20 @@ def tool_prepare_catalog(profile, arguments, update=None):
         changes[item["campo"]] = item["valor"].strip()
     if entity == "empleado" and "usuarioid" in changes:
         bot._require_access(profile, "visualizar_usuarios")
+    references = {"categoria": ("Categoria", ("nombre",)), "sucursalid": ("Sucursal", ("nombre",)), "usuarioid": ("Usuario", ("nombreusuario",))}
+    for field, (target, names) in references.items():
+        if field in changes and changes[field] and not (changes[field].isascii() and changes[field].isdigit()):
+            obj = resolve_name(_model(target).objects.all(), changes[field], names, entity=target)
+            changes[field] = str(obj.pk)
     model = _model(spec[0])
     if operation == "editar":
         if arguments.get("registro_id") is not None:
             instance = model.objects.filter(pk=_pk(model, arguments["registro_id"])).first()
         elif arguments.get("registro"):
-            matches = list(model.objects.filter(nombre__iexact=str(arguments["registro"]).strip()).order_by("pk")[:2])
-            if len(matches) != 1:
-                raise bot.TelegramBotError("No encontré un único registro con ese nombre exacto. Consulta el catálogo e indica el ID; no se preparó ningún cambio.")
-            instance = matches[0]
+            fields = ("nombre", "apellido") if entity in {"empleado", "cliente"} else ("nombre",)
+            instance = resolve_name(model.objects.all(), arguments["registro"], fields, entity=entity)
         else:
-            raise bot.TelegramBotError("Indica el ID o el nombre exacto del registro que quieres editar.")
+            raise bot.TelegramBotError("Dime el ID o el nombre de lo que quieres cambiar.")
         if instance is None:
             raise bot.TelegramBotError("No encontré el registro. Consulta primero su ID exacto.")
         before = _snapshot(instance)
@@ -505,7 +506,7 @@ def tool_capabilities(profile, arguments):
         bot._require_access(profile, spec[3], spec[4])
         form = getattr(forms, spec[1])()
         required = [key for key in spec[6] if form.fields[key].required]
-        return "\n".join([f"Campos de {entity}: {', '.join(spec[6])}", "Obligatorios al crear: " + ", ".join(required), "Al editar, indica el ID o nombre exacto único y solo los campos que quieres cambiar. Categoría, usuarioid y sucursalid usan IDs existentes; IVA se expresa de 0 a 1. Un empleado requiere cuenta de usuario existente, sin contraseñas por chat. Siempre se solicita confirmación."])
+        return "\n".join([f"Campos de {entity}: {', '.join(spec[6])}", "Obligatorios al crear: " + ", ".join(required), "Al editar, indica el ID o nombre y solo los campos que quieres cambiar. Busco el nombre más parecido y pregunto si hay varias opciones. Categoría, usuarioid y sucursalid aceptan nombres o IDs existentes; IVA se expresa de 0 a 1. Un empleado requiere cuenta de usuario existente, sin contraseñas por chat. Siempre se solicita confirmación."])
     readable = [key.replace("_", " ") for key, spec in RESOURCES.items() if bot.user_can_access_url_name(profile.usuario, spec.permission)]
     writable = []
     for key, spec in EDITABLE.items():
@@ -526,6 +527,7 @@ def tool_capabilities(profile, arguments):
         "También están disponibles los totales, pagos, balance, empleados y turnos según tus permisos; detalle de venta/pedido/turno y ranking de productos.",
         "Usa /horario para ver tus próximas jornadas laborales. Puedes pedir fechas concretas; consultar otros empleados requiere permiso de calendario. Los horarios laborales son independientes de las cajas.",
         "Informes: ventas por empleado/cajero, cliente, sucursal, punto de pago o día; pagos por concepto, usuario o día. Totales, promedios y comparación con el período anterior.",
+        "También puedo combinar filtros y calcular sumas, promedios, mínimos, máximos y valores distintos de ventas, productos vendidos, pagos, inventario, productos, empleados y pedidos. Busco los nombres más parecidos y te pido elegir si hay varias coincidencias.",
         "Puedes combinar hasta cuatro consultas en una petición, pedir un resumen del negocio o continuar con '¿y ayer?' y 'siguiente página'. El contexto es solo de tu cuenta y chat durante 24 horas.",
         "Cambios con confirmación: registrar pagos" + ("; " + ", ".join(writable) if writable else "") + ".",
         "Usa /acciones producto (o categoría, cliente, proveedor, sucursal, empleado) para consultar los campos. /pendientes muestra tus propuestas vigentes.",
@@ -536,6 +538,7 @@ def tool_capabilities(profile, arguments):
 
 
 TOOL_FUNCTIONS = {
+    "consultar_datos": tool_query,
     **ASSISTANT_FUNCTIONS,
     **SCHEDULE_FUNCTIONS,
     "consultar_registros": tool_records,
@@ -548,13 +551,14 @@ TOOL_FUNCTIONS = {
 }
 
 TOOL_DEFINITIONS = [
+    QUERY_DEFINITION,
     *ASSISTANT_DEFINITIONS,
     *SCHEDULE_DEFINITIONS,
     RETURN_TOOL_DEFINITION,
     {"name": "consultar_registros", "description": "Lista, busca o cuenta registros reales de los catálogos y operaciones. Eventos: hoy salvo ID exacto o fechas explícitas. No modifica datos.", "parameters": {"type": "OBJECT", "properties": {
         "recurso": {"type": "STRING", "enum": list(RESOURCES)}, "consulta": {"type": "STRING"},
         "registro_id": {"type": "STRING"}, "sucursal": {"type": "STRING"}, "desde": {"type": "STRING"}, "hasta": {"type": "STRING"},
-        "categoria": {"type": "STRING", "description": "ID o nombre exacto de categoría para productos, inventario o precios de proveedor."},
+        "categoria": {"type": "STRING", "description": "ID o nombre de categoría para productos, inventario o precios de proveedor; se buscan similitudes sin adivinar ante ambigüedad."},
         "estado": {"type": "STRING", "description": "Estado del pedido/devolución o activo/inactivo para usuarios, métodos y funcionalidades."},
         "sin_ventas": {"type": "BOOLEAN", "description": "Solo productos sin ninguna venta en el historial disponible."},
         "stock_max": {"type": "INTEGER", "description": "Solo inventario: cantidad máxima inclusive; 0 para agotados."},
@@ -566,10 +570,10 @@ TOOL_DEFINITIONS = [
     {"name": "consultar_detalle_operativo", "description": "Detalle de una venta o pedido con productos, o valores guardados de turno con facturas pagadas. Requiere ID exacto.", "parameters": {"type": "OBJECT", "properties": {"tipo": {"type": "STRING", "enum": ["venta", "pedido", "turno"]}, "id": {"type": "INTEGER"}, "pagina": {"type": "INTEGER"}}, "required": ["tipo", "id"]}},
     {"name": "ranking_productos", "description": "Productos más/menos vendidos por cantidad o importe de renglones en un intervalo; no incluye productos sin ventas.", "parameters": {"type": "OBJECT", "properties": {"desde": {"type": "STRING"}, "hasta": {"type": "STRING"}, "sucursal": {"type": "STRING"}, "orden": {"type": "STRING", "enum": ["cantidad", "importe"]}, "ascendente": {"type": "BOOLEAN"}, "pagina": {"type": "INTEGER"}}}},
     {"name": "buscar_vistas", "description": "Devuelve enlaces a las páginas permitidas del sistema. Usar para procesos no ejecutables por chat; NO ejecuta operaciones.", "parameters": {"type": "OBJECT", "properties": {"consulta": {"type": "STRING"}, "pagina": {"type": "INTEGER"}}}},
-    {"name": "preparar_cambio_catalogo", "description": "Prepara crear/editar un registro de catálogo. No guarda hasta confirmación. Usa consultar_capacidades para conocer campos; no inventes datos obligatorios. Editar exige ID o nombre exacto único.", "parameters": {"type": "OBJECT", "properties": {
+    {"name": "preparar_cambio_catalogo", "description": "Prepara crear/editar un registro de catálogo. No guarda hasta confirmación. Usa consultar_capacidades para conocer campos; no inventes datos obligatorios. Editar acepta ID o nombre; busca similitud y pregunta si hay ambigüedad.", "parameters": {"type": "OBJECT", "properties": {
         "entidad": {"type": "STRING", "enum": list(EDITABLE)}, "operacion": {"type": "STRING", "enum": ["crear", "editar"]}, "registro_id": {"type": "INTEGER"},
-        "registro": {"type": "STRING", "description": "Nombre exacto del registro existente a editar si no se conoce el ID. Si hay ambigüedad no se prepara el cambio."},
-        "campos": {"type": "ARRAY", "items": {"type": "OBJECT", "properties": {"campo": {"type": "STRING", "enum": sorted({field for spec in EDITABLE.values() for field in spec[6]})}, "valor": {"type": "STRING", "description": "Valor exacto solicitado; categoría, usuarioid y sucursalid usan ID existente, decimales con punto, IVA 0 a 1."}}, "required": ["campo", "valor"]}},
+        "registro": {"type": "STRING", "description": "Nombre indicado por el usuario del registro a editar si no se conoce el ID; tolera errores de escritura. Si hay ambigüedad no se prepara el cambio."},
+        "campos": {"type": "ARRAY", "items": {"type": "OBJECT", "properties": {"campo": {"type": "STRING", "enum": sorted({field for spec in EDITABLE.values() for field in spec[6]})}, "valor": {"type": "STRING", "description": "Valor solicitado; categoría, usuarioid y sucursalid aceptan ID o nombre existente, decimales con punto, IVA 0 a 1. No corregir documentos ni códigos de barras."}}, "required": ["campo", "valor"]}},
     }, "required": ["entidad", "operacion", "campos"]}},
     {"name": "consultar_capacidades", "description": "Muestra las capacidades permitidas o los campos y requisitos de una entidad editable.", "parameters": {"type": "OBJECT", "properties": {"entidad": {"type": "STRING", "enum": list(EDITABLE)}}}},
 ]

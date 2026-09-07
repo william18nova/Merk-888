@@ -10,6 +10,7 @@ from django.utils import timezone
 from mainApp.models import Empleado, Sucursal, TelegramAccionPendiente, TurnoEmpleado
 from . import employee_schedule as schedule
 from . import employee_rotation as rotation
+from .telegram_search import resolve_name
 
 
 def _bot():
@@ -29,27 +30,11 @@ def _employee(user, raw):
         if own and (name == str(own.pk) or bot._normalized_text(name) == bot._normalized_text(str(own))):
             return own
         raise PermissionDenied("Solo puedes consultar tu propio horario.")
-    rows = Empleado.objects.all()
-    if name.isascii() and name.isdigit():
-        rows = rows.filter(pk=schedule.positive_id(name, "ID de empleado"))
-    else:
-        if not name:
-            raise bot.TelegramBotError("Indica el nombre o ID del empleado.")
-        for word in name.split():
-            rows = rows.filter(Q(nombre__icontains=word) | Q(apellido__icontains=word))
-    matches = list(rows[:2])
-    if len(matches) != 1:
-        raise bot.TelegramBotError("No encontré un empleado único con ese nombre. Consulta /empleados e indica su ID.")
-    return matches[0]
+    return resolve_name(Empleado.objects.all(), name, ("nombre", "apellido"), entity="un empleado")
 
 
 def _branch(raw):
-    name = str(raw or "").strip()
-    rows = Sucursal.objects.filter(pk=schedule.positive_id(name, "ID de sucursal")) if name.isascii() and name.isdigit() else Sucursal.objects.filter(nombre__iexact=name)
-    matches = list(rows[:2])
-    if len(matches) != 1:
-        raise _bot().TelegramBotError("Indica el ID o nombre exacto de una sucursal existente.")
-    return matches[0]
+    return resolve_name(Sucursal.objects.all(), raw, entity="una sucursal")
 
 
 def tool_schedule(profile, arguments):
@@ -185,7 +170,7 @@ READ_PROPERTIES = {
     "desde": {"type": "STRING", "description": "Fecha inicial YYYY-MM-DD. Por defecto hoy."},
     "hasta": {"type": "STRING", "description": "Fecha final inclusiva. Por defecto seis días después de desde. Máximo 93 días."},
     "empleado": {"type": "STRING", "description": "ID o nombre único del empleado; omitir para mi horario. No inventar IDs."},
-    "sucursal": {"type": "STRING", "description": "ID o nombre exacto de sucursal opcional."},
+    "sucursal": {"type": "STRING", "description": "ID o nombre de sucursal opcional. El servidor busca similitudes y pregunta ante ambigüedad."},
     "todos": {"type": "BOOLEAN", "description": "Solo si pide horarios de todos los empleados; exige permiso de calendario global."},
     "pagina": {"type": "INTEGER"},
 }

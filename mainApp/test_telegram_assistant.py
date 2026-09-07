@@ -103,7 +103,7 @@ class TelegramAssistantTests(TestCase):
     def test_report_employee_resolution_does_not_choose_ambiguous_name(self):
         self.sale()
         self.assertIn("$100,50", self.query(fuente="ventas", empleado="Ana Perez").text)
-        with self.assertRaisesMessage(bot.TelegramBotError, "nombre único"):
+        with self.assertRaisesMessage(bot.TelegramBotError, "varias opciones parecidas"):
             self.query(fuente="ventas", empleado="Perez")
 
     def test_payment_reports_group_and_filter_canonical_methods_and_amounts(self):
