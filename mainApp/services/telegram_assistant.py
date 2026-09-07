@@ -20,7 +20,7 @@ READ_TOOLS = (
     "consultar_ventas", "buscar_producto", "consultar_inventario", "consultar_pagos",
     "listar_empleados", "consultar_balance", "consultar_turnos", "consultar_registros",
     "consultar_detalle_operativo", "ranking_productos", "buscar_vistas",
-    "consultar_informe", "consultar_resumen_negocio", "consultar_pendientes",
+    "consultar_informe", "consultar_resumen_negocio", "consultar_pendientes", "consultar_horarios_empleados",
 )
 
 DATE_TOOLS = {"consultar_ventas", "consultar_pagos", "consultar_balance", "ranking_productos", "consultar_informe", "consultar_resumen_negocio"}
@@ -328,6 +328,15 @@ def common_read_request(text):
         return "consultar_resumen_negocio", {}
     if normalized in {"mis pendientes", "muestrame mis pendientes", "acciones pendientes"}:
         return "consultar_pendientes", {}
+    if normalized in {"mi horario", "muestrame mi horario", "cuando trabajo", "mis horarios", "cual es mi horario"}:
+        return "consultar_horarios_empleados", {}
+    if normalized in {"mi horario de hoy", "mi horario hoy", "cuando trabajo hoy"}:
+        today = timezone.localdate().isoformat()
+        return "consultar_horarios_empleados", {"desde": today, "hasta": today}
+    if normalized in {"mi horario esta semana", "mi horario de esta semana", "mis turnos de esta semana"}:
+        today = timezone.localdate()
+        start = today - timedelta(days=today.weekday())
+        return "consultar_horarios_empleados", {"desde": start.isoformat(), "hasta": (start + timedelta(days=6)).isoformat()}
     if normalized in {"que puedes hacer", "que sabes hacer", "ayuda"}:
         return "consultar_capacidades", {}
     if normalized in {"siguiente", "siguiente pagina", "anterior", "pagina anterior"}:

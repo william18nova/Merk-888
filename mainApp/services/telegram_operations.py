@@ -20,6 +20,7 @@ from django.utils import timezone
 
 from .telegram_returns import RETURN_TOOL_DEFINITION, tool_prepare_return
 from .telegram_assistant import TOOL_DEFINITIONS as ASSISTANT_DEFINITIONS, TOOL_FUNCTIONS as ASSISTANT_FUNCTIONS
+from .telegram_schedule import TOOL_DEFINITIONS as SCHEDULE_DEFINITIONS, TOOL_FUNCTIONS as SCHEDULE_FUNCTIONS
 
 
 @dataclass(frozen=True)
@@ -515,9 +516,12 @@ def tool_capabilities(profile, arguments):
     from mainApp.permissions import user_can_change_sale
     if user_can_change_sale(profile.usuario):
         writable.append("devolver productos de una venta y registrar su reintegro")
+    if bot.user_can_access_url_name(profile.usuario, "guardar_turno_empleado"):
+        writable.append("crear, editar, mover y cancelar horarios de empleados")
     return "\n".join([
         "Consultas habilitadas para tu usuario: " + (", ".join(readable) or "ninguna"),
         "También están disponibles los totales, pagos, balance, empleados y turnos según tus permisos; detalle de venta/pedido/turno y ranking de productos.",
+        "Usa /horario para ver tus próximas jornadas laborales. Puedes pedir fechas concretas; consultar otros empleados requiere permiso de calendario. Los horarios laborales son independientes de las cajas.",
         "Informes: ventas por empleado/cajero, cliente, sucursal, punto de pago o día; pagos por concepto, usuario o día. Totales, promedios y comparación con el período anterior.",
         "Puedes combinar hasta cuatro consultas en una petición, pedir un resumen del negocio o continuar con '¿y ayer?' y 'siguiente página'. El contexto es solo de tu cuenta y chat durante 24 horas.",
         "Cambios con confirmación: registrar pagos" + ("; " + ", ".join(writable) if writable else "") + ".",
@@ -530,6 +534,7 @@ def tool_capabilities(profile, arguments):
 
 TOOL_FUNCTIONS = {
     **ASSISTANT_FUNCTIONS,
+    **SCHEDULE_FUNCTIONS,
     "consultar_registros": tool_records,
     "consultar_detalle_operativo": tool_detail,
     "ranking_productos": tool_ranking,
@@ -541,6 +546,7 @@ TOOL_FUNCTIONS = {
 
 TOOL_DEFINITIONS = [
     *ASSISTANT_DEFINITIONS,
+    *SCHEDULE_DEFINITIONS,
     RETURN_TOOL_DEFINITION,
     {"name": "consultar_registros", "description": "Lista, busca o cuenta registros reales de los catálogos y operaciones. Eventos: hoy salvo ID exacto o fechas explícitas. No modifica datos.", "parameters": {"type": "OBJECT", "properties": {
         "recurso": {"type": "STRING", "enum": list(RESOURCES)}, "consulta": {"type": "STRING"},

@@ -41,6 +41,7 @@ from mainApp.services.telegram_operations import (
     validate_arguments as validate_operation_arguments,
 )
 from mainApp.services.telegram_returns import command_prepare_return, confirm_return
+from mainApp.services.telegram_schedule import confirm_schedule
 from mainApp.services.telegram_assistant import DATE_TOOLS, common_read_request, resolve_continuation
 
 
@@ -54,7 +55,7 @@ LIST_PAGE_SIZE = 5
 PAGINATED_READ_TOOLS = frozenset({
     "consultar_pagos", "listar_empleados", "consultar_registros",
     "consultar_detalle_operativo", "ranking_productos", "buscar_vistas",
-    "consultar_informe", "consultar_pendientes",
+    "consultar_informe", "consultar_pendientes", "consultar_horarios_empleados",
 })
 # El trabajador evita repetir una petición fallida por cada mensaje. Cambiar la
 # clave o el modelo permite probar inmediatamente la configuración corregida.
@@ -346,7 +347,9 @@ class TelegramApiClient:
                 {"command": "pagos", "description": "Consultar pagos registrados"},
                 {"command": "empleados", "description": "Listar o buscar empleados"},
                 {"command": "balance", "description": "Ver ventas menos pagos"},
-                {"command": "turnos", "description": "Consultar turnos"},
+                {"command": "turnos", "description": "Consultar turnos de caja"},
+                {"command": "horario", "description": "Consultar mi horario laboral"},
+                {"command": "horarios", "description": "Calendario de empleados según permisos"},
                 {"command": "acciones", "description": "Ver capacidades y campos editables"},
                 {"command": "catalogo", "description": "Consultar un catálogo del sistema"},
                 {"command": "vistas", "description": "Buscar páginas disponibles"},
@@ -1094,6 +1097,17 @@ def _assistant_system_prompt():
         "usa buscar_vistas para ofrecer la página correspondiente y aclara que no se ejecutó nada. "
         "Para 'qué puedes hacer' usa consultar_capacidades. Mantén estas mismas reglas para audios. "
         "Solo puedes usar las herramientas disponibles; no inventes listas ni capacidades. "
+        "Para 'mi horario', 'cuándo trabajo' o jornadas laborales usa consultar_horarios_empleados, "
+        "no consultar_turnos ni horarios de apertura. Por defecto devuelve las próximas siete fechas "
+        "del empleado vinculado. Para todos usa todos=true solo si lo pide, o empleado para una persona. "
+        "Para esta semana laboral incluye lunes a domingo, y para hoy desde=hasta=hoy. "
+        "Para asignar, mover, editar o cancelar una jornada usa preparar_turno_empleado; "
+        "los IDs son del calendario laboral, NO de caja. Si falta ID al editar/cancelar consulta "
+        "primero el calendario; no adivines un turno cuando hay varios. Las horas y fechas deben "
+        "ser explícitas y completas en hora Colombia. Para cambiar la fecha conservando horas "
+        "consulta antes el horario original y envía tanto inicio como fin con la nueva fecha. "
+        "No asumas recurrencias, descansos ni cambios masivos: cada propuesta afecta una sola jornada. "
+        "Estos cambios requieren el botón Confirmar y nunca abren, cierran ni ajustan cajas. "
         "Si faltan datos esenciales, pregunta por ellos sin llamar herramientas."
     )
 
@@ -1331,7 +1345,7 @@ def _execute_tool(profile, tool_name, arguments, update=None):
         if tool_name == "consultar_pagos":
             _require_access(profile, "registrar_egreso")
             arguments = _expense_query_arguments(profile, arguments)
-        if tool_name in {"preparar_registro_pago", "preparar_cambio_catalogo", "preparar_devolucion_venta"}:
+        if tool_name in {"preparar_registro_pago", "preparar_cambio_catalogo", "preparar_devolucion_venta", "preparar_turno_empleado"}:
             result = function(profile, arguments, update=update)
         else:
             result = function(profile, arguments)
@@ -1371,6 +1385,9 @@ HELP_TEXT = (
     "• /empleados [NOMBRE] — lista o búsqueda de empleados\n"
     "• /balance — ventas menos pagos de hoy\n"
     "• /turnos — turnos abiertos\n"
+    "• /horario [EMPLEADO] — mi horario laboral o el de un empleado, con permiso\n"
+    "• /horarios — calendario laboral de todos, con permiso\n"
+    "• Por texto/audio puedes asignar, mover o cancelar una jornada con fechas, horas y confirmación\n"
     "• /devolver VENTA PRODUCTO:CANTIDAD [MEDIO] — preparar devolución; efectivo por defecto\n"
     "• /acciones [ENTIDAD] — capacidades y campos para crear/editar\n"
     "• /catalogo RECURSO [BUSQUEDA] — por ejemplo, /catalogo proveedores\n"
@@ -1497,11 +1514,13 @@ def _handle_callback(update, profile, client):
             action.estado = "CANCELADA"
             action.resuelto_en = timezone.now()
             action.save(update_fields=["estado", "resuelto_en"])
-            cancel_intent = {"registrar_pago": "cancelar_registro_pago", "devolver_venta": "cancelar_devolucion_venta"}.get(action.accion, "cancelar_cambio_catalogo")
+            cancel_intent = {"registrar_pago": "cancelar_registro_pago", "devolver_venta": "cancelar_devolucion_venta", "turno_empleado": "descartar_propuesta_horario"}.get(action.accion, "cancelar_cambio_catalogo")
             _audit(profile, cancel_intent, {"accion_id": str(action.pk)})
             message = "Acción cancelada. No se guardó ningún cambio, pago ni devolución."
         elif action.accion == "devolver_venta":
             message = confirm_return(profile, action) if verb == "confirm" else "Usa Confirmar devolución o Cancelar en esta propuesta."
+        elif action.accion == "turno_empleado":
+            message = confirm_schedule(profile, action) if verb == "confirm" else "Usa Confirmar o Descartar propuesta en este horario."
         elif action.accion == "cambio_catalogo":
             if verb != "confirm":
                 message = "Usa Confirmar cambio o Cancelar en la propuesta del catálogo."
@@ -1607,6 +1626,9 @@ def _handle_command(update, profile, text):
         return BotReply(f"Cancelé {changed} acción(es) pendiente(s).", "cancelar")
     if command == "/ventas":
         return _execute_tool(profile, "consultar_ventas", {}, update)
+    if command in {"/horario", "/horarios"}:
+        args = {"empleado": remainder} if remainder else ({"todos": True} if command == "/horarios" else {})
+        return _execute_tool(profile, "consultar_horarios_empleados", args, update)
     if command == "/resumen":
         return _execute_tool(profile, "consultar_resumen_negocio", {}, update)
     if command == "/pendientes":

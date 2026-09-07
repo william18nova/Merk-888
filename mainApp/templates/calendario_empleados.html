@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% load static %}
+{% block title %}{% if personal %}Mi horario{% else %}Calendario de empleados{% endif %}{% endblock %}
+{% block extra_head %}<link rel="stylesheet" href="{% static 'css/calendario_empleados.css' %}?v=1">{% endblock %}
+{% block content %}
+<section class="schedule-page" aria-labelledby="schedule-title">
+  <header class="schedule-heading">
+    <div><p class="schedule-eyebrow">PERSONAS &nbsp;/&nbsp; PLANIFICACIÓN</p>
+      <h1 id="schedule-title">{% if personal %}Mi horario{% else %}Calendario de empleados{% endif %}</h1>
+      <p class="schedule-subtitle">{% if personal %}Tu semana, organizada. Consulta tus próximas jornadas y sus últimas actualizaciones.{% else %}Organiza al equipo, ajusta las jornadas y mantén a todos al día.{% endif %}</p>
+    </div>
+    <div class="schedule-heading-actions">
+      {% if not personal %}<a class="sch-btn sch-btn-quiet" href="{% url 'mi_horario' %}">Mi horario ↗</a>{% endif %}
+      {% if editable %}<button type="button" class="sch-btn sch-btn-primary" id="schedule-new">＋ Asignar turno</button>{% endif %}
+    </div>
+  </header>
+
+  {% if personal and not employee %}<div class="schedule-notice" role="status">Tu usuario aún no está vinculado a un empleado. Pide al administrador que vincule tu ficha para poder ver tus horarios.</div>{% endif %}
+
+  <div class="schedule-summary">
+    <article><span class="sch-summary-icon" aria-hidden="true">▦</span><div><small>Turnos en pantalla</small><strong id="schedule-count">—</strong></div></article>
+    <article><span class="sch-summary-icon" aria-hidden="true">◷</span><div><small>Horas en el intervalo</small><strong id="schedule-hours">—</strong></div></article>
+    <article class="sch-summary-note"><span class="sch-summary-icon sch-icon-green" aria-hidden="true">●</span><div><small>{% if personal %}Tu calendario personal{% else %}Planificación compartida{% endif %}</small><p>{% if personal %}{{ employee|default:'Sin empleado vinculado' }}{% else %}Los cambios quedan registrados con su autor.{% endif %}</p></div></article>
+  </div>
+
+  <section class="schedule-shell" aria-label="Calendario laboral">
+    <div class="schedule-toolbar">
+      <div class="schedule-period-nav"><button class="sch-btn sch-btn-icon" id="schedule-prev" aria-label="Período anterior">‹</button><button class="sch-btn sch-btn-quiet" id="schedule-today">Hoy</button><button class="sch-btn sch-btn-icon" id="schedule-next" aria-label="Período siguiente">›</button><h2 id="schedule-period">Cargando calendario…</h2></div>
+      <div class="schedule-view-switch" role="group" aria-label="Vista del calendario"><button data-view="week" class="is-active" aria-pressed="true">Semana</button><button data-view="month" aria-pressed="false">Mes</button><button data-view="list" aria-pressed="false">Lista</button></div>
+    </div>
+    <div class="schedule-filters">
+      <label class="sch-filter">Ir a fecha<input id="schedule-date" type="date" min="2000-01-01" max="2100-12-31" aria-label="Ir a fecha"></label>
+      {% if not personal %}
+      <label class="sch-filter sch-filter-wide">Empleado<select id="schedule-employee-filter"><option value="">Todo el equipo</option></select></label>
+      <label class="sch-filter sch-filter-wide">Sucursal<select id="schedule-branch-filter"><option value="">Todas las sucursales</option></select></label>
+      {% endif %}
+      <button type="button" class="sch-btn sch-btn-quiet" id="schedule-refresh">↻ Actualizar</button>
+      <span class="schedule-timezone">Hora Colombia · UTC−5</span>
+    </div>
+    <div id="schedule-status" class="schedule-status" role="status" aria-live="polite"></div>
+    <div id="schedule-calendar" class="schedule-calendar" aria-busy="true"></div>
+    <footer class="schedule-footer"><span><i></i> Jornadas programadas</span><p>{% if editable %}Arrastra un turno a otro día o selecciónalo para ajustar sus horas.{% else %}Selecciona un turno para ver sus detalles.{% endif %}</p><small>No modifica los turnos de caja.</small></footer>
+  </section>
+
+  <dialog id="schedule-dialog" class="schedule-dialog" aria-labelledby="schedule-dialog-title">
+    <form id="schedule-form" autocomplete="off">
+      {% csrf_token %}
+      <div class="sch-dialog-heading"><div><p class="schedule-eyebrow">JORNADA LABORAL</p><h2 id="schedule-dialog-title">Asignar turno</h2></div><button class="sch-btn sch-btn-icon" id="schedule-close" type="button" aria-label="Cerrar">×</button></div>
+      <p id="schedule-dialog-hint" class="schedule-subtitle">Define el empleado, la sucursal y el intervalo de trabajo.</p>
+      <div class="sch-form-grid">
+        <label>Empleado<select id="shift-employee" required></select></label>
+        <label>Sucursal<select id="shift-branch" required></select></label>
+        <label>Inicio<input id="shift-start" type="datetime-local" required min="2000-01-01T00:00" max="2100-12-31T23:59"></label>
+        <label>Fin<input id="shift-end" type="datetime-local" required min="2000-01-01T00:00" max="2100-12-31T23:59"></label>
+        <label class="sch-form-full">Notas para el empleado<textarea id="shift-notes" rows="3" maxlength="300" placeholder="Por ejemplo: apertura, apoyo en bodega…"></textarea></label>
+      </div>
+      <p class="sch-form-help">{% if editable %}Puedes asignar jornadas nocturnas indicando el día siguiente como fin. No se permiten cruces con otros turnos del mismo empleado.{% else %}Esta vista es de consulta. Para solicitar un cambio de jornada, comunícate con quien administra los horarios.{% endif %}</p>
+      <p id="schedule-audit" class="sch-form-help"></p>
+      <p id="schedule-form-error" class="sch-form-error" role="alert"></p>
+      <div class="sch-dialog-actions">
+        {% if editable %}<button type="button" id="schedule-cancel-turn" class="sch-btn sch-btn-danger" hidden>Cancelar turno</button>{% endif %}
+        <button type="button" id="schedule-dismiss" class="sch-btn sch-btn-quiet">Cerrar</button>
+        {% if editable %}<button type="submit" id="schedule-save" class="sch-btn sch-btn-primary">Guardar turno</button>{% endif %}
+      </div>
+    </form>
+  </dialog>
+  <noscript><p class="schedule-notice">Activa JavaScript para consultar y utilizar el calendario interactivo.</p></noscript>
+</section>
+{{ calendar_config|json_script:"schedule-config" }}
+{% endblock %}
+{% block scripts %}<script defer src="{% static 'javascript/calendario_empleados.js' %}?v=1"></script>{% endblock %}

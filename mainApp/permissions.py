@@ -18,7 +18,7 @@ from .services.feature_flags import (
 WEB_MASTER_ROLE_NAMES = {"web_master", "webmaster"}
 ADMIN_ROLE_NAMES = {"admin", "administrador", "administradora", "supervisor"}
 PUBLIC_URL_NAMES = {"login", "logout", "visor_barcode", "visor_barcode_buscar", "visor_barcode_lookup", "macrodroid_nequi_webhook", "telegram_webhook"}
-ALWAYS_ALLOWED_URL_NAMES = {"home", "registrar_egreso"}
+ALWAYS_ALLOWED_URL_NAMES = {"home", "registrar_egreso", "mi_horario", "mi_horario_datos"}
 WEB_MASTER_ONLY_URL_NAMES = {
     "ventas_no_realizadas",
     "claves_descuento_merk2888",
@@ -375,6 +375,18 @@ PERMISSION_DEFINITIONS = [
         "aliases": ["generar_venta", "abrir_caja"],
     },
     {
+        "code": "horarios_empleados_ver",
+        "label": "Ver calendario de empleados",
+        "description": "Permite consultar la planificación laboral de todos los empleados.",
+        "aliases": ["calendario_empleados", "calendario_empleados_datos"],
+    },
+    {
+        "code": "horarios_empleados_editar",
+        "label": "Gestionar turnos de empleados",
+        "description": "Permite crear, mover, editar y cancelar jornadas de empleados, sin modificar cajas.",
+        "aliases": ["guardar_turno_empleado"],
+    },
+    {
         "code": "descuentos_especiales_generar",
         "label": "Generar códigos de descuento especial",
         "assignable": False,
@@ -607,6 +619,7 @@ PERMISSION_IMPLICATIONS = {
     "empleados_ver": ["empleados_editar", "empleados_eliminar"],
     "horarios_ver": ["horarios_editar", "horarios_eliminar"],
     "horarios_caja_ver": ["horarios_caja_editar", "horarios_caja_eliminar"],
+    "horarios_empleados_ver": ["horarios_empleados_editar"],
     "clientes_ver": ["clientes_editar", "clientes_eliminar"],
     "pedidos_ver": ["pedidos_editar", "pedidos_eliminar"],
 }
@@ -686,6 +699,9 @@ ROUTE_PERMISSIONS = {
     "editar_empleado": "empleados_editar",
     "eliminar_empleado": "empleados_eliminar",
     "agregar_horario": "horarios_crear",
+    "calendario_empleados": "horarios_empleados_ver",
+    "calendario_empleados_datos": "horarios_empleados_ver",
+    "guardar_turno_empleado": "horarios_empleados_editar",
     "horarios_sucursal_autocomplete": "horarios_crear",
     "visualizar_horarios": "horarios_ver",
     "sucursal_horario_visualizar_autocomplete": "horarios_ver",
@@ -885,6 +901,8 @@ NAV_GROUPS = [
     {
         "label": "Horarios",
         "children": [
+            {"label": "Mi horario", "url_name": "mi_horario"},
+            {"label": "Calendario de empleados", "url_name": "calendario_empleados"},
             {"label": "Agregar horario", "url_name": "agregar_horario"},
             {"label": "Visualizar horarios", "url_name": "visualizar_horarios"},
         ],

@@ -1,5 +1,6 @@
 from django.urls import path, include
 from . import views
+from . import schedule_views
 from django.contrib.auth import views as auth_views
 from .views import (
                     LoginView,
@@ -63,6 +64,11 @@ urlpatterns = [
     path("", LoginView.as_view(), name="login"),
 
     path('home/', HomePageView.as_view(), name='home'),
+    path("horarios/empleados/", schedule_views.calendar_page, name="calendario_empleados"),
+    path("horarios/empleados/datos/", schedule_views.calendar_data, name="calendario_empleados_datos"),
+    path("horarios/empleados/guardar/", schedule_views.calendar_save, name="guardar_turno_empleado"),
+    path("mi-horario/", schedule_views.calendar_page, {"personal": True}, name="mi_horario"),
+    path("mi-horario/datos/", schedule_views.calendar_data, {"personal": True}, name="mi_horario_datos"),
     path(
         "configuracion/funcionalidades/",
         views.ConfiguracionFuncionalidadesView.as_view(),

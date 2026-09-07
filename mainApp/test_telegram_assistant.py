@@ -47,7 +47,13 @@ class TelegramAssistantTests(TestCase):
         return sale
 
     def expense(self, amount="20.25", method="efectivo", at=None):
-        return Egreso.objects.create(concepto=self.concept, monto=amount, medio_pago=method, registrado_por=self.user, registrado_por_nombre=self.user.nombreusuario, creado_en=at or timezone.now())
+        expense = Egreso.objects.create(concepto=self.concept, monto=amount, medio_pago=method, registrado_por=self.user, registrado_por_nombre=self.user.nombreusuario)
+        # auto_now_add ignora la fecha pasada al crear. Fijarla después permite
+        # probar límites de zona horaria sin depender del día de ejecución.
+        if at is not None:
+            Egreso.objects.filter(pk=expense.pk).update(creado_en=at)
+            expense.refresh_from_db()
+        return expense
 
     def message(self, text, voice=False):
         return TelegramActualizacion.objects.create(update_id=10000 + TelegramActualizacion.objects.count(), telegram_user_id=880, telegram_chat_id=880, tipo="VOZ" if voice else "TEXTO", texto="" if voice else text, transcripcion=text if voice else "")

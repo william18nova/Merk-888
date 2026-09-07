@@ -920,6 +920,51 @@ class Egreso(models.Model):
         return f"{self.concepto} - {self.medio_pago} - {self.monto}"
 
 
+class TurnoEmpleado(models.Model):
+    """Planificación laboral; independiente de aperturas/cierres de caja."""
+
+    empleado = models.ForeignKey(Empleado, on_delete=models.PROTECT, related_name="turnos_planificados")
+    sucursal = models.ForeignKey(Sucursal, on_delete=models.PROTECT, related_name="turnos_empleados")
+    inicio = models.DateTimeField(db_index=True)
+    fin = models.DateTimeField()
+    notas = models.CharField(max_length=300, blank=True, default="")
+    cancelado = models.BooleanField(default=False)
+    version = models.PositiveIntegerField(default=1)
+    creado_por = models.ForeignKey(Usuario, on_delete=models.SET_NULL, null=True, related_name="horarios_creados")
+    actualizado_por = models.ForeignKey(Usuario, on_delete=models.SET_NULL, null=True, related_name="horarios_actualizados")
+    creado_en = models.DateTimeField(auto_now_add=True)
+    actualizado_en = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "turnos_empleados"
+        ordering = ["inicio", "pk"]
+        indexes = [models.Index(fields=["empleado", "inicio", "fin"], name="turno_emp_intervalo_idx")]
+        constraints = [
+            models.CheckConstraint(condition=Q(fin__gt=F("inicio")), name="turno_emp_fin_posterior"),
+            models.CheckConstraint(condition=Q(version__gte=1), name="turno_emp_version_positiva"),
+        ]
+
+    def __str__(self):
+        return f"{self.empleado} · {self.inicio}"
+
+
+class CambioTurnoEmpleado(models.Model):
+    turno = models.ForeignKey(TurnoEmpleado, on_delete=models.PROTECT, related_name="cambios")
+    usuario = models.ForeignKey(Usuario, on_delete=models.SET_NULL, null=True)
+    usuario_nombre = models.CharField(max_length=160)
+    operacion = models.CharField(max_length=10)
+    origen = models.CharField(max_length=10)
+    solicitud_id = models.UUIDField(unique=True)
+    peticion = models.JSONField(default=dict)
+    anterior = models.JSONField(default=dict)
+    nuevo = models.JSONField(default=dict)
+    creado_en = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "cambios_turnos_empleados"
+        ordering = ["-creado_en", "-pk"]
+
+
 class TelegramUsuario(models.Model):
     """Identidad de Telegram vinculada a un usuario real del sistema."""
 
