@@ -8,6 +8,77 @@ pulsar **Confirmar** en Telegram.
 Los cambios de catálogo siguen el mismo esquema: propuesta, revisión y botón
 de confirmación. Un «sí» escrito o hablado no guarda el cambio.
 
+## Asistente operativo tipo «Jarvis»
+
+El nombre «Jarvis» es opcional: puedes anteponerlo a tus solicitudes. No supone
+acceso sin límites: cada consulta y cada cambio siguen los permisos de Nova.
+No ejecuta código, SQL, comandos del servidor ni acciones arbitrarias dictadas
+en el chat.
+
+### Informes y preguntas más completas
+
+- «¿Quién vendió más este mes?» muestra el empleado con mayor importe vendido.
+- «Ventas por cajero esta semana»: total, número de ventas y promedio por empleado.
+- «Ventas por cliente / sucursal / punto de pago / día»: agrupaciones del intervalo.
+- «Los cinco clientes que más compraron»: ranking por importe con un máximo pedido.
+- «Compara lo vendido esta semana con el período anterior»: total, diferencia y
+  porcentaje; usa el intervalo inmediatamente anterior de igual duración, no
+  necesariamente una semana calendario completa. Si el total anterior es cero,
+  no inventa un porcentaje.
+- «¿Cuánto pagué por concepto este mes?» o «Pagos por usuario/día»: agrupaciones
+  de pagos, con filtros por concepto, usuario, medio y límites de monto.
+- «Jarvis, ¿cómo va el negocio?» o `/resumen`: ventas, pagos, balance operativo,
+  existencias bajas/agotadas, pedidos pendientes y turnos, solo según tus permisos.
+
+Los informes de ventas utilizan el total guardado de cada venta, sin duplicarlo
+por la cantidad de renglones de productos. Las modificaciones y devoluciones ya
+reflejadas en ese total están incluidas: no son una reconstrucción histórica del
+importe original. El balance operativo no es utilidad contable ni saldo bancario.
+Inventario, pedidos pendientes y turnos del resumen describen el estado **actual**,
+aunque el intervalo de ventas/pagos sea histórico.
+
+### Varias consultas y continuaciones
+
+«Muéstrame las ventas de hoy, los pagos y los productos agotados» puede resolver
+hasta **cuatro consultas independientes de lectura**. Cada parte se identifica,
+comprueba sus permisos y conserva los botones de su listado. Si una no está
+permitida, se indica sin revelar sus datos. Las respuestas largas se envían
+completas en varios mensajes; ya no se cortan a 4.000 caracteres.
+
+Puedes continuar con «¿y ayer?», «¿y este mes?», «ahora por sucursal» o
+«siguiente página». El sistema recupera los filtros y fechas de la consulta
+exitosa de **la misma cuenta y chat**, durante 24 horas, vuelve a comprobar sus
+permisos y consulta datos actuales. Al cambiar filtros se vuelve a la primera
+página. Después de una respuesta con varias consultas, debes aclarar cuál deseas
+continuar. No se reutilizan acciones de escritura como si fueran consultas.
+
+Esto funciona con texto y audios transcritos. Gemini/Groq interpretan las
+solicitudes abiertas. Los atajos claros por ID, resumen, pendientes, navegación,
+fechas de continuación y «quién vendió más hoy/ayer/este mes» se resuelven sin
+llamar a la IA de texto. La transcripción de audio sí necesita Groq.
+
+Comandos nuevos:
+
+```text
+/resumen
+/ranking empleados
+/ranking sucursales 2026-09-01 2026-09-06
+/ranking clientes
+/ranking cajas
+/pendientes
+/pendientes 2
+```
+
+`/pendientes` muestra únicamente tus propuestas vigentes, con opción de
+cancelarlas. Para confirmar debes revisar el mensaje original completo; nunca
+se confirma desde un resumen abreviado. Los cambios no se mezclan en una consulta
+compuesta: pide cada acción para recibir su propia propuesta y confirmación.
+
+Continúan disponibles pagos operativos, devoluciones parciales con medio de
+reintegro y edición/creación de catálogos. No se agregaron ejecución de ventas,
+cierres, eliminaciones, ajustes manuales de inventario, transferencias bancarias,
+cambios de contraseñas o permisos desde el chat: se ofrece la página apropiada.
+
 Al preparar un pago, el bot busca conceptos existentes parecidos, sin distinguir
 tildes, espacios o guiones y admitiendo pequeñas diferencias de escritura. Por
 ejemplo, para «pago de 1 en efectivo a cocacola», si existe **COCA-COLA**, ofrece
@@ -116,8 +187,8 @@ ni se aceptan nombres de modelos o campos arbitrarios.
 
 ### Crear y editar desde el chat
 
-El bot puede **crear y editar productos, categorías, clientes, proveedores y
-sucursales**, reutilizando los formularios y validaciones web. También mantiene
+El bot puede **crear y editar productos, categorías, clientes, proveedores,
+sucursales y empleados**, reutilizando los formularios y validaciones web. También mantiene
 el registro de pagos con sugerencias de conceptos y confirmación.
 
 - «Crea una categoría llamada HELADOS».
@@ -127,6 +198,17 @@ el registro de pagos con sugerencias de conceptos y confirmación.
 - «Pon al producto 2934 la categoría ID 8».
 - «Actualiza el teléfono del proveedor 12 a 3001234567».
 - «¿Qué datos necesitas para crear un cliente?».
+- «¿Qué datos necesitas para crear un empleado?» o `/acciones empleado`.
+- «Actualiza el teléfono del empleado ID 12 a 3001234567».
+
+Para crear un empleado se piden nombre, apellido, documento, teléfono, correo,
+`usuarioid` y `sucursalid`; puesto y dirección son opcionales. Los IDs deben
+existir y la cuenta no puede estar vinculada a otro empleado. Asignar la cuenta
+requiere también permiso para visualizar usuarios. La propuesta muestra las
+identidades seleccionadas y se valida otra vez al confirmar. El guardado reutiliza
+la sincronización empleado/cliente del sistema en una transacción: no duplica el
+cliente ni deja medio cambio si hay un conflicto. No crea cuentas de acceso ni
+solicita contraseñas por Telegram.
 
 Solo se modifican los campos solicitados. Los obligatorios faltantes se piden;
 no se inventan documentos, correos, teléfonos o precios. La categoría de un
@@ -335,7 +417,7 @@ python manage.py procesar_telegram_bot --once
 tail -n 100 /home/Merk888/logs/telegram_bot.log
 ```
 
-Los comandos `/ventas`, `/venta ID`, `/factura ID`, `/producto`, `/inventario`, `/pagos`, `/empleados`,
+Los comandos `/resumen`, `/ranking`, `/pendientes`, `/ventas`, `/venta ID`, `/factura ID`, `/producto`, `/inventario`, `/pagos`, `/empleados`,
 `/balance`, `/turnos`, `/acciones`, `/catalogo`, `/vistas`, `/devolver` y `/estado` siguen
 disponibles aunque los proveedores inteligentes fallen. Con una
 clave de Groq válida, el texto libre y los audios continúan funcionando aunque

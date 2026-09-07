@@ -3,6 +3,7 @@ import hmac
 import io
 import json
 import logging
+import math
 import re
 import secrets
 import time
@@ -40,6 +41,7 @@ from mainApp.services.telegram_operations import (
     validate_arguments as validate_operation_arguments,
 )
 from mainApp.services.telegram_returns import command_prepare_return, confirm_return
+from mainApp.services.telegram_assistant import DATE_TOOLS, common_read_request, resolve_continuation
 
 
 logger = logging.getLogger(__name__)
@@ -52,6 +54,7 @@ LIST_PAGE_SIZE = 5
 PAGINATED_READ_TOOLS = frozenset({
     "consultar_pagos", "listar_empleados", "consultar_registros",
     "consultar_detalle_operativo", "ranking_productos", "buscar_vistas",
+    "consultar_informe", "consultar_pendientes",
 })
 # El trabajador evita repetir una petición fallida por cada mensaje. Cambiar la
 # clave o el modelo permite probar inmediatamente la configuración corregida.
@@ -289,14 +292,25 @@ class TelegramApiClient:
 
     def send_message(self, chat_id, text, *, reply_markup=None):
         clean_text = str(text or "").strip() or "Sin información para mostrar."
-        payload = {
-            "chat_id": int(chat_id),
-            "text": clean_text[:4000],
-            "disable_web_page_preview": True,
-        }
-        if reply_markup:
-            payload["reply_markup"] = reply_markup
-        return self._post("sendMessage", payload=payload)
+        # No recortar informes silenciosamente. El límite cuenta unidades UTF-16
+        # para dejar margen incluso cuando hay emojis fuera del plano básico.
+        chunks, current, size = [], [], 0
+        for char in clean_text:
+            units = 2 if ord(char) > 0xFFFF else 1
+            if size + units > 3800:
+                chunks.append("".join(current))
+                current, size = [], 0
+            current.append(char)
+            size += units
+        if current:
+            chunks.append("".join(current))
+        result = None
+        for index, chunk in enumerate(chunks):
+            payload = {"chat_id": int(chat_id), "text": chunk, "disable_web_page_preview": True}
+            if reply_markup and index == len(chunks) - 1:
+                payload["reply_markup"] = reply_markup
+            result = self._post("sendMessage", payload=payload)
+        return result
 
     def answer_callback(self, callback_query_id, text=""):
         if not callback_query_id:
@@ -324,6 +338,9 @@ class TelegramApiClient:
                 {"command": "ayuda", "description": "Ver lo que puede hacer"},
                 {"command": "ventas", "description": "Consultar ventas de hoy"},
                 {"command": "venta", "description": "Ver una venta por su ID"},
+                {"command": "resumen", "description": "Resumen del negocio según tus permisos"},
+                {"command": "ranking", "description": "Quién vendió más: empleados, sucursales o clientes"},
+                {"command": "pendientes", "description": "Revisar tus propuestas pendientes"},
                 {"command": "producto", "description": "Buscar un producto"},
                 {"command": "inventario", "description": "Consultar inventario"},
                 {"command": "pagos", "description": "Consultar pagos registrados"},
@@ -409,6 +426,10 @@ def _money(value):
 
 
 def _json_safe(value):
+    if isinstance(value, float) and not math.isfinite(value):
+        # Registrar un argumento inválido no debe romper JSON ni ocultar el
+        # error de validación original (NaN/Infinity no son JSON estándar).
+        return str(value)
     if isinstance(value, Decimal):
         return str(value)
     if hasattr(value, "isoformat"):
@@ -1039,11 +1060,26 @@ def _assistant_system_prompt():
         "usa consultar_detalle_operativo con tipo=venta e id=142266, sin filtrar por hoy. "
         "El ID es suficiente: no pidas además fecha, período, cliente o sucursal para buscar esa venta. "
         "No afirmes que no puedes ver ventas sin consultar la herramienta: ella comprueba los permisos. "
-        "Para crear o editar productos, categorías, clientes, proveedores o sucursales usa "
+        "Actúa como un asistente operativo: puedes consultar informes, combinar consultas y preparar cambios, "
+        "pero nunca prometas capacidades fuera de las herramientas. Para 'quién vendió más este mes' usa "
+        "consultar_informe con fuente=ventas, agrupar=empleado, orden=importe, primeros=1 y fechas reales del mes. "
+        "Para ventas por cliente/sucursal/punto de pago/día, ticket promedio o cantidad de ventas también usa "
+        "consultar_informe. Para pagos por concepto/usuario/día usa fuente=pagos. Para comparación con el "
+        "período anterior usa comparar_anterior=true: compara totales de intervalos de igual duración. "
+        "Para 'cómo va el negocio' usa consultar_resumen_negocio; no impongas este resumen a quien solo pide un total. "
+        "Si pide varias cosas independientes ('ventas y pagos de hoy y productos agotados'), usa consultar_varias "
+        "con hasta cuatro herramientas de lectura y sus argumentos JSON válidos. Nunca incluyas escrituras en esa lista. "
+        "Para continuaciones de consultas ('y ayer', 'ahora por sucursal', 'siguiente página') usa continuar_consulta "
+        "con solo los cambios explícitos. El servidor hereda los filtros de la misma cuenta/chat; no inventes contexto. "
+        "Tras varias consultas especifica la herramienta que quiere continuar; si es ambiguo pregunta. "
+        "Para ver propuestas pendientes usa consultar_pendientes. Para crear o editar productos, categorías, "
+        "clientes, proveedores, sucursales o empleados usa "
         "preparar_cambio_catalogo; esto solo prepara, nunca confirma. Envía únicamente campos "
         "solicitados, no alteres otros datos. Pregunta los obligatorios que falten y usa "
         "consultar_capacidades para conocerlos. Conserva códigos y documentos como texto, "
         "incluidos ceros iniciales. Nunca inventes nombres, teléfonos, correos, precios o categorías. "
+        "Un empleado usa usuarioid y sucursalid EXISTENTES; pide los IDs o consulta las listas si faltan. "
+        "Su ficha de cliente se sincroniza automáticamente al confirmar. No crea usuarios ni cambia roles o claves. "
         "Un 'sí' escrito o en audio no sustituye el botón de confirmación de una acción. "
         "Para devolver productos de una venta usa preparar_devolucion_venta con venta_id, los "
         "productos concretos y sus cantidades explícitas. Puedes usar producto_id, nombre exacto "
@@ -1110,7 +1146,7 @@ def _gemini_function_call(user_text, history=None):
         "contents": contents,
         "tools": GEMINI_TOOLS,
         "toolConfig": {"functionCallingConfig": {"mode": "AUTO"}},
-        "generationConfig": {"temperature": 0.1, "maxOutputTokens": 500},
+        "generationConfig": {"temperature": 0.1, "maxOutputTokens": 1400},
     }
     try:
         response = requests.post(
@@ -1176,7 +1212,7 @@ def _groq_function_call(user_text, history=None):
         "tools": GROQ_CHAT_TOOLS,
         "tool_choice": "auto",
         "temperature": 0.1,
-        "max_completion_tokens": 500,
+        "max_completion_tokens": 1400,
     }
     try:
         response = requests.post(
@@ -1286,6 +1322,12 @@ def _execute_tool(profile, tool_name, arguments, update=None):
     try:
         if tool_name in OPERATIONS_FUNCTIONS:
             validate_operation_arguments(tool_name, arguments)
+        if tool_name == "continuar_consulta":
+            resolved_name, resolved_args = resolve_continuation(profile, arguments)
+            return _execute_tool(profile, resolved_name, resolved_args, update)
+        if tool_name in DATE_TOOLS and tool_name != "consultar_pagos":
+            start, end = _date_range(arguments)
+            arguments = dict(arguments, desde=start.isoformat(), hasta=end.isoformat())
         if tool_name == "consultar_pagos":
             _require_access(profile, "registrar_egreso")
             arguments = _expense_query_arguments(profile, arguments)
@@ -1307,7 +1349,8 @@ def _execute_tool(profile, tool_name, arguments, update=None):
             if page < pages:
                 buttons.append({"text": "Siguiente ➡️", "callback_data": f"page:{audit.pk}:{page + 1}"})
             if buttons:
-                result.reply_markup = {"inline_keyboard": [buttons]}
+                existing = (result.reply_markup or {}).get("inline_keyboard", [])
+                result.reply_markup = {"inline_keyboard": existing + [buttons]}
         return result if isinstance(result, BotReply) else BotReply(str(result), tool_name)
     except Exception as exc:
         _audit(profile, tool_name, arguments, successful=False, detail=str(exc))
@@ -1319,6 +1362,9 @@ HELP_TEXT = (
     "También preparo pagos, devoluciones y cambios de catálogo con confirmación. Puedes escribir, enviar audio o usar:\n"
     "• /ventas — ventas de hoy\n"
     "• /venta ID — detalle, productos y pagos de una venta (también /factura ID)\n"
+    "• /resumen — panorama del negocio según tus permisos\n"
+    "• /ranking empleados [DESDE HASTA] — ventas por empleado; también clientes, sucursales o cajas\n"
+    "• /pendientes — tus propuestas sin confirmar\n"
     "• /producto NOMBRE_O_ID\n"
     "• /inventario NOMBRE_O_ID\n"
     "• /pagos — lista de pagos de hoy con detalle y totales\n"
@@ -1394,6 +1440,7 @@ def _handle_list_page_callback(update, profile, client):
     audit = TelegramAuditoria.objects.filter(
         pk=int(audit_id), usuario=profile.usuario,
         telegram_user_id=profile.telegram_user_id,
+        telegram_chat_id=profile.telegram_chat_id,
         accion__in=PAGINATED_READ_TOOLS, exitoso=True,
         creado_en__gte=timezone.now() - timedelta(hours=24),
     ).first()
@@ -1560,6 +1607,21 @@ def _handle_command(update, profile, text):
         return BotReply(f"Cancelé {changed} acción(es) pendiente(s).", "cancelar")
     if command == "/ventas":
         return _execute_tool(profile, "consultar_ventas", {}, update)
+    if command == "/resumen":
+        return _execute_tool(profile, "consultar_resumen_negocio", {}, update)
+    if command == "/pendientes":
+        if remainder and not re.fullmatch(r"[1-9][0-9]{0,5}", remainder):
+            return BotReply("Usa /pendientes o /pendientes NUMERO_DE_PAGINA.", "ayuda_pendientes")
+        return _execute_tool(profile, "consultar_pendientes", {"pagina": int(remainder)} if re.fullmatch(r"[1-9][0-9]{0,5}", remainder) else {}, update)
+    if command == "/ranking":
+        tokens = remainder.split()
+        groups = {"empleados": "empleado", "cajeros": "empleado", "clientes": "cliente", "sucursales": "sucursal", "cajas": "punto_pago"}
+        if len(tokens) not in {1, 3} or _normalized_text(tokens[0]) not in groups:
+            return BotReply("Usa /ranking empleados (o clientes, sucursales, cajas), opcionalmente seguido de DESDE HASTA en formato YYYY-MM-DD.", "ayuda_ranking")
+        args = {"fuente": "ventas", "agrupar": groups[_normalized_text(tokens[0])]}
+        if len(tokens) == 3:
+            args.update(desde=tokens[1], hasta=tokens[2])
+        return _execute_tool(profile, "consultar_informe", args, update)
     if command in {"/venta", "/factura"}:
         if not re.fullmatch(r"#?[0-9]{1,19}", remainder) or int(remainder.lstrip("#")) <= 0:
             return BotReply("Usa /venta ID, por ejemplo /venta 142266. Indica un solo ID numérico de venta.", "ayuda_venta")
@@ -1618,13 +1680,18 @@ def build_reply(update, client):
     sale_arguments = _sale_detail_request(text)
     if sale_arguments is not None:
         return _execute_tool(profile, "consultar_detalle_operativo", sale_arguments, update)
+    direct = common_read_request(text)
+    if direct is not None:
+        return _execute_tool(profile, *direct, update=update)
     from mainApp.models import TelegramActualizacion
 
     previous = list(
         TelegramActualizacion.objects
         .filter(
             telegram_user_id=update.telegram_user_id,
+            telegram_chat_id=update.telegram_chat_id,
             estado="PROCESADO",
+            recibido_en__gte=max(profile.vinculado_en, timezone.now() - timedelta(hours=24)),
         )
         .exclude(pk=update.pk)
         .order_by("-procesado_en", "-update_id")[:4]

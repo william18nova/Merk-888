@@ -19,6 +19,7 @@ from django.urls import reverse
 from django.utils import timezone
 
 from .telegram_returns import RETURN_TOOL_DEFINITION, tool_prepare_return
+from .telegram_assistant import TOOL_DEFINITIONS as ASSISTANT_DEFINITIONS, TOOL_FUNCTIONS as ASSISTANT_FUNCTIONS
 
 
 @dataclass(frozen=True)
@@ -334,6 +335,7 @@ EDITABLE = {
     "cliente": ("Cliente", "ClienteForm", "EditarClienteForm", "agregar_cliente", "editar_cliente", "visualizar_clientes", ("nombre", "apellido", "numerodocumento", "telefono", "email")),
     "proveedor": ("Proveedor", "ProveedorForm", "EditarProveedorForm", "agregar_proveedor", "editar_proveedor", "visualizar_proveedores", ("nombre", "empresa", "telefono", "email", "direccion")),
     "producto": ("Producto", "ProductoForm", "ProductoEditarForm", "agregar_producto", "editar_producto", "visualizar_productos", ("nombre", "descripcion", "precio", "categoria", "codigo_de_barras", "iva", "impuesto_consumo", "icui", "ibua", "rentabilidad")),
+    "empleado": ("Empleado", "EmpleadoCreateForm", "EditarEmpleadoForm", "agregar_empleado", "editar_empleado", "visualizar_empleados", ("nombre", "apellido", "numerodocumento", "telefono", "email", "direccion", "puesto", "usuarioid", "sucursalid")),
 }
 
 
@@ -341,7 +343,7 @@ def _catalog_spec(profile, entity, operation):
     bot = _bot()
     spec = EDITABLE.get(entity)
     if spec is None or operation not in {"crear", "editar"}:
-        raise bot.TelegramBotError("Solo puedo crear o editar productos, categorías, clientes, proveedores y sucursales. Para otros cambios busca su página con /vistas.")
+        raise bot.TelegramBotError("Entidades editables: " + ", ".join(EDITABLE) + ". Para otros cambios busca su página con /vistas.")
     bot._require_access(profile, spec[3] if operation == "crear" else spec[4])
     if operation == "editar":
         bot._require_access(profile, spec[5])
@@ -358,6 +360,11 @@ def _catalog_form(spec, operation, instance, changes):
     bot = _bot()
     data = model_to_dict(instance)
     data.update(changes)
+    if spec[0] == "Empleado":
+        # Los campos visibles del autocomplete son obligatorios en los formularios
+        # web. Las identidades reales se validan en sus ModelChoiceField, no aquí.
+        data["usuario_autocomplete"] = str(data.get("usuarioid") or "")
+        data["sucursal_autocomplete"] = str(data.get("sucursalid") or "")
     # Igual que la web: los opcionales numéricos de un producto nuevo valen cero.
     if spec[0] == "Producto" and operation == "crear":
         for key in ("iva", "impuesto_consumo", "icui", "ibua", "rentabilidad"):
@@ -390,6 +397,8 @@ def tool_prepare_catalog(profile, arguments, update=None):
         if not isinstance(item["valor"], str) or len(item["valor"]) > 1000:
             raise bot.TelegramBotError("Envía cada valor como texto de máximo 1000 caracteres.")
         changes[item["campo"]] = item["valor"].strip()
+    if entity == "empleado" and "usuarioid" in changes:
+        bot._require_access(profile, "visualizar_usuarios")
     model = _model(spec[0])
     if operation == "editar":
         if arguments.get("registro_id") is not None:
@@ -417,9 +426,11 @@ def tool_prepare_catalog(profile, arguments, update=None):
         cleaned[key] = str(value.pk if hasattr(value, "pk") else (value if value is not None else ""))
         old = before.get(model._meta.get_field(key).attname) if before else None
         display = (f"{old if old is not None else '—'} → " if before else "") + cleaned[key]
-        if key == "categoria":
-            display += f" ({value.nombre})"
+        if hasattr(value, "pk"):
+            display += f" ({bot._list_text(str(value), 140)})"
         lines.append(f"• {key}: {display}")
+    if entity == "empleado":
+        lines.append("Se sincroniza también su ficha de cliente, igual que en la página de empleados. No crea cuentas ni cambia roles o contraseñas.")
     if before and all(str(before.get(model._meta.get_field(key).attname) or "") == value for key, value in cleaned.items()):
         return bot.BotReply("Los valores indicados ya están guardados. No se preparó ningún cambio.", "sin_cambios")
     lines.append("\nTodavía no se ha guardado. Confirma para aplicar; la propuesta vence en 10 minutos.")
@@ -439,9 +450,12 @@ def tool_prepare_catalog(profile, arguments, update=None):
 
 def confirm_catalog(profile, action):
     """Llamar con la propuesta bloqueada en una transacción del callback."""
+    from .employee_client import EmployeeClientSyncError
     bot = _bot()
     args = action.argumentos
     spec = _catalog_spec(profile, args.get("entidad"), args.get("operacion"))
+    if args.get("entidad") == "empleado" and "usuarioid" in args.get("datos", {}):
+        bot._require_access(profile, "visualizar_usuarios")
     try:
         # Savepoint: un error de unicidad no deja roto el atomic del callback.
         with transaction.atomic():
@@ -466,8 +480,8 @@ def confirm_catalog(profile, action):
             action.save(update_fields=["estado", "resuelto_en"])
             bot._audit(profile, "confirmar_cambio_catalogo", args, detail=f"{spec[0]} #{obj.pk}")
         return f"Cambio guardado: {args['entidad']} #{obj.pk}. {action.resumen}."
-    except (bot.TelegramBotError, IntegrityError) as exc:
-        message = str(exc) if isinstance(exc, bot.TelegramBotError) else "Los datos entran en conflicto con otro registro. Solicita una nueva propuesta."
+    except (bot.TelegramBotError, IntegrityError, EmployeeClientSyncError) as exc:
+        message = str(exc) if isinstance(exc, (bot.TelegramBotError, EmployeeClientSyncError)) else "Los datos entran en conflicto con otro registro. Solicita una nueva propuesta."
         action.estado = "ERROR"
         action.resuelto_en = timezone.now()
         action.save(update_fields=["estado", "resuelto_en"])
@@ -487,7 +501,7 @@ def tool_capabilities(profile, arguments):
         bot._require_access(profile, spec[3], spec[4])
         form = getattr(forms, spec[1])()
         required = [key for key in spec[6] if form.fields[key].required]
-        return "\n".join([f"Campos de {entity}: {', '.join(spec[6])}", "Obligatorios al crear: " + ", ".join(required), "Al editar, indica el ID o nombre exacto único y solo los campos que quieres cambiar. Categoría usa el ID existente; IVA se expresa de 0 a 1. Siempre se solicita confirmación."])
+        return "\n".join([f"Campos de {entity}: {', '.join(spec[6])}", "Obligatorios al crear: " + ", ".join(required), "Al editar, indica el ID o nombre exacto único y solo los campos que quieres cambiar. Categoría, usuarioid y sucursalid usan IDs existentes; IVA se expresa de 0 a 1. Un empleado requiere cuenta de usuario existente, sin contraseñas por chat. Siempre se solicita confirmación."])
     readable = [key.replace("_", " ") for key, spec in RESOURCES.items() if bot.user_can_access_url_name(profile.usuario, spec.permission)]
     writable = []
     for key, spec in EDITABLE.items():
@@ -504,8 +518,10 @@ def tool_capabilities(profile, arguments):
     return "\n".join([
         "Consultas habilitadas para tu usuario: " + (", ".join(readable) or "ninguna"),
         "También están disponibles los totales, pagos, balance, empleados y turnos según tus permisos; detalle de venta/pedido/turno y ranking de productos.",
+        "Informes: ventas por empleado/cajero, cliente, sucursal, punto de pago o día; pagos por concepto, usuario o día. Totales, promedios y comparación con el período anterior.",
+        "Puedes combinar hasta cuatro consultas en una petición, pedir un resumen del negocio o continuar con '¿y ayer?' y 'siguiente página'. El contexto es solo de tu cuenta y chat durante 24 horas.",
         "Cambios con confirmación: registrar pagos" + ("; " + ", ".join(writable) if writable else "") + ".",
-        "Usa /acciones producto (o categoría, cliente, proveedor, sucursal) para consultar los campos.",
+        "Usa /acciones producto (o categoría, cliente, proveedor, sucursal, empleado) para consultar los campos. /pendientes muestra tus propuestas vigentes.",
         "Puedes solicitar devoluciones por texto/audio o /devolver VENTA PRODUCTO:CANTIDAD MEDIO, con permiso y confirmación. Efectivo es el medio predeterminado; no realiza transferencias bancarias.",
         "Usa /vistas PALABRA para buscar páginas. Cierres, facturación, ajustes manuales de stock, eliminación y configuración sensible se realizan en la web, no automáticamente desde el chat.",
         "Puedes escribir o enviar audio. Pide solo el total, una lista, filtros, fechas o la siguiente página. No muestro contraseñas ni claves API.",
@@ -513,6 +529,7 @@ def tool_capabilities(profile, arguments):
 
 
 TOOL_FUNCTIONS = {
+    **ASSISTANT_FUNCTIONS,
     "consultar_registros": tool_records,
     "consultar_detalle_operativo": tool_detail,
     "ranking_productos": tool_ranking,
@@ -523,6 +540,7 @@ TOOL_FUNCTIONS = {
 }
 
 TOOL_DEFINITIONS = [
+    *ASSISTANT_DEFINITIONS,
     RETURN_TOOL_DEFINITION,
     {"name": "consultar_registros", "description": "Lista, busca o cuenta registros reales de los catálogos y operaciones. Eventos: hoy salvo ID exacto o fechas explícitas. No modifica datos.", "parameters": {"type": "OBJECT", "properties": {
         "recurso": {"type": "STRING", "enum": list(RESOURCES)}, "consulta": {"type": "STRING"},
@@ -542,7 +560,7 @@ TOOL_DEFINITIONS = [
     {"name": "preparar_cambio_catalogo", "description": "Prepara crear/editar un registro de catálogo. No guarda hasta confirmación. Usa consultar_capacidades para conocer campos; no inventes datos obligatorios. Editar exige ID o nombre exacto único.", "parameters": {"type": "OBJECT", "properties": {
         "entidad": {"type": "STRING", "enum": list(EDITABLE)}, "operacion": {"type": "STRING", "enum": ["crear", "editar"]}, "registro_id": {"type": "INTEGER"},
         "registro": {"type": "STRING", "description": "Nombre exacto del registro existente a editar si no se conoce el ID. Si hay ambigüedad no se prepara el cambio."},
-        "campos": {"type": "ARRAY", "items": {"type": "OBJECT", "properties": {"campo": {"type": "STRING", "enum": sorted({field for spec in EDITABLE.values() for field in spec[6]})}, "valor": {"type": "STRING", "description": "Valor exacto solicitado; categoría usa ID, decimales con punto, IVA 0 a 1."}}, "required": ["campo", "valor"]}},
+        "campos": {"type": "ARRAY", "items": {"type": "OBJECT", "properties": {"campo": {"type": "STRING", "enum": sorted({field for spec in EDITABLE.values() for field in spec[6]})}, "valor": {"type": "STRING", "description": "Valor exacto solicitado; categoría, usuarioid y sucursalid usan ID existente, decimales con punto, IVA 0 a 1."}}, "required": ["campo", "valor"]}},
     }, "required": ["entidad", "operacion", "campos"]}},
     {"name": "consultar_capacidades", "description": "Muestra las capacidades permitidas o los campos y requisitos de una entidad editable.", "parameters": {"type": "OBJECT", "properties": {"entidad": {"type": "STRING", "enum": list(EDITABLE)}}}},
 ]
@@ -550,7 +568,7 @@ TOOL_DEFINITIONS = [
 
 def validate_arguments(tool_name, arguments):
     """Validar también en servidor: la IA no es una frontera de seguridad."""
-    schema = next(item["parameters"] for item in TOOL_DEFINITIONS if item["name"] == tool_name)
+    schema = next(item["parameters"] for item in _bot().GEMINI_TOOLS[0]["functionDeclarations"] if item["name"] == tool_name)
 
     def check(value, rule, path):
         kind = rule["type"]
@@ -560,9 +578,12 @@ def validate_arguments(tool_name, arguments):
             "STRING": isinstance(value, str),
             "INTEGER": isinstance(value, int) and not isinstance(value, bool),
             "BOOLEAN": isinstance(value, bool),
+            "NUMBER": isinstance(value, (int, float)) and not isinstance(value, bool) and Decimal(str(value)).is_finite(),
         }.get(kind, False)
         if not valid or ("enum" in rule and value not in rule["enum"]):
             raise _bot().TelegramBotError(f"Valor no permitido en {path}. Revisa los datos de la solicitud.")
+        if kind == "STRING" and len(value) > 8000:
+            raise _bot().TelegramBotError("El texto de la solicitud es demasiado largo.")
         if kind == "OBJECT":
             properties = rule.get("properties", {})
             if set(value) - set(properties) or set(rule.get("required", [])) - set(value):
