@@ -120,13 +120,13 @@ def _page_reply(tool, args, heading, queryset, fields, summary=""):
     bot = _bot()
     total = queryset.count()
     page, pages, offset = bot._list_page(args, total)
-    lines = [heading, f"{total} registro(s) · página {page} de {pages}"]
+    lines = [f"Esto encontré: {heading}", f"{total} {'registro' if total == 1 else 'registros'} · página {page} de {pages}"]
     if summary:
         lines.append(summary)
     for row in queryset.values("pk", *(path for _, path, _ in fields))[offset:offset + bot.LIST_PAGE_SIZE]:
         lines.append(f"\n• #{row['pk']} " + " · ".join(f"{label}: {_format(row[path], kind)}" for label, path, kind in fields))
     if not total:
-        lines.append("No hay registros con esos filtros.")
+        lines.append("No encontré resultados que coincidan con tu búsqueda.")
     return bot.BotReply("\n".join(lines), tool, pagination={"page": page, "pages": pages, "arguments": bot._json_safe(args)})
 
 
@@ -222,7 +222,8 @@ def tool_records(profile, arguments):
     fields = spec.fields + (spec.contact if args.get("incluir_contacto") is True else ())
     summary = f"Total del listado: {bot._list_money(rows.aggregate(value=Sum(spec.amount))['value'])}" if spec.amount else ""
     if args.get("solo_total") is True:
-        return bot.BotReply(f"{heading}\n{rows.count()} registro(s)" + (f"\n{summary}" if summary else ""), "consultar_registros")
+        count = rows.count()
+        return bot.BotReply(f"{heading}\nEncontré {count} {'registro' if count == 1 else 'registros'}." + (f"\n{summary}" if summary else ""), "consultar_registros")
     ordering = ("-" + spec.date_field.removesuffix("__date"), "-pk") if spec.date_field else ("pk",)
     return _page_reply("consultar_registros", args, heading, rows.order_by(*ordering), fields, summary)
 
@@ -419,7 +420,8 @@ def tool_prepare_catalog(profile, arguments, update=None):
             raise bot.TelegramBotError("Para crear no envíes un ID existente; para cambiarlo usa editar.")
         instance, before = model(), None
     form = _catalog_form(spec, operation, instance, changes)
-    lines = [f"Propuesta: {operation} {entity}" + (f" #{instance.pk} ({before['nombre']})" if operation == "editar" else " nuevo")]
+    entity_name = {"categoria": "esta categoría", "sucursal": "esta sucursal"}.get(entity, f"este {entity}")
+    lines = [f"Revisa los datos para {operation} {entity_name}" + (f" #{instance.pk} ({before['nombre']})" if operation == "editar" else "") + ":"]
     # El formulario normaliza; confirmar exactamente los valores que muestra.
     cleaned = {}
     for key in changes:
@@ -429,12 +431,13 @@ def tool_prepare_catalog(profile, arguments, update=None):
         display = (f"{old if old is not None else '—'} → " if before else "") + cleaned[key]
         if hasattr(value, "pk"):
             display += f" ({bot._list_text(str(value), 140)})"
-        lines.append(f"• {key}: {display}")
+        label = str(form.fields[key].label or key).capitalize()
+        lines.append(f"• {label}: {display}")
     if entity == "empleado":
         lines.append("Se sincroniza también su ficha de cliente, igual que en la página de empleados. No crea cuentas ni cambia roles o contraseñas.")
     if before and all(str(before.get(model._meta.get_field(key).attname) or "") == value for key, value in cleaned.items()):
-        return bot.BotReply("Los valores indicados ya están guardados. No se preparó ningún cambio.", "sin_cambios")
-    lines.append("\nTodavía no se ha guardado. Confirma para aplicar; la propuesta vence en 10 minutos.")
+        return bot.BotReply("Ya está guardado así. No hay nada que cambiar.", "sin_cambios")
+    lines.append("\n¿Lo guardo así? Todavía no he cambiado nada. Pulsa Confirmar cambio antes de 10 minutos si está correcto.")
     text = "\n".join(lines)
     if len(text) > 3400:
         raise bot.TelegramBotError("La propuesta es demasiado larga. Divide el cambio en varias solicitudes para poder revisarlo completo.")
@@ -480,7 +483,7 @@ def confirm_catalog(profile, action):
             action.resuelto_en = timezone.now()
             action.save(update_fields=["estado", "resuelto_en"])
             bot._audit(profile, "confirmar_cambio_catalogo", args, detail=f"{spec[0]} #{obj.pk}")
-        return f"Cambio guardado: {args['entidad']} #{obj.pk}. {action.resumen}."
+        return f"Listo, guardé el cambio de {args['entidad']} #{obj.pk}."
     except (bot.TelegramBotError, IntegrityError, EmployeeClientSyncError) as exc:
         message = str(exc) if isinstance(exc, (bot.TelegramBotError, EmployeeClientSyncError)) else "Los datos entran en conflicto con otro registro. Solicita una nueva propuesta."
         action.estado = "ERROR"

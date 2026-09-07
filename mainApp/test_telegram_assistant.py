@@ -273,7 +273,7 @@ class TelegramAssistantTests(TestCase):
         ])
         with self.assertRaisesMessage(bot.TelegramBotError, "varias consultas"):
             self.query("continuar_consulta")
-        self.assertIn("Total pagado", self.query("continuar_consulta", herramienta="consultar_pagos").text)
+        self.assertIn("No encontré pagos registrados", self.query("continuar_consulta", herramienta="consultar_pagos").text)
 
     def test_report_pagination_and_followup_do_not_lose_original_scope(self):
         for index in range(7):
@@ -339,7 +339,7 @@ class TelegramAssistantTests(TestCase):
         self.assertFalse(Cliente.objects.filter(numerodocumento="12345678").exists())
         self.assertIn("ficha de cliente", reply.text)
         self.assertIn("empleado nuevo", reply.text)
-        self.assertIn("guardado", self.callback(reply, "Confirmar").text)
+        self.assertIn("Listo, guardé", self.callback(reply, "Confirmar").text)
         self.assertEqual(Empleado.objects.filter(nombre="Maria").count(), 1)
         self.assertEqual(Cliente.objects.filter(numerodocumento="12345678").count(), 1)
         self.callback(reply, "Confirmar")

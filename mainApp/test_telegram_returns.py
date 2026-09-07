@@ -98,12 +98,12 @@ class TelegramReturnTests(TestCase):
         self.assertIn("Medio: Efectivo", reply.text)
         self.assertIn(f"turno actual #{self.shift.pk}", reply.text)
         self.assertIn("NO envía dinero", reply.text)
-        self.assertIn("Todavía no se ha guardado", reply.text)
+        self.assertIn("Todavía no la he guardado", reply.text)
         self.assertEqual(TelegramAccionPendiente.objects.get().argumentos["medio_pago"], "efectivo")
 
     def test_confirm_updates_stock_sale_refund_and_current_shift_preserving_payment(self):
         response = self.callback(self.prepare(quantity=2))
-        self.assertIn("Devolución registrada", response.text)
+        self.assertIn("Listo, registré la devolución", response.text)
         self.sale.refresh_from_db()
         self.detail.refresh_from_db()
         self.inventory.refresh_from_db()
@@ -303,7 +303,7 @@ class TelegramReturnTests(TestCase):
         self.assertTrue(TelegramAuditoria.objects.filter(accion="cancelar_devolucion_venta").exists())
         reply = self.prepare()
         TelegramAccionPendiente.objects.filter(estado="PENDIENTE").update(vence_en=timezone.now() - timedelta(seconds=1))
-        self.assertIn("venció", self.callback(reply).text)
+        self.assertIn("pasó el tiempo para confirmar", self.callback(reply).text)
         self.assert_unchanged()
 
     def test_web_and_bot_require_change_permission_and_exclude_cashier(self):
@@ -318,7 +318,7 @@ class TelegramReturnTests(TestCase):
             self.assertEqual(VentaDetailView()._can_edit_venta(user), expected)
             profile = TelegramUsuario.objects.create(usuario=user, telegram_user_id=9000 + user.pk, telegram_chat_id=9000 + user.pk)
             if expected:
-                self.assertIn("Propuesta de devolución", self.prepare(profile=profile).text)
+                self.assertIn("Revisa esta devolución", self.prepare(profile=profile).text)
             else:
                 with self.assertRaises(PermissionDenied):
                     self.prepare(profile=profile)

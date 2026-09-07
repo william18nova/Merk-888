@@ -199,7 +199,7 @@ class TelegramOperationsTests(TestCase):
             with self.subTest(resource=name):
                 self.assertTrue(reverse(spec.permission, kwargs={"venta_id": 1} if spec.permission == "ver_venta" else None))
                 reply = self.query(recurso=name)
-                self.assertIn("registro(s)", reply.text)
+                self.assertRegex(reply.text, r"\d+ registros?")
                 self.assertLess(len(reply.text), 4000)
 
     def test_all_reads_deny_user_without_the_corresponding_permission(self):
@@ -241,7 +241,7 @@ class TelegramOperationsTests(TestCase):
         found = self.query(recurso="productos", consulta="000012345")
         self.assertIn(f"#{self.product.pk}", found.text)
         count = self.query(recurso="productos", solo_total=True)
-        self.assertIn("1 registro(s)", count.text)
+        self.assertIn("1 registro", count.text)
         self.assertNotIn("AGUA NATURAL", count.text)
         with self.assertRaises(bot.TelegramBotError):
             self.query(recurso="productos", registro_id="1 OR 1=1")
@@ -278,7 +278,7 @@ class TelegramOperationsTests(TestCase):
     def test_event_dates_are_anchored_and_exact_id_ignores_today(self):
         sale = self.sale(day=timezone.localdate() - timedelta(days=20))
         today = self.query(recurso="ventas")
-        self.assertIn("0 registro(s)", today.text)
+        self.assertIn("0 registros", today.text)
         exact = self.query(recurso="ventas", registro_id=str(sale.pk))
         self.assertIn(f"#{sale.pk}", exact.text)
         audit = TelegramAuditoria.objects.filter(accion="consultar_registros").order_by("pk").first()
@@ -364,8 +364,8 @@ class TelegramOperationsTests(TestCase):
     def test_prepare_does_not_save_and_confirm_is_idempotent_and_audited(self):
         reply = self.prepare(nombre="FRUTAS", descripcion="Productos frescos")
         self.assertFalse(Categoria.objects.filter(nombre="FRUTAS").exists())
-        self.assertIn("Todavía no se ha guardado", reply.text)
-        self.assertIn("guardado", self.callback(reply).text)
+        self.assertIn("Todavía no he cambiado nada", reply.text)
+        self.assertIn("Listo, guardé", self.callback(reply).text)
         self.assertEqual(Categoria.objects.filter(nombre="FRUTAS").count(), 1)
         self.assertIn("ya estaba", self.callback(reply).text)
         self.assertEqual(Categoria.objects.filter(nombre="FRUTAS").count(), 1)
@@ -384,7 +384,7 @@ class TelegramOperationsTests(TestCase):
             with self.subTest(entity=entity):
                 reply = self.prepare(entity=entity, **fields)
                 confirmed = self.callback(reply)
-                self.assertIn("Cambio guardado", confirmed.text)
+                self.assertIn("Listo, guardé el cambio", confirmed.text)
                 self.assertTrue(ops._model(ops.EDITABLE[entity][0]).objects.filter(nombre=fields["nombre"]).exists())
         self.assertEqual(Cliente.objects.get(nombre="Pedro").numerodocumento, "001122")
         self.assertEqual(Producto.objects.get(nombre="GASEOSA").codigo_de_barras, "00009999")
@@ -440,11 +440,11 @@ class TelegramOperationsTests(TestCase):
         other = Usuario.objects.create_user("Otro", rolid=self.role)
         profile = TelegramUsuario.objects.create(usuario=other, telegram_user_id=772, telegram_chat_id=772)
         self.assertIn("otra cuenta", self.callback(reply, profile=profile).text)
-        self.assertIn("cancelada", self.callback(reply, "Cancelar").text)
+        self.assertIn("descarté esta solicitud", self.callback(reply, "Cancelar").text)
         self.assertIn("ya estaba", self.callback(reply).text)
         reply = self.prepare(nombre="NO GUARDAR")
         TelegramAccionPendiente.objects.filter(estado="PENDIENTE").update(vence_en=timezone.now() - timedelta(seconds=1))
-        self.assertIn("venció", self.callback(reply).text)
+        self.assertIn("pasó el tiempo para confirmar", self.callback(reply).text)
         self.assertFalse(Categoria.objects.filter(nombre="NO GUARDAR").exists())
 
     def test_integrity_failure_rolls_back_savepoint_and_marks_action(self):
@@ -464,7 +464,7 @@ class TelegramOperationsTests(TestCase):
 
     def test_noop_does_not_create_pending_action(self):
         reply = self.prepare(operation="editar", record=self.category.pk, nombre=self.category.nombre)
-        self.assertIn("ya están guardados", reply.text)
+        self.assertIn("Ya está guardado así", reply.text)
         self.assertFalse(TelegramAccionPendiente.objects.exists())
 
     def test_edit_by_exact_unique_name_and_ambiguous_name_is_not_chosen(self):

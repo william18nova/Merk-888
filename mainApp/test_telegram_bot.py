@@ -176,7 +176,7 @@ class TelegramBotTests(TestCase):
         first = _handle_callback(callback, profile, telegram_client)
         second = _handle_callback(callback, profile, telegram_client)
 
-        self.assertIn("registrado correctamente", first.text)
+        self.assertIn("el pago quedó registrado", first.text)
         self.assertIn("ya estaba confirmada", second.text)
         self.assertEqual(Egreso.objects.count(), 1)
         self.assertEqual(Egreso.objects.get().concepto.nombre, "SERVICIO DE AGUA")
@@ -233,7 +233,7 @@ class TelegramBotTests(TestCase):
                 if expected == "ERROR":
                     client.send_message.assert_called_once()
                     sent = client.send_message.call_args.args[1]
-                    self.assertIn("error interno", sent)
+                    self.assertIn("Algo falló y no pude terminar", sent)
                     self.assertNotIn("detalle interno de prueba", sent)
                 else:
                     client.send_message.assert_not_called()
@@ -507,5 +507,5 @@ class TelegramBotTests(TestCase):
             profile,
             SimpleNamespace(answer_callback=MagicMock()),
         )
-        self.assertIn("venció", reply.text)
+        self.assertIn("pasó el tiempo para confirmar", reply.text)
         self.assertEqual(Egreso.objects.count(), 0)

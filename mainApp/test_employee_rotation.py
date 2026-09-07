@@ -225,7 +225,7 @@ class RotationTests(TestCase):
         self.assertIn("SIGUIENTES REPETICIONES", reply.text)
         self.assertNotEqual(self.event(cycle)["notas"], "Desde Telegram")
         callback = SimpleNamespace(texto=reply.reply_markup["inline_keyboard"][0][0]["callback_data"], callback_query_id="rotation")
-        self.assertIn("guardado correctamente", bot._handle_callback(callback, self.profile, self.client_stub).text)
+        self.assertIn("quedó guardado", bot._handle_callback(callback, self.profile, self.client_stub).text)
         self.assertEqual(self.event(cycle, repeat=4)["notas"], "Desde Telegram")
         self.assertEqual(CambioRotacionEmpleado.objects.order_by("pk").last().origen, "TELEGRAM")
 

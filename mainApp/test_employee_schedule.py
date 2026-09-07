@@ -278,7 +278,7 @@ class ScheduleTests(TestCase):
         turn.refresh_from_db()
         self.assertFalse(turn.cancelado)
         reply = bot._execute_tool(self.profile, "preparar_turno_empleado", {"operacion": "cancelar", "turno_id": turn.pk})
-        self.assertIn("cancelado correctamente", self.callback(reply).text)
+        self.assertIn("quedó cancelado", self.callback(reply).text)
         turn.refresh_from_db()
         self.assertTrue(turn.cancelado)
 
@@ -288,7 +288,7 @@ class ScheduleTests(TestCase):
         action = TelegramAccionPendiente.objects.get()
         action.vence_en -= timedelta(hours=1)
         action.save(update_fields=["vence_en"])
-        self.assertIn("venció", self.callback(reply).text)
+        self.assertIn("pasó el tiempo para confirmar", self.callback(reply).text)
         reply = self.propose()
         with patch("mainApp.services.employee_schedule.user_can_access_url_name", return_value=False):
             with self.assertRaises(PermissionDenied):

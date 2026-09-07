@@ -6,6 +6,8 @@ import unicodedata
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 
+from .telegram_wording import CONVERSATION_STYLE
+
 
 def normalized(text):
     return "".join(c for c in unicodedata.normalize("NFKD", str(text).lower()) if not unicodedata.combining(c))
@@ -174,4 +176,4 @@ def compact_prompt(today, names):
         rules.append("Varias preguntas independientes => consultar_varias con hasta cuatro herramientas de SOLO LECTURA y argumentos JSON según sus esquemas; jamás escrituras ni consultas anidadas.")
     if "continuar_consulta" in names:
         rules.append("Para 'y ayer', 'ahora por sucursal' o páginas usa continuar_consulta con SOLO cambios explícitos; el servidor hereda filtros de la misma cuenta/chat. Si hay varias consultas posibles, pregunta cuál.")
-    return "\n".join(rules)
+    return "\n".join([CONVERSATION_STYLE, *rules])

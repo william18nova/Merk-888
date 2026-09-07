@@ -8,6 +8,44 @@ pulsar **Confirmar** en Telegram.
 Los cambios de catálogo siguen el mismo esquema: propuesta, revisión y botón
 de confirmación. Un «sí» escrito o hablado no guarda el cambio.
 
+## Respuestas más naturales
+
+El bot habla de tú, con frases breves y lenguaje cotidiano. Los totales, listas,
+confirmaciones, horarios y mensajes de error usan plantillas claras; Gemini y
+Groq reciben las mismas instrucciones de tono cuando necesitan interpretar una
+solicitud o preguntar un dato que falta. No se hace otra llamada a la IA solo
+para reescribir resultados, por lo que esta presentación no añade ese consumo
+ni permite que la IA cambie los importes calculados por el sistema.
+
+Ejemplos de formato (valores ilustrativos):
+
+- Total: «Hoy (07/09/2026) se han pagado $85.000.»
+- Sin resultados: «No encontré pagos registrados hoy (07/09/2026). Total pagado: $0.»
+- Antes de guardar: «¿Confirmas que registre este pago? […] Todavía no lo he guardado.»
+- Después de guardar: «Listo, el pago quedó registrado: COCA-COLA por $20.000 en Efectivo.»
+- Servicio no disponible: «Ahora mismo no pude atender esa consulta. Inténtalo más tarde o usa /ayuda para ver otras formas de consultar.»
+
+Se conservan las fechas exactas, los filtros, los identificadores de los
+registros, quién registró cada pago y los centavos. Los totales del negocio no
+se presentan como gastos personales del usuario. Las listas y los desgloses se
+siguen mostrando solo cuando se solicitan. «Hola» y «gracias» tienen respuestas
+breves sin IA; un saludo acompañado de una petición conserva el flujo normal.
+
+Los detalles de errores de proveedores quedan en el diagnóstico del trabajador
+y en la auditoría, no en el mensaje al usuario. No se copian cuerpos de error
+de los proveedores. Si un fallo impide saber si un cambio se guardó, se pide
+revisarlo antes de repetirlo; nunca se asegura que no ocurrió nada sin saberlo.
+
+Estas mejoras no necesitan migraciones. Para activarlas en PythonAnywhere,
+sube el código, ejecuta `git pull`, reinicia la tarea Always-on existente y
+recarga la Web. No crees un segundo trabajador.
+
+Pruebas de presentación y seguridad con API simuladas:
+
+```bash
+python manage.py test mainApp.test_telegram_human_responses --settings=NovaSoft.test_settings
+```
+
 ## Asistente operativo tipo «Jarvis»
 
 El nombre «Jarvis» es opcional: puedes anteponerlo a tus solicitudes. No supone

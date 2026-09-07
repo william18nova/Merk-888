@@ -82,7 +82,7 @@ class TelegramQueryListTests(TestCase):
         reply = self.query()
         self.assertIn(f"#{included.pk}", reply.text)
         self.assertNotIn("NOCHE DE AYER", reply.text)
-        self.assertIn("1 registro(s)", reply.text)
+        self.assertIn("1 pago", reply.text)
 
     def test_payments_combine_date_concept_method_author_and_amount_filters(self):
         expected = self.expense(amount="50000", method="nequi")
@@ -101,15 +101,15 @@ class TelegramQueryListTests(TestCase):
         self.expense(method="tarjeta")
         self.expense(method="caja_social", amount="2000")
         reply = self.query(medio_pago="Banco Caja Social")
-        self.assertIn("2 registro(s)", reply.text)
+        self.assertIn("2 pagos", reply.text)
         self.assertIn("Total pagado: $3.000", reply.text)
 
     def test_summary_and_empty_list_are_explicit(self):
         empty = self.query()
-        self.assertIn("No hay pagos", empty.text)
+        self.assertIn("No encontré pagos", empty.text)
         self.expense()
         summary = self.query(detalle=False)
-        self.assertIn("Total pagado", summary.text)
+        self.assertIn("se han pagado", summary.text)
         self.assertNotIn("Detalle", summary.text)
         self.assertIsNone(summary.reply_markup)
 
@@ -154,7 +154,7 @@ class TelegramQueryListTests(TestCase):
         other_branch = Sucursal.objects.create(nombre="Otra sucursal")
         self.employee(branch=other_branch)
         reply = self.query("listar_empleados", consulta="Ana Pérez", cargo="Cajera", sucursal="Yerbabuena")
-        self.assertIn("Empleados encontrados: 1.", reply.text)
+        self.assertIn("Encontré 1 empleado:", reply.text)
         self.assertIn(f"ID {target.pk}", reply.text)
 
     def test_employee_pagination_and_empty_search(self):
@@ -165,7 +165,7 @@ class TelegramQueryListTests(TestCase):
         self.assertIn("Página 2 de 2", second.text)
         self.assertIn("Persona 5", second.text)
         empty = self.query("listar_empleados", consulta="No existe")
-        self.assertIn("No hay empleados", empty.text)
+        self.assertIn("No encontré empleados", empty.text)
 
     def test_employee_permissions_and_inactive_accounts_are_enforced(self):
         self.employee()
