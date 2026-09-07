@@ -965,6 +965,53 @@ class CambioTurnoEmpleado(models.Model):
         ordering = ["-creado_en", "-pk"]
 
 
+class RotacionEmpleado(models.Model):
+    """Ciclo de cinco semanas, sin materializar infinitas jornadas."""
+
+    nombre = models.CharField(max_length=120)
+    inicio = models.DateField()
+    patron = models.JSONField(default=list)
+    version = models.PositiveIntegerField(default=1)
+    creado_por = models.ForeignKey(Usuario, null=True, on_delete=models.SET_NULL)
+    creado_en = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "rotaciones_empleados"
+
+
+class MiembroRotacionEmpleado(models.Model):
+    """Conserva referencias reales incluso tras cambiar una asignación."""
+
+    rotacion = models.ForeignKey(RotacionEmpleado, on_delete=models.PROTECT, related_name="miembros")
+    empleado = models.ForeignKey(Empleado, on_delete=models.PROTECT)
+    sucursal = models.ForeignKey(Sucursal, on_delete=models.PROTECT)
+
+    class Meta:
+        db_table = "miembros_rotaciones_empleados"
+        constraints = [models.UniqueConstraint(fields=["rotacion", "empleado", "sucursal"], name="rotacion_miembro_sucursal_uniq")]
+
+
+class CambioRotacionEmpleado(models.Model):
+    rotacion = models.ForeignKey(RotacionEmpleado, on_delete=models.PROTECT, related_name="cambios")
+    clave = models.PositiveIntegerField(default=0)
+    fecha_base = models.DateField()
+    alcance = models.CharField(max_length=12)
+    datos = models.JSONField(default=dict)
+    usuario = models.ForeignKey(Usuario, null=True, on_delete=models.SET_NULL)
+    usuario_nombre = models.CharField(max_length=160)
+    origen = models.CharField(max_length=10)
+    solicitud_id = models.UUIDField(unique=True)
+    peticion = models.JSONField(default=dict)
+    anterior = models.JSONField(default=dict)
+    nuevo = models.JSONField(default=dict)
+    creado_en = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "cambios_rotaciones_empleados"
+        indexes = [models.Index(fields=["rotacion", "clave", "fecha_base"], name="rotacion_cambio_fecha_idx")]
+        ordering = ["pk"]
+
+
 class TelegramUsuario(models.Model):
     """Identidad de Telegram vinculada a un usuario real del sistema."""
 
