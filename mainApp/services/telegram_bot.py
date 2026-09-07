@@ -112,6 +112,38 @@ class TelegramAIUnavailable(TelegramBotError):
     # debe volver a llamarla inmediatamente otras tres veces con el mismo texto.
     retryable = False
 
+    def __init__(self, message, *, failures=()):
+        super().__init__(message)
+        self.failures = tuple(failures)
+
+
+def _ai_failure_message(error):
+    # Solo categorías conocidas: nunca reenviar mensajes crudos del proveedor.
+    failures = (error,) if isinstance(error, TelegramAIProviderError) else error.failures
+    explanations = {
+        "rate_limit": "se alcanzó un límite temporal de consultas",
+        "quota": "se agotó una cuota de uso del servicio de IA",
+        "connection": "hubo una demora o un problema de conexión con la IA",
+        "unavailable": "el servicio de IA presentó un fallo temporal",
+        "authentication": "hay un problema con el acceso del bot al servicio de IA",
+        "model": "el modelo de IA configurado no está disponible",
+        "request": "el servicio de IA no aceptó esta solicitud",
+        "invalid_response": "la IA devolvió una respuesta que no pude interpretar de forma segura",
+    }
+    kinds = list(dict.fromkeys(f.kind for f in failures if isinstance(f, TelegramAIProviderError)))
+    reasons = [explanations[k] for k in kinds if k in explanations]
+    message = "Ahora mismo no pude atender esa consulta"
+    message += ": " + "; además, ".join(reasons) + "." if reasons else ". No tengo suficiente información para precisar la causa."
+    if set(kinds) & {"authentication", "model"}:
+        message += " El administrador debe revisar la configuración."
+    elif "quota" in kinds:
+        message += " Puedes volver a intentarlo cuando se renueve la cuota; no puedo asegurar cuándo."
+    elif set(kinds) & {"request", "invalid_response"}:
+        message += " Prueba con una petición más corta o dividida en dos."
+    else:
+        message += " Inténtalo más tarde."
+    return message + " También puedes usar /ayuda para ver otras formas de consultar."
+
 
 def _user_error_message(error, update):
     """El diagnóstico se conserva en la auditoría, no se reenvía al cliente."""
@@ -120,7 +152,7 @@ def _user_error_message(error, update):
     if isinstance(error, TelegramConfigurationError):
         return "Necesito que el administrador revise la configuración del bot para poder ayudarte con eso."
     if isinstance(error, (TelegramAIUnavailable, TelegramAIProviderError)):
-        return "Ahora mismo no pude atender esa consulta. Inténtalo más tarde o usa /ayuda para ver otras formas de consultar."
+        return _ai_failure_message(error)
     if isinstance(error, TelegramExternalError):
         if update.tipo == "VOZ" and not update.transcripcion:
             return "No pude procesar tu audio en este momento. ¿Puedes enviarme la solicitud por escrito?"
@@ -1436,7 +1468,7 @@ def _intelligent_function_call(user_text, history=None):
         elif error.kind == "request":
             message += "; prueba una petición más corta; si persiste, pide al Web Master revisar la configuración"
         details.append(message)
-    raise TelegramAIUnavailable("No pude interpretar la solicitud con la IA. " + ". ".join(details) + ". Puedes usar /ayuda para los comandos; las consultas sencillas siguen disponibles sin IA")
+    raise TelegramAIUnavailable("No pude interpretar la solicitud con la IA. " + ". ".join(details) + ". Puedes usar /ayuda para los comandos; las consultas sencillas siguen disponibles sin IA", failures=errors.values())
 
 
 def _expense_query_arguments(profile, arguments):

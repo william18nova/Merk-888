@@ -17,6 +17,32 @@ from mainApp.services.telegram_wording import CONVERSATION_STYLE, period_phrase,
 
 
 class HumanWordingTests(SimpleTestCase):
+    def test_ai_failures_explain_safe_categories(self):
+        expected = {
+            "rate_limit": "límite temporal", "quota": "cuota de uso",
+            "connection": "problema de conexión", "unavailable": "fallo temporal",
+            "authentication": "problema con el acceso", "model": "modelo de IA",
+            "request": "no aceptó", "invalid_response": "interpretar de forma segura",
+        }
+        for kind, phrase in expected.items():
+            with self.subTest(kind=kind):
+                failure = bot.TelegramAIProviderError("PRIVATE_PROVIDER", kind)
+                error = bot.TelegramAIUnavailable("PRIVATE_BODY", failures=[failure])
+                text = bot._user_error_message(error, None)
+                self.assertIn(phrase, text)
+                self.assertIn("/ayuda", text)
+                self.assertNotIn("PRIVATE", text)
+
+    def test_mixed_failures_and_unknown_reason_are_not_invented(self):
+        errors = [bot.TelegramAIProviderError("Gemini", "rate_limit"),
+                  bot.TelegramAIProviderError("Groq", "connection")]
+        text = bot._user_error_message(bot.TelegramAIUnavailable("private", failures=errors), None)
+        self.assertIn("límite temporal", text)
+        self.assertIn("problema de conexión", text)
+        text = bot._user_error_message(bot.TelegramAIUnavailable("HTTP 429 secret"), None)
+        self.assertIn("No tengo suficiente información", text)
+        self.assertNotIn("límite temporal", text)
+
     def test_relative_dates_keep_the_exact_date(self):
         today = date(2026, 9, 7)
         self.assertEqual(period_phrase(today, today, today), "hoy (07/09/2026)")
