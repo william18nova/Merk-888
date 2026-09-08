@@ -160,6 +160,12 @@ def compact_prompt(today, names):
         rules.append("Pagos: 'cuánto he pagado' => consultar_pagos, detalle=false, desglose_por_medio=false. 'Muéstrame los pagos' => detalle=true. "
                      "Desglose por medios solo si lo pide; un filtro Nequi no implica desglose. Si pide lista y desglose, ambos true. "
                      "Continuaciones de pagos usan usar_consulta_anterior=true y SOLO los cambios explícitos; el servidor conserva fechas y filtros.")
+    if "consultar_ventas" in names:
+        rules.append("Ventas: 'cuánto vendimos' usa consultar_ventas sin detalle ni desglose_por_medio. Activa desglose_por_medio SOLO si pide medios; detalle SOLO si pide además cantidad de ventas. Para ver cada venta usa consultar_registros.")
+    if "consultar_balance" in names:
+        rules.append("Balance: 'cuánto queda' usa consultar_balance sin detalle. detalle=true solo si pide incluir vendido y pagado.")
+    if "listar_empleados" in names:
+        rules.append("Lista de empleados: respuesta compacta; detalle=true solo si pide más datos o la cuenta vinculada.")
     if "preparar_registro_pago" in names:
         rules.append("Registrar pagos usa preparar_registro_pago. Conserva el concepto dictado: la herramienta ofrece elegir conceptos parecidos o uno nuevo. "
                      "La elección y confirmación son por botones; nunca inventes una elección.")
@@ -173,6 +179,7 @@ def compact_prompt(today, names):
         rules.append("Informes: ventas por empleado/cajero, cliente, sucursal, punto_pago o día; pagos por concepto, usuario o día. "
                      "'Quién vendió más' => fuente=ventas, agrupar=empleado, orden=importe, primeros=1 y fechas. comparar_anterior=true compara intervalos de igual duración. "
                      "No inventes utilidad ni saldos bancarios.")
+        rules.append("En consultar_informe omite incluir_total, incluir_cantidad e incluir_promedio salvo que los pida. No añadas promedios a un ranking por ventas; si pide solo promedio usa consultar_datos con operacion=promedio. Conserva todos los filtros solicitados.")
     if "preparar_cambio_catalogo" in names:
         rules.append("Crear/editar catálogos solo prepara cambios: envía únicamente campos solicitados. Consulta capacidades para obligatorios. "
                      "Conserva códigos/documentos como texto con ceros iniciales. Empleados requieren usuarioid y sucursalid existentes; no crea cuentas ni cambia claves/roles.")

@@ -23,6 +23,7 @@ from .telegram_assistant import TOOL_DEFINITIONS as ASSISTANT_DEFINITIONS, TOOL_
 from .telegram_schedule import TOOL_DEFINITIONS as SCHEDULE_DEFINITIONS, TOOL_FUNCTIONS as SCHEDULE_FUNCTIONS
 from .telegram_search import ranked_queryset, resolve_name
 from .telegram_queries import QUERY_DEFINITION, tool_query
+from .telegram_wording import page_note
 
 
 @dataclass(frozen=True)
@@ -122,7 +123,7 @@ def _page_reply(tool, args, heading, queryset, fields, summary=""):
     bot = _bot()
     total = queryset.count()
     page, pages, offset = bot._list_page(args, total)
-    lines = [f"Esto encontré: {heading}", f"{total} {'registro' if total == 1 else 'registros'} · página {page} de {pages}"]
+    lines = [heading, f"{total} {'resultado' if total == 1 else 'resultados'}" + page_note(page, pages)]
     if summary:
         lines.append(summary)
     for row in queryset.values("pk", *(path for _, path, _ in fields))[offset:offset + bot.LIST_PAGE_SIZE]:
@@ -292,7 +293,7 @@ def tool_ranking(profile, arguments):
     ).order_by(("" if args.get("ascendente") is True else "-") + ("total_cantidad" if metric == "cantidad" else metric), "productoid")
     total = rows.count()
     page, pages, offset = bot._list_page(args, total)
-    lines = [heading, f"{total} producto(s) · página {page} de {pages}", "Importes de los renglones de venta; no descuentan descuentos globales ni reintegros. Cantidades según la unidad registrada del producto."]
+    lines = [heading, f"{total} {'producto' if total == 1 else 'productos'}" + page_note(page, pages), "Importes sin descontar descuentos globales ni reintegros; cantidades en la unidad de cada producto."]
     for row in rows[offset:offset + bot.LIST_PAGE_SIZE]:
         lines.append(f"• #{row['productoid']} {_format(row['productoid__nombre'])}: cantidad {row['total_cantidad']}; importe {bot._list_money(row['importe'])}")
     if not total:
@@ -321,7 +322,7 @@ def tool_views(profile, arguments):
 
     visit(NAV_GROUPS)
     page, pages, offset = bot._list_page(arguments, len(found))
-    lines = [f"Páginas disponibles para tu usuario · {len(found)} resultado(s) · página {page} de {pages}", "Estos enlaces abren la web; no ejecutan la operación. Inicia sesión con tu cuenta."]
+    lines = [f"Páginas disponibles ({len(found)})" + page_note(page, pages), "Abren la web; requieren iniciar sesión y no ejecutan cambios."]
     lines.extend(f"• {label}\n{url}" for label, url in found[offset:offset + bot.LIST_PAGE_SIZE])
     if not found:
         lines.append("No encontré páginas accesibles con esa búsqueda.")
@@ -378,7 +379,7 @@ def _catalog_form(spec, operation, instance, changes):
                 form.add_error(key, "Valor fuera de rango: usa valores no negativos, IVA de 0 a 1 y rentabilidad de 0 a 100.")
                 valid = False
     if not valid:
-        errors = "; ".join(f"{key}: {', '.join(messages)}" for key, messages in form.errors.items())
+        errors = "; ".join(f"{(form.fields[key].label or key.replace('_', ' ')) if key in form.fields else 'Datos'}: {', '.join(messages)}" for key, messages in form.errors.items())
         raise bot.TelegramBotError("Revisa los datos antes de continuar: " + bot._list_text(errors, 1800))
     return form
 
@@ -438,7 +439,7 @@ def tool_prepare_catalog(profile, arguments, update=None):
         lines.append("Se sincroniza también su ficha de cliente, igual que en la página de empleados. No crea cuentas ni cambia roles o contraseñas.")
     if before and all(str(before.get(model._meta.get_field(key).attname) or "") == value for key, value in cleaned.items()):
         return bot.BotReply("Ya está guardado así. No hay nada que cambiar.", "sin_cambios")
-    lines.append("\n¿Lo guardo así? Todavía no he cambiado nada. Pulsa Confirmar cambio antes de 10 minutos si está correcto.")
+    lines.append("\nTodavía no he cambiado nada. Pulsa Confirmar cambio; vence en 10 minutos.")
     text = "\n".join(lines)
     if len(text) > 3400:
         raise bot.TelegramBotError("La propuesta es demasiado larga. Divide el cambio en varias solicitudes para poder revisarlo completo.")

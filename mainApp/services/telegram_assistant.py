@@ -11,6 +11,7 @@ from django.db.models.functions import TruncDate
 from django.utils import timezone
 from .telegram_search import resolve_name
 from .telegram_queries import QUERY_DEFINITION, SOURCES
+from .telegram_wording import page_note, period_phrase
 
 
 def _bot():
@@ -107,20 +108,37 @@ def tool_report(profile, arguments):
     rows = base.filter(**{date_field + "__range": (start, end)})
     totals = rows.aggregate(importe=Sum(amount), cantidad=Count("pk"), promedio=Avg(amount))
     total, count = totals["importe"] or Decimal(0), totals["cantidad"]
-    lines = [f"Informe de {source} · {start:%d/%m/%Y} al {end:%d/%m/%Y}"]
-    filters = [f"{key}: {bot._list_text(args[key], 80)}" for key in ("sucursal", "empleado", "concepto", "usuario", "medio_pago", "monto_min", "monto_max") if key in args]
+    lines = [f"{source.capitalize()} {period_phrase(start, end, timezone.localdate())}"]
+    filter_names = {"sucursal": "Sucursal", "empleado": "Empleado", "concepto": "Concepto", "usuario": "Registró", "medio_pago": "Medio", "monto_min": "Desde", "monto_max": "Hasta"}
+    filters = []
+    for key, label in filter_names.items():
+        if key not in args:
+            continue
+        value = args[key]
+        if key == "medio_pago":
+            value = bot.payment_method_label(value)
+        elif key in {"monto_min", "monto_max"}:
+            value = bot._list_money(value)
+        filters.append(f"{label}: {bot._list_text(value, 80)}")
     if filters:
         lines.append("Filtros: " + " · ".join(filters))
-    lines.append(f"Total: {bot._list_money(total)} · {count} registro(s) · Promedio por registro: {bot._list_money(totals['promedio'])}")
+    show_count = args.get("incluir_cantidad") or args.get("orden") == "cantidad"
+    show_average = args.get("incluir_promedio") or args.get("orden") == "promedio"
+    if group == "total" or args.get("incluir_total") or args.get("comparar_anterior"):
+        lines.append(f"Total: {bot._list_money(total)}")
+        if show_count:
+            lines.append(f"{count} {source if count != 1 else ('venta' if source == 'ventas' else 'pago')}")
+        if show_average:
+            lines.append(f"Promedio: {bot._list_money(totals['promedio']) if count else 'Sin datos'}")
     if args.get("comparar_anterior"):
         previous_end = start - timedelta(days=1)
         previous_start = start - timedelta(days=(end - start).days + 1)
         previous = base.filter(**{date_field + "__range": (previous_start, previous_end)}).aggregate(total=Sum(amount))["total"] or Decimal(0)
         difference = total - previous
-        percent = f"{(difference / previous * 100):+.2f}%" if previous else "sin base para porcentaje (anterior = 0)"
+        percent = f"{(difference / previous * 100):+.2f}%" if previous else "sin base para porcentaje: antes no hubo importe registrado"
         lines.append(f"Comparación del total con {previous_start:%d/%m/%Y} al {previous_end:%d/%m/%Y}: {bot._list_money(previous)}; diferencia {bot._list_money(difference)} · {percent}.")
     if source == "ventas":
-        lines.append("Importes actuales de las ventas, con los cambios/devoluciones ya reflejados; no equivale a utilidad ni saldo bancario.")
+        lines.append("Ventas con cambios y devoluciones ya reflejados.")
     if group == "total":
         bot._list_page(args, 0)
         return bot.BotReply("\n".join(lines), "consultar_informe", pagination={"page": 1, "pages": 1, "arguments": args})
@@ -134,14 +152,20 @@ def tool_report(profile, arguments):
     if limit is not None:
         count_groups = min(limit, count_groups)
     page, pages, offset = bot._list_page(args, count_groups)
-    lines.append(f"Por {group.replace('_', ' ')} · {count_groups} resultado(s) · página {page} de {pages}" + (f" · primeros {limit}" if limit else ""))
+    label_group = {"punto_pago": "caja", "dia": "día"}.get(group, group)
+    lines.append(f"Por {label_group}" + page_note(page, pages) + (f" · primeros {limit}" if limit and limit > 1 else ""))
     for row in grouped[offset:min(offset + bot.LIST_PAGE_SIZE, count_groups)]:
         if group == "dia":
             label = str(row[fields[0]])
         else:
             name = " ".join(str(row[field] or "") for field in fields[1:]).strip()
             label = f"#{row[fields[0]]} {name}" if row[fields[0]] is not None else (name or "Sin asignar")
-        lines.append(f"• {bot._list_text(label, 140)} · {bot._list_money(row['importe'])} · {row['cantidad']} registro(s) · promedio {bot._list_money(row['promedio'])}")
+        parts = [f"• {bot._list_text(label, 140)} · {bot._list_money(row['importe'])}"]
+        if show_count:
+            parts.append(f"{row['cantidad']} {source if row['cantidad'] != 1 else ('venta' if source == 'ventas' else 'pago')}")
+        if show_average:
+            parts.append(f"promedio {bot._list_money(row['promedio'])}")
+        lines.append(" · ".join(parts))
     if not count_groups:
         lines.append("No hay registros en ese intervalo con esos filtros.")
     return bot.BotReply("\n".join(lines), "consultar_informe", pagination={"page": page, "pages": pages, "arguments": args})
@@ -168,8 +192,7 @@ def tool_brief(profile, arguments):
             omitted.append(section)
             continue
         if section == "ventas":
-            report = tool_report(profile, {"fuente": "ventas", "desde": args["desde"], "hasta": args["hasta"]})
-            lines.append("Ventas: " + report.text.splitlines()[1])
+            lines.append(bot.tool_sales(profile, {"desde": args["desde"], "hasta": args["hasta"]}))
         elif section == "pagos":
             lines.append(bot.tool_expenses(profile, {"desde": args["desde"], "hasta": args["hasta"]}))
         elif section == "balance":
@@ -177,13 +200,13 @@ def tool_brief(profile, arguments):
         elif section == "inventario":
             rows = Inventario.objects.all()
             counts = rows.aggregate(agotados=Count("pk", filter=Q(cantidad__lte=0)), bajos=Count("pk", filter=Q(cantidad__gt=0, cantidad__lte=5)))
-            lines.append(f"Inventario ACTUAL (producto/sucursal): {counts['agotados']} agotado(s) o negativo(s); {counts['bajos']} con 1 a 5 unidades. No es un estado histórico del intervalo.")
+            lines.append(f"Inventario actual por sucursal: {counts['agotados']} sin existencias o en negativo; {counts['bajos']} con 1 a 5 unidades. No es histórico.")
         elif section == "pedidos":
             count = PedidoProveedor.objects.filter(estado="En espera").count()
-            lines.append(f"Pedidos ACTUALMENTE en espera: {count}.")
+            lines.append(f"Pedidos en espera actualmente: {count}.")
         else:
             counts = TurnoCaja.objects.aggregate(abiertos=Count("pk", filter=Q(estado="ABIERTO")), cierre=Count("pk", filter=Q(estado="CIERRE")))
-            lines.append(f"Turnos ACTUALES: {counts['abiertos']} abierto(s); {counts['cierre']} en cierre.")
+            lines.append(f"Cajas actuales: {counts['abiertos']} abiertas; {counts['cierre']} en cierre.")
     if omitted:
         lines.append("Sin permiso para incluir: " + ", ".join(omitted) + ".")
     return bot.BotReply("\n\n".join(lines), "consultar_resumen_negocio", pagination={"page": 1, "pages": 1, "arguments": args})
@@ -196,13 +219,14 @@ def tool_pending(profile, arguments):
     rows = TelegramAccionPendiente.objects.filter(telegram_usuario=profile, estado="PENDIENTE", vence_en__gt=timezone.now()).order_by("creado_en", "pk")
     count = rows.count()
     page, pages, offset = bot._list_page(arguments, count)
-    lines = [f"Tus acciones pendientes: {count} · página {page} de {pages}"]
+    lines = [f"Tienes {count} {'propuesta pendiente' if count == 1 else 'propuestas pendientes'}" + page_note(page, pages)]
     keyboard = []
     for index, action in enumerate(rows[offset:offset + bot.LIST_PAGE_SIZE], offset + 1):
         lines.append(f"{index}. {bot._list_text(action.resumen, 300)} · vence {timezone.localtime(action.vence_en):%H:%M}")
         # No confirma desde un resumen abreviado: debe revisar la propuesta original.
         keyboard.append([{"text": f"Cancelar propuesta {index}", "callback_data": f"cancel:{action.pk}"}])
-    lines.append("Para confirmar, revisa la propuesta completa en su mensaje original. /cancelar cancela todas tus propuestas pendientes.")
+    if count:
+        lines.append("Confirma desde la propuesta original. /cancelar descarta todas las pendientes.")
     return bot.BotReply("\n".join(lines), "consultar_pendientes", reply_markup={"inline_keyboard": keyboard} if keyboard else None, pagination={"page": page, "pages": pages, "arguments": arguments})
 
 
@@ -390,6 +414,9 @@ REPORT_FIELDS = {
     **{key: {"type": "STRING"} for key in ("sucursal", "empleado", "concepto", "usuario", "medio_pago")},
     "monto_min": {"type": "NUMBER"}, "monto_max": {"type": "NUMBER"},
     "comparar_anterior": {"type": "BOOLEAN", "description": "Compara el TOTAL con el período inmediatamente anterior de igual duración."},
+    "incluir_total": {"type": "BOOLEAN", "description": "En resultados agrupados, añade total general solo si lo pide. false por defecto."},
+    "incluir_cantidad": {"type": "BOOLEAN", "description": "Añade conteo de ventas/pagos solo si lo pide. false por defecto."},
+    "incluir_promedio": {"type": "BOOLEAN", "description": "Añade promedio solo si lo pide. false por defecto."},
     "orden": {"type": "STRING", "enum": ["importe", "cantidad", "promedio"]},
     "ascendente": {"type": "BOOLEAN"}, "primeros": {"type": "INTEGER", "description": "De 1 a 50. Para quién vendió más, primeros=1."}, "pagina": {"type": "INTEGER"},
 }

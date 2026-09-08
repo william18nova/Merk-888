@@ -179,13 +179,13 @@ class SmartQueriesTests(TestCase):
         Egreso.objects.create(concepto=self.concept, monto=3000, medio_pago="caja_social", registrado_por_nombre="William Nova")
         result = self.query(operacion="sumar", campo="importe", agrupar=["medio_pago"])
         self.assertIn("$5.000", result.text)
-        self.assertIn("2 grupos", result.text)
+        self.assertEqual(sum(line.startswith("• ") for line in result.text.splitlines()), 2)
 
     def test_distinct_count_does_not_count_same_employee_twice(self):
         Venta.objects.create(fecha=timezone.localdate(), hora="13:00", empleadoid=self.employee, sucursalid=self.branch, puntopagoid=self.point, total=1000, mediopago="efectivo")
         result = self.query("ventas", operacion="contar", campo="empleado")
-        self.assertIn("valores distintos: 1", result.text)
-        self.assertIn("2 registros", result.text)
+        self.assertIn("Empleados distintos: 1", result.text)
+        self.assertNotIn("2 registros", result.text)
 
     def test_average_minimum_and_maximum(self):
         Egreso.objects.create(concepto=self.concept, monto="2000.75", medio_pago="efectivo", registrado_por_nombre="William Nova")
@@ -260,7 +260,7 @@ class SmartQueriesTests(TestCase):
 
     def test_sql_like_filter_is_only_literal_data(self):
         text = self.query("productos", filtros=[{"campo": "nombre", "operador": "contiene", "valor": "' OR 1=1; DROP TABLE productos --"}]).text
-        self.assertIn("0 registros", text)
+        self.assertIn("0 resultados", text)
         self.assertEqual(Producto.objects.count(), 2)
 
     def test_permission_is_checked_before_reading_data(self):

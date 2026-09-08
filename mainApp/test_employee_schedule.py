@@ -233,7 +233,7 @@ class ScheduleTests(TestCase):
         self.assertEqual(reply.pagination["pages"], 2)
         self.assertIn("Siguiente", str(reply.reply_markup))
         following = bot._execute_tool(self.profile, "continuar_consulta", {"navegacion": "siguiente"})
-        self.assertIn("página 2/2", following.text)
+        self.assertIn("página 2 de 2", following.text)
         self.assertEqual(following.pagination["arguments"]["desde"], "2026-09-08")
 
     def test_bot_creation_waits_for_confirmation_and_is_idempotent(self):

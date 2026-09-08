@@ -11,6 +11,7 @@ from mainApp.models import Empleado, Sucursal, TelegramAccionPendiente, TurnoEmp
 from . import employee_schedule as schedule
 from . import employee_rotation as rotation
 from .telegram_search import resolve_name
+from .telegram_wording import page_note
 
 
 def _bot():
@@ -61,11 +62,11 @@ def tool_schedule(profile, arguments):
         page = schedule.positive_id(args.get("pagina", 1), "número de página")
         if page > pages:
             raise bot.TelegramBotError(f"La consulta tiene {pages} página(s).")
-        lines = [f"{'Este es tu horario' if personal else 'Estos son los horarios'} · {start:%d/%m/%Y} – {end:%d/%m/%Y}", f"{count} {'turno' if count == 1 else 'turnos'} · página {page}/{pages} · hora Colombia"]
+        lines = [f"{'Tu horario' if personal else 'Horarios'} · {start:%d/%m/%Y} – {end:%d/%m/%Y} (Colombia)" + page_note(page, pages)]
         for turn in rows[(page - 1) * bot.LIST_PAGE_SIZE:page * bot.LIST_PAGE_SIZE]:
             begin, finish = schedule.parse_time(turn["inicio"]), schedule.parse_time(turn["fin"])
-            hours = "Descanso · día completo" if turn.get("descanso") else f"{begin:%d/%m %H:%M} → {finish:%d/%m %H:%M}"
-            lines.append(f"• Turno #{turn['id']} · {bot._list_text(turn['empleado'], 80)}\n  {begin:%d/%m} · {hours} · {bot._list_text(turn['sucursal'], 80)}")
+            hours = f"{begin:%d/%m} · descanso" if turn.get("descanso") else (f"{begin:%d/%m} · {begin:%H:%M}–{finish:%H:%M}" if begin.date() == finish.date() else f"{begin:%d/%m %H:%M} → {finish:%d/%m %H:%M}")
+            lines.append(f"• {bot._list_text(turn['empleado'], 80)} · {hours} · {bot._list_text(turn['sucursal'], 80)}\n  Turno #{turn['id']}")
             if turn.get("rotacion_id"):
                 lines.append(f"  Semana {turn['semana_rotacion']}/{turn['semanas_ciclo']} · {'ajustado solo para esta fecha' if turn['excepcion'] else 'horario que se repite'}")
             if turn["notas"]:
@@ -128,7 +129,7 @@ def tool_prepare_schedule(profile, arguments, update=None):
             lines.append("Notas: " + bot._list_text(after["notas"], 300))
         if payload.get("alcance"):
             lines.append("Alcance: SOLO ESTA FECHA." if payload["alcance"] == "fecha" else f"Alcance: ESTA FECHA Y LAS SIGUIENTES REPETICIONES de esta jornada, cada {after['semanas_ciclo']} semanas. Las otras jornadas y el historial anterior no cambian.")
-        lines.append("Todavía no lo he guardado. Si está correcto, pulsa el botón de confirmación antes de 10 minutos. Esto no abre ni modifica una caja.")
+        lines.append("Todavía no lo he guardado. Confirma en los próximos 10 minutos. No modifica ninguna caja.")
         pending = TelegramAccionPendiente.objects.create(
             telegram_usuario=profile, actualizacion=update, accion="turno_empleado",
             argumentos={"payload": payload, "anterior": before, "propuesto": after},
@@ -156,7 +157,7 @@ def confirm_schedule(profile, action):
             action.save(update_fields=["estado", "resuelto_en"])
             bot._audit(profile, "confirmar_turno_empleado", action.argumentos, detail=f"Turno de empleado #{event['id']}")
         scope = " Se actualizó esta fecha y sus siguientes repeticiones." if payload.get("alcance") == "futuro" else ""
-        return f"Listo, el turno #{event['id']} quedó {'cancelado' if event['cancelado'] else 'guardado'}.{scope} Ya puedes verlo en el calendario y en Mi horario. No se modificó ninguna caja."
+        return f"Listo, el turno #{event['id']} quedó {'cancelado' if event['cancelado'] else 'guardado'}.{scope}"
     except (schedule.ScheduleError, DatabaseError) as exc:
         message = str(exc) if isinstance(exc, schedule.ScheduleError) else "No fue posible guardar el horario. Revisa el calendario y solicita una nueva propuesta."
         action.estado = "ERROR"

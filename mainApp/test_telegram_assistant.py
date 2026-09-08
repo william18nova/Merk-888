@@ -66,9 +66,9 @@ class TelegramAssistantTests(TestCase):
         self.sale(total="100.50")
         self.sale(total="200.50")
         self.sale(self.luis, total="250.25")
-        reply = self.query(fuente="ventas", agrupar="empleado")
+        reply = self.query(fuente="ventas", agrupar="empleado", incluir_total=True, incluir_cantidad=True, incluir_promedio=True)
         self.assertIn("Total: $551,25", reply.text)
-        self.assertIn("3 registro(s)", reply.text)
+        self.assertIn("3 ventas", reply.text)
         self.assertIn("Ana Perez · $301", reply.text)
         self.assertIn("promedio $150,50", reply.text)
         self.assertLess(reply.text.index("Ana Perez"), reply.text.index("Luis Perez"))
@@ -110,16 +110,16 @@ class TelegramAssistantTests(TestCase):
         self.expense("20.25", "tarjeta")
         self.expense("30.50", "caja_social")
         self.expense("200", "efectivo")
-        reply = self.query(fuente="pagos", agrupar="concepto", medio_pago="tarjeta", monto_max=100)
+        reply = self.query(fuente="pagos", agrupar="concepto", medio_pago="tarjeta", monto_max=100, incluir_total=True, incluir_cantidad=True)
         self.assertIn("Total: $50,75", reply.text)
         self.assertIn("COCA-COLA", reply.text)
-        self.assertIn("2 registro(s)", reply.text)
+        self.assertIn("2 pagos", reply.text)
         self.assertIn(self.user.nombreusuario, self.query(fuente="pagos", agrupar="usuario").text)
 
     def test_payment_day_group_uses_colombia_not_utc_day(self):
         at = datetime(2026, 9, 7, 2, 30, tzinfo=ZoneInfo("UTC"))
         self.expense(at=at)
-        reply = self.query(fuente="pagos", agrupar="dia", desde="2026-09-06", hasta="2026-09-06")
+        reply = self.query(fuente="pagos", agrupar="dia", desde="2026-09-06", hasta="2026-09-06", incluir_total=True)
         self.assertIn("2026-09-06", reply.text)
         self.assertIn("Total: $20,25", reply.text)
 
@@ -148,8 +148,8 @@ class TelegramAssistantTests(TestCase):
         Inventario.objects.create(productoid=self.product, sucursalid=self.branch, cantidad=0)
         with patch.object(bot, "user_can_access_url_name", side_effect=lambda user, route: route in {"home", "visualizar_inventarios"}):
             reply = self.query("consultar_resumen_negocio")
-        self.assertIn("1 agotado", reply.text)
-        self.assertIn("ACTUAL", reply.text)
+        self.assertIn("1 sin existencias", reply.text)
+        self.assertIn("Inventario actual", reply.text)
         self.assertIn("Sin permiso para incluir", reply.text)
         self.assertNotIn("Total:", reply.text)
         with self.assertRaises(bot.TelegramBotError):
@@ -214,7 +214,7 @@ class TelegramAssistantTests(TestCase):
         self.expense("200")
         self.query("consultar_pagos", detalle=True, monto_max=100)
         reply = self.query("continuar_consulta", cambios={"agrupar": "concepto"})
-        self.assertIn("Total: $20", reply.text)
+        self.assertIn("COCA-COLA · $20", reply.text)
         self.assertIn("COCA-COLA", reply.text)
 
     def test_continuation_refuses_cross_chat_stale_missing_and_write_actions(self):
@@ -294,7 +294,7 @@ class TelegramAssistantTests(TestCase):
         other = TelegramUsuario.objects.create(usuario=other_user, telegram_user_id=881, telegram_chat_id=881)
         TelegramAccionPendiente.objects.create(telegram_usuario=other, accion="pago_operativo", resumen="SECRETO OTRA CUENTA", vence_en=timezone.now() + timedelta(minutes=5))
         reply = self.query("consultar_pendientes")
-        self.assertIn("pendientes: 7", reply.text)
+        self.assertIn("7 propuestas pendientes", reply.text)
         self.assertNotIn("VENCIDA", reply.text)
         self.assertNotIn("SECRETO", reply.text)
         buttons = [item["callback_data"] for row in reply.reply_markup["inline_keyboard"] for item in row]

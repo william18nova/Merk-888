@@ -11,6 +11,8 @@ from django.db.models import Avg, Case, CharField, Count, DecimalField, Expressi
 from django.utils.dateparse import parse_date
 
 from .telegram_search import choose_match, rank_candidates, rank_queryset
+from .telegram_wording import filter_label, page_note, period_phrase
+from django.utils import timezone
 
 
 @dataclass(frozen=True)
@@ -151,14 +153,14 @@ def _filter(rows, eligible, field, operator, raw):
         codes = [code for code in eligible.order_by().values_list(path, flat=True).distinct() if bot.normalize_payment_method_code(code) == canonical]
         condition = {path + "__in": codes}
         filtered = rows.exclude(**condition) if operator == "distinto" else rows.filter(**condition)
-        return filtered, f"{field.label}: {operator} {bot.payment_method_label(canonical)}"
+        return filtered, filter_label(field.label, operator, bot.payment_method_label(canonical))
     elif kind == "text" and operator in {"igual", "distinto"}:
         names = eligible.order_by().values_list(path, flat=True).distinct()
         matches = rank_candidates(value, ((name, name, ()) for name in names if name))
         if matches:
             value = choose_match(value, matches).label
     condition = {path + "__" + OPERATORS[operator]: value}
-    return (rows.exclude(**condition) if operator == "distinto" else rows.filter(**condition)), f"{field.label}: {operator} {_display(field, value)}"
+    return (rows.exclude(**condition) if operator == "distinto" else rows.filter(**condition)), filter_label(field.label, operator, _display(field, value))
 
 
 def tool_query(profile, arguments):
@@ -173,7 +175,7 @@ def tool_query(profile, arguments):
     if source.model in {"Venta", "DetalleVenta"}:
         rows = _sale_branch_scope(profile, rows, source.branch)
     args = dict(arguments)
-    heading = ["Esto encontré en " + arguments["fuente"].replace("_", " ") + ":"]
+    heading = [arguments["fuente"].replace("_", " ").capitalize()]
     if args.get("sucursal"):
         if not source.branch:
             raise bot.TelegramBotError("Estos datos no están asociados a una sucursal.")
@@ -186,7 +188,7 @@ def tool_query(profile, arguments):
         start, end = bot._date_range(args)
         rows = rows.filter(**{source.date_field + "__range": (start, end)})
         args.update(desde=start.isoformat(), hasta=end.isoformat())
-        heading.append(f"Del {start:%d/%m/%Y} al {end:%d/%m/%Y}")
+        heading[0] += " " + period_phrase(start, end, timezone.localdate())
     elif args.get("desde") or args.get("hasta"):
         raise bot.TelegramBotError("Este catálogo muestra datos actuales, no históricos. Puedes consultar las ventas para revisar otro intervalo.")
     filters = args.get("filtros", [])
@@ -231,14 +233,15 @@ def tool_query(profile, arguments):
             raise bot.TelegramBotError("No puedo ordenar por ese dato.")
         order = ("-" if args.get("descendente", False) else "") + source.fields[order_name].path
         values = rows.order_by(order, "pk").values(*[field.path for field in selected])[offset:offset + bot.LIST_PAGE_SIZE]
-        heading.append(f"{count} registros · página {page} de {pages}")
+        heading.append(f"{count} {'resultado' if count == 1 else 'resultados'}" + page_note(page, pages))
         for row in values:
             heading.append("• " + " · ".join(f"{field.label}: {_display(field, row[field.path])}" for field in selected))
     else:
         aggregate = (Count(measure.path, distinct=True) if measure else Count("pk")) if operation == "contar" else AGGREGATES[operation](measure.path)
         output = Field("_value", {"contar": "Cantidad de registros", "sumar": "Total", "promedio": "Promedio", "minimo": "Mínimo", "maximo": "Máximo"}[operation], "number" if operation == "contar" else measure.kind)
         if operation == "contar" and measure:
-            output = Field("_value", f"{measure.label}: valores distintos", "number")
+            plural = {"Cliente": "Clientes", "Empleado": "Empleados", "Producto": "Productos", "Sucursal": "Sucursales", "Medio": "Medios", "Concepto": "Conceptos", "Registró": "Usuarios", "Fecha": "Fechas"}.get(measure.label, measure.label)
+            output = Field("_value", f"{plural} distintos", "number")
         if group_fields:
             grouped = rows.order_by().values(*[field.path for field in group_fields]).annotate(_value=aggregate)
             count = grouped.count()
@@ -249,7 +252,8 @@ def tool_query(profile, arguments):
                     raise bot.TelegramBotError("En un resultado agrupado puedes ordenar por el resultado o por una de las agrupaciones.")
                 order = group_fields[groups.index(args["ordenar"])].path
             grouped = grouped.order_by(("-" if args.get("descendente", True) else "") + order, *[field.path for field in group_fields])
-            heading.append(f"{count} grupos · página {page} de {pages}")
+            if pages > 1:
+                heading[0] += page_note(page, pages)
             for row in grouped[offset:offset + bot.LIST_PAGE_SIZE]:
                 label = " · ".join(f"{field.label}: {_display(field, row[field.path])}" for field in group_fields)
                 heading.append(f"• {label} · {output.label}: {_display(output, row['_value'])}")
@@ -260,10 +264,10 @@ def tool_query(profile, arguments):
             totals = rows.aggregate(_value=aggregate, _records=Count("pk"))
             count, value = totals["_records"], totals["_value"]
             value = 0 if value is None and operation == "sumar" else value
-            heading.append(f"{output.label}: {_display(output, value)} · {count} registros")
+            heading.insert(0, f"{output.label}: {_display(output, value)}")
     if not count:
         heading.append("No encontré resultados con esos datos.")
-    if source.note:
+    if source.note and operation != "contar":
         heading.append(source.note)
     args["pagina"] = page
     return bot.BotReply("\n".join(heading), "consultar_datos", pagination={"page": page, "pages": pages, "arguments": args})

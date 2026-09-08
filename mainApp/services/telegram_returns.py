@@ -184,21 +184,21 @@ def tool_prepare_return(profile, arguments, update=None):
         ]
         for item in selected:
             detail = item["detalle"]
-            lines.append(f"• Producto #{detail.productoid_id} {bot._list_text(detail.productoid.nombre, 80)} · detalle #{detail.pk}: devolver {item['cantidad']} de {detail.cantidad} disponible(s).")
+            lines.append(f"• {item['cantidad']} × {bot._list_text(detail.productoid.nombre, 80)} · producto #{detail.productoid_id}, detalle #{detail.pk} (disponible: {detail.cantidad}).")
         lines.extend([
             f"\nTotal a reintegrar: {bot._list_money(total)} · Medio: {snapshot['medio']['nombre']}",
-            "Este valor ya tiene en cuenta lo que pagó el cliente y los descuentos de la venta.",
+            "Monto ajustado a lo pagado y a los descuentos.",
         ])
         if turn:
-            lines.append(f"Se registrará en el turno actual #{turn.pk}, cajero {bot._list_text(turn.cajero.nombreusuario, 80)}, de esta caja; no en un turno histórico cerrado.")
+            lines.append(f"Se registrará en el turno actual #{turn.pk} · cajero {bot._list_text(turn.cajero.nombreusuario, 80)}.")
         elif total > 0:
             lines.append("El control de turnos está desactivado. El efectivo ajustará el saldo global del punto de pago de esta venta.")
         else:
             lines.append("Esta devolución no entrega dinero: solo restaura inventario y registra los productos devueltos.")
         lines.extend([
-            "Las cantidades usan la unidad registrada de cada producto. El inventario regresa a la sucursal de la venta.",
-            "Todavía no la he guardado. Pulsa Confirmar devolución solo si corresponde registrar la entrega del dinero por ese medio. El bot NO envía dinero por Nequi ni reversa cargos de tarjeta.",
-            "La propuesta vence en 10 minutos. Si cambia la venta, la caja o el turno, deberás solicitar otra.",
+            "Cantidades en la unidad de cada producto; el inventario regresa a esta sucursal.",
+            "Todavía no la he guardado. Confirma solo si corresponde registrar la entrega por ese medio. El bot NO envía dinero por Nequi ni reversa cargos de tarjeta.",
+            "Vence en 10 minutos; se volverán a comprobar venta, caja y turno.",
         ])
         text = "\n".join(lines)
         if len(text) > 3600:
@@ -243,7 +243,7 @@ def confirm_return(profile, action):
             action.resuelto_en = timezone.now()
             action.save(update_fields=["estado", "resuelto_en"])
             bot._audit(profile, "confirmar_devolucion_venta", arguments, detail=f"Venta #{sale.pk}; reintegro {total}; turno {turn.pk if turn else 'sin turno'}")
-        return f"Listo, registré la devolución de la venta #{sale.pk}: {bot._list_money(total)} en {snapshot['medio']['nombre']}. El inventario quedó actualizado y conservé el pago original. No se realizó ninguna transferencia bancaria automática."
+        return f"Listo, registré la devolución de la venta #{sale.pk}: {bot._list_money(total)} en {snapshot['medio']['nombre']}. Inventario actualizado; sin transferencia bancaria automática."
     except (bot.TelegramBotError, ValueError, DatabaseError) as exc:
         # El savepoint ya revirtió inventario, venta, caja y reintegros. No hacer
         # consultas dentro de una transacción rota ni filtrar SQL al usuario.

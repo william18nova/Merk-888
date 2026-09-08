@@ -44,7 +44,7 @@ from mainApp.services.telegram_returns import command_prepare_return, confirm_re
 from mainApp.services.telegram_schedule import confirm_schedule
 from mainApp.services.telegram_assistant import DATE_TOOLS, common_read_request, resolve_continuation
 from mainApp.services.telegram_ai_policy import compact_history, compact_prompt, response_failure, selected_tool_names
-from mainApp.services.telegram_wording import CONVERSATION_STYLE, period_phrase, social_reply
+from mainApp.services.telegram_wording import CONVERSATION_STYLE, page_note, period_phrase, social_reply
 from mainApp.services.telegram_search import choose_match, rank_candidates, rank_queryset, ranked_queryset, resolve_name
 from mainApp.services.telegram_queries import SMART_QUERY_RULES
 from mainApp.services import telegram_providers
@@ -610,6 +610,16 @@ def tool_sales(profile, arguments):
         sales = sales.filter(sucursalid=branch)
     summary = sales.aggregate(count=Count("ventaid"), total=Sum("total"))
 
+    scope = f" en {_list_text(branch.nombre)}" if branch else ""
+    period = period_phrase(start, end, timezone.localdate())
+    total_text = f"{period[0].upper() + period[1:]} se vendieron {_list_money(summary['total'])}{scope}."
+    if not summary["count"]:
+        return f"No encontré ventas registradas {period}{scope}. Total vendido: {_list_money(0)}."
+    if not arguments.get("desglose_por_medio"):
+        if arguments.get("detalle"):
+            total_text += f" {summary['count']} {'venta' if summary['count'] == 1 else 'ventas'}."
+        return total_text
+
     labels = payment_method_label_map()
     methods = {}
     payment_rows = (
@@ -632,19 +642,13 @@ def tool_sales(profile, arguments):
         code = normalize_payment_method_code(row["mediopago"])
         methods[code] = methods.get(code, Decimal("0")) + (row["total"] or 0)
 
-    scope = f" en {branch.nombre}" if branch else ""
-    period = period_phrase(start, end, timezone.localdate())
-    if not summary['count']:
-        return f"No encontré ventas registradas {period}{scope}. Total vendido: {_money(0)}."
-    lines = [
-        f"Estas son las ventas {period}{scope}:",
-        f"• {summary['count']} {'venta' if summary['count'] == 1 else 'ventas'}",
-        f"• Total: {_money(summary['total'])}",
-    ]
+    lines = [total_text]
+    if arguments.get("detalle"):
+        lines.append(f"{summary['count']} {'venta' if summary['count'] == 1 else 'ventas'}.")
     if methods:
         lines.append("Por medio de pago:")
         for code, total in sorted(methods.items()):
-            lines.append(f"• {payment_method_label(code, labels=labels)}: {_money(total)}")
+            lines.append(f"• {payment_method_label(code, labels=labels)}: {_list_money(total)}")
     return "\n".join(lines)
 
 
@@ -667,7 +671,7 @@ def tool_find_product(profile, arguments):
     )
     if not products:
         return f"No encontré productos para “{query}”."
-    lines = [f"Estas son las coincidencias más cercanas a «{_list_text(query, 100)}»:"]
+    lines = [f"Productos para «{_list_text(query, 100)}»:"]
     for product in products:
         barcode = f" · barras {product.codigo_de_barras}" if product.codigo_de_barras else ""
         category = getattr(product.categoria, "nombre", "Sin categoría")
@@ -796,10 +800,7 @@ def tool_expenses(profile, arguments):
     show_methods = arguments.get("desglose_por_medio") is True
     labels = payment_method_label_map()
     period = period_phrase(start, end, timezone.localdate())
-    lines = [
-        f"Estos son los pagos registrados {period}:",
-        f"• Total pagado: {_list_money(summary['total'])}",
-    ]
+    lines = [f"Pagos {period} · Total pagado: {_list_money(summary['total'])}"]
     if show_details:
         lines.insert(1, f"• {summary['count'] or 0} {'pago' if summary['count'] == 1 else 'pagos'}")
     filters = []
@@ -819,7 +820,7 @@ def tool_expenses(profile, arguments):
             return f"No encontré pagos registrados {period}{scope}. Total pagado: {_list_money(0)}."
         return f"{period[0].upper() + period[1:]} se han pagado {_list_money(summary['total'])}{scope}."
     if filters:
-        lines.append("Para esta consulta: " + " · ".join(filters))
+        lines.append(" · ".join(filters))
     if show_methods:
         grouped = rows.values("medio_pago").annotate(total=Sum("monto")).order_by("medio_pago")
         methods = {}
@@ -827,7 +828,7 @@ def tool_expenses(profile, arguments):
             code = normalize_payment_method_code(row["medio_pago"])
             methods[code] = methods.get(code, Decimal("0")) + row["total"]
         if methods:
-            lines.append("Así se reparten por medio de pago:")
+            lines.append("Por medio de pago:")
         for code, amount in sorted(methods.items())[:10]:
             lines.append(
                 f"• {_list_text(payment_method_label(code, labels=labels), 60)}: {_list_money(amount)}"
@@ -839,13 +840,15 @@ def tool_expenses(profile, arguments):
     page, pages, offset = _list_page(arguments, summary["count"])
     if not summary["count"]:
         return "\n".join(lines + ["No encontré pagos que coincidan con tu búsqueda."])
-    lines.append(f"\nDetalle · página {page} de {pages}:")
+    if pages > 1:
+        lines.append(f"Detalle · página {page} de {pages}:")
+    else:
+        lines.append("Detalle:")
     expenses = rows.select_related("concepto").order_by("-creado_en", "-egresoid")
     for expense in expenses[offset:offset + LIST_PAGE_SIZE]:
         paid_at = timezone.localtime(expense.creado_en)
         lines.extend([
-            f"• #{expense.pk} · {_list_text(expense.concepto.nombre)}",
-            f"  {_list_money(expense.monto)} · {_list_text(payment_method_label(expense.medio_pago, labels=labels), 60)}",
+            f"• #{expense.pk} · {_list_text(expense.concepto.nombre)} · {_list_money(expense.monto)} · {_list_text(payment_method_label(expense.medio_pago, labels=labels), 60)}",
             f"  {paid_at:%d/%m/%Y %H:%M} · Registró: {_list_text(expense.registrado_por_nombre, 80) or 'Sin usuario registrado'}",
         ])
     query = dict(arguments, desde=start.isoformat(), hasta=end.isoformat(), pagina=page, detalle=True)
@@ -882,15 +885,14 @@ def tool_employees(profile, arguments):
         lines.append(f"Sucursal: {_list_text(branch.nombre, 100)}")
     if not count:
         return "\n".join(lines + ["No encontré empleados que coincidan con tu búsqueda."])
-    lines.append(f"Página {page} de {pages}:")
+    if pages > 1:
+        lines.append(f"Página {page} de {pages}:")
     ordered = employees if query and not query.isdigit() else employees.order_by("nombre", "apellido", "empleadoid")
     for employee in ordered[offset:offset + LIST_PAGE_SIZE]:
-        lines.extend([
-            f"• ID {employee.pk} · {_list_text(f'{employee.nombre} {employee.apellido}', 201)}",
-            f"  Cargo: {_list_text(employee.puesto, 50) or 'Sin cargo'} · "
-            f"Sucursal: {_list_text(getattr(employee.sucursalid, 'nombre', None), 100) or 'Sin sucursal'}",
-            f"  Usuario: {_list_text(getattr(employee.usuarioid, 'nombreusuario', None), 100) or 'Sin usuario vinculado'}",
-        ])
+        lines.append(f"• ID {employee.pk} · {_list_text(f'{employee.nombre} {employee.apellido}', 201)} · "
+                     f"{_list_text(employee.puesto, 50) or 'Sin cargo'} · {_list_text(getattr(employee.sucursalid, 'nombre', None), 100) or 'Sin sucursal'}")
+        if arguments.get("detalle"):
+            lines.append(f"  Usuario: {_list_text(getattr(employee.usuarioid, 'nombreusuario', None), 100) or 'Sin usuario vinculado'}")
     return BotReply("\n".join(lines), "listar_empleados", pagination={
         "page": page, "pages": pages, "arguments": dict(arguments, pagina=page),
     })
@@ -914,13 +916,11 @@ def tool_balance(profile, arguments):
         or Decimal("0")
     )
     remaining = sales_total - expense_total
-    return "\n".join([
-        f"Así va el balance {period_phrase(start, end, timezone.localdate())}:",
-        f"• Vendido: {_money(sales_total)}",
-        f"• Pagado: {_money(expense_total)}",
-        f"• Queda al restar los pagos: {_money(remaining)}",
-        "Es la diferencia entre ventas y pagos registrados, no el saldo real del banco o la caja.",
-    ])
+    lines = [f"Quedan {_list_money(remaining)} {period_phrase(start, end, timezone.localdate())}, al restar los pagos de las ventas."]
+    if arguments.get("detalle"):
+        lines.append(f"Vendido: {_list_money(sales_total)} · Pagado: {_list_money(expense_total)}")
+    lines.append("No es el saldo real del banco o la caja.")
+    return "\n".join(lines)
 
 
 def tool_cash_shifts(profile, arguments):
@@ -954,8 +954,7 @@ def _expense_confirmation_reply(pending):
     return BotReply(
         text=(
             f"¿Confirmas que registre este pago?\n{pending.resumen}\n\n"
-            "Todavía no lo he guardado. Pulsa Confirmar si está correcto. "
-            "Puedes confirmarlo durante los 10 minutos siguientes a tu solicitud."
+            "Todavía no lo he guardado. Pulsa Confirmar; la propuesta vence en 10 minutos."
         ),
         intent="preparar_registro_pago",
         reply_markup={
@@ -982,9 +981,8 @@ def _expense_concept_choice_reply(pending):
     return BotReply(
         text=(
             f"{pending.resumen}\n\n"
-            f"Ya tienes nombres parecidos a {concept}:\n" + "\n".join(lines) +
-            f"\n\n¿Usamos uno de estos o creamos {concept}? "
-            "Elige con los botones. Después te pediré confirmar el pago; todavía no lo he guardado."
+            f"Encontré nombres parecidos a {concept}:\n" + "\n".join(lines) +
+            f"\n\n¿Usamos uno de estos o creamos {concept}? Elige un botón; después confirmarás el pago."
         ),
         intent="seleccionar_concepto_pago",
         reply_markup={"inline_keyboard": keyboard},
@@ -1049,11 +1047,13 @@ TOOL_FUNCTIONS = {
 GEMINI_TOOLS = [{"functionDeclarations": [
     {
         "name": "consultar_ventas",
-        "description": "Consulta totales reales de ventas en un intervalo y opcionalmente una sucursal.",
+        "description": "Consulta el total vendido. Por defecto responde solo el importe; desglose por medios y cantidad de ventas solo si se solicitan. Para listar cada venta usa consultar_registros.",
         "parameters": {"type": "OBJECT", "properties": {
             "desde": {"type": "STRING", "description": "Fecha inicial YYYY-MM-DD"},
             "hasta": {"type": "STRING", "description": "Fecha final YYYY-MM-DD"},
             "sucursal": {"type": "STRING"},
+            "detalle": {"type": "BOOLEAN", "description": "Incluye cantidad de ventas solo si la pide; false por defecto."},
+            "desglose_por_medio": {"type": "BOOLEAN", "description": "true solo si pide separar ventas por medios de pago."},
         }},
     },
     {
@@ -1091,20 +1091,22 @@ GEMINI_TOOLS = [{"functionDeclarations": [
     },
     {
         "name": "listar_empleados",
-        "description": "Lista empleados reales con ID, nombre, cargo, sucursal y usuario. Permite buscar y filtrar; no crea ni modifica empleados.",
+        "description": "Lista empleados con ID, nombre, cargo y sucursal; detalle=true incluye la cuenta de usuario si la pide. Permite buscar y filtrar; no crea ni modifica empleados.",
         "parameters": {"type": "OBJECT", "properties": {
             "consulta": {"type": "STRING", "description": "Nombre, apellido, usuario o ID del empleado. Omitir para listar todos."},
             "sucursal": {"type": "STRING"},
             "cargo": {"type": "STRING"},
+            "detalle": {"type": "BOOLEAN", "description": "Incluye cuenta vinculada cuando pide detalles o usuarios; false por defecto."},
             "pagina": {"type": "INTEGER"},
         }},
     },
     {
         "name": "consultar_balance",
-        "description": "Calcula lo vendido menos los pagos operativos en un intervalo.",
+        "description": "Responde cuánto queda al restar pagos a ventas; detalle=true añade vendido y pagado solo si pide el desglose.",
         "parameters": {"type": "OBJECT", "properties": {
             "desde": {"type": "STRING"},
             "hasta": {"type": "STRING"},
+            "detalle": {"type": "BOOLEAN", "description": "Incluye vendido y pagado además del resultado, solo si lo pide."},
         }},
     },
     {
@@ -1140,6 +1142,8 @@ def _assistant_system_prompt():
         "Si hay una elección pendiente, pide usar esos botones, no inventes que se ha elegido. "
         "Responde solo con la información solicitada, sin añadir desgloses ni listas automáticamente. "
         "Para 'cuánto he pagado hoy' usa consultar_pagos con detalle=false y desglose_por_medio=false: solo total. "
+        "Para 'cuánto vendimos' usa consultar_ventas sin detalle ni desglose_por_medio; activa esos indicadores solo si pide cantidad o medios respectivamente. "
+        "Para 'cuánto queda' usa consultar_balance sin detalle; detalle=true solo si pide incluir vendido y pagado. "
         "Para 'cuánto he pagado por método de pago' usa detalle=false y desglose_por_medio=true. "
         "Para 'muéstrame los pagos de hoy' usa detalle=true y desglose_por_medio=false: lista individual. "
         "Para 'pagos en Nequi' filtra medio_pago=nequi, sin añadir un desglose por medios. "
@@ -1164,8 +1168,9 @@ def _assistant_system_prompt():
         "Actúa como un asistente operativo: puedes consultar informes, combinar consultas y preparar cambios, "
         "pero nunca prometas capacidades fuera de las herramientas. Para 'quién vendió más este mes' usa "
         "consultar_informe con fuente=ventas, agrupar=empleado, orden=importe, primeros=1 y fechas reales del mes. "
-        "Para ventas por cliente/sucursal/punto de pago/día, ticket promedio o cantidad de ventas también usa "
-        "consultar_informe. Para pagos por concepto/usuario/día usa fuente=pagos. Para comparación con el "
+        "Para ventas por cliente/sucursal/punto de pago/día usa consultar_informe. No actives incluir_total, incluir_cantidad ni incluir_promedio sin que lo pida. "
+        "Si pide solo un promedio o una cantidad usa consultar_datos con promedio o contar, sin añadir un total monetario. "
+        "Para pagos por concepto/usuario/día usa fuente=pagos. Para comparación con el "
         "período anterior usa comparar_anterior=true: compara totales de intervalos de igual duración. "
         "Para 'cómo va el negocio' usa consultar_resumen_negocio; no impongas este resumen a quien solo pide un total. "
         "Si pide varias cosas independientes ('ventas y pagos de hoy y productos agotados'), usa consultar_varias "

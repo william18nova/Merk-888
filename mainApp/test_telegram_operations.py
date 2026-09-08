@@ -199,7 +199,7 @@ class TelegramOperationsTests(TestCase):
             with self.subTest(resource=name):
                 self.assertTrue(reverse(spec.permission, kwargs={"venta_id": 1} if spec.permission == "ver_venta" else None))
                 reply = self.query(recurso=name)
-                self.assertRegex(reply.text, r"\d+ registros?")
+                self.assertRegex(reply.text, r"\d+ resultados?")
                 self.assertLess(len(reply.text), 4000)
 
     def test_all_reads_deny_user_without_the_corresponding_permission(self):
@@ -278,7 +278,7 @@ class TelegramOperationsTests(TestCase):
     def test_event_dates_are_anchored_and_exact_id_ignores_today(self):
         sale = self.sale(day=timezone.localdate() - timedelta(days=20))
         today = self.query(recurso="ventas")
-        self.assertIn("0 registros", today.text)
+        self.assertIn("0 resultados", today.text)
         exact = self.query(recurso="ventas", registro_id=str(sale.pk))
         self.assertIn(f"#{sale.pk}", exact.text)
         audit = TelegramAuditoria.objects.filter(accion="consultar_registros").order_by("pk").first()

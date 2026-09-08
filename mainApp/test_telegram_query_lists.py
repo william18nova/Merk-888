@@ -142,7 +142,7 @@ class TelegramQueryListTests(TestCase):
 
     def test_employee_list_shows_job_and_branch_but_not_sensitive_contact_fields(self):
         row = self.employee()
-        reply = self.query("listar_empleados")
+        reply = self.query("listar_empleados", detalle=True)
         for expected in (f"ID {row.pk}", "Ana Pérez", "Cajera", "Yerbabuena", "Sin usuario vinculado"):
             self.assertIn(expected, reply.text)
         for private in (row.telefono, row.email, row.direccion, row.numerodocumento):

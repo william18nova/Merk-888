@@ -66,19 +66,19 @@ class TelegramExpenseResponseModeTests(TestCase):
         self.assertIn("Detalle", reply.text)
         self.assertIn(f"#{self.cash.pk}", reply.text)
         self.assertIn("Registró: William", reply.text)
-        self.assertNotIn("Así se reparten por medio de pago", reply.text)
+        self.assertNotIn("Por medio de pago", reply.text)
         self.assertNotIn("Efectivo:", reply.text)
 
     def test_list_and_breakdown_can_be_requested_together(self):
         reply = self.query(detalle=True, desglose_por_medio=True)
-        self.assertIn("Así se reparten por medio de pago", reply.text)
+        self.assertIn("Por medio de pago", reply.text)
         self.assertIn("Detalle", reply.text)
 
     def test_filtering_one_method_does_not_implicitly_request_breakdown(self):
         reply = self.query(medio_pago="nequi")
         self.assertIn("se han pagado $2.000", reply.text)
         self.assertIn("Medio: Nequi", reply.text)
-        self.assertNotIn("Así se reparten", reply.text)
+        self.assertNotIn("Por medio de pago", reply.text)
         self.assertNotIn("Detalle", reply.text)
 
     def test_follow_up_keeps_dates_and_filters_without_carrying_list_format(self):
@@ -196,7 +196,7 @@ class TelegramExpenseResponseModeTests(TestCase):
                     "consultar_pagos", arguments, "",
                 )):
                     reply = build_reply(update, self.client_stub)
-                self.assertEqual("Así se reparten por medio de pago" in reply.text, methods)
+                self.assertEqual("Por medio de pago" in reply.text, methods)
                 self.assertEqual("Detalle" in reply.text, details)
         self.assertEqual(Egreso.objects.count(), 2)
         self.assertFalse(TelegramAccionPendiente.objects.exists())
