@@ -104,7 +104,7 @@ class HumanWordingTests(SimpleTestCase):
     def test_raw_transcription_error_body_is_not_repeated(self):
         response = SimpleNamespace(status_code=400, ok=False, json=lambda: {"error": {"message": "PRIVATE_PROVIDER_BODY"}})
         with patch.object(bot.requests, "post", return_value=response):
-            with self.assertRaises(bot.TelegramConfigurationError) as raised:
+            with self.assertRaises(bot.TelegramTranscriptionUnavailable) as raised:
                 bot.transcribe_voice(b"fake-audio")
         self.assertNotIn("PRIVATE_PROVIDER_BODY", str(raised.exception))
         self.assertIn("HTTP 400", str(raised.exception))

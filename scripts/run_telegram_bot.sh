@@ -38,16 +38,12 @@ if (( ${#missing[@]} > 0 )); then
     echo "ERROR: faltan variables privadas: ${missing[*]}."
     exit 2
 fi
-if [[ -z "${GEMINI_API_KEY:-}" && -z "${GROQ_API_KEY:-}" ]]; then
-    echo "AVISO: faltan GEMINI_API_KEY y GROQ_API_KEY; solo funcionarán comandos explícitos."
-fi
-if [[ -z "${GROQ_API_KEY:-}" ]]; then
-    echo "AVISO: falta GROQ_API_KEY; las notas de voz no funcionarán."
-fi
 if [[ ! -d "$PROJECT_DIR" || ! -x "$PYTHON_BIN" ]]; then
     echo "ERROR: revisa TELEGRAM_PROJECT_DIR y TELEGRAM_PYTHON_BIN."
     exit 2
 fi
 
 cd "$PROJECT_DIR" || exit 2
+# Diagnóstico de configuración sin consumir API ni mostrar secretos.
+"$PYTHON_BIN" manage.py comprobar_ia_telegram --status || exit 2
 exec "$PYTHON_BIN" -u manage.py procesar_telegram_bot

@@ -19,3 +19,10 @@ PASSWORD_HASHERS = [
 ]
 
 EMAIL_BACKEND = "django.core.mail.backends.locmem.EmailBackend"
+
+# Las pruebas nunca heredan credenciales de proveedores desde archivos privados.
+GEMINI_API_KEY = GROQ_API_KEY = CEREBRAS_API_KEY = OPENROUTER_API_KEY = ""
+AZURE_SPEECH_KEY = DEEPGRAM_API_KEY = ASSEMBLYAI_API_KEY = ""
+TELEGRAM_TEXT_PROVIDERS = "gemini,groq,cerebras,openrouter"
+TELEGRAM_VOICE_PROVIDERS = "groq,azure,deepgram,assemblyai,gemini"
+AZURE_SPEECH_FREE_TIER_CONFIRMED = DEEPGRAM_TRIAL_CONFIRMED = ASSEMBLYAI_TRIAL_CONFIRMED = "false"

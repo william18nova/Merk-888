@@ -33,6 +33,11 @@ def _duration(value):
 def response_failure(response, data):
     """Clasifica sin copiar cuerpos, claves ni mensajes del proveedor a los logs."""
     status = response.status_code
+    # OpenRouter puede devolver errores estructurados dentro de HTTP 200.
+    embedded = data.get("error", {}) if isinstance(data, dict) else {}
+    if 200 <= status < 300 and isinstance(embedded, dict) and isinstance(embedded.get("code"), int):
+        if 400 <= embedded["code"] <= 599:
+            status = embedded["code"]
     if 200 <= status < 300:
         return None
     headers = {str(k).lower(): v for k, v in (getattr(response, "headers", None) or {}).items()}
@@ -50,6 +55,14 @@ def response_failure(response, data):
         delays.append(retry)
     daily_quota = False
     if status == 429:
+        # Cerebras publica ventanas separadas por minuto, hora y día.
+        for bucket in ("requests", "tokens"):
+            for window in ("minute", "hour", "day"):
+                if str(headers.get(f"x-ratelimit-remaining-{bucket}-{window}")) == "0":
+                    reset = _seconds(headers.get(f"x-ratelimit-reset-{bucket}-{window}"))
+                    if reset is not None:
+                        delays.append(reset)
+                    daily_quota |= window == "day"
         for bucket in ("requests", "tokens"):
             if str(headers.get(f"x-ratelimit-remaining-{bucket}")) == "0":
                 reset = _duration(headers.get(f"x-ratelimit-reset-{bucket}"))
@@ -72,6 +85,8 @@ def response_failure(response, data):
         if isinstance(violations, list):
             daily_quota |= any(isinstance(v, dict) and "perday" in str(v.get("quotaId", "")).lower() for v in violations)
     delay = max(delays) if delays else None
+    if status == 402:
+        return "credits", 86400, False
     if status == 429:
         return ("quota" if daily_quota else "rate_limit", delay if delay is not None else (3600 if daily_quota else 60), False)
     if status in {401, 403} or invalid_key:

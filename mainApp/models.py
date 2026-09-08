@@ -1103,6 +1103,8 @@ class TelegramActualizacion(models.Model):
     intentos = models.PositiveSmallIntegerField(default=0)
     intencion = models.CharField(max_length=80, blank=True, default="")
     transcripcion = models.TextField(blank=True, default="")
+    transcripcion_estado = models.JSONField(default=dict, blank=True)
+    reintentar_en = models.DateTimeField(null=True, blank=True)
     respuesta = models.TextField(blank=True, default="")
     error = models.TextField(blank=True, default="")
     recibido_en = models.DateTimeField(auto_now_add=True, db_index=True)

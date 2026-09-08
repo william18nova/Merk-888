@@ -237,3 +237,22 @@ GROQ_WHISPER_MODEL = _telegram_setting(
     "GROQ_WHISPER_MODEL",
     "whisper-large-v3-turbo",
 )
+
+# Orden vacío desactiva la etapa. Los proveedores sin clave se omiten.
+TELEGRAM_TEXT_PROVIDERS = _telegram_setting("TELEGRAM_TEXT_PROVIDERS", "gemini,groq,cerebras,openrouter")
+TELEGRAM_VOICE_PROVIDERS = _telegram_setting("TELEGRAM_VOICE_PROVIDERS", "groq,azure,deepgram,assemblyai,gemini")
+CEREBRAS_API_KEY = _telegram_setting("CEREBRAS_API_KEY")
+CEREBRAS_CHAT_MODEL = _telegram_setting("CEREBRAS_CHAT_MODEL", "gpt-oss-120b")
+OPENROUTER_API_KEY = _telegram_setting("OPENROUTER_API_KEY")
+OPENROUTER_CHAT_MODEL = _telegram_setting("OPENROUTER_CHAT_MODEL", "openai/gpt-oss-120b:free")
+GEMINI_AUDIO_MODEL = _telegram_setting("GEMINI_AUDIO_MODEL", GEMINI_MODEL)
+AZURE_SPEECH_KEY = _telegram_setting("AZURE_SPEECH_KEY")
+AZURE_SPEECH_RESOURCE = _telegram_setting("AZURE_SPEECH_RESOURCE")
+AZURE_SPEECH_FREE_TIER_CONFIRMED = _telegram_setting("AZURE_SPEECH_FREE_TIER_CONFIRMED", "false")
+DEEPGRAM_API_KEY = _telegram_setting("DEEPGRAM_API_KEY")
+DEEPGRAM_MODEL = _telegram_setting("DEEPGRAM_MODEL", "nova-3")
+DEEPGRAM_TRIAL_CONFIRMED = _telegram_setting("DEEPGRAM_TRIAL_CONFIRMED", "false")
+ASSEMBLYAI_API_KEY = _telegram_setting("ASSEMBLYAI_API_KEY")
+ASSEMBLYAI_MODEL = _telegram_setting("ASSEMBLYAI_MODEL", "universal-2")
+ASSEMBLYAI_TRIAL_CONFIRMED = _telegram_setting("ASSEMBLYAI_TRIAL_CONFIRMED", "false")
+TELEGRAM_FFMPEG_BIN = _telegram_setting("TELEGRAM_FFMPEG_BIN", "ffmpeg")

@@ -27,8 +27,18 @@
     <article><span class="tg-dot {% if integration.enabled %}is-ok{% endif %}"></span><small>Funcionalidad</small><strong>{% if integration.enabled %}Activada{% else %}Desactivada{% endif %}</strong></article>
     <article><span class="tg-dot {% if integration.telegram_token and integration.webhook_secret %}is-ok{% endif %}"></span><small>Telegram</small><strong>{% if integration.telegram_token and integration.webhook_secret %}Configurado{% else %}Faltan variables{% endif %}</strong></article>
     <article><span class="tg-dot {% if integration.text_provider %}is-ok{% endif %}"></span><small>Proveedores de texto configurados</small><strong>{% if integration.text_provider %}{{ integration.text_provider }}{% else %}Falta proveedor IA{% endif %}</strong></article>
-    <article><span class="tg-dot {% if integration.groq_key %}is-ok{% endif %}"></span><small>Notas de voz</small><strong>{% if integration.groq_key %}Groq listo{% else %}Falta Groq{% endif %}</strong></article>
+    <article><span class="tg-dot {% if integration.voice_provider %}is-ok{% endif %}"></span><small>Proveedores de audio configurados</small><strong>{{ integration.voice_provider|default:"Falta proveedor de voz" }}</strong></article>
   </div>
+
+  <section class="tg-card tg-card--wide">
+    <div class="tg-card__heading"><div><p class="tg-eyebrow">Respaldos automáticos</p><h2>Proveedores por orden de uso</h2></div></div>
+    {% if integration.provider_error %}<p class="tg-alert tg-alert--error">{{ integration.provider_error }}</p>{% endif %}
+    <p class="tg-muted">Se usa el siguiente si el anterior falla. Las claves y el orden se configuran en el archivo privado del servidor, nunca en Git. Este estado no comprueba la conexión ni la cuota disponible.</p>
+    <div class="tg-table-wrap"><table><thead><tr><th>Etapa</th><th>Servicio</th><th>Configuración</th></tr></thead><tbody>
+      {% for provider in integration.providers %}<tr><td>{{ provider.stage }}</td><td>{{ provider.name }}</td><td>{{ provider.status }}</td></tr>{% endfor %}
+    </tbody></table></div>
+    <p class="tg-muted">Azure requiere FFmpeg y un recurso F0; solo se envían audios completos de hasta 60 segundos. Deepgram y AssemblyAI usan créditos iniciales, no una cuota gratuita ilimitada. Desactiva las recargas automáticas en cada cuenta.</p>
+  </section>
 
   {% if generated_code %}
     <section class="tg-code" aria-live="polite">

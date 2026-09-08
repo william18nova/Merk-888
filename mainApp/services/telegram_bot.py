@@ -1,6 +1,5 @@
 import hashlib
 import hmac
-import io
 import json
 import logging
 import math
@@ -48,6 +47,7 @@ from mainApp.services.telegram_ai_policy import compact_history, compact_prompt,
 from mainApp.services.telegram_wording import CONVERSATION_STYLE, period_phrase, social_reply
 from mainApp.services.telegram_search import choose_match, rank_candidates, rank_queryset, ranked_queryset, resolve_name
 from mainApp.services.telegram_queries import SMART_QUERY_RULES
+from mainApp.services import telegram_providers
 
 
 logger = logging.getLogger(__name__)
@@ -94,6 +94,7 @@ class TelegramAIProviderError(TelegramExternalError):
         reasons = {
             "rate_limit": "alcanzó un límite de uso",
             "quota": "alcanzó su cuota diaria",
+            "credits": "no tiene créditos disponibles",
             "authentication": "rechazó la clave o sus permisos",
             "model": "no tiene disponible el modelo configurado",
             "request": "rechazó el formato o la configuración de la solicitud",
@@ -117,12 +118,21 @@ class TelegramAIUnavailable(TelegramBotError):
         self.failures = tuple(failures)
 
 
+class TelegramTranscriptionUnavailable(TelegramAIUnavailable):
+    pass
+
+
+class TelegramTranscriptionPending(TelegramBotError):
+    """Reanudar el mismo trabajo de audio, sin consumir otro intento de envío."""
+
+
 def _ai_failure_message(error):
     # Solo categorías conocidas: nunca reenviar mensajes crudos del proveedor.
     failures = (error,) if isinstance(error, TelegramAIProviderError) else error.failures
     explanations = {
         "rate_limit": "se alcanzó un límite temporal de consultas",
         "quota": "se agotó una cuota de uso del servicio de IA",
+        "credits": "un servicio de respaldo no tiene créditos disponibles",
         "connection": "hubo una demora o un problema de conexión con la IA",
         "unavailable": "el servicio de IA presentó un fallo temporal",
         "authentication": "hay un problema con el acceso del bot al servicio de IA",
@@ -136,6 +146,8 @@ def _ai_failure_message(error):
     message += ": " + "; además, ".join(reasons) + "." if reasons else ". No tengo suficiente información para precisar la causa."
     if set(kinds) & {"authentication", "model"}:
         message += " El administrador debe revisar la configuración."
+    elif "credits" in kinds:
+        message += " El administrador debe revisar los créditos gratuitos o desactivar ese respaldo."
     elif "quota" in kinds:
         message += " Puedes volver a intentarlo cuando se renueve la cuota; no puedo asegurar cuándo."
     elif set(kinds) & {"request", "invalid_response"}:
@@ -151,6 +163,8 @@ def _user_error_message(error, update):
         return "Tu cuenta no tiene permiso para hacer eso. Si necesitas acceso, pídeselo al administrador."
     if isinstance(error, TelegramConfigurationError):
         return "Necesito que el administrador revise la configuración del bot para poder ayudarte con eso."
+    if isinstance(error, TelegramTranscriptionUnavailable):
+        return _ai_failure_message(error).replace("atender esa consulta", "transcribir tu audio").replace("servicio de IA", "servicio de voz") + " Puedes enviarme la solicitud por escrito."
     if isinstance(error, (TelegramAIUnavailable, TelegramAIProviderError)):
         return _ai_failure_message(error)
     if isinstance(error, TelegramExternalError):
@@ -178,6 +192,14 @@ def _configured(name):
 def integration_status():
     gemini_key = bool(_configured("GEMINI_API_KEY"))
     groq_key = bool(_configured("GROQ_API_KEY"))
+    try:
+        text_providers = telegram_providers.active("text")
+        voice_providers = telegram_providers.active("voice")
+        provider_rows = telegram_providers.status()
+        provider_error = ""
+    except TelegramConfigurationError as exc:
+        text_providers, voice_providers, provider_rows = [], [], []
+        provider_error = str(exc)
     return {
         "telegram_token": bool(_configured("TELEGRAM_BOT_TOKEN")),
         "webhook_secret": bool(_configured("TELEGRAM_WEBHOOK_SECRET")),
@@ -186,9 +208,10 @@ def integration_status():
         "gemini_model": _configured("GEMINI_MODEL") or "gemini-3.8-flash",
         "groq_model": _configured("GROQ_WHISPER_MODEL") or "whisper-large-v3-turbo",
         "groq_chat_model": _configured("GROQ_CHAT_MODEL") or "openai/gpt-oss-120b",
-        "text_provider": "Gemini + Groq" if gemini_key and groq_key else (
-            "Gemini" if gemini_key else ("Groq" if groq_key else "")
-        ),
+        "text_provider": " → ".join(telegram_providers.LABELS[n] for n in text_providers),
+        "voice_provider": " → ".join(telegram_providers.LABELS[n] for n in voice_providers),
+        "providers": provider_rows,
+        "provider_error": provider_error,
         "enabled": is_feature_enabled(TELEGRAM_BOT_FEATURE),
     }
 
@@ -475,40 +498,9 @@ class TelegramApiClient:
         return response.content
 
 
-def transcribe_voice(audio_bytes):
-    api_key = _configured("GROQ_API_KEY")
-    if not api_key:
-        raise TelegramConfigurationError(
-            "La transcripción de voz no está disponible: falta GROQ_API_KEY."
-        )
-    model = _configured("GROQ_WHISPER_MODEL") or "whisper-large-v3-turbo"
-    try:
-        response = requests.post(
-            "https://api.groq.com/openai/v1/audio/transcriptions",
-            headers={"Authorization": f"Bearer {api_key}"},
-            data={"model": model, "language": "es", "response_format": "json"},
-            files={"file": ("telegram.ogg", io.BytesIO(audio_bytes), "audio/ogg")},
-            timeout=90,
-        )
-        data = response.json()
-    except (requests.RequestException, ValueError):
-        raise TelegramExternalError(
-            "Falló la conexión o la respuesta del servicio de transcripción."
-        ) from None
-    if response.status_code >= 500 or response.status_code == 429:
-        raise TelegramExternalError(
-            f"Servicio de transcripción no disponible (HTTP {response.status_code})."
-        )
-    if not response.ok:
-        raise TelegramConfigurationError(
-            f"Servicio de transcripción rechazó la solicitud (HTTP {response.status_code})."
-        )
-    if not isinstance(data, dict):
-        raise TelegramExternalError("El servicio de transcripción devolvió una respuesta inválida.")
-    text = str(data.get("text") or "").strip()
-    if not text:
-        raise TelegramBotError("No alcancé a entender el audio. ¿Puedes enviarlo de nuevo o escribirme lo que necesitas?")
-    return text[:8000]
+def transcribe_voice(audio_bytes, *, update=None):
+    from .telegram_voice import transcribe
+    return transcribe(audio_bytes, update=update)
 
 
 def _money(value):
@@ -1261,7 +1253,7 @@ def _ai_response(provider, url, **kwargs):
     payload = kwargs.get("json", {})
     logger.info("IA Telegram proveedor=%s caracteres_solicitud=%s", provider, len(json.dumps(payload, ensure_ascii=False)))
     try:
-        response = requests.post(url, timeout=(5, 18), **kwargs)
+        response = requests.post(url, timeout=(5, 18), allow_redirects=False, **kwargs)
     except requests.RequestException:
         raise TelegramAIProviderError(provider, "connection", delay=10) from None
     try:
@@ -1339,13 +1331,27 @@ def _validated_ai_call(name, arguments, allowed=None):
 
 
 def _groq_function_call(user_text, history=None):
-    api_key = _configured("GROQ_API_KEY")
+    return _compatible_function_call("Groq", "GROQ_API_KEY", "GROQ_CHAT_MODEL", "openai/gpt-oss-120b",
+                                     "https://api.groq.com/openai/v1/chat/completions", user_text, history)
+
+
+def _cerebras_function_call(user_text, history=None):
+    return _compatible_function_call("Cerebras", "CEREBRAS_API_KEY", "CEREBRAS_CHAT_MODEL", "gpt-oss-120b",
+                                     "https://api.cerebras.ai/v1/chat/completions", user_text, history)
+
+
+def _openrouter_function_call(user_text, history=None):
+    return _compatible_function_call("OpenRouter", "OPENROUTER_API_KEY", "OPENROUTER_CHAT_MODEL", "openai/gpt-oss-120b:free",
+                                     "https://openrouter.ai/api/v1/chat/completions", user_text, history)
+
+
+def _compatible_function_call(provider, key_setting, model_setting, default_model, url, user_text, history):
+    api_key = _configured(key_setting)
     if not api_key:
-        raise TelegramConfigurationError(
-            "La comprensión libre no está disponible: faltan las claves de Gemini y Groq. "
-            "Usa /ayuda para ver los comandos."
-        )
-    model = _configured("GROQ_CHAT_MODEL") or "openai/gpt-oss-120b"
+        raise TelegramConfigurationError(f"Falta configurar {key_setting}.")
+    model = _configured(model_setting) or default_model
+    if provider == "OpenRouter" and not model.endswith(":free"):
+        raise TelegramConfigurationError("OpenRouter solo permite un modelo fijo con sufijo :free.")
     definitions, system, history = _ai_request_context(user_text, history)
     names = {item["name"] for item in definitions}
     messages = [{"role": "system", "content": system}]
@@ -1363,9 +1369,14 @@ def _groq_function_call(user_text, history=None):
         "temperature": 0.1,
         "max_completion_tokens": 1400,
     }
+    if provider == "OpenRouter":
+        payload["max_tokens"] = payload.pop("max_completion_tokens")
+        payload["provider"] = {"require_parameters": True, "max_price": {"prompt": 0, "completion": 0, "request": 0}}
+    if provider == "Cerebras":
+        payload["parallel_tool_calls"] = False
     data = _ai_response(
-        "Groq",
-        "https://api.groq.com/openai/v1/chat/completions",
+        provider,
+        url,
         headers={
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
@@ -1390,18 +1401,20 @@ def _groq_function_call(user_text, history=None):
             raise ValueError("Respuesta vacía")
         return "", {}, answer.strip()
     except (KeyError, IndexError, TypeError, AttributeError, ValueError):
-        raise TelegramAIProviderError("Groq", "invalid_response") from None
+        raise TelegramAIProviderError(provider, "invalid_response") from None
 
 
 def _intelligent_function_call(user_text, history=None):
-    providers = [
-        ("Gemini", "GEMINI_API_KEY", "GEMINI_MODEL", _gemini_function_call),
-        ("Groq", "GROQ_API_KEY", "GROQ_CHAT_MODEL", _groq_function_call),
-    ]
-    configured = [provider for provider in providers if _configured(provider[1])]
+    providers = {
+        "gemini": ("Gemini", "GEMINI_API_KEY", "GEMINI_MODEL", _gemini_function_call),
+        "groq": ("Groq", "GROQ_API_KEY", "GROQ_CHAT_MODEL", _groq_function_call),
+        "cerebras": ("Cerebras", "CEREBRAS_API_KEY", "CEREBRAS_CHAT_MODEL", _cerebras_function_call),
+        "openrouter": ("OpenRouter", "OPENROUTER_API_KEY", "OPENROUTER_CHAT_MODEL", _openrouter_function_call),
+    }
+    configured = [providers[name] for name in telegram_providers.active("text")]
     if not configured:
         raise TelegramConfigurationError(
-            "La comprensión libre no está disponible: faltan las claves de Gemini y Groq. "
+            "La comprensión libre no está disponible: no hay proveedores de texto habilitados y configurados. "
             "Usa /ayuda para ver los comandos."
         )
     started, attempts = time.monotonic(), 0
@@ -1877,6 +1890,8 @@ def _build_reply(update, client):
         return BotReply("Primero vincula tu cuenta con /vincular CODIGO. Usa /ayuda si lo necesitas.", "sin_vinculo")
     if not text:
         return BotReply("Envíame texto o una nota de voz con tu solicitud.", "sin_texto")
+    if not getattr(profile.usuario, "is_active", False):
+        raise PermissionDenied("Usuario inactivo.")
     greeting = social_reply(text)
     if greeting is not None:
         return BotReply(greeting, "conversacion")
@@ -1943,6 +1958,7 @@ def process_next_update():
             TelegramActualizacion.objects
             .select_for_update(skip_locked=True)
             .filter(estado="PENDIENTE")
+            .filter(Q(reintentar_en__isnull=True) | Q(reintentar_en__lte=timezone.now()))
             .filter(~Exists(earlier))
             .order_by("recibido_en", "update_id")
             .first()
@@ -1973,9 +1989,14 @@ def process_next_update():
         else:
             client = TelegramApiClient()
             if update.tipo == "VOZ" and not update.transcripcion:
+                voice_profile = _profile_for_update(update)
+                if voice_profile is None:
+                    raise TelegramBotError("Primero vincula tu cuenta por escrito con /vincular CODIGO antes de enviar audios.")
+                if not getattr(voice_profile.usuario, "is_active", False):
+                    raise PermissionDenied("Usuario inactivo.")
                 if update.voice_file_size and update.voice_file_size > TELEGRAM_FILE_LIMIT:
                     raise TelegramBotError("El audio supera el límite de 20 MB.")
-                update.transcripcion = transcribe_voice(client.download_voice(update.voice_file_id))
+                update.transcripcion = transcribe_voice(client.download_voice(update.voice_file_id), update=update)
                 update.save(update_fields=["transcripcion"])
             reply = build_reply(update, client)
             client.send_message(update.telegram_chat_id, reply.text, reply_markup=reply.reply_markup)
@@ -1984,6 +2005,20 @@ def process_next_update():
             update.respuesta = reply.text[:8000]
         update.procesado_en = timezone.now()
         update.save(update_fields=["estado", "intencion", "respuesta", "procesado_en"])
+    except TelegramTranscriptionPending:
+        update.estado = "PENDIENTE"
+        update.intentos = max(0, update.intentos - 1)
+        update.reintentar_en = timezone.now() + timedelta(seconds=15)
+        update.error = "Transcripción asíncrona pendiente; se consultará el mismo trabajo."
+        update.save(update_fields=["estado", "intentos", "reintentar_en", "error"])
+        if not update.transcripcion_estado.get("pending_notified"):
+            # Marcar antes de enviar para no inundar el chat si Telegram falla.
+            update.transcripcion_estado["pending_notified"] = True
+            update.save(update_fields=["transcripcion_estado"])
+            try:
+                client.send_message(update.telegram_chat_id, "Estoy procesando tu audio con un servicio de respaldo. Te responderé cuando termine; no necesitas reenviarlo.")
+            except TelegramBotError:
+                logger.warning("No se pudo avisar de la transcripción pendiente de Telegram update %s", update.pk)
     except Exception as exc:
         logger.exception("Falló el procesamiento de Telegram update %s", update.pk)
         retryable = (

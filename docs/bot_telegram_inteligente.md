@@ -1,12 +1,146 @@
 # Bot inteligente de Telegram
 
 El bot consulta Nova mediante los permisos del usuario vinculado. El texto libre
-usa Gemini y, si no está disponible, Groq como respaldo automático. Las notas de
-voz usan Whisper en Groq. Un pago nunca se registra
+usa Gemini y, si no está disponible, Groq, Cerebras y OpenRouter como respaldos
+configurables. Las notas de voz pueden usar Groq, Azure Speech, Deepgram,
+AssemblyAI y Gemini. Solo se llaman proveedores habilitados con claves válidamente
+configuradas; esto no garantiza cuotas ni calidad idéntica. Un pago nunca se registra
 directamente: se crea una propuesta que vence en 10 minutos y solo se ejecuta al
 pulsar **Confirmar** en Telegram.
 Los cambios de catálogo siguen el mismo esquema: propuesta, revisión y botón
 de confirmación. Un «sí» escrito o hablado no guarda el cambio.
+
+## Activar los respaldos de texto y audio
+
+La integración está programada, pero cada cuenta debe configurarse y probarse
+antes de usarla en producción. No se crean cuentas ni claves automáticamente.
+No pegues claves en Git, documentación, capturas ni mensajes: guárdalas en
+`/home/Merk888/.telegram_bot.env` (en Windows, en el archivo privado equivalente
+leído por `TELEGRAM_ENV_FILE`). `.env.example` contiene solo nombres y ejemplos.
+
+### Orden y variables privadas
+
+```dotenv
+TELEGRAM_TEXT_PROVIDERS=gemini,groq,cerebras,openrouter
+TELEGRAM_VOICE_PROVIDERS=groq,azure,deepgram,assemblyai,gemini
+
+# Conservar las claves existentes de Gemini y Groq.
+CEREBRAS_API_KEY=
+CEREBRAS_CHAT_MODEL=gpt-oss-120b
+OPENROUTER_API_KEY=
+OPENROUTER_CHAT_MODEL=openai/gpt-oss-120b:free
+GEMINI_AUDIO_MODEL=gemini-3.8-flash
+
+AZURE_SPEECH_KEY=
+AZURE_SPEECH_RESOURCE=
+AZURE_SPEECH_FREE_TIER_CONFIRMED=false
+TELEGRAM_FFMPEG_BIN=ffmpeg
+
+DEEPGRAM_API_KEY=
+DEEPGRAM_MODEL=nova-3
+DEEPGRAM_TRIAL_CONFIRMED=false
+
+ASSEMBLYAI_API_KEY=
+ASSEMBLYAI_MODEL=universal-2
+ASSEMBLYAI_TRIAL_CONFIRMED=false
+```
+
+- Elimina un nombre del orden para desactivar ese proveedor; un orden vacío
+  desactiva esa etapa. No se llama a todos a la vez. Se para en el primer éxito.
+- Sin clave, el proveedor se omite. Los modelos se fijan por nombre; no se usa
+  un selector aleatorio ni se aceptan modelos dictados por el chat.
+- Azure: crear un recurso **Speech F0**, confirmar su plan y poner
+  `AZURE_SPEECH_FREE_TIER_CONFIRMED=true`. `AZURE_SPEECH_RESOURCE` es únicamente
+  el nombre del recurso de `NOMBRE.cognitiveservices.azure.com`, no una URL.
+  Esta integración necesita **FFmpeg** en el servidor (`ffmpeg -version`).
+  Convierte a WAV PCM 16 kHz mono sin comprimir y rechaza audios de más de 60 s
+  para Azure; no corta la solicitud. Si no hay FFmpeg, intenta otro proveedor.
+- Deepgram y AssemblyAI: confirmar que la cuenta conserva **créditos iniciales**
+  y tiene recargas automáticas desactivadas antes de cambiar su `TRIAL_CONFIRMED`
+  a `true`. Estos créditos no son una cuota renovable indefinida.
+- **Estos indicadores son confirmaciones administrativas, no verificaciones de
+  saldo/facturación.** El código no puede garantizar coste cero si la cuenta se
+  convierte a pago. Mantén los planes gratuitos, desactiva recargas y revisa los
+  límites en los paneles. El bot nunca compra créditos ni activa facturación.
+- OpenRouter exige un modelo fijo `:free` y envía precios máximos cero para
+  entrada, salida y solicitud; si no hay ruta gratuita compatible con herramientas,
+  falla sin elegir un modelo de pago. No habilita complementos facturables.
+- Revisar las condiciones de tratamiento de datos de cada cuenta: al habilitar
+  un respaldo, puede recibir audios o texto del negocio cuando fallen los anteriores.
+  No se envía el token de Telegram ni una URL privada de descarga a esos servicios.
+
+### Migración y despliegue
+
+Esta ampliación SÍ necesita **0039_telegram_transcription_fallback**: añade estado
+duradero del trabajo de transcripción y fecha del siguiente intento. No cambia
+ventas, pagos, productos ni permisos. Pausa el trabajador antes de actualizar;
+no arranques otro trabajador para sustituirlo.
+
+Tras subir el código al repositorio, en la consola de PythonAnywhere:
+
+```bash
+cd /home/Merk888/Merk-888
+git pull
+source /home/Merk888/.virtualenvs/env/bin/activate
+python manage.py migrate
+python manage.py collectstatic --noinput
+python manage.py comprobar_ia_telegram --status
+```
+
+Configura el archivo privado, reinicia la **misma tarea Always-on** y recarga la
+Web. El panel `/configuracion/telegram/` muestra el orden y qué proveedor está
+sin clave, desactivado por falta de confirmación o configurado. Es un diagnóstico
+de configuración, no una prueba de conectividad ni de saldo.
+
+Pruebas reales opcionales (consumen cuota; no ejecutan acciones del negocio):
+
+```bash
+python manage.py comprobar_ia_telegram --provider cerebras
+python manage.py comprobar_ia_telegram --provider openrouter
+python manage.py comprobar_ia_telegram --stage voice --provider deepgram --audio-file /home/Merk888/prueba.ogg
+```
+
+`--status` nunca llama a las API. Usa un audio de prueba sin datos sensibles;
+el comando de voz no imprime su contenido. En AssemblyAI el diagnóstico puede
+informar que el trabajo sigue pendiente; la cola del bot sí conserva el ID para
+consultarlo después sin volver a subirlo. Evita repetir ese diagnóstico pendiente.
+
+### Comportamiento y límites
+
+- Texto: Gemini → Groq → Cerebras → OpenRouter, salvo orden configurado. Todos
+  reciben las mismas reglas y pasan por la misma validación de herramientas y
+  argumentos antes de consultar o proponer acciones. La calidad real debe
+  comprobarse con consultas representativas, incluyendo montos y nombres propios.
+- Voz: Groq → Azure → Deepgram → AssemblyAI → Gemini. Una transcripción válida
+  se guarda antes de interpretar. Si la interpretación falla, no se transcribe
+  nuevamente el mismo mensaje. No se recortan textos largos para convertirlos
+  en acciones incompletas. Gemini se usa solo para transcribir, sin herramientas.
+- Un trabajo pendiente de AssemblyAI se vuelve a consultar cada 15 s (máximo
+  10 minutos), con un único aviso y sin reenviarlo. Otros chats pueden progresar;
+  ese chat conserva el orden. Al fallar o superar la espera, intenta Gemini si
+  está configurado. Un envío de resultado incierto no se repite automáticamente.
+- Tras guardar el resultado de AssemblyAI se intenta borrar su copia externa;
+  si la limpieza falla se registra `limpieza_pendiente=true`. Esto no garantiza
+  eliminación de archivos subidos o trabajos fallidos: revisar también la
+  política de retención del proveedor.
+- Cada fallo usa su categoría segura (cuota, créditos, acceso, conexión, etc.).
+  Se respeta `Retry-After`; HTTP 402 pausa el proveedor por 24 h sin comprar
+  créditos. Las pausas están en memoria por trabajador y se reinician al reiniciarlo.
+- Solo usuarios vinculados y activos pueden consumir transcripción. Los grupos
+  no se procesan. Los permisos y botones de confirmación se mantienen.
+
+Pruebas sin API reales ni base de datos de producción:
+
+```bash
+python manage.py test mainApp.test_telegram_provider_fallbacks --settings=NovaSoft.test_settings
+```
+
+Referencias de implementación: [Cerebras](https://inference-docs.cerebras.ai/api-reference/chat-completions),
+[rutas OpenRouter](https://openrouter.ai/docs/guides/routing/provider-selection),
+[Azure audio corto](https://learn.microsoft.com/en-us/azure/ai-services/speech-service/rest-speech-to-text-short),
+[Deepgram](https://developers.deepgram.com/docs/pre-recorded-audio),
+[AssemblyAI](https://www.assemblyai.com/docs/pre-recorded-audio/api-reference/transcripts/submit),
+[Gemini audio](https://ai.google.dev/gemini-api/docs/audio).
 
 ## Respuestas más naturales
 
@@ -151,7 +285,7 @@ continuar. No se reutilizan acciones de escritura como si fueran consultas.
 Esto funciona con texto y audios transcritos. Gemini/Groq interpretan las
 solicitudes abiertas. Los atajos claros por ID, resumen, pendientes, navegación,
 fechas de continuación y «quién vendió más hoy/ayer/este mes» se resuelven sin
-llamar a la IA de texto. La transcripción de audio sí necesita Groq.
+llamar a la IA de texto. La transcripción de audio usa los respaldos configurados.
 
 Comandos nuevos:
 
@@ -421,9 +555,11 @@ Credenciales rechazadas o modelos inexistentes mantienen cinco minutos de pausa;
 cambiar la clave o el modelo permite reintentarlo inmediatamente. Las pausas son
 por proveedor/configuración dentro del proceso del trabajador.
 
-Se prueba primero el proveedor alternativo. Si ambos fallan por problemas
-transitorios o respuestas inválidas, se permite un único reintento adicional con
-una espera de 0,4–0,8 segundos, hasta **tres llamadas de interpretación por mensaje**.
+Se prueban primero los proveedores alternativos configurados. Con dos proveedores,
+si ambos fallan por problemas transitorios o respuestas inválidas, se permite un
+único reintento adicional con una espera de 0,4–0,8 segundos, hasta tres llamadas.
+Con los cuatro proveedores se da una oportunidad a cada uno, sin intento extra:
+**máximo cuatro llamadas de interpretación por mensaje**.
 No se reintenta inmediatamente un 429, una clave inválida, un modelo inexistente
 ni un error con espera explícita. Tampoco se hace ese intento extra si ya han
 transcurrido 35 segundos. Las conexiones tienen timeout de 5 segundos y las
@@ -438,8 +574,8 @@ La acción se despacha solo después de una interpretación válida; los cambios
 siguen requiriendo sus botones de confirmación. El panel muestra proveedores
 configurados; tener una clave guardada no garantiza su validez.
 
-Las notas de voz se transcriben con Groq y el texto resultante pasa por esa misma
-combinación Gemini/Groq. No es necesario enviar cada solicitud a ambos si el
+Las notas de voz se transcriben con los respaldos de audio y el texto resultante
+pasa por la cadena de interpretación. No se envía cada solicitud a todos si el
 primer proveedor responde correctamente.
 
 ### Menor consumo y continuidad de las conversaciones
