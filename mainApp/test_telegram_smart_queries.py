@@ -79,6 +79,75 @@ class SmartQueriesTests(TestCase):
     def query(self, source="pagos", **args):
         return bot._execute_tool(self.profile, "consultar_datos", {"fuente": source, **args})
 
+    def test_sales_default_answers_only_exact_total_without_querying_methods(self):
+        with patch("mainApp.models.PagoVenta.objects.filter", side_effect=AssertionError("No consultar desglose no solicitado")):
+            reply = bot._execute_tool(self.profile, "consultar_ventas", {"sucursal": "Yerbabuena"})
+        self.assertEqual(reply.text, f"Hoy ({timezone.localdate():%d/%m/%Y}) se vendieron $3.000,75 en Yerbabuena.")
+        self.assertIsNone(reply.reply_markup)
+
+    def test_sales_count_and_methods_are_independently_requested(self):
+        for detail, breakdown in ((False, False), (True, False), (False, True), (True, True)):
+            with self.subTest(detail=detail, breakdown=breakdown):
+                text = bot._execute_tool(self.profile, "consultar_ventas", {
+                    "detalle": detail, "desglose_por_medio": breakdown,
+                }).text
+                self.assertIn("$3.000,75", text)
+                self.assertEqual("1 venta." in text, detail)
+                self.assertEqual("Por medio de pago:" in text, breakdown)
+                self.assertEqual("Nequi: $3.000,75" in text, breakdown)
+
+    def test_balance_shows_remaining_first_and_details_only_on_request(self):
+        short = bot._execute_tool(self.profile, "consultar_balance", {}).text
+        self.assertTrue(short.startswith("Quedan $2.000,50"))
+        self.assertIn("No es el saldo real del banco o la caja.", short)
+        self.assertNotIn("Vendido:", short)
+        self.assertNotIn("Pagado:", short)
+        detailed = bot._execute_tool(self.profile, "consultar_balance", {"detalle": True}).text
+        self.assertIn("Vendido: $3.000,75 · Pagado: $1.000,25", detailed)
+
+    def test_negative_balance_explains_shortfall_without_negative_money_left(self):
+        Egreso.objects.filter(pk=self.expense.pk).update(monto="4000.90")
+        text = bot._execute_tool(self.profile, "consultar_balance", {}).text
+        self.assertTrue(text.startswith("Los pagos superan las ventas en $1.000,15"))
+        self.assertIn("No es el saldo real", text)
+        self.assertNotIn("Quedan", text)
+
+    def test_aggregate_returns_answer_first_without_unrequested_record_count(self):
+        text = self.query(operacion="promedio", campo="importe").text
+        self.assertEqual(text.splitlines()[0], "Promedio: $1.000,25")
+        self.assertIn(timezone.localdate().strftime("%d/%m/%Y"), text)
+        self.assertNotIn("registros", text)
+        self.assertNotIn("Total:", text)
+        self.assertNotIn("página", text)
+
+    def test_count_uses_business_name_and_displays_zero(self):
+        text = self.query(operacion="contar").text
+        self.assertEqual(text.splitlines()[0], "Pagos: 1")
+        tomorrow = (timezone.localdate() + timedelta(days=1)).isoformat()
+        empty = self.query(operacion="contar", desde=tomorrow, hasta=tomorrow).text
+        self.assertEqual(empty.splitlines()[0], "Pagos: 0")
+        self.assertNotIn("transferencias", empty)
+        self.assertEqual(queries._display(queries.Field("cantidad", "Existencias", "number"), 0), "0")
+
+    def test_natural_filter_labels_preserve_inclusive_and_exclusive_amounts(self):
+        Egreso.objects.create(concepto=self.concept, monto="2000", medio_pago="efectivo")
+        for operator, label, total in (
+            ("mayor", "más de", "$2.000"), ("al_menos", "desde", "$3.000,25"),
+            ("menor", "menos de", "$0"), ("hasta", "hasta", "$1.000,25"),
+            ("distinto", "excepto", "$2.000"),
+        ):
+            with self.subTest(operator=operator):
+                text = self.query(operacion="sumar", campo="importe", filtros=[{
+                    "campo": "importe", "operador": operator, "valor": "1000.25",
+                }]).text
+                self.assertEqual(text.splitlines()[0], f"Total: {total}")
+                self.assertIn(f"Total pagado: {label} $1.000,25", text)
+
+    def test_product_price_is_not_rounded_when_shortening_search_reply(self):
+        text = bot.tool_find_product(self.profile, {"consulta": "aroz diana"})
+        self.assertIn("$1.000,25", text)
+        self.assertIn(f"ID {self.product.pk}", text)
+
     def test_product_search_orders_similar_names_and_keeps_ids(self):
         text = bot.tool_find_product(self.profile, {"consulta": "aroz diana"})
         self.assertIn(f"ID {self.product.pk}", text)

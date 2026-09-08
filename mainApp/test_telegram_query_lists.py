@@ -76,6 +76,16 @@ class TelegramQueryListTests(TestCase):
         self.assertEqual(Egreso.objects.count(), 1)
         self.assertFalse(TelegramAccionPendiente.objects.exists())
 
+    def test_employee_default_uses_one_line_and_omits_unrequested_account(self):
+        employee = self.employee()
+        text = self.query("listar_empleados").text
+        self.assertIn(f"• ID {employee.pk} · Ana Pérez · Cajera · Yerbabuena", text)
+        self.assertNotIn("Usuario:", text)
+        self.assertNotIn("página", text.lower())
+        details = self.query("listar_empleados", detalle=True).text
+        self.assertIn("Usuario: Sin usuario vinculado", details)
+        self.assertNotIn(employee.telefono, details)
+
     def test_today_uses_colombian_date_at_utc_midnight_boundaries(self):
         included = self.expense(name="NOCHE DE HOY", at=datetime(2026, 9, 7, 4, 30, tzinfo=utc_timezone.utc))
         self.expense(name="NOCHE DE AYER", at=datetime(2026, 9, 6, 4, 30, tzinfo=utc_timezone.utc))

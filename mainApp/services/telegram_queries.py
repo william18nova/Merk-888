@@ -8,11 +8,11 @@ from decimal import Decimal, InvalidOperation
 
 from django.apps import apps
 from django.db.models import Avg, Case, CharField, Count, DecimalField, ExpressionWrapper, F, Max, Min, Sum, Value, When
+from django.utils import timezone
 from django.utils.dateparse import parse_date
 
 from .telegram_search import choose_match, rank_candidates, rank_queryset
 from .telegram_wording import filter_label, page_note, period_phrase
-from django.utils import timezone
 
 
 @dataclass(frozen=True)
@@ -238,7 +238,8 @@ def tool_query(profile, arguments):
             heading.append("• " + " · ".join(f"{field.label}: {_display(field, row[field.path])}" for field in selected))
     else:
         aggregate = (Count(measure.path, distinct=True) if measure else Count("pk")) if operation == "contar" else AGGREGATES[operation](measure.path)
-        output = Field("_value", {"contar": "Cantidad de registros", "sumar": "Total", "promedio": "Promedio", "minimo": "Mínimo", "maximo": "Máximo"}[operation], "number" if operation == "contar" else measure.kind)
+        count_label = {"productos_vendidos": "Líneas de productos vendidos", "inventario": "Registros de inventario"}.get(args["fuente"], args["fuente"].capitalize())
+        output = Field("_value", {"contar": count_label, "sumar": "Total", "promedio": "Promedio", "minimo": "Mínimo", "maximo": "Máximo"}[operation], "number" if operation == "contar" else measure.kind)
         if operation == "contar" and measure:
             plural = {"Cliente": "Clientes", "Empleado": "Empleados", "Producto": "Productos", "Sucursal": "Sucursales", "Medio": "Medios", "Concepto": "Conceptos", "Registró": "Usuarios", "Fecha": "Fechas"}.get(measure.label, measure.label)
             output = Field("_value", f"{plural} distintos", "number")

@@ -44,7 +44,7 @@ from mainApp.services.telegram_returns import command_prepare_return, confirm_re
 from mainApp.services.telegram_schedule import confirm_schedule
 from mainApp.services.telegram_assistant import DATE_TOOLS, common_read_request, resolve_continuation
 from mainApp.services.telegram_ai_policy import compact_history, compact_prompt, response_failure, selected_tool_names
-from mainApp.services.telegram_wording import CONVERSATION_STYLE, page_note, period_phrase, social_reply
+from mainApp.services.telegram_wording import CONVERSATION_STYLE, period_phrase, social_reply
 from mainApp.services.telegram_search import choose_match, rank_candidates, rank_queryset, ranked_queryset, resolve_name
 from mainApp.services.telegram_queries import SMART_QUERY_RULES
 from mainApp.services import telegram_providers
@@ -676,7 +676,7 @@ def tool_find_product(profile, arguments):
         barcode = f" · barras {product.codigo_de_barras}" if product.codigo_de_barras else ""
         category = getattr(product.categoria, "nombre", "Sin categoría")
         lines.append(
-            f"• ID {product.pk} · {product.nombre} · {_money(product.precio)} · "
+            f"• ID {product.pk} · {product.nombre} · {_list_money(product.precio)} · "
             f"{category}{barcode}"
         )
     if len(products) == 10:
@@ -727,7 +727,7 @@ def _list_page(arguments, total):
 
 
 def _list_text(value, limit=160):
-    text = " ".join(str(value or "").split())
+    text = " ".join(str(value if value is not None else "").split())
     return text if len(text) <= limit else text[:limit - 1] + "…"
 
 
@@ -916,7 +916,11 @@ def tool_balance(profile, arguments):
         or Decimal("0")
     )
     remaining = sales_total - expense_total
-    lines = [f"Quedan {_list_money(remaining)} {period_phrase(start, end, timezone.localdate())}, al restar los pagos de las ventas."]
+    period = period_phrase(start, end, timezone.localdate())
+    if remaining < 0:
+        lines = [f"Los pagos superan las ventas en {_list_money(-remaining)} {period}."]
+    else:
+        lines = [f"Quedan {_list_money(remaining)} {period}, al restar los pagos de las ventas."]
     if arguments.get("detalle"):
         lines.append(f"Vendido: {_list_money(sales_total)} · Pagado: {_list_money(expense_total)}")
     lines.append("No es el saldo real del banco o la caja.")

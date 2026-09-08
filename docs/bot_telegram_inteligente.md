@@ -10,6 +10,38 @@ pulsar **Confirmar** en Telegram.
 Los cambios de catálogo siguen el mismo esquema: propuesta, revisión y botón
 de confirmación. Un «sí» escrito o hablado no guarda el cambio.
 
+## Respuestas naturales y al grano
+
+El bot responde primero el dato solicitado, sin saludos repetidos, introducciones
+ni explicaciones adicionales. El mismo criterio se aplica al texto y al audio
+transcrito, tanto con el proveedor principal como con los respaldos.
+
+- «¿Cuánto vendimos hoy?» muestra solo el total, la fecha y la sucursal si se pidió.
+- «¿Cuánto hemos pagado hoy?» muestra solo el total pagado.
+- «Sepáralo por medio de pago» añade el desglose; no añade la lista de pagos.
+- «Muéstrame los pagos» sí muestra cada pago, con importe, medio, fecha y quién
+  lo registró. Los botones permiten recorrer la lista completa.
+- «¿Cuánto queda?» muestra ventas menos pagos, aclarando que no es el saldo real
+  de la caja o del banco. El detalle de vendido y pagado se añade cuando se pide.
+- Los informes y rankings no añaden conteos, promedios ni total general a un
+  desglose salvo que se soliciten. Para pedir únicamente una cantidad o promedio,
+  el intérprete usa la consulta de conteo o promedio correspondiente.
+- «¿Y ayer?» mantiene el tipo de respuesta y los filtros de la consulta anterior.
+  Se puede pedir después más o menos detalle sin cambiar el intervalo.
+
+Las listas breves no muestran «página 1 de 1». Se conservan identificadores,
+centavos, condiciones de búsqueda y advertencias necesarias. Las propuestas de
+pago, devolución o cambio siguen requiriendo revisión y el botón **Confirmar**.
+
+No se hace una llamada adicional a la IA para reescribir resultados: se usan
+plantillas y reglas de estilo compartidas. Así, el cambio de tono no añade ese
+consumo de cuota ni permite que una reformulación altere cifras verificadas.
+
+Este ajuste de presentación no añade migraciones ni variables privadas. Para
+verlo en producción, después de subir y actualizar el código, reinicia la misma
+tarea **Always-on** del bot y recarga la Web. Las migraciones de ampliaciones
+anteriores que sigan pendientes deben aplicarse por separado.
+
 ## Activar los respaldos de texto y audio
 
 La integración está programada, pero cada cuenta debe configurarse y probarse

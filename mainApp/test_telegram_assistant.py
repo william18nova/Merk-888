@@ -62,6 +62,37 @@ class TelegramAssistantTests(TestCase):
         button = next(item for row in reply.reply_markup["inline_keyboard"] for item in row if label in item["text"])
         return bot._handle_callback(SimpleNamespace(texto=button["callback_data"], callback_query_id="test-assistant"), self.profile, self.client_stub)
 
+    def test_grouped_report_omits_unrequested_total_average_and_count(self):
+        self.sale(total="100.50")
+        self.sale(total="200.50")
+        reply = self.query(fuente="ventas", agrupar="empleado")
+        self.assertIn("Ana Perez · $301", reply.text)
+        for extra in ("Total:", "promedio", "2 ventas", "página 1"):
+            self.assertNotIn(extra, reply.text)
+        self.assertIsNone(reply.reply_markup)
+
+    def test_report_quantity_and_average_flags_are_independent(self):
+        self.sale(total="100.50")
+        self.sale(total="200.50")
+        for count, average in ((False, False), (True, False), (False, True), (True, True)):
+            with self.subTest(count=count, average=average):
+                text = self.query(fuente="ventas", incluir_cantidad=count, incluir_promedio=average).text
+                self.assertIn("Total: $301", text)
+                self.assertEqual("2 ventas" in text, count)
+                self.assertEqual("Promedio: $150,50" in text, average)
+
+    def test_followup_keeps_sales_detail_level_until_explicitly_changed(self):
+        yesterday = timezone.localdate() - timedelta(days=1)
+        self.sale()
+        self.sale(total="50.25", day=yesterday)
+        self.query("consultar_ventas", detalle=True, desglose_por_medio=True)
+        reply = self.query("continuar_consulta", cambios={"desde": yesterday.isoformat()})
+        self.assertIn("Ayer", reply.text)
+        self.assertIn("1 venta.", reply.text)
+        self.assertIn("Efectivo: $50,25", reply.text)
+        short = self.query("continuar_consulta", cambios={"detalle": False, "desglose_por_medio": False})
+        self.assertEqual(short.text, f"Ayer ({yesterday:%d/%m/%Y}) se vendieron $50,25.")
+
     def test_employee_ranking_uses_sale_totals_not_joined_lines(self):
         self.sale(total="100.50")
         self.sale(total="200.50")

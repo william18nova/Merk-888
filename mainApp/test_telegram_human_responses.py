@@ -68,6 +68,15 @@ class HumanWordingTests(SimpleTestCase):
                 self.assertIn("botón Confirmar", prompt)
                 self.assertIn("no inventes", prompt)
 
+    def test_prompts_require_direct_answers_without_hiding_requested_details(self):
+        for prompt in (bot._assistant_system_prompt(), bot._ai_request_context("Muéstrame ventas y pagos de hoy")[1]):
+            with self.subTest(prompt_size=len(prompt)):
+                for rule in ("Responde primero el dato", "No añadas análisis", "no la sustituyas por un resumen", "Conserva el nivel de detalle"):
+                    self.assertIn(rule, prompt)
+                self.assertIn("consultar_ventas", prompt)
+                self.assertIn("desglose_por_medio", prompt)
+                self.assertIn("incluir_promedio", prompt)
+
     def test_provider_details_are_not_sent_in_error_messages(self):
         update = SimpleNamespace(tipo="TEXTO", transcripcion="")
         for error in (
@@ -150,6 +159,24 @@ class HumanBusinessRepliesTests(TestCase):
             self.assertIn(part, reply.text)
         self.assertNotIn("Así se reparten", reply.text)
         self.assertEqual(Egreso.objects.count(), 1)
+
+    def test_text_and_transcribed_audio_use_same_short_total_without_rewriting_ai(self):
+        request = "Cuánto hemos pagado hoy"
+        text = self.message(request)
+        voice = self.message("", tipo="VOZ", transcripcion=request)
+        with patch.object(bot, "_intelligent_function_call", side_effect=AssertionError("No llamar IA para reformular")):
+            plain_reply = bot.build_reply(text, self.client_stub)
+            voice_reply = bot.build_reply(voice, self.client_stub)
+        self.assertEqual(plain_reply.text, voice_reply.text)
+        self.assertEqual(plain_reply.text, f"Hoy ({timezone.localdate():%d/%m/%Y}) se han pagado $1.000,25.")
+
+    def test_ai_interpreted_request_needs_no_second_call_for_short_answer(self):
+        with patch.object(bot, "_intelligent_function_call", return_value=("consultar_pagos", {}, "")) as ai:
+            reply = bot.build_reply(self.message("Hola, dime cuánto salió en pagos durante esta jornada"), self.client_stub)
+        ai.assert_called_once()
+        self.assertNotIn("\n", reply.text)
+        self.assertIn("$1.000,25", reply.text)
+        self.assertFalse(TelegramAccionPendiente.objects.exists())
 
     def test_short_social_messages_do_not_consume_ai_or_create_proposals(self):
         with patch.object(bot, "_intelligent_function_call", side_effect=AssertionError("No llamar IA para saludar")):
