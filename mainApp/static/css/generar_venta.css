@@ -489,6 +489,33 @@ body::before{
   min-width:0;
 }
 
+.venta-carrito-audit-notice{
+  position:fixed;
+  left:50%;
+  bottom:calc(88px + env(safe-area-inset-bottom, 0px));
+  transform:translateX(-50%);
+  z-index:100000;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  width:max-content;
+  max-width:min(420px, calc(100% - 32px));
+  margin:0;
+  padding:12px 18px;
+  border:1px solid #e5b65b;
+  border-radius:10px;
+  background:#23344b;
+  color:#ffe3a6;
+  font:600 16px/1.45 var(--font);
+  text-align:center;
+  box-shadow:0 8px 28px rgba(0,0,0,.35);
+  pointer-events:none;
+  overflow-wrap:anywhere;
+}
+.venta-carrito-audit-notice[hidden]{ display:none; }
+.venta-carrito-audit-notice.is-warning{ border-color:#ff9fa9; color:#ffe1e5; }
+@media print{ .venta-carrito-audit-notice{ display:none; } }
+
 /* total */
 #total{
   display:inline-block;

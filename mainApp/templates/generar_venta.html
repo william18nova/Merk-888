@@ -7,7 +7,7 @@
 {% block extra_head %}
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"/>
   <link rel="stylesheet" href="{% static 'vendor/jquery-ui/jquery-ui-1.13.2.min.css' %}?v=1"/>
-  <link rel="stylesheet" href="{% static 'css/generar_venta.css' %}?v=24">
+  <link rel="stylesheet" href="{% static 'css/generar_venta.css' %}?v=26">
   <link rel="stylesheet" href="{% static 'css/modal_venta.css' %}?v=19">
 {% endblock %}
 
@@ -249,6 +249,11 @@
 
 </div>
 
+<p id="venta-carrito-audit-notice" class="venta-carrito-audit-notice"
+   role="status" aria-live="polite" aria-atomic="true" hidden>
+  <span id="venta-carrito-audit-message"></span>
+</p>
+
 <aside id="venta-draft-center" class="venta-draft-center" aria-label="Gestor de ventas pendientes" hidden>
   <button
     type="button"
@@ -322,5 +327,5 @@
   if (!/^https?:\/\//.test(window.POS_AGENT_URL)) window.POS_AGENT_URL = "http://127.0.0.1:8787";
 </script>
 
-<script src="{% static 'javascript/generar_venta.js' %}?v=38"></script>
+<script src="{% static 'javascript/generar_venta.js' %}?v=40"></script>
 {% endblock %}

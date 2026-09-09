@@ -240,6 +240,9 @@ $(function () {
     isMerk2888: false
   };
   const cartAuditSessionItems = new Map();
+  let cartClearNoticeDay = "";
+  let cartClearNoticeCount = 0;
+  let cartClearNoticeTimer = null;
 
   /* ================== Borrador local recuperable ==================
      Es solamente una ayuda de interfaz: la venta sigue siendo creada y
@@ -1550,12 +1553,42 @@ $(function () {
     };
   }
 
+  function showCartClearAuditNotice(result, failed = false) {
+    const notice = document.getElementById("venta-carrito-audit-notice");
+    const message = document.getElementById("venta-carrito-audit-message");
+    if (!notice || !message) return;
+    if (failed) {
+      message.textContent = "Carrito vaciado. No se pudo confirmar el conteo diario; revisa la conexión.";
+    } else {
+      if (!result?.success || result.ignored) return;
+      const count = Number(result.daily_count);
+      const day = String(result.audit_day || "");
+      if (!Number.isSafeInteger(count) || count < 1 || !/^\d{4}-\d{2}-\d{2}$/.test(day)) return;
+      // Una respuesta lenta de otro vaciado no debe retroceder el contador.
+      if (day < cartClearNoticeDay || (day === cartClearNoticeDay && count < cartClearNoticeCount)) return;
+      cartClearNoticeCount = day === cartClearNoticeDay ? Math.max(count, cartClearNoticeCount) : count;
+      cartClearNoticeDay = day;
+      message.textContent = `Venta no facturada #${cartClearNoticeCount} del día`;
+    }
+    notice.classList.toggle("is-warning", failed);
+    notice.hidden = false;
+    clearTimeout(cartClearNoticeTimer);
+    cartClearNoticeTimer = setTimeout(() => {
+      notice.hidden = true;
+      message.textContent = "";
+      cartClearNoticeTimer = null;
+    }, 2000);
+  }
+
   function sendCartClearAudit(payload, options = {}) {
     if (CARRITO_LIMPIO_AUDIT_DISABLED) return;
     if (!CARRITO_LIMPIO_AUDIT_URL || !payload || !Array.isArray(payload.items) || !payload.items.length) return;
 
     const csrf = getCSRF();
-    const body = JSON.stringify(payload);
+    const body = JSON.stringify({
+      ...payload,
+      motivo: options.beacon ? "cierre_sin_borrador" : "carrito_vaciado",
+    });
 
     if (options.beacon && navigator.sendBeacon && window.FormData) {
       try {
@@ -1567,7 +1600,7 @@ $(function () {
     }
 
     try {
-      fetch(CARRITO_LIMPIO_AUDIT_URL, {
+      return fetch(CARRITO_LIMPIO_AUDIT_URL, {
         method: "POST",
         credentials: "same-origin",
         keepalive: !!options.keepalive && body.length < 60000,
@@ -1577,8 +1610,17 @@ $(function () {
           "X-CSRFToken": csrf,
         },
         body,
-      }).catch(() => {});
-    } catch (_) {}
+      }).then(async response => {
+        if (!response.ok) throw new Error("No se pudo registrar el vaciado");
+        const result = await response.json();
+        if (!result.success) throw new Error("Registro de vaciado no confirmado");
+        if (!options.beacon) showCartClearAuditNotice(result);
+      }).catch(() => {
+        if (!options.beacon) showCartClearAuditNotice(null, true);
+      });
+    } catch (_) {
+      if (!options.beacon) showCartClearAuditNotice(null, true);
+    }
   }
 
   function removeRowByPidWithAuditIfEmpty(pid) {

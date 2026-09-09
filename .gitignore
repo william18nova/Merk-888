@@ -22,6 +22,9 @@ local_settings.py
 # Environment variables and secrets
 .env
 .env.*
+*.env
+.price_sync.ps1
+.telegram_bot.ps1
 !.env.example
 
 # Uploaded/generated assets that should live outside git

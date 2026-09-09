@@ -6666,6 +6666,28 @@ def _audit_user_is_web_master(user):
     return role_name in WEB_MASTER_ROLE_NAMES
 
 
+@transaction.atomic
+def _record_cart_clear_with_daily_count(user, **fields):
+    # Serializa los vaciados del mismo trabajador, incluso desde varias pestañas.
+    Usuario.objects.select_for_update().only("pk").get(pk=user.pk)
+    audit = VentaCarritoAudit.objects.create(usuarioid=user.pk, **fields)
+    business_tz = timezone.get_default_timezone()
+    day = timezone.localtime(audit.creado_en, business_tz).date()
+    start = timezone.make_aware(datetime.combine(day, time.min), business_tz)
+    end = timezone.make_aware(datetime.combine(day + timedelta(days=1), time.min), business_tz)
+    daily_count = (
+        VentaCarritoAudit.objects.filter(
+            usuarioid=user.pk,
+            evento=VentaCarritoAudit.EVENTO_LIMPIADO,
+            creado_en__gte=start,
+            creado_en__lt=end,
+        )
+        .exclude(motivo="cierre_sin_borrador")
+        .count()
+    )
+    return audit, daily_count, day
+
+
 @method_decorator(require_POST, name="dispatch")
 class VentaCarritoLimpioAuditView(LoginRequiredMixin, View):
     """
@@ -6700,6 +6722,9 @@ class VentaCarritoLimpioAuditView(LoginRequiredMixin, View):
         try:
             payload = self._payload(request)
         except (json.JSONDecodeError, UnicodeDecodeError):
+            return JsonResponse({"success": False, "error": "Payload invalido."}, status=400)
+
+        if not isinstance(payload, dict):
             return JsonResponse({"success": False, "error": "Payload invalido."}, status=400)
 
         raw_items = payload.get("items") or payload.get("productos") or []
@@ -6747,9 +6772,10 @@ class VentaCarritoLimpioAuditView(LoginRequiredMixin, View):
             if cliente:
                 cliente_nombre = f"{cliente.nombre or ''} {cliente.apellido or ''}".strip()
 
-        audit = VentaCarritoAudit.objects.create(
+        audit, daily_count, audit_day = _record_cart_clear_with_daily_count(
+            request.user,
             evento=VentaCarritoAudit.EVENTO_LIMPIADO,
-            usuarioid=getattr(request.user, "pk", None),
+            motivo="cierre_sin_borrador" if payload.get("motivo") == "cierre_sin_borrador" else "carrito_vaciado",
             usuario_nombre=_audit_text(getattr(request.user, "nombreusuario", "") or str(request.user), 160),
             sucursalid=sucursal_id,
             sucursal_nombre=_audit_text(getattr(sucursal, "nombre", "") or payload.get("sucursal_nombre"), 120),
@@ -6768,7 +6794,12 @@ class VentaCarritoLimpioAuditView(LoginRequiredMixin, View):
             ip=_audit_client_ip(request),
         )
 
-        return JsonResponse({"success": True, "audit_id": audit.pk})
+        return JsonResponse({
+            "success": True,
+            "audit_id": audit.pk,
+            "daily_count": daily_count,
+            "audit_day": audit_day.isoformat(),
+        })
 
 
 class VentaCarritoAuditListView(LoginRequiredMixin, ListView):
@@ -14222,9 +14253,7 @@ class VisorProductoBarcodeView( View):
     template_name = "visor_producto_barcode.html"
 
     def get(self, request):
-        if request.user.is_authenticated:
-            return redirect("visor_cajero")
-        return render(request, self.template_name)
+        return render(request, self.template_name, {"visor_cajero": False})
 
 
 class VisorProductosCajeroView(LoginRequiredMixin, View):

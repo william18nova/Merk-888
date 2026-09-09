@@ -73,13 +73,29 @@ class VisorProductosTests(TestCase):
         raw = {"label": "Visor Barcode", "url_name": "visor_barcode"}
         self.assertEqual(_resolve_nav_item(raw, AnonymousUser())["url"], reverse("visor_barcode"))
 
-    def test_authenticated_old_visor_url_redirects_directly_to_cashier_page(self):
+    def test_authenticated_public_visor_stays_barcode_only_without_redirect(self):
         self.client.force_login(self.user)
         response = self.client.get(reverse("visor_barcode"), follow=True)
-        self.assertEqual(response.redirect_chain, [(reverse("visor_cajero"), 302)])
-        self.assertContains(response, 'id="vb_search"')
+        self.assertEqual(response.redirect_chain, [])
+        self.assertNotContains(response, 'id="vb_search"')
         self.assertContains(response, 'id="vb_barcode"')
+        self.assertContains(response, 'id="vb_camera"')
+        self.assertContains(response, 'id="vb_quantity"')
+        self.assertContains(response, 'const VISOR_CAJERO_URL = "";')
         self.assertNotContains(response, "Buscar por nombre o ID →")
+
+    def test_public_barcode_lookup_does_not_fall_back_to_name_or_product_id(self):
+        for authenticated in (False, True):
+            if authenticated:
+                self.client.force_login(self.user)
+            for term in (self.other.nombre, str(self.product.pk)):
+                with self.subTest(authenticated=authenticated, term=term):
+                    response = self.client.get(reverse("visor_barcode_lookup"), {"barcode": term})
+                    self.assertEqual(response.status_code, 404)
+                    self.assertFalse(response.json()["success"])
+            response = self.client.get(reverse("visor_barcode_lookup"), {"barcode": self.other.codigo_de_barras})
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json()["product"]["id"], self.other.pk)
 
     def test_search_does_not_expose_internal_fields(self):
         item = json.loads(self.search("tomate").content)["results"][0]
@@ -105,6 +121,8 @@ class VisorProductosTests(TestCase):
         request.user = AnonymousUser()
         response = VisorProductoBarcodeView.as_view()(request)
         self.assertContains(response, 'id="vb_quantity"')
+        self.assertContains(response, 'id="vb_barcode"')
+        self.assertContains(response, 'const VISOR_CAJERO_URL = "";')
         self.assertNotContains(response, 'id="vb_search"')
 
     def test_cashier_page_has_both_search_modes(self):
