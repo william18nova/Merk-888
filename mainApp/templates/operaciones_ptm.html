@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% load static %}
+{% block title %}Operaciones PTM{% endblock %}
+{% block extra_head %}
+<link rel="stylesheet" href="{% static 'css/registrar_egreso.css' %}?v=1">
+<link rel="stylesheet" href="{% static 'css/operaciones_ptm.css' %}?v=1">
+{% endblock %}
+{% block content %}
+<div class="expense-page ptm-page">
+  <header class="expense-hero">
+    <div><p class="expense-eyebrow">Caja · solo efectivo</p><h1>Operaciones PTM</h1>
+    <p class="expense-lead">Recargas y pagos: entra dinero. Retiros: sale dinero. Cada comprobante se registra una sola vez.</p></div>
+    <a class="ptm-link" href="{% url 'turno_caja' %}">Ir a mi turno →</a>
+  </header>
+  {% for message in messages %}<p class="expense-message" role="status">{{ message }}</p>{% endfor %}
+  {% if not has_open_turn %}<p class="expense-warning">Para registrar PTM necesitas un turno de caja abierto, incluso si las ventas normales funcionan sin turno.</p>{% endif %}
+  <section class="expense-panel ptm-entry">
+    <h2>Registrar comprobante</h2>
+    <p>Este formulario registra una operación que ya realizaste en PTM; no la ejecuta en la plataforma.</p>
+    <form method="post" class="expense-form" id="ptm-form">
+      {% csrf_token %}{{ form.solicitud_id }}
+      {% for error in form.non_field_errors %}<p class="expense-form-errors" role="alert">{{ error }}</p>{% endfor %}
+      <div class="ptm-fields">
+      {% for field in form.visible_fields %}
+        <div class="expense-field {% if field.name == 'confirmada' %}ptm-confirm{% endif %}">
+          {% if field.name == 'confirmada' %}<label>{{ field }} {{ field.label }}</label>
+          {% else %}<label for="{{ field.id_for_label }}">{{ field.label }}</label>{{ field }}{% endif %}
+          {% for error in field.errors %}<em>{{ error }}</em>{% endfor %}
+        </div>
+      {% endfor %}
+      </div>
+      <p id="ptm-direction" aria-live="polite"></p>
+      <p class="ptm-muted">No agregues estos valores a “Facturas pagadas”: ya ajustan el cierre. No hay descuentos ni movimiento de inventario.</p>
+      <button class="ptm-submit" type="submit" {% if not has_open_turn %}disabled{% endif %}>Guardar operación confirmada</button>
+    </form>
+  </section>
+  <section class="expense-history ptm-entry">
+    <h2>{% if can_review %}Historial PTM{% else %}Mis operaciones PTM{% endif %}</h2>
+    <form method="get" class="ptm-filters">
+      <label>Turno # <input name="turno" inputmode="numeric" value="{{ turno_filtro }}" placeholder="Todos"></label>
+      <label>Referencia <input name="referencia" value="{{ referencia_filtro }}" maxlength="100"></label>
+      <button class="ptm-submit" type="submit">Consultar</button>
+    </form>
+    {% if resumen %}<p>Turno #{{ turno_seleccionado.pk }} · {{ resumen.cantidad }} transacciones · Entradas: ${{ resumen.recargas|floatformat:2 }} · Salidas: ${{ resumen.retiros|floatformat:2 }} · Neto: ${{ resumen.neto|floatformat:2 }}</p>{% endif %}
+    <div class="ptm-table-wrap"><table>
+      <thead><tr><th>ID / fecha</th><th>Operación</th><th>Efectivo COP</th><th>Referencia</th><th>Turno / caja</th><th>Registró</th></tr></thead>
+      <tbody>{% for op in page_obj %}<tr>
+        <td>#{{ op.pk }}<br><small>{{ op.creado_en|date:"d/m/Y H:i:s" }}</small></td>
+        <td>{{ op.get_tipo_display }}</td><td>{% if op.tipo == 'retiro' %}−{% else %}+{% endif %}${{ op.monto|floatformat:2 }}</td>
+        <td>{{ op.referencia }}</td><td>#{{ op.turno_id }} · {{ op.turno.puntopago.nombre }}</td><td>{{ op.usuario.nombreusuario }}</td>
+      </tr>{% empty %}<tr><td colspan="6">No hay operaciones con estos filtros.</td></tr>{% endfor %}</tbody>
+    </table></div>
+    <nav class="ptm-pagination" aria-label="Páginas del historial">
+      {% if page_obj.has_previous %}<a href="?{{ pagination_query }}&page={{ page_obj.previous_page_number }}">← Anterior</a>{% endif %}
+      <span>{{ page_obj.number }} / {{ page_obj.paginator.num_pages }}</span>
+      {% if page_obj.has_next %}<a href="?{{ pagination_query }}&page={{ page_obj.next_page_number }}">Siguiente →</a>{% endif %}
+    </nav>
+    <p class="ptm-muted">Las operaciones guardadas no se editan ni se borran desde el sistema. Ante un error, conserva el comprobante y comunícalo al administrador antes de cerrar.</p>
+    {% if conteos %}
+      <h3>Intentos de cierre PTM</h3>
+      <ul>{% for conteo in conteos %}<li>{{ conteo.creado_en|date:"d/m/Y H:i:s" }} · {{ conteo.usuario.nombreusuario }} · Declaró {{ conteo.declarado }}, registrados {{ conteo.registrado }}{% if conteo.declarado != conteo.registrado %} · No coincide{% endif %}</li>{% endfor %}</ul>
+    {% endif %}
+  </section>
+</div>
+{% endblock %}
+{% block scripts %}<script defer src="{% static 'javascript/operaciones_ptm.js' %}?v=1"></script>{% endblock %}

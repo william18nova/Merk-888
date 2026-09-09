@@ -41,7 +41,7 @@ from mainApp.services.telegram_operations import (
     validate_arguments as validate_operation_arguments,
 )
 from mainApp.services.telegram_returns import command_prepare_return, confirm_return
-from mainApp.services.telegram_schedule import confirm_schedule
+from mainApp.services.telegram_schedule import confirm_schedule, handle_schedule_callback, schedule_buttons
 from mainApp.services.telegram_assistant import DATE_TOOLS, common_read_request, resolve_continuation
 from mainApp.services.telegram_ai_policy import compact_history, compact_prompt, response_failure, selected_tool_names
 from mainApp.services.telegram_wording import CONVERSATION_STYLE, period_phrase, social_reply
@@ -1208,6 +1208,10 @@ def _assistant_system_prompt():
         "no consultar_turnos ni horarios de apertura. Por defecto devuelve las próximas siete fechas "
         "del empleado vinculado. Para todos usa todos=true solo si lo pide, o empleado para una persona. "
         "Para esta semana laboral incluye lunes a domingo, y para hoy desde=hasta=hoy. "
+        "Para quién trabaja usa tipo=trabajo y todos=true; para quién descansa tipo=descanso y todos=true. "
+        "Para a qué hora entra/sale usa vista=entrada/salida, sin añadir el otro extremo; si omite la fecha usa hoy. "
+        "detalle=true solo si pide notas o el ciclo de rotación. No tener turno registrado no demuestra que descanse, y planificado no significa asistencia real. "
+        "Para 'y mañana', 'y la próxima semana', 'solo descansos' o cambiar de empleado usa continuar_consulta; conserva sucursal y los demás filtros. "
         "Para asignar, mover, editar o cancelar una jornada usa preparar_turno_empleado; "
         "los IDs son del calendario laboral, NO de caja. Si falta ID al editar/cancelar consulta "
         "primero el calendario; no adivines un turno cuando hay varios. Las horas y fechas deben "
@@ -1556,6 +1560,9 @@ def _execute_tool(profile, tool_name, arguments, update=None):
             if buttons:
                 existing = (result.reply_markup or {}).get("inline_keyboard", [])
                 result.reply_markup = {"inline_keyboard": existing + [buttons]}
+            if tool_name == "consultar_horarios_empleados":
+                existing = (result.reply_markup or {}).get("inline_keyboard", [])
+                result.reply_markup = {"inline_keyboard": existing + schedule_buttons(audit.pk, pagination["arguments"])}
         return result if isinstance(result, BotReply) else BotReply(str(result), tool_name)
     except Exception as exc:
         _audit(profile, tool_name, arguments, successful=False, detail=str(exc))
@@ -1668,6 +1675,8 @@ def _handle_callback(update, profile, client):
     from mainApp.models import TelegramAccionPendiente
 
     data = str(update.texto or "")
+    if data.startswith("schedule:"):
+        return handle_schedule_callback(update, profile, client)
     if data.startswith("page:"):
         return _handle_list_page_callback(update, profile, client)
     match = re.fullmatch(r"(confirm|cancel|concept|newconcept):([0-9a-fA-F-]{36})(?::([0-9]{1,2}))?", data)

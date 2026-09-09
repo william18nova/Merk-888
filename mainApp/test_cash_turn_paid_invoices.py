@@ -42,7 +42,7 @@ class PaidInvoicesMarkupTests(SimpleTestCase):
         )
         self.assertIn("Facturas pagadas (caja)", template)
         self.assertIn('<div id="mFacturasPagadas" class="v">', template)
-        self.assertIn("turnos_caja_admin.js' %}?v=5", template)
+        self.assertIn("turnos_caja_admin.js' %}?v=6", template)
 
     def test_single_input_is_visible_in_both_closure_steps(self):
         markup = _ClosureMarkup()

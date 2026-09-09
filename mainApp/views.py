@@ -31,7 +31,8 @@ from django.db import transaction, connection, DatabaseError, IntegrityError
 from django.db.models.deletion import ProtectedError
 from django.contrib import messages
 from zoneinfo import ZoneInfo
-from django.core.exceptions import FieldDoesNotExist
+from django.core.exceptions import FieldDoesNotExist, ValidationError as DjangoValidationError
+from .services.ptm import resumen_ptm, resumen_ptm_json, validar_conteo_ptm
 from django.core import signing
 from django.core.signing import BadSignature, SignatureExpired
 from django.views.generic import DetailView
@@ -5018,6 +5019,13 @@ class GenerarVentaView(LoginRequiredMixin, View):
             .only("productoid", "nombre", "precio")
         )
         prods_map = {p.productoid: p for p in prods_qs}
+
+        if Producto.objects.filter(pk__in=prod_ids, tipo_ptm__isnull=False).exists():
+            return JsonResponse({
+                "success": False,
+                "error": "PTM se registra en Operaciones PTM, no como mercancía. Usa los botones PTM de esta página.",
+                "ptm_url": reverse("operaciones_ptm"),
+            }, status=400)
 
         detalles = []
         total = Decimal('0')
@@ -11854,6 +11862,11 @@ def _expected_por_metodo(turno: TurnoCaja) -> tuple[dict[str, Decimal], Decimal,
         ).quantize(Decimal("0.01"))
     expected = normalized_expected
 
+    # PTM mueve efectivo de terceros, pero no crea ventas ni pagos de mercancía.
+    expected[CASH_PAYMENT_CODE] = (
+        expected.get(CASH_PAYMENT_CODE, Decimal("0.00")) + resumen_ptm(turno)["neto"]
+    )
+
     # Los activos aparecen aunque no tengan movimientos. Los inactivos solo
     # permanecen si el turno conserva ventas, reintegros o una fila historica.
     existing_codes = TurnoCajaMedio.objects.filter(turno=turno).values_list(
@@ -12147,6 +12160,11 @@ class TurnoCajaCerrarApi(LoginRequiredMixin, View):
                 status=409
             )
 
+        try:
+            validar_conteo_ptm(turno, request.user, request.POST.get("ptm_transacciones"))
+        except DjangoValidationError as exc:
+            return JsonResponse({"success": False, "error": " ".join(exc.messages)}, status=400)
+
         efectivo_entregado = _to_decimal(request.POST.get("efectivo_entregado"), Decimal("0.00"))
         if efectivo_entregado < 0:
             return JsonResponse({"success": False, "error": "Efectivo entregado no puede ser negativo."}, status=400)
@@ -12430,6 +12448,7 @@ class TurnoCajaRetiroView(LoginRequiredMixin, View):
             })
 
         retiro_data = {
+            "ptm": resumen_ptm_json(turno),
             "turno_id": turno.id,
             "puntopago": getattr(turno.puntopago, "nombre", str(turno.puntopago_id)),
             "cajero": _turno_label_usuario(turno.cajero),
@@ -12536,6 +12555,9 @@ def _calcular_esperados_por_metodo(pp_id, start_dt, end_dt, turno=None):
         esperado_por = _aplicar_reintegros_a_esperados(
             esperado_por,
             _sum_reintegros_por_metodo(turno),
+        )
+        esperado_por[CASH_PAYMENT_CODE] = (
+            esperado_por.get(CASH_PAYMENT_CODE, Decimal("0.00")) + resumen_ptm(turno)["neto"]
         )
 
     esperado_normalizado = {}
@@ -13399,6 +13421,7 @@ class TurnoCajaAdminDetailAPI(LoginRequiredMixin, View):
         return JsonResponse({
             "success": True,
             "turno": {
+                "ptm": resumen_ptm_json(turno),
                 "id": turno.id,
                 "estado": turno.estado,
                 "puntopago": getattr(turno.puntopago, "nombre", str(turno.puntopago_id)),
@@ -13480,6 +13503,12 @@ class TurnoCajaAdminUpdateAPI(LoginRequiredMixin, View):
             TurnoCaja.objects.select_for_update(),
             pk=turno_id,
         )
+
+        if turno.operaciones_ptm.exists():
+            return JsonResponse({
+                "success": False,
+                "error": "Este turno tiene operaciones PTM auditables: no se permite alterar sus fechas, estado o valores manualmente. Usa el cierre normal.",
+            }, status=409)
 
         medios_in = payload.get("medios") or []
         if not isinstance(medios_in, list):
@@ -14196,6 +14225,37 @@ class VisorProductoBarcodeView( View):
         return render(request, self.template_name)
 
 
+class VisorProductosCajeroView(LoginRequiredMixin, View):
+    def get(self, request):
+        return render(request, "visor_producto_barcode.html", {"visor_cajero": True})
+
+
+class ProductoBuscarVisorCajeroView(LoginRequiredMixin, View):
+    def get(self, request):
+        term = (request.GET.get("term") or "").strip()[:160]
+        if not term:
+            return JsonResponse({"results": []})
+        filtro = Q()
+        for word in term.split():
+            filtro &= Q(nombre__icontains=word)
+        exact_id = int(term) if term.isascii() and term.isdecimal() and len(term) <= 10 else None
+        if exact_id is not None and exact_id <= 2147483647:
+            filtro |= Q(pk=exact_id)
+        else:
+            exact_id = None
+        products = Producto.objects.filter(filtro).annotate(
+            exact_match=Case(When(pk=exact_id, then=Value(0)), default=Value(1), output_field=IntegerField())
+        ).order_by("exact_match", "nombre", "pk").values(
+            "productoid", "nombre", "precio", "precio_anterior", "codigo_de_barras",
+        )[:31]
+        rows = list(products)
+        return JsonResponse({"results": [{
+            "id": p["productoid"], "text": p["nombre"], "barcode": p["codigo_de_barras"] or "",
+            "precio": str(p["precio"]),
+            "precio_anterior": str(p["precio_anterior"]) if p["precio_anterior"] is not None else "",
+        } for p in rows[:30]], "pagination": {"more": len(rows) > 30}})
+
+
 class ProductoLookupPorBarrasVisorView(View):
     """
     GET ?barcode=7709...
@@ -14235,7 +14295,7 @@ class ProductoBuscarBarrasVisorView( View):
 
     def get(self, request):
         term = (request.GET.get("term") or "").strip()
-        page = int(request.GET.get("page") or 1)
+        page = request.GET.get("page") or 1
 
         if not term:
             return JsonResponse({"results": [], "pagination": {"more": False}})

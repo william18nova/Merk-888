@@ -1,0 +1,17 @@
+.ptm-page { font-family: Arial, sans-serif; padding-inline: 16px; }
+.ptm-entry { margin-top: 22px; padding: clamp(18px, 3vw, 32px); }
+.ptm-fields { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 18px; }
+.ptm-confirm { grid-column: 1 / -1; }
+.ptm-confirm input { width: auto; min-height: auto; margin-right: 8px; }
+.ptm-page a { color: #c5e8ff; }
+.ptm-submit { border: 1px solid #75bcff; border-radius: 12px; padding: 13px 20px; background: #2d84d8; color: white; font-weight: 700; cursor: pointer; }
+.ptm-submit:disabled { opacity: .5; cursor: not-allowed; }
+.ptm-muted { color: #bfd3eb; font-size: .9rem; line-height: 1.5; }
+.ptm-table-wrap { overflow-x: auto; }
+.ptm-page table { width: 100%; border-collapse: collapse; text-align: left; }
+.ptm-page th, .ptm-page td { padding: 14px 10px; border-bottom: 1px solid #ffffff26; overflow-wrap: anywhere; }
+.ptm-filters { display: flex; align-items: end; gap: 14px; flex-wrap: wrap; margin: 20px 0; }
+.ptm-filters label { display: grid; gap: 6px; }
+.ptm-filters input { background: #ffffff16; color: white; border: 1px solid #ffffff45; border-radius: 10px; padding: 12px; }
+.ptm-pagination { display: flex; gap: 20px; margin-top: 20px; }
+@media(max-width: 650px) { .ptm-fields { grid-template-columns: 1fr; } }

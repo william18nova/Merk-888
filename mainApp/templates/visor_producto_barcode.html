@@ -7,8 +7,8 @@
   <link rel="stylesheet"
         href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"/>
   <link rel="stylesheet"
-        href="https://code.jquery.com/ui/1.13.3/themes/base/jquery-ui.css"/>
-  <link rel="stylesheet" href="{% static 'css/visor_barcode.css' %}">
+        href="{% static 'vendor/jquery-ui/jquery-ui-1.13.2.min.css' %}"/>
+  <link rel="stylesheet" href="{% static 'css/visor_barcode.css' %}?v=2">
 {% endblock %}
 
 {% block content %}
@@ -17,12 +17,21 @@
     <div class="vb-header">
       <div class="vb-icon"><i class="fas fa-barcode"></i></div>
       <div class="vb-title">
-        <h2>Visor de Producto</h2>
-        <p>Escanea o escribe el código de barras</p>
+        <h2>{% if visor_cajero %}Consulta de productos · Cajeros{% else %}Visor de Producto{% endif %}</h2>
+        <p>{% if visor_cajero %}Busca por nombre, ID o código de barras{% else %}Escanea o escribe el código de barras{% endif %}</p>
+        {% if request.user.is_authenticated and not visor_cajero %}<a class="vb-link" href="{% url 'visor_cajero' %}">Buscar por nombre o ID →</a>{% endif %}
       </div>
     </div>
 
     <div id="vb-error" class="vb-alert vb-alert--error" style="display:none;"></div>
+
+    {% if visor_cajero %}
+    <div class="vb-inputwrap">
+      <label for="vb_search">Nombre o ID del producto</label>
+      <input id="vb_search" class="vb-input" autocomplete="off" placeholder="Ej.: tomate o 2978">
+      <p class="vb-hint">Selecciona el producto en la lista. No registra una venta ni modifica inventario.</p>
+    </div>
+    {% endif %}
 
     <div class="vb-inputwrap">
       <label for="vb_barcode">Código de barras</label>
@@ -53,6 +62,13 @@
         <span class="vb-pill" id="vb_pid">ID: —</span>
         <span class="vb-pill" id="vb_bar">Barras: —</span>
       </div>
+      <section class="vb-quantity" aria-label="Calcular valor por cantidad">
+        <label for="vb_quantity">Cantidad (gramos si se vende por peso)</label>
+        <input id="vb_quantity" class="vb-input" type="number" min="1" max="999999999" step="1" value="1" inputmode="numeric" disabled aria-describedby="vb_quantity_help">
+        <p class="vb-hint" id="vb_quantity_help">Para productos por peso escribe gramos: 500 = medio kilo, 1000 = un kilo. Para los demás productos escribe unidades. Se usa el mismo precio registrado en el POS.</p>
+        <div class="vb-total">Total estimado: <strong id="vb_total" aria-live="polite">—</strong></div>
+        <small>Precio registrado × cantidad. Sin descuentos ni promociones.</small>
+      </section>
     </div>
   </div>
 </div>
@@ -60,9 +76,10 @@
 <script>
   const VISOR_BARRAS_URL  = "{% url 'visor_barcode_buscar' %}";
   const VISOR_LOOKUP_URL  = "{% url 'visor_barcode_lookup' %}";
+  const VISOR_CAJERO_URL = "{% if visor_cajero %}{% url 'visor_cajero_buscar' %}{% endif %}";
 </script>
 
-<script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
-<script src="https://code.jquery.com/ui/1.13.3/jquery-ui.min.js"></script>
-<script defer src="{% static 'javascript/visor_barcode.js' %}"></script>
+<script src="{% static 'vendor/jquery/jquery-3.6.4.min.js' %}"></script>
+<script src="{% static 'vendor/jquery-ui/jquery-ui-1.13.2.min.js' %}"></script>
+<script defer src="{% static 'javascript/visor_barcode.js' %}?v=2"></script>
 {% endblock %}

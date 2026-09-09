@@ -42,6 +42,11 @@ class Categoria(models.Model):
         return self.nombre
 
 class Producto(models.Model):
+    tipo_ptm = models.CharField(
+        max_length=10, null=True, blank=True, unique=True,
+        choices=[("retiro", "PTM RETIROS"), ("recarga", "PTM RECARGA O PAGOS")],
+        editable=False,
+    )
     productoid = models.AutoField(primary_key=True)
     nombre = models.CharField(max_length=100, unique=True, db_index=True)
     descripcion = models.TextField(null=True, blank=True)
@@ -1269,6 +1274,50 @@ class TurnoCaja(models.Model):
 
     class Meta:
         db_table = "turnos_caja"
+
+class OperacionPTM(models.Model):
+    """Dinero de terceros: no es una venta ni un movimiento de inventario."""
+
+    turno = models.ForeignKey(TurnoCaja, on_delete=models.PROTECT, related_name="operaciones_ptm")
+    usuario = models.ForeignKey("Usuario", on_delete=models.PROTECT)
+    producto = models.ForeignKey(Producto, on_delete=models.PROTECT)
+    tipo = models.CharField(max_length=10, choices=[("retiro", "Retiro"), ("recarga", "Recarga o pago")])
+    monto = models.DecimalField(max_digits=12, decimal_places=2)
+    referencia = models.CharField(max_length=100, unique=True)
+    solicitud_id = models.UUIDField(default=uuid4, unique=True, editable=False)
+    creado_en = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "operaciones_ptm"
+        ordering = ["-creado_en", "-pk"]
+        constraints = [
+            models.CheckConstraint(condition=Q(monto__gt=0), name="ptm_monto_positivo"),
+            models.CheckConstraint(condition=Q(tipo__in=["retiro", "recarga"]), name="ptm_tipo_valido"),
+            models.CheckConstraint(condition=~Q(referencia=""), name="ptm_referencia_obligatoria"),
+        ]
+
+    def save(self, *args, **kwargs):
+        if not self._state.adding:
+            raise ValidationError("Las operaciones PTM registradas no se pueden editar.")
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("Las operaciones PTM registradas no se pueden borrar.")
+
+
+class ConteoCierrePTM(models.Model):
+    """Conserva también los intentos de cierre cuyo conteo no coincide."""
+
+    turno = models.ForeignKey(TurnoCaja, on_delete=models.PROTECT, related_name="conteos_ptm")
+    usuario = models.ForeignKey("Usuario", on_delete=models.PROTECT)
+    declarado = models.PositiveIntegerField()
+    registrado = models.PositiveIntegerField()
+    creado_en = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "conteos_cierre_ptm"
+        ordering = ["-creado_en", "-pk"]
+
 
 class TurnoCajaMedio(models.Model):
     turno      = models.ForeignKey(TurnoCaja, related_name="medios", on_delete=models.CASCADE, db_column="turno_id")

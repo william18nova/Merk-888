@@ -338,10 +338,17 @@
     out.push(line(`Inicio: ${DATA.inicio || ""}`));
     out.push(line(`Fin: ${DATA.fin || ""}`));
     out.push("-".repeat(48));
-    out.push(lr("Ventas totales:", plainMoney(DATA.ventas_total_vendido || DATA.ventas_total || 0)));
-    out.push(line("Vendido por medio:"));
+    out.push(lr(DATA.ptm?.cantidad ? "Neto reconocido (con PTM):" : "Ventas totales:", plainMoney(DATA.ventas_total_vendido || DATA.ventas_total || 0)));
+    out.push(line(DATA.ptm?.cantidad ? "Reconocido por medio:" : "Vendido por medio:"));
     out.push(...medioLines());
     out.push(lr("Facturas pagadas:", plainMoney(DATA.facturas_pagadas || 0)));
+    if (DATA.ptm?.cantidad) {
+      out.push(lr("PTM transacciones:", String(DATA.ptm.cantidad)));
+      out.push(lr("PTM declaradas:", String(DATA.ptm.declarado ?? "-")));
+      out.push(lr("PTM entradas:", plainMoney(DATA.ptm.recargas)));
+      out.push(lr("PTM retiros:", plainMoney(DATA.ptm.retiros)));
+      out.push(lr("PTM neto efectivo:", plainMoney(DATA.ptm.neto)));
+    }
     out.push(lr("Efectivo fisico:", plainMoney(DATA.efectivo_real || 0)));
     out.push("-".repeat(48));
     out.push(lr("Base a dejar:", plainMoney(plan.base || 0)));

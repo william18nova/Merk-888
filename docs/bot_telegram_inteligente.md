@@ -42,6 +42,41 @@ verlo en producción, después de subir y actualizar el código, reinicia la mis
 tarea **Always-on** del bot y recarga la Web. Las migraciones de ampliaciones
 anteriores que sigan pendientes deben aplicarse por separado.
 
+## Consultar horarios de forma conversacional
+
+El calendario laboral del bot muestra la planificación, no asistencia real ni
+turnos financieros de caja. Las respuestas se agrupan por día y usan horas como
+«7 a. m. a 2 p. m.». Si el turno cruza medianoche, se indica la fecha de salida.
+Las referencias de cada jornada se conservan para poder solicitar un cambio.
+
+Ejemplos por texto o audio:
+
+- «Mi horario esta semana»: agenda de lunes a domingo.
+- «Muéstrame el horario de Camila mañana»: consulta de esa persona, con permiso.
+- «¿Quién trabaja mañana?» o «¿Quién descansa hoy?»: solo el grupo solicitado.
+- «¿A qué hora entro mañana?» / «¿A qué hora salgo?»: solo entrada o salida;
+  sin fecha explícita se consulta hoy. Una salida a medianoche pertenece al día
+  en que ocurre, aunque el turno haya empezado el día anterior.
+- «¿Y mañana?» / «¿Y la próxima semana?»: conserva empleado, sucursal y tipo
+  de consulta. Las semanas del calendario siempre incluyen lunes a domingo.
+- «Solo descansos»: filtra la consulta reciente del calendario.
+- «Incluye las notas y la semana de rotación»: pide la vista detallada.
+
+Los botones permiten consultar el día/semana/período anterior o siguiente,
+volver a hoy y alternar entre turnos, descansos o ambos. Mantienen los filtros,
+vuelven a leer los datos y nunca modifican horarios. Solo funcionan para la
+misma cuenta y chat durante 24 horas; los permisos se verifican de nuevo.
+
+Un día sin turno registrado **no se interpreta como descanso**. Solo se muestran
+los descansos que existen en la planificación. Las notas y los detalles del
+ciclo se añaden cuando se solicitan; los ajustes puntuales siempre se identifican.
+Al proponer un cambio se muestran fechas y horas legibles, pero se mantienen la
+confirmación, la comprobación de cruces y la elección explícita entre una sola
+fecha o futuras repeticiones.
+
+Estas mejoras no necesitan nuevas migraciones. Tras actualizar el código en
+PythonAnywhere, reinicia la misma tarea Always-on del bot y recarga la Web.
+
 ## Activar los respaldos de texto y audio
 
 La integración está programada, pero cada cuenta debe configurarse y probarse

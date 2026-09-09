@@ -114,7 +114,7 @@ def selected_tool_names(text, history, available):
         (r"\b(?:venta\w*|vendi\w*|vende\w*|vendio|factura\w*)\b", {"consultar_ventas", "consultar_detalle_operativo", "ranking_productos", "consultar_informe", "consultar_registros"}),
         (r"\b(?:producto\w*|precio\w*|stock|inventario\w*|agotado\w*|existencia\w*)\b", {"buscar_producto", "consultar_inventario", "consultar_registros", "ranking_productos", "preparar_cambio_catalogo"}),
         (r"\b(?:empleado\w*|personal|equipo)\b", {"listar_empleados", "consultar_registros", "preparar_cambio_catalogo", "consultar_horarios_empleados"}),
-        (r"\b(?:horario\w*|jornada\w*|turno\w*|descanso\w*|trabaj\w*|rotacion\w*)\b", {"consultar_horarios_empleados", "preparar_turno_empleado", "listar_empleados", "consultar_registros", "consultar_turnos"}),
+        (r"\b(?:horario\w*|calendario\w*|jornada\w*|turno\w*|descans\w*|trabaj\w*|rotacion\w*)\b|\ba que horas? (?:entro|entra|entran|salgo|sale|salen)\b", {"consultar_horarios_empleados", "preparar_turno_empleado", "listar_empleados", "consultar_registros", "consultar_turnos"}),
         (r"\b(?:caja\w*|cierre\w*|arqueo\w*|retiro\w*)\b", {"consultar_turnos", "consultar_detalle_operativo", "consultar_registros"}),
         (r"\b(?:devol\w*|devuel\w*|reintegr\w*|reembols\w*)\b", {"preparar_devolucion_venta", "consultar_detalle_operativo", "consultar_registros", "buscar_producto"}),
         (r"\b(?:cliente\w*|proveedor\w*|categoria\w*|sucursal\w*|usuario\w*|rol|roles|permiso\w*|nequi|configuracion|pedido\w*)\b", {"consultar_registros", "consultar_detalle_operativo", "preparar_cambio_catalogo"}),
@@ -189,7 +189,10 @@ def compact_prompt(today, names):
                      "Si omite medio de reintegro será efectivo, nunca el medio original. Requiere Confirmar devolución; no transfiere Nequi ni reversa tarjetas.")
     if "consultar_horarios_empleados" in names:
         rules.append("Mi horario/cuándo trabajo usa consultar_horarios_empleados, no turnos de caja. Por defecto próximas siete fechas de la cuenta vinculada. "
-                     "Todos=true solo si pide todo el equipo. Esta semana laboral=lunes a domingo. No adivines empleado ni jornada si hay varias.")
+                     "todos=true solo si pide todo el equipo. Esta/próxima semana laboral=lunes a domingo. No adivines empleado ni jornada si hay varias. "
+                     "Quién trabaja => tipo=trabajo y todos=true; quién descansa => tipo=descanso y todos=true. A qué hora entra/sale => vista=entrada/salida, fecha hoy si no dice otra. "
+                     "detalle=true solo para notas o detalles de rotación. No tener turnos no confirma descanso; planificado no demuestra asistencia real. "
+                     "Para cambiar fecha, empleado o tipo conserva los otros filtros usando continuar_consulta; no conviertas su horario en el de todos.")
     if "preparar_turno_empleado" in names:
         rules.append("Horarios: preparar_turno_empleado exige fechas/horas completas en Colombia. Consulta primero el turno para mover conservando horas. "
                      "Jornadas independientes usan turno_id; rotaciones turno_referencia rID-CLAVE-AAAAMMDD, nunca ambos. "
@@ -198,5 +201,5 @@ def compact_prompt(today, names):
     if "consultar_varias" in names:
         rules.append("Varias preguntas independientes => consultar_varias con hasta cuatro herramientas de SOLO LECTURA y argumentos JSON según sus esquemas; jamás escrituras ni consultas anidadas.")
     if "continuar_consulta" in names:
-        rules.append("Para 'y ayer', 'ahora por sucursal' o páginas usa continuar_consulta con SOLO cambios explícitos; el servidor hereda filtros de la misma cuenta/chat. Si hay varias consultas posibles, pregunta cuál.")
+        rules.append("Para 'y ayer', 'y mañana', 'la próxima semana', 'ahora por sucursal' o páginas usa continuar_consulta con SOLO cambios explícitos; periodo interpreta fechas relativas sin perder filtros. El servidor hereda filtros de la misma cuenta/chat. Si hay varias consultas posibles, pregunta cuál.")
     return "\n".join([CONVERSATION_STYLE, SMART_QUERY_RULES, *rules])

@@ -86,7 +86,7 @@
               <div id="mEsperado" class="v">—</div>
             </div>
             <div class="m">
-              <div class="k">Ventas total</div>
+              <div class="k" id="mVentasLabel">Ventas total</div>
               <div id="mVentas" class="v">—</div>
             </div>
             <div class="m">
@@ -98,7 +98,7 @@
               <div id="mDeuda" class="v">—</div>
             </div>
             <div class="m">
-              <div class="k">Efectivo (ventas)</div>
+              <div class="k" id="mEfectivoLabel">Efectivo (ventas)</div>
               <div id="mEf" class="v">—</div>
             </div>
             <div class="m">
@@ -109,6 +109,11 @@
               <div class="k">Facturas pagadas (caja)</div>
               <div id="mFacturasPagadas" class="v">—</div>
               <div class="k">Incluidas en el cuadre de efectivo.</div>
+            </div>
+            <div class="m">
+              <div class="k">PTM · efectivo</div>
+              <div id="mPTM" class="v">—</div>
+              <a id="mPTMHistorial" href="{% url 'operaciones_ptm' %}">Ver comprobantes →</a>
             </div>
           </div>
         </div>
@@ -158,5 +163,5 @@
   const API_DELETE = (id) => "{% url 'api_admin_turno_delete' 999999 %}".replace("999999", String(id));
 </script>
 
-<script defer src="{% static 'javascript/turnos_caja_admin.js' %}?v=5"></script>
+<script defer src="{% static 'javascript/turnos_caja_admin.js' %}?v=6"></script>
 {% endblock %}

@@ -210,13 +210,50 @@ class RotationTests(TestCase):
 
     def test_bot_queries_recurrent_shifts_and_requires_scope_before_proposal(self):
         cycle = self.create()
-        reply = bot._execute_tool(self.worker_profile, "consultar_horarios_empleados", {"desde": "2026-09-07", "hasta": "2026-09-07"})
+        reply = bot._execute_tool(self.worker_profile, "consultar_horarios_empleados", {"desde": "2026-09-07", "hasta": "2026-09-07", "detalle": True})
         self.assertIn("Camila", reply.text)
         self.assertIn("Semana 1/4", reply.text)
         self.assertNotIn("Cristian", reply.text)
         with self.assertRaises(bot.TelegramBotError):
             bot._execute_tool(self.profile, "preparar_turno_empleado", {"operacion": "editar", "turno_referencia": self.event(cycle)["id"], "notas": "Sin alcance"})
         self.assertFalse(TelegramAccionPendiente.objects.exists())
+
+    def test_bot_rest_filter_only_uses_real_days_off_in_the_rotation(self):
+        self.create()
+        args = {"desde": "2026-09-07", "hasta": "2026-09-07", "todos": True, "tipo": "descanso"}
+        reply = bot._execute_tool(self.profile, "consultar_horarios_empleados", args)
+        self.assertIn("Santiago Pruebas · Descanso", reply.text)
+        self.assertNotIn("Camila", reply.text)
+        self.assertNotIn("Alejandra", reply.text)
+        self.assertNotIn("12 a. m.", reply.text)
+        self.assertNotIn("Semana 1/4", reply.text)
+        no_record = bot._execute_tool(self.profile, "consultar_horarios_empleados", dict(args, empleado="Alejandra"))
+        self.assertIn("No encontré descansos registrados", no_record.text)
+
+    def test_bot_midnight_exit_from_rotation_uses_following_day(self):
+        self.create()
+        reply = bot._execute_tool(self.profile, "consultar_horarios_empleados", {
+            "desde": "2026-09-12", "hasta": "2026-09-12", "empleado": "Duvan", "vista": "salida",
+        })
+        self.assertIn("Sábado 12/09/2026", reply.text)
+        self.assertIn("Salida: 12 a. m.", reply.text)
+        self.assertNotIn("3 p. m.", reply.text)
+        self.assertEqual(reply.text.count("•"), 1)
+
+    def test_bot_read_buttons_filter_rest_without_changing_rotation(self):
+        cycle = self.create()
+        before = cycle.patron
+        first = bot._execute_tool(self.profile, "consultar_horarios_empleados", {
+            "desde": "2026-09-07", "hasta": "2026-09-07", "todos": True, "vista": "entrada",
+        })
+        button = next(button for row in first.reply_markup["inline_keyboard"] for button in row if button["callback_data"].endswith(":descanso"))
+        result = bot._handle_callback(SimpleNamespace(texto=button["callback_data"], callback_query_id="rest-view"), self.profile, self.client_stub)
+        self.assertIn("Santiago Pruebas · Descanso", result.text)
+        self.assertEqual(result.pagination["arguments"]["vista"], "agenda")
+        cycle.refresh_from_db()
+        self.assertEqual(cycle.patron, before)
+        self.assertFalse(TelegramAccionPendiente.objects.exists())
+        self.assertFalse(TurnoEmpleado.objects.exists())
 
     def test_bot_future_change_requires_confirmation_and_revalidates(self):
         cycle = self.create()

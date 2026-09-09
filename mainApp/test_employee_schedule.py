@@ -1,6 +1,6 @@
 import importlib
 import json
-from datetime import timedelta
+from datetime import date, timedelta
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
@@ -12,10 +12,11 @@ from django.db import DatabaseError, IntegrityError, connection, transaction
 from django.db.migrations.state import ModelState, ProjectState
 from django.test import Client, TestCase, TransactionTestCase, override_settings
 from django.urls import reverse
+from django.utils import timezone
 
 from mainApp.models import (
     CambioTurnoEmpleado, Empleado, Permiso, Rol, Sucursal, TelegramAccionPendiente,
-    TelegramUsuario, TurnoCaja, TurnoEmpleado, Usuario, UsuarioPermiso,
+    TelegramUsuario, TelegramAuditoria, TelegramActualizacion, TurnoCaja, TurnoEmpleado, Usuario, UsuarioPermiso,
 )
 from mainApp.permissions import clear_permission_cache, user_can_access_url_name
 from mainApp.services import employee_schedule as schedule
@@ -63,6 +64,180 @@ class ScheduleTests(TestCase):
     def callback(self, reply, profile=None, confirm=True):
         button = reply.reply_markup["inline_keyboard"][0][0 if confirm else 1]
         return bot._handle_callback(SimpleNamespace(texto=button["callback_data"], callback_query_id="schedule-test"), profile or self.profile, self.stub)
+
+    def calendar_button(self, reply, action, profile=None):
+        button = next(button for row in reply.reply_markup["inline_keyboard"] for button in row
+                      if button["callback_data"].startswith("schedule:") and button["callback_data"].endswith(":" + action))
+        return bot._handle_callback(SimpleNamespace(texto=button["callback_data"], callback_query_id="calendar-read"), profile or self.profile, self.stub)
+
+    def test_bot_agenda_groups_days_and_only_shows_notes_on_request(self):
+        turn = self.create(inicio="2026-09-08T07:00", fin="2026-09-08T14:00")
+        reply = self.query(self.worker_profile)
+        for part in ("Ana Perez", "Martes 08/09/2026", "7 a. m. a 2 p. m.", f"#{turn.pk}", self.branch.nombre):
+            self.assertIn(part, reply.text)
+        self.assertNotIn("2026-09-08T", reply.text)
+        self.assertNotIn("Apertura", reply.text)
+        self.assertNotIn("página 1 de 1", reply.text)
+        self.assertIn("Apertura", self.query(self.worker_profile, detalle=True).text)
+
+    def test_bot_night_shift_shows_the_actual_end_day(self):
+        self.create(inicio="2026-09-08T20:00", fin="2026-09-09T01:00")
+        reply = self.query(self.worker_profile)
+        self.assertIn("8 p. m. a 1 a. m. del miércoles 09/09/2026", reply.text)
+        self.assertIn("Martes 08/09/2026", reply.text)
+
+    def test_bot_entry_and_exit_views_only_show_requested_endpoint(self):
+        self.create(inicio="2026-09-08T07:30", fin="2026-09-08T14:45")
+        entry = self.query(self.worker_profile, vista="entrada").text
+        self.assertIn("Entrada: 7:30 a. m.", entry)
+        self.assertNotIn("2:45 p. m.", entry)
+        leave = self.query(self.worker_profile, vista="salida").text
+        self.assertIn("Salida: 2:45 p. m.", leave)
+        self.assertNotIn("7:30 a. m.", leave)
+
+    def test_bot_exit_filter_handles_overnight_and_midnight_without_duplicates(self):
+        for end_time in ("00:00", "01:00"):
+            with self.subTest(end_time=end_time):
+                turn = self.create(inicio="2026-09-08T20:00", fin=f"2026-09-09T{end_time}")
+                text = self.query(self.worker_profile, desde="2026-09-09", hasta="2026-09-09", vista="salida").text
+                self.assertEqual(text.count(f"#{turn.pk}"), 1)
+                self.assertIn("Miércoles 09/09/2026", text)
+                self.assertIn("Salida: " + ("12 a. m." if end_time == "00:00" else "1 a. m."), text)
+                self.assertNotIn("8 p. m.", text)
+                schedule.save_change(self.admin, self.change(turn, operacion="cancelar"))
+
+    def test_bot_entry_does_not_treat_yesterdays_overnight_shift_as_new_entry(self):
+        self.create(inicio="2026-09-08T20:00", fin="2026-09-09T01:00")
+        text = self.query(self.worker_profile, desde="2026-09-09", hasta="2026-09-09", vista="entrada").text
+        self.assertIn("No encontré horarios", text)
+        self.assertNotIn("Entrada: 8", text)
+
+    def test_empty_calendar_does_not_invent_a_day_off(self):
+        text = self.query(self.worker_profile).text
+        self.assertIn("Eso no confirma un descanso", text)
+        text = self.query(self.worker_profile, tipo="descanso").text
+        self.assertIn("No encontré descansos registrados", text)
+        self.assertNotIn("No trabajas", text)
+
+    def test_calendar_buttons_keep_employee_branch_and_do_not_write_shifts(self):
+        self.create()
+        tomorrow = self.create(inicio="2026-09-09T09:00", fin="2026-09-09T18:00")
+        first = self.query(empleado=str(self.ana.pk), sucursal=str(self.branch.pk), hasta="2026-09-08", detalle=True)
+        following = self.calendar_button(first, "siguiente")
+        self.assertIn(f"#{tomorrow.pk}", following.text)
+        self.assertEqual(following.pagination["arguments"], {
+            "empleado": str(self.ana.pk), "sucursal": str(self.branch.pk), "desde": "2026-09-09", "hasta": "2026-09-09", "pagina": 1, "detalle": True,
+        })
+        self.assertEqual(TurnoEmpleado.objects.count(), 2)
+        self.assertFalse(TelegramAccionPendiente.objects.exists())
+        self.assertFalse(TurnoCaja.objects.exists())
+
+    def test_calendar_buttons_reject_other_accounts_chats_and_expired_queries(self):
+        self.create()
+        first = self.query(todos=True)
+        self.assertEqual(self.calendar_button(first, "siguiente", self.worker_profile).intent, "calendario_invalido")
+        self.profile.telegram_chat_id += 10
+        self.assertEqual(self.calendar_button(first, "siguiente").intent, "calendario_invalido")
+        self.profile.telegram_chat_id -= 10
+        TelegramAuditoria.objects.filter(accion="consultar_horarios_empleados").update(creado_en=timezone.now() - timedelta(hours=25))
+        self.assertEqual(self.calendar_button(first, "siguiente").intent, "calendario_invalido")
+
+    def test_calendar_buttons_recheck_current_permissions(self):
+        first = self.query(todos=True)
+        with patch("mainApp.services.employee_schedule.user_can_access_url_name", return_value=False):
+            with self.assertRaises(PermissionDenied):
+                self.calendar_button(first, "siguiente")
+
+    def test_calendar_buttons_reject_disabled_links_and_unknown_operations(self):
+        first = self.query(todos=True)
+        self.profile.activo = False
+        self.assertEqual(self.calendar_button(first, "siguiente").intent, "calendario_invalido")
+        self.profile.activo = True
+        for data in ("schedule:1:crear", "schedule:1:eliminar", "schedule:abc:hoy"):
+            reply = bot._handle_callback(SimpleNamespace(texto=data, callback_query_id="invalid-calendar"), self.profile, self.stub)
+            self.assertEqual(reply.intent, "calendario_invalido")
+        self.assertFalse(TelegramAccionPendiente.objects.exists())
+
+    def test_entry_without_dates_defaults_to_today_not_a_week(self):
+        with patch.object(timezone, "localdate", return_value=date(2026, 9, 8)):
+            reply = bot._execute_tool(self.worker_profile, "consultar_horarios_empleados", {"vista": "entrada"})
+        self.assertEqual(reply.pagination["arguments"]["desde"], "2026-09-08")
+        self.assertEqual(reply.pagination["arguments"]["hasta"], "2026-09-08")
+
+    def test_calendar_month_followup_and_report_week_keep_their_different_meaning(self):
+        with patch.object(timezone, "localdate", return_value=date(2026, 9, 8)):
+            self.query(self.worker_profile)
+            month = bot._execute_tool(self.worker_profile, "continuar_consulta", {"periodo": "este mes"})
+            self.assertEqual((month.pagination["arguments"]["desde"], month.pagination["arguments"]["hasta"]), ("2026-09-01", "2026-09-30"))
+            bot._execute_tool(self.profile, "consultar_ventas", {})
+            _, args = assistant.resolve_continuation(self.profile, {"periodo": "esta semana"})
+            self.assertEqual((args["desde"], args["hasta"]), ("2026-09-07", "2026-09-08"))
+
+    def test_calendar_followups_use_complete_weeks_and_keep_requested_employee(self):
+        with patch.object(timezone, "localdate", return_value=date(2026, 9, 8)):
+            self.query(empleado=str(self.ana.pk), sucursal=str(self.branch.pk), vista="entrada")
+            tool, arguments = assistant.common_read_request("¿Y esta semana?")
+            result = bot._execute_tool(self.profile, tool, arguments)
+            args = result.pagination["arguments"]
+            self.assertEqual((args["desde"], args["hasta"]), ("2026-09-07", "2026-09-13"))
+            self.assertEqual(args["empleado"], str(self.ana.pk))
+            self.assertEqual(args["sucursal"], str(self.branch.pk))
+            self.assertEqual(args["vista"], "entrada")
+            tool, arguments = assistant.common_read_request("¿Y la próxima semana?")
+            result = bot._execute_tool(self.profile, tool, arguments)
+            self.assertEqual((result.pagination["arguments"]["desde"], result.pagination["arguments"]["hasta"]), ("2026-09-14", "2026-09-20"))
+
+    def test_calendar_followups_switch_employee_or_rest_without_stale_filters(self):
+        self.query(todos=True, vista="entrada")
+        result = bot._execute_tool(self.profile, "continuar_consulta", {"cambios": {"empleado": "Ana", "tipo": "descanso"}})
+        self.assertFalse(result.pagination["arguments"]["todos"])
+        self.assertEqual(result.pagination["arguments"]["empleado"], str(self.ana.pk))
+        self.assertEqual(result.pagination["arguments"]["vista"], "agenda")
+        result = bot._execute_tool(self.profile, "continuar_consulta", {"cambios": {"todos": True}})
+        self.assertNotIn("empleado", result.pagination["arguments"])
+
+    def test_schedule_shortcuts_cover_person_team_rest_and_endpoint_but_not_mutations(self):
+        with patch.object(timezone, "localdate", return_value=date(2026, 9, 8)):
+            examples = (
+                ("¿Quién trabaja mañana?", {"todos": True, "tipo": "trabajo", "desde": "2026-09-09", "hasta": "2026-09-09"}),
+                ("¿Quién descansa hoy?", {"todos": True, "tipo": "descanso", "desde": "2026-09-08", "hasta": "2026-09-08"}),
+                ("¿A qué hora entro mañana?", {"vista": "entrada", "desde": "2026-09-09", "hasta": "2026-09-09"}),
+                ("¿A qué hora salgo?", {"vista": "salida", "desde": "2026-09-08", "hasta": "2026-09-08"}),
+                ("Muéstrame el horario de Ana mañana", {"empleado": "ana", "desde": "2026-09-09", "hasta": "2026-09-09"}),
+                ("Mis descansos la próxima semana", {"tipo": "descanso", "desde": "2026-09-14", "hasta": "2026-09-20"}),
+            )
+            for text, args in examples:
+                with self.subTest(text=text):
+                    self.assertEqual(assistant.common_read_request(text), ("consultar_horarios_empleados", args))
+        for text in ("Mi horario mañana y cambia la hora", "Quién trabaja mañana y cuánto vendimos", "Horario de Ana y Luis mañana", "Cambia mi horario mañana"):
+            self.assertIsNone(assistant.common_read_request(text))
+
+    def test_schedule_read_shortcuts_are_identical_for_text_and_transcribed_voice(self):
+        self.create()
+        with patch.object(timezone, "localdate", return_value=date(2026, 9, 8)), patch.object(bot, "_intelligent_function_call", side_effect=AssertionError("No necesita IA")):
+            results = []
+            for i, kind in enumerate(("TEXTO", "VOZ")):
+                request = "A qué hora entro hoy"
+                update = TelegramActualizacion.objects.create(update_id=81000+i, telegram_user_id=991, telegram_chat_id=991, chat_type="private", tipo=kind, texto=request if kind == "TEXTO" else "", transcripcion=request if kind == "VOZ" else "")
+                results.append(bot.build_reply(update, self.stub).text)
+        self.assertEqual(results[0], results[1])
+        self.assertIn("Entrada: 8 a. m.", results[0])
+
+    def test_schedule_routing_does_not_confuse_product_cost_with_shift_exit(self):
+        tools, _, _ = bot._ai_request_context("¿Cuánto sale la Coca-Cola?")
+        self.assertIn("buscar_producto", {tool["name"] for tool in tools})
+        tools, prompt, _ = bot._ai_request_context("¿A qué hora sale Ana mañana?")
+        self.assertIn("consultar_horarios_empleados", {tool["name"] for tool in tools})
+        self.assertIn("vista=entrada/salida", prompt)
+        self.assertIsNone(assistant.common_read_request("El horario de todos mañana"))
+
+    def test_schedule_proposal_uses_human_dates_but_retains_confirmation(self):
+        reply = self.propose(inicio="2026-09-08T20:00", fin="2026-09-09T01:00")
+        self.assertIn("martes 08/09/2026", reply.text)
+        self.assertIn("8 p. m. a 1 a. m. del miércoles 09/09/2026", reply.text)
+        self.assertIn("Todavía no lo he guardado", reply.text)
+        self.assertIn("10 minutos", reply.text)
+        self.assertFalse(TurnoEmpleado.objects.exists())
 
     def test_create_is_audited_and_does_not_open_cash(self):
         turn = self.create()

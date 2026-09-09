@@ -12,6 +12,7 @@ from django.utils import timezone
 from .telegram_search import resolve_name
 from .telegram_queries import QUERY_DEFINITION, SOURCES
 from .telegram_wording import page_note, period_phrase
+from .telegram_schedule import READ_PROPERTIES as SCHEDULE_READ_PROPERTIES, SCHEDULE_PERIODS, calendar_period, common_schedule_request
 
 
 def _bot():
@@ -282,8 +283,26 @@ def resolve_continuation(profile, arguments):
     if last.accion == "consultar_varias":
         raise bot.TelegramBotError("La respuesta anterior contiene varias consultas. Indica cuál quieres continuar: ventas, pagos, inventario, etc.")
     args = dict(last.argumentos)
-    changes = arguments.get("cambios", {})
+    changes = dict(arguments.get("cambios", {}))
     name = last.accion
+    if arguments.get("periodo"):
+        if {"desde", "hasta"} & set(changes):
+            raise bot.TelegramBotError("Indica un período o fechas concretas, no ambos a la vez.")
+        period = arguments["periodo"]
+        if name == "consultar_horarios_empleados" or period not in {"hoy", "ayer", "esta semana", "la semana pasada", "este mes", "el mes pasado"}:
+            start, end = calendar_period(period)
+        else:
+            start, end = _period_dates(period)
+        changes.update(desde=start.isoformat(), hasta=end.isoformat())
+    if name == "consultar_horarios_empleados":
+        if "tipo" in changes and "vista" not in changes:
+            changes["vista"] = "agenda"
+        elif changes.get("vista") in {"entrada", "salida"} and "tipo" not in changes:
+            changes["tipo"] = "trabajo"
+        if changes.get("todos") and "empleado" not in changes:
+            args.pop("empleado", None)
+        elif changes.get("empleado") and "todos" not in changes:
+            args["todos"] = False
     if name == "consultar_datos":
         changes = dict(changes)
         if "grupos" in changes:
@@ -353,18 +372,13 @@ def common_read_request(text):
         return "consultar_resumen_negocio", {}
     if normalized in {"mis pendientes", "muestrame mis pendientes", "acciones pendientes"}:
         return "consultar_pendientes", {}
-    if normalized in {"mi horario", "muestrame mi horario", "cuando trabajo", "mis horarios", "cual es mi horario"}:
-        return "consultar_horarios_empleados", {}
-    if normalized in {"mi horario de hoy", "mi horario hoy", "cuando trabajo hoy"}:
-        today = timezone.localdate().isoformat()
-        return "consultar_horarios_empleados", {"desde": today, "hasta": today}
-    if normalized in {"mi horario manana", "mi horario de manana", "cuando trabajo manana", "muestrame mi horario manana"}:
-        tomorrow = (timezone.localdate() + timedelta(days=1)).isoformat()
-        return "consultar_horarios_empleados", {"desde": tomorrow, "hasta": tomorrow}
-    if normalized in {"mi horario esta semana", "mi horario de esta semana", "mis turnos de esta semana"}:
-        today = timezone.localdate()
-        start = today - timedelta(days=today.weekday())
-        return "consultar_horarios_empleados", {"desde": start.isoformat(), "hasta": (start + timedelta(days=6)).isoformat()}
+    calendar_request = common_schedule_request(normalized)
+    if calendar_request:
+        return calendar_request
+    if normalized in {"solo descansos", "solo los descansos", "y los descansos", "ahora solo descansos"}:
+        return "continuar_consulta", {"herramienta": "consultar_horarios_empleados", "cambios": {"tipo": "descanso"}}
+    if normalized in {"solo turnos", "solo los turnos", "ahora solo turnos"}:
+        return "continuar_consulta", {"herramienta": "consultar_horarios_empleados", "cambios": {"tipo": "trabajo"}}
     if normalized in {"que puedes hacer", "que sabes hacer", "ayuda"}:
         return "consultar_capacidades", {}
     if normalized in {"siguiente", "siguiente pagina", "anterior", "pagina anterior"}:
@@ -392,10 +406,9 @@ def common_read_request(text):
     if sales:
         start, end = _period_dates(sales[1] or "hoy")
         return "consultar_ventas", {"desde": start.isoformat(), "hasta": end.isoformat()}
-    match = re.fullmatch(r"(?:y|ahora|pero) (" + periods + r")", normalized)
+    match = re.fullmatch(r"(?:y|ahora|pero) (" + periods + "|" + SCHEDULE_PERIODS + r")", normalized)
     if match:
-        start, end = _period_dates(match[1])
-        return "continuar_consulta", {"cambios": {"desde": start.isoformat(), "hasta": end.isoformat()}}
+        return "continuar_consulta", {"periodo": match[1]}
     match = re.fullmatch(r"(?:ahora|y) por (empleado|cliente|sucursal|dia|concepto|usuario|punto de pago)", normalized)
     if match:
         return "continuar_consulta", {"cambios": {"agrupar": match[1].replace(" ", "_")}}
@@ -427,9 +440,11 @@ TOOL_DEFINITIONS = [
     {"name": "consultar_varias", "description": "Responde de 1 a 4 consultas independientes de SOLO LECTURA en un mensaje, usando las funciones disponibles. No admite preparar/confirmar cambios ni consultas anidadas. Cada respuesta conserva sus permisos y botones.", "parameters": {"type": "OBJECT", "properties": {"consultas": {"type": "ARRAY", "items": {"type": "OBJECT", "properties": {"herramienta": {"type": "STRING", "enum": list(READ_TOOLS)}, "argumentos_json": {"type": "STRING", "description": "Objeto JSON con los argumentos de esa herramienta, según su esquema; no SQL ni código."}}, "required": ["herramienta", "argumentos_json"]}}}, "required": ["consultas"]}},
     {"name": "continuar_consulta", "description": "Continúa una consulta real de la misma cuenta/chat en las últimas 24h. Conserva filtros/fechas; envía SOLO cambios explícitos. No hereda acciones. Si hubo varias consultas, especifica herramienta.", "parameters": {"type": "OBJECT", "properties": {
         "herramienta": {"type": "STRING", "enum": list(READ_TOOLS)},
+        "periodo": {"type": "STRING", "enum": list(dict.fromkeys(SCHEDULE_PERIODS.split("|") + ["este mes", "el mes pasado"])), "description": "Período relativo sin combinar con fechas explícitas. En horarios, esta/próxima semana siempre abarca lunes a domingo; conserva empleado y sucursal."},
         "navegacion": {"type": "STRING", "enum": ["siguiente", "anterior"]},
         "cambios": {"type": "OBJECT", "properties": {
             **REPORT_FIELDS,
+            **{key: SCHEDULE_READ_PROPERTIES[key] for key in ("tipo", "vista", "todos")},
             **{key: value for key, value in QUERY_DEFINITION["parameters"]["properties"].items() if key not in {"fuente", "desde", "hasta", "sucursal", "pagina", "agrupar"}},
             "grupos": QUERY_DEFINITION["parameters"]["properties"]["agrupar"],
             **{key: {"type": "STRING"} for key in ("consulta", "categoria", "estado", "cargo")},

@@ -1,6 +1,7 @@
 from django.urls import path, include
 from . import views
 from . import schedule_views
+from .ptm_views import OperacionesPTMView
 from django.contrib.auth import views as auth_views
 from .views import (
                     LoginView,
@@ -316,6 +317,7 @@ urlpatterns = [
 
 
 
+     path("ptm/", OperacionesPTMView.as_view(), name="operaciones_ptm"),
      path("turno_caja/", views.TurnoCajaPageView.as_view(), name="turno_caja"),
 
      path("turnos_caja/recuperar_o_iniciar/",
@@ -375,6 +377,8 @@ urlpatterns = [
 
 
     path("v", views.VisorProductoBarcodeView.as_view(), name="visor_barcode"),
+    path("visor/cajeros/", views.VisorProductosCajeroView.as_view(), name="visor_cajero"),
+    path("visor/cajeros/buscar/", views.ProductoBuscarVisorCajeroView.as_view(), name="visor_cajero_buscar"),
     path("visor/barcode/buscar/", views.ProductoBuscarBarrasVisorView.as_view(), name="visor_barcode_buscar"),
     path("visor/barcode/lookup/", views.ProductoLookupPorBarrasVisorView.as_view(), name="visor_barcode_lookup"),
 

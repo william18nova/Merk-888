@@ -18,7 +18,7 @@ from .services.feature_flags import (
 WEB_MASTER_ROLE_NAMES = {"web_master", "webmaster"}
 ADMIN_ROLE_NAMES = {"admin", "administrador", "administradora", "supervisor"}
 PUBLIC_URL_NAMES = {"login", "logout", "visor_barcode", "visor_barcode_buscar", "visor_barcode_lookup", "macrodroid_nequi_webhook", "telegram_webhook"}
-ALWAYS_ALLOWED_URL_NAMES = {"home", "registrar_egreso", "mi_horario", "mi_horario_datos"}
+ALWAYS_ALLOWED_URL_NAMES = {"home", "registrar_egreso", "mi_horario", "mi_horario_datos", "visor_cajero", "visor_cajero_buscar"}
 WEB_MASTER_ONLY_URL_NAMES = {
     "ventas_no_realizadas",
     "claves_descuento_merk2888",
@@ -769,6 +769,7 @@ ROUTE_PERMISSIONS = {
     "sucursal_con_pedidos_pagados_autocomplete": "reportes_pedidos_pagados",
     "puntopago_con_pedidos_pagados_autocomplete": "reportes_pedidos_pagados",
     "turno_caja": "caja_turno",
+    "operaciones_ptm": "caja_turno",
     "turno_recuperar_o_iniciar": "caja_turno",
     "turno_caja_puntopago_ac": "caja_turno",
     "turno_caja_cajero_ac": "caja_turno",
@@ -802,6 +803,7 @@ ROUTE_PERMISSIONS = {
 
 
 ROUTE_PERMISSION_ALTERNATIVES = {
+    "operaciones_ptm": ["caja_turno", "caja_turnos_editar"],
     "ver_venta": ["ventas_ver", "ventas_imprimir", "ventas_cambios"],
     "ticket_texto": ["ventas_ver", "ventas_imprimir", "ventas_cambios"],
     "imprimir_factura": ["ventas_generar", "ventas_ver", "ventas_imprimir", "ventas_cambios"],
@@ -926,6 +928,7 @@ NAV_GROUPS = [
         "label": "Ventas",
         "children": [
             {"label": "Generar venta", "url_name": "generar_venta"},
+            {"label": "Consultar productos (cajeros)", "url_name": "visor_cajero"},
             {"label": "Claves merk2888", "url_name": "claves_descuento_merk2888"},
             {"label": "Visualizar ventas", "url_name": "visualizar_ventas"},
             {"label": "Ventas no realizadas", "url_name": "ventas_no_realizadas"},
@@ -946,6 +949,7 @@ NAV_GROUPS = [
         "label": "Caja",
         "children": [
             {"label": "Turno de caja", "url_name": "turno_caja"},
+            {"label": "Operaciones PTM", "url_name": "operaciones_ptm"},
             {"label": "Registrar pago", "url_name": "registrar_egreso"},
             {"label": "Retiro base de caja", "url_name": "turno_caja_retiro_actual"},
             {"label": "Dashboard turnos", "url_name": "turnos_caja_dashboard"},

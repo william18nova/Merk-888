@@ -14,6 +14,11 @@ $(function () {
   const $pid   = $("#vb_pid");
   const $bar   = $("#vb_bar");
   const $disp  = $("#vb_display");
+  const $quantity = $("#vb_quantity");
+  const $total = $("#vb_total");
+  const $search = $("#vb_search");
+  let currentProduct = null;
+  let lookupRevision = 0;
 
   // ====== cache (barcode -> product) ======
   const cache = new Map();
@@ -31,15 +36,6 @@ $(function () {
   let cameraFallbackTimer = 0;
   let zxingReader = null;
   let zxingLoaded = false;
-
-  // ====== keyboard-wedge scanner ======
-  let scanBuf = "";
-  let scanTimer = 0;
-  let scanActive = false;
-
-  // Ajustes: mientras más corto, más “scanner-only”
-  const SCAN_IDLE_MS = 55;      // si pasan >55ms entre teclas, reinicia
-  const MIN_SCAN_LEN = 4;       // longitud mínima para aceptar (evita ruido)
 
   /* ================= Utils ================= */
   function showErr(msg){ $err.text(msg).show(); }
@@ -383,6 +379,10 @@ $(function () {
   }
 
   function paintEmpty(){
+    lookupRevision++;
+    currentProduct = null;
+    $quantity.val("1").prop("disabled", true);
+    $total.text("—");
     lastPaintedBarcode = "";
     $disp.removeClass("has-product");
     $name.text("—");
@@ -396,7 +396,10 @@ $(function () {
     if (!p) return;
 
     const bc = String(p.codigo_de_barras || "").trim();
-    if (bc && bc === lastPaintedBarcode) return;
+    lookupRevision++;
+    currentProduct = p;
+    $quantity.val("1").prop("disabled", false);
+    updateQuantityTotal();
     lastPaintedBarcode = bc;
 
     hideErr();
@@ -415,6 +418,20 @@ $(function () {
     pop();
   }
 
+  function updateQuantityTotal(){
+    if (!currentProduct) { $total.text("—"); return; }
+    const quantity = String($quantity.val() || "").trim();
+    const price = String(currentProduct.precio || "0").match(/^(\d+)(?:\.(\d{1,2}))?$/);
+    if (!/^[1-9]\d{0,8}$/.test(quantity) || !price) {
+      $total.text("Escribe una cantidad entera mayor que cero");
+      return;
+    }
+    // Centavos enteros: evita errores de coma flotante al multiplicar gramos.
+    const cents = (BigInt(price[1]) * 100n + BigInt((price[2] || "").padEnd(2, "0"))) * BigInt(quantity);
+    $total.text(`$ ${(cents / 100n).toLocaleString("es-CO")},${String(cents % 100n).padStart(2, "0")}`);
+  }
+  $quantity.on("input", updateQuantityTotal);
+
   function forceFocus(){
     // Mantén foco SIEMPRE y el cursor al final
     if (document.activeElement !== $inp[0]) $inp.trigger("focus");
@@ -424,26 +441,14 @@ $(function () {
     }catch{}
   }
 
-  // En esta página NO hay teclado/mouse: forzamos foco ante cualquier intento de perderlo
-  $(document).on("mousedown pointerdown touchstart", function(){
-    // por si alguien toca/clickea: volvemos al input
-    setTimeout(forceFocus, 0);
-  });
-
-  $(document).on("focusin", function(e){
-    if (e.target !== $inp[0]) setTimeout(forceFocus, 0);
-  });
-
-  $inp.on("blur", function(){
-    setTimeout(forceFocus, 0);
-  });
+  // No robar el foco: el usuario puede escribir gramos o consultar por nombre.
 
   /* ================= Lookup exacto ================= */
   async function lookupExact(barcode){
     const bc = sanitizeBarcode(barcode);
     if (!bc) return null;
 
-    if (cache.has(bc)) return cache.get(bc);
+    // Consultar de nuevo: el precio puede haber cambiado desde otro equipo.
 
     try { lookupAbort?.abort(); } catch {}
     lookupAbort = ("AbortController" in window) ? new AbortController() : null;
@@ -479,7 +484,7 @@ $(function () {
   $inp.autocomplete({
     minLength: 1,
     delay: 0,
-    autoFocus: true,
+    autoFocus: false,
     appendTo: "body",
     source: function(req, resp){
       const term = sanitizeBarcode(req.term);
@@ -521,6 +526,7 @@ $(function () {
       forceFocus();
 
       paintProduct(ui.item.product);
+      $inp[0].select();
       return false;
     }
   });
@@ -538,8 +544,13 @@ $(function () {
       return;
     }
 
-    const exact = list.find(it => String(it.value || "") === pendingPick.value);
-    const item = exact || list[0];
+    const exact = list.filter(it => String(it.value || "") === pendingPick.value);
+    if (exact.length !== 1) {
+      pendingPick = null;
+      showErr("No hay una coincidencia exacta única. Selecciona el producto en la lista.");
+      return;
+    }
+    const item = exact[0];
 
     pendingPick = null;
     try { $inp.autocomplete("close"); } catch {}
@@ -558,6 +569,7 @@ $(function () {
   async function handleScanNow(barcode){
     const bc = sanitizeBarcode(barcode);
     if (!bc) return;
+    const revision = ++lookupRevision;
 
     hideErr();
 
@@ -566,11 +578,13 @@ $(function () {
     forceFocus();
 
     const p = await lookupExact(bc);
+    if (revision !== lookupRevision) return;
     if (p){
       const finalBc = String(p.codigo_de_barras || bc).trim();
       $inp.val(finalBc);
       forceFocus();
       paintProduct(p);
+      $inp[0].select();
       return;
     }
 
@@ -578,93 +592,62 @@ $(function () {
     openAutocompletePickFirst();
   }
 
-  /* =============================================================================
-     ✅ SCANNER ONLY MODE:
-     - siempre focus en input
-     - cada escaneo reemplaza por completo (no concatena)
-     - usamos un buffer interno y al Enter “commit” el código
-  ============================================================================= */
-  function resetScanBuffer(){
-    scanBuf = "";
-    scanActive = false;
-    if (scanTimer) clearTimeout(scanTimer);
-    scanTimer = 0;
-  }
-
   function isPrintableChar(e){
     return e.key && e.key.length === 1;
   }
 
-  // Capturamos global para que aunque el navegador pierda foco, igual llegue al buffer
+  // Si el foco está en el fondo, comenzar una nueva lectura; nunca robarlo a otro campo.
   document.addEventListener("keydown", function(e){
     // Ignorar combos
     if (e.ctrlKey || e.altKey || e.metaKey) return;
 
-    // Siempre volvemos foco al input (la página es solo lector)
+    // Los campos editables usan entrada normal, sin captura global del lector.
+    if (e.target.closest?.("input, textarea, select, button, a, [contenteditable]")) return;
+    if (!isPrintableChar(e)) return;
     forceFocus();
 
-    // Enter = fin de escaneo
-    if (e.key === "Enter"){
-      // Si el lector manda Enter al final (lo normal)
-      if (scanActive){
-        e.preventDefault();
-
-        const code = sanitizeBarcode(scanBuf);
-        resetScanBuffer();
-
-        if (code.length >= MIN_SCAN_LEN){
-          // ✅ REEMPLAZA y busca
-          handleScanNow(code);
-        }
-        return;
-      }
-
-      // Si por alguna razón no estábamos en scanActive, igual procesamos lo que haya en input
+    if (isPrintableChar(e)) {
       e.preventDefault();
-      const v = sanitizeBarcode($inp.val());
-      if (v) handleScanNow(v);
-      return;
+      $inp.val(e.key).trigger("input");
     }
-
-    // Solo chars imprimibles para buffer del lector
-    if (!isPrintableChar(e)) return;
-
-    // Evitar que el navegador escriba/concatene dentro del input
-    // (esto es CLAVE para que NUNCA se concatene más de un código)
-    e.preventDefault();
-
-    // Empezar burst
-    if (!scanActive){
-      scanActive = true;
-      scanBuf = "";
-    }
-
-    scanBuf += e.key;
-
-    // Si hay pausa, reinicia (evita concatenaciones entre scans)
-    if (scanTimer) clearTimeout(scanTimer);
-    scanTimer = setTimeout(() => {
-      resetScanBuffer();
-      // además limpiamos el input por seguridad
-      $inp.val("");
-      forceFocus();
-    }, SCAN_IDLE_MS);
   }, true);
 
-  // Por si el scanner NO manda Enter (rarísimo), hacemos commit cuando detectamos pausa
-  // (si esto te estorba, lo quitamos; pero ayuda a robustez)
-  function commitOnIdle(){
-    const code = sanitizeBarcode(scanBuf);
-    resetScanBuffer();
-    if (code.length >= MIN_SCAN_LEN){
-      handleScanNow(code);
-    }
-  }
+  $inp.on("input", function(){
+    pendingPick = null;
+    paintEmpty();
+  });
+  $inp.on("keydown", function(e){
+    if (e.key !== "Enter" || e.isDefaultPrevented()) return;
+    e.preventDefault();
+    handleScanNow($inp.val());
+  });
 
-  // Si el scanner no manda Enter, el timeout de SCAN_IDLE_MS resetea.
-  // Para soportar “sin enter”, cambia el reset por commit:
-  // (déjalo así si tu lector SÍ manda Enter, que es lo mejor)
-  // NOTA: por defecto NO hacemos commit automático, solo reseteo.
+  if ($search.length && VISOR_CAJERO_URL) {
+    let searchController = null;
+    $search.on("input", function(){ pendingPick = null; paintEmpty(); });
+    $search.autocomplete({
+      minLength: 1, delay: 180, autoFocus: false, appendTo: "body",
+      source: function(req, resp){
+        searchController?.abort();
+        searchController = new AbortController();
+        fetch(`${VISOR_CAJERO_URL}?term=${encodeURIComponent(req.term)}`, {cache: "no-store", signal: searchController.signal})
+          .then(r => { if (!r.ok) throw new Error("No se pudo consultar. Revisa tu sesión e inténtalo de nuevo."); return r.json(); })
+          .then(data => resp((data.results || []).map(p => ({
+            label: `ID ${p.id} — ${p.text} — ${moneyCOP(p.precio)}`,
+            value: p.text,
+            product: {id:p.id, nombre:p.text, codigo_de_barras:p.barcode, precio:p.precio, precio_anterior:p.precio_anterior}
+          }))))
+          .catch(error => { resp([]); if (error.name !== "AbortError") showErr(error.message); });
+      },
+      select: function(_event, ui){
+        pendingPick = null;
+        $search.val(ui.item.value);
+        $inp.val(ui.item.product.codigo_de_barras || "");
+        paintProduct(ui.item.product);
+        return false;
+      }
+    });
+  }
 
   /* ================= Botón limpiar ================= */
   $cam.on("click", function(){
@@ -672,9 +655,9 @@ $(function () {
   });
 
   $clear.on("click", function(){
-    resetScanBuffer();
     hideErr();
     $inp.val("");
+    $search.val("");
     paintEmpty();
     forceFocus();
   });
@@ -684,7 +667,6 @@ $(function () {
   /* ================= Init ================= */
   paintEmpty();
 
-  // foco inicial + refresco periódico por si algo externo lo roba
+  // Solo foco inicial; no interferir con cantidad, búsqueda ni navegación.
   setTimeout(forceFocus, 30);
-  setInterval(forceFocus, 900);
 });

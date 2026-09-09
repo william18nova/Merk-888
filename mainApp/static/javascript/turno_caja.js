@@ -513,6 +513,7 @@
       const payload = {
         efectivo_entregado: efectivoEntregadoInp?.value || "",
         facturas_pagadas: facturasPagadasInp?.value || "",
+        ptm_transacciones: document.getElementById("ptm_transacciones")?.value || "",
         denominaciones: readCloseDenomCounts(),
         contados: { ...CONTADOS },
         ts: Date.now(),
@@ -538,6 +539,9 @@
       }
       if (facturasPagadasInp && payload.facturas_pagadas) {
         facturasPagadasInp.value = payload.facturas_pagadas;
+      }
+      if (document.getElementById("ptm_transacciones")) {
+        document.getElementById("ptm_transacciones").value = payload.ptm_transacciones || "";
       }
       if (payload.denominaciones && typeof payload.denominaciones === "object") {
         setCloseDenomCounts(payload.denominaciones);
@@ -775,6 +779,8 @@
      Hidratar UI desde respuesta backend
      ============================================================ */
   function hydrateTurno(data) {
+    const ptmCount = document.getElementById("ptm_transacciones");
+    if (ptmCount) { ptmCount.value = ""; ptmCount.oninput = persistContados; }
     TURNO_ID = data.turno_id || data.turno?.id || null;
 
     const baseFrom =
@@ -947,6 +953,8 @@
   async function actionCerrar() {
     if (inflightAction) return;
     if (!TURNO_ID) { warn("No hay turno en cierre."); return; }
+    const ptmTransacciones = document.getElementById("ptm_transacciones")?.value.trim() || "";
+    if (!/^[0-9]{1,8}$/.test(ptmTransacciones)) { err("Escribe cuántas transacciones PTM hiciste (0 si no hubo)."); return; }
 
     const efectivoEntregado = refreshCloseCashTotal();
     if (efectivoEntregado < 0) { err("El efectivo entregado no puede ser negativo."); return; }
@@ -982,6 +990,7 @@
         turno_id: TURNO_ID,
         efectivo_entregado: String(efectivoEntregado),
         facturas_pagadas: String(facturasPagadas),
+        ptm_transacciones: ptmTransacciones,
         medios_json: JSON.stringify(mediosOut),
       });
 

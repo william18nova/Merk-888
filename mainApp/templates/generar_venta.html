@@ -17,6 +17,11 @@
   <!-- IZQUIERDA -->
   <section class="panel panel-left">
     <h1>Generar Venta</h1>
+    <div class="venta-mode-notice is-info">
+      <a href="{% url 'operaciones_ptm' %}?tipo=retiro" target="_blank" rel="noopener">PTM RETIROS ↗</a>
+      · <a href="{% url 'operaciones_ptm' %}?tipo=recarga" target="_blank" rel="noopener">PTM RECARGA O PAGOS ↗</a>
+      <small>Operaciones de efectivo, separadas del carrito.</small>
+    </div>
 
     {% if config_error %}
       <div class="venta-mode-notice is-error" role="alert">

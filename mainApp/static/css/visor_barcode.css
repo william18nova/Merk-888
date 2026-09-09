@@ -1,6 +1,11 @@
 /* static/css/visor_barcode.css */
 @import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap");
-
+.vb-quantity { margin-top: 24px; padding-top: 18px; border-top: 1px solid rgba(255,255,255,.2); }
+.vb-quantity label { display: block; margin-bottom: 8px; font-weight: 700; }
+.vb-quantity input { max-width: 260px; }
+.vb-quantity small { display: block; margin-top: 8px; }
+.vb-total { margin-top: 14px; font-size: 1.4rem; }
+.vb-link { color: inherit; }
 :root{
   --bg-1:#153060; --bg-2:#20497d;
   --brand:#4da6ff; --brand-2:#3d8cff;

@@ -233,8 +233,18 @@
     cajName.textContent = TURNO.cajero || "—";
     // Dato informativo: el contado de Efectivo ya incluye estas facturas.
     mFacturasPagadas.textContent = money2(TURNO.facturas_pagadas ?? 0);
+    const ptm = TURNO.ptm || {};
+    document.getElementById("mPTM").textContent = `${ptm.cantidad || 0} transacciones · Declaradas: ${ptm.declarado ?? "—"} · Entradas: ${money2(ptm.recargas || 0)} · Salidas: ${money2(ptm.retiros || 0)} · Neto: ${money2(ptm.neto || 0)}`;
+    document.getElementById("mPTMHistorial").search = `?turno=${TURNO.id}`;
 
     buildMediosTable();
+    const protectedPTM = Number(ptm.cantidad || 0) > 0;
+    document.getElementById("mVentasLabel").textContent = protectedPTM ? "Neto reconocido (incluye PTM)" : "Ventas total";
+    document.getElementById("mEfectivoLabel").textContent = protectedPTM ? "Efectivo neto (incluye PTM)" : "Efectivo (ventas)";
+    [estado, base, inicio, cierre, fin, efectivoReal, ...mediosBody.querySelectorAll("input")].forEach(input => { input.disabled = protectedPTM; });
+    btnSave.disabled = protectedPTM;
+    if (btnDelete) btnDelete.disabled = protectedPTM;
+    btnSave.title = protectedPTM ? "Este turno tiene registros PTM protegidos. Utiliza el cierre normal." : "";
     editor.style.display = "block";
   }
 
