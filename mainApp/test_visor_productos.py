@@ -6,8 +6,8 @@ from django.contrib.auth.models import AnonymousUser
 from django.test import RequestFactory, SimpleTestCase, TestCase
 from django.urls import reverse
 
-from .models import Categoria, Producto, Usuario
-from .permissions import user_can_access_url_name
+from .models import Categoria, Producto, Usuario, Rol
+from .permissions import user_can_access_url_name, _resolve_nav_item
 from .views import (ProductoBuscarVisorCajeroView, VisorProductosCajeroView,
                     ProductoBuscarBarrasVisorView, VisorProductoBarcodeView)
 
@@ -53,6 +53,18 @@ class VisorProductosTests(TestCase):
     def test_cashier_has_access_without_administration_permissions(self):
         self.assertTrue(user_can_access_url_name(self.user, "visor_cajero"))
         self.assertTrue(user_can_access_url_name(self.user, "visor_cajero_buscar"))
+
+    def test_navbar_visor_opens_cashier_view_for_cashier_role(self):
+        self.user.rolid = Rol.objects.create(nombre="Cajero")
+        raw = {"label": "Visor Barcode", "url_name": "visor_barcode"}
+        item = _resolve_nav_item(raw, self.user)
+        self.assertEqual(item["url"], "/visor/cajeros/")
+        self.assertEqual(raw["url_name"], "visor_barcode")
+
+    def test_public_and_other_roles_keep_public_visor_link(self):
+        raw = {"label": "Visor Barcode", "url_name": "visor_barcode"}
+        for user in (AnonymousUser(), self.user):
+            self.assertEqual(_resolve_nav_item(raw, user)["url"], reverse("visor_barcode"))
 
     def test_search_does_not_expose_internal_fields(self):
         item = json.loads(self.search("tomate").content)["results"][0]

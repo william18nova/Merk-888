@@ -1345,6 +1345,12 @@ def user_can_access_url_name(user, url_name: Optional[str]) -> bool:
 
 def _resolve_nav_item(raw_item: Dict[str, object], user) -> Optional[Dict[str, object]]:
     url_name = raw_item.get("url_name")
+    if (
+        url_name == "visor_barcode"
+        and getattr(user, "is_authenticated", False)
+        and normalize_permission_key(role_name(user)) == "cajero"
+    ):
+        url_name = "visor_cajero"
     if url_name and not user_can_access_url_name(user, str(url_name)):
         return None
 
@@ -1366,7 +1372,7 @@ def _nav_cache_key(user) -> str:
         for key in sorted(FEATURE_REGISTRY)
     )
     return ":".join([
-        "mainapp:nav",
+        "mainapp:nav:v2",
         _permission_cache_version(),
         feature_signature,
         str(getattr(user, "pk", "anon") or "anon"),
