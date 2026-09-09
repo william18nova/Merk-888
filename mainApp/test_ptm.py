@@ -2,14 +2,14 @@ import importlib
 import json
 from decimal import Decimal
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 from uuid import uuid4
 
 from django.apps import apps
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
 from django.db.models.deletion import ProtectedError
-from django.test import RequestFactory, TestCase
+from django.test import RequestFactory, TestCase, SimpleTestCase
 from django.urls import reverse
 from django.utils import timezone
 
@@ -269,3 +269,22 @@ class PTMSeedTests(TestCase):
         Producto.objects.create(nombre="PTM RECARGA O PAGOS", precio=1, categoria=cat)
         with self.assertRaises(RuntimeError):
             self.seed()
+
+
+class PTMMigrationConstraintTests(SimpleTestCase):
+    def test_flush_constraints_before_schema_editor_creates_deferred_indexes(self):
+        migration = importlib.import_module("mainApp.migrations.0040_ptm_cash_operations")
+        self.assertTrue(migration.Migration.atomic)
+        self.assertIs(migration.Migration.operations[-2].code, migration.crear_productos_ptm)
+        self.assertIs(migration.Migration.operations[-1].code, migration.finalizar_validaciones_ptm)
+        editor = MagicMock()
+        editor.connection.vendor = "postgresql"
+        migration.finalizar_validaciones_ptm(None, editor)
+        editor.execute.assert_called_once_with("SET CONSTRAINTS ALL IMMEDIATE")
+
+    def test_other_backends_do_not_receive_postgresql_sql(self):
+        migration = importlib.import_module("mainApp.migrations.0040_ptm_cash_operations")
+        editor = MagicMock()
+        editor.connection.vendor = "sqlite"
+        migration.finalizar_validaciones_ptm(None, editor)
+        editor.execute.assert_not_called()

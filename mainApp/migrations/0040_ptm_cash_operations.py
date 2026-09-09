@@ -34,6 +34,16 @@ def crear_productos_ptm(apps, schema_editor):
                             descripcion="Operación de efectivo PTM. Registrar desde Caja → Operaciones PTM.")
 
 
+def finalizar_validaciones_ptm(apps, schema_editor):
+    # AddField(unique=True) sobre varchar deja un índice *_like en
+    # schema_editor.deferred_sql. El RunPython anterior puede dejar eventos
+    # de claves foráneas pendientes en productos; PostgreSQL rechaza crear
+    # ese índice al salir del editor si no se validan antes. No se desactiva
+    # ninguna restricción ni se rompe la atomicidad: si algo falla, revierte todo.
+    if schema_editor.connection.vendor == "postgresql":
+        schema_editor.execute("SET CONSTRAINTS ALL IMMEDIATE")
+
+
 class Migration(migrations.Migration):
     dependencies = [("mainApp", "0039_telegram_transcription_fallback")]
     operations = [
@@ -75,4 +85,5 @@ class Migration(migrations.Migration):
         # No reclasifica ventas anteriores ni modifica cierres históricos. No se
         # borran registros financieros al revertir un despliegue.
         migrations.RunPython(crear_productos_ptm),
+        migrations.RunPython(finalizar_validaciones_ptm, migrations.RunPython.noop),
     ]
