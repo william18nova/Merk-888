@@ -626,7 +626,7 @@ $(function () {
     let searchController = null;
     $search.on("input", function(){ pendingPick = null; paintEmpty(); });
     $search.autocomplete({
-      minLength: 1, delay: 180, autoFocus: false, appendTo: "body",
+      minLength: 1, delay: 0, autoFocus: true, appendTo: "body",
       source: function(req, resp){
         searchController?.abort();
         searchController = new AbortController();
@@ -648,6 +648,79 @@ $(function () {
       }
     });
   }
+
+  // Misma interacción que Generar venta: sin espera artificial, caché breve,
+  // reapertura al enfocar, flechas/Enter y nombre + ID + precio en cada fila.
+  function enhanceAutocomplete($field, url, mode) {
+    if (!$field.length) return;
+    const recent = new Map();
+    let controller = null;
+    let revision = 0;
+    const source = function(req, respond) {
+      const term = String(req.term || "").trim();
+      const key = term.toLocaleLowerCase("es");
+      const ownRevision = ++revision;
+      controller?.abort();
+      if (!term) { respond([]); return; }
+      const saved = recent.get(key);
+      if (saved && Date.now() - saved.at < 5000) { respond(saved.items); return; }
+      controller = new AbortController();
+      fetch(`${url}?term=${encodeURIComponent(term)}`, {cache: "no-store", signal: controller.signal})
+        .then(r => { if (!r.ok) throw new Error("No pudimos consultar los productos. Revisa tu conexión o sesión."); return r.json(); })
+        .then(data => {
+          if (ownRevision !== revision) { respond([]); return; }
+          const items = (data.results || []).map(row => ({
+            id: row.id,
+            label: `${row.text} · ID ${row.id}`,
+            value: mode === "barcode" ? String(row.barcode || "") : row.text,
+            product: {id:row.id, nombre:row.text, codigo_de_barras:row.barcode || "", precio:row.precio, precio_anterior:row.precio_anterior}
+          }));
+          if (recent.size >= 80) recent.delete(recent.keys().next().value);
+          recent.set(key, {at:Date.now(), items});
+          hideErr();
+          respond(items);
+        })
+        .catch(error => { respond([]); if (error.name !== "AbortError" && ownRevision === revision) showErr(error.message); });
+    };
+    $field.autocomplete("option", {
+      delay: 0, autoFocus: true, source,
+      position: {my: "left top+6", at: "left bottom", collision: "flipfit"},
+      open: function() { $field.autocomplete("widget").addClass("vb-autocomplete"); }
+    });
+    $field.on("focus.vbFast", function() {
+      const term = String(this.value || "").trim();
+      if (term) $field.autocomplete("search", term);
+    });
+    $field.on("keydown.vbFast", function(e) {
+      if ((e.key === "ArrowDown" || e.key === "ArrowUp") && !String(this.value || "").trim()) {
+        e.preventDefault();
+        $field.autocomplete("close");
+      }
+    });
+    const instance = $field.autocomplete("instance");
+    instance._renderItem = function(ul, item) {
+      const left = $("<div>").addClass("vb-result-main");
+      $("<strong>").text(item.product.nombre).appendTo(left);
+      $("<small>").text(`ID ${item.id}${item.product.codigo_de_barras ? " · " + item.product.codigo_de_barras : " · Sin código de barras"}`).appendTo(left);
+      const row = $("<div>").addClass("vb-result").append(left);
+      $("<span>").addClass("vb-result-price").text(moneyCOP(item.product.precio)).appendTo(row);
+      return $("<li>").append(row).appendTo(ul);
+    };
+  }
+  enhanceAutocomplete($inp, VISOR_BARRAS_URL, "barcode");
+  if ($search.length) enhanceAutocomplete($search, VISOR_CAJERO_URL, "name");
+
+  // Un lector no debe elegir un código parcial solo porque quedó resaltado.
+  let barcodeKeyboardChoice = false;
+  $inp.on("input", () => { barcodeKeyboardChoice = false; });
+  $inp[0].addEventListener("keydown", function(e) {
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") barcodeKeyboardChoice = true;
+    if (e.key !== "Enter" || barcodeKeyboardChoice) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    try { $inp.autocomplete("close"); } catch (_) {}
+    handleScanNow($inp.val());
+  }, true);
 
   /* ================= Botón limpiar ================= */
   $cam.on("click", function(){

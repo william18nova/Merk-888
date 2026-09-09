@@ -8,16 +8,17 @@
         href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"/>
   <link rel="stylesheet"
         href="{% static 'vendor/jquery-ui/jquery-ui-1.13.2.min.css' %}"/>
-  <link rel="stylesheet" href="{% static 'css/visor_barcode.css' %}?v=2">
+  <link rel="stylesheet" href="{% static 'css/visor_barcode.css' %}?v=3">
 {% endblock %}
 
 {% block content %}
-<div class="vb-page">
+<div class="vb-page{% if visor_cajero %} vb-page--cashier{% endif %}">
   <div class="vb-card">
     <div class="vb-header">
       <div class="vb-icon"><i class="fas fa-barcode"></i></div>
       <div class="vb-title">
-        <h2>{% if visor_cajero %}Consulta de productos · Cajeros{% else %}Visor de Producto{% endif %}</h2>
+        <span class="vb-eyebrow">NOVA ADVANCE · CONSULTA DE PRECIOS</span>
+        <h2>{% if visor_cajero %}Encuentra tu producto{% else %}Consulta el precio{% endif %}</h2>
         <p>{% if visor_cajero %}Busca por nombre, ID o código de barras{% else %}Escanea o escribe el código de barras{% endif %}</p>
         {% if request.user.is_authenticated and not visor_cajero %}<a class="vb-link" href="{% url 'visor_cajero' %}">Buscar por nombre o ID →</a>{% endif %}
       </div>
@@ -25,16 +26,17 @@
 
     <div id="vb-error" class="vb-alert vb-alert--error" style="display:none;"></div>
 
+    <div class="vb-search-grid">
     {% if visor_cajero %}
     <div class="vb-inputwrap">
-      <label for="vb_search">Nombre o ID del producto</label>
+      <label for="vb_search"><i class="fas fa-magnifying-glass" aria-hidden="true"></i> Nombre o ID del producto</label>
       <input id="vb_search" class="vb-input" autocomplete="off" placeholder="Ej.: tomate o 2978">
-      <p class="vb-hint">Selecciona el producto en la lista. No registra una venta ni modifica inventario.</p>
+      <p class="vb-hint">Escribe para buscar · ↑ ↓ para elegir · Enter para consultar</p>
     </div>
     {% endif %}
 
     <div class="vb-inputwrap">
-      <label for="vb_barcode">Código de barras</label>
+      <label for="vb_barcode"><i class="fas fa-barcode" aria-hidden="true"></i> Código de barras</label>
       <div class="vb-inputrow">
         <input id="vb_barcode" class="vb-input" inputmode="numeric" autocomplete="off"
                placeholder="Escanea aquí…">
@@ -51,22 +53,26 @@
         <i class="fas fa-bolt"></i> Tip: Si usas lector USB, normalmente envía “Enter” al final.
       </div>
     </div>
+    </div>
 
     <div class="vb-display" id="vb_display">
+      <div class="vb-product-summary">
+      <p class="vb-eyebrow">PRODUCTO SELECCIONADO</p>
       <div class="vb-bigname" id="vb_name">—</div>
       <div class="vb-pricebox">
-        <div class="vb-price" id="vb_price">$0</div>
+        <div><small class="vb-price-caption">Precio registrado · unidad / gramo</small><div class="vb-price" id="vb_price">$0</div></div>
         <div class="vb-old" id="vb_old" style="display:none;"></div>
       </div>
       <div class="vb-meta">
         <span class="vb-pill" id="vb_pid">ID: —</span>
         <span class="vb-pill" id="vb_bar">Barras: —</span>
       </div>
+      </div>
       <section class="vb-quantity" aria-label="Calcular valor por cantidad">
         <label for="vb_quantity">Cantidad (gramos si se vende por peso)</label>
         <input id="vb_quantity" class="vb-input" type="number" min="1" max="999999999" step="1" value="1" inputmode="numeric" disabled aria-describedby="vb_quantity_help">
         <p class="vb-hint" id="vb_quantity_help">Para productos por peso escribe gramos: 500 = medio kilo, 1000 = un kilo. Para los demás productos escribe unidades. Se usa el mismo precio registrado en el POS.</p>
-        <div class="vb-total">Total estimado: <strong id="vb_total" aria-live="polite">—</strong></div>
+        <div class="vb-total"><span>Total estimado</span><strong id="vb_total" aria-live="polite">—</strong></div>
         <small>Precio registrado × cantidad. Sin descuentos ni promociones.</small>
       </section>
     </div>
@@ -81,5 +87,5 @@
 
 <script src="{% static 'vendor/jquery/jquery-3.6.4.min.js' %}"></script>
 <script src="{% static 'vendor/jquery-ui/jquery-ui-1.13.2.min.js' %}"></script>
-<script defer src="{% static 'javascript/visor_barcode.js' %}?v=2"></script>
+<script defer src="{% static 'javascript/visor_barcode.js' %}?v=3"></script>
 {% endblock %}

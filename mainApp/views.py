@@ -14295,7 +14295,10 @@ class ProductoBuscarBarrasVisorView( View):
 
     def get(self, request):
         term = (request.GET.get("term") or "").strip()
-        page = request.GET.get("page") or 1
+        try:
+            page = max(1, min(int(request.GET.get("page") or 1), 10000))
+        except (ValueError, TypeError):
+            page = 1
 
         if not term:
             return JsonResponse({"results": [], "pagination": {"more": False}})
@@ -14306,13 +14309,17 @@ class ProductoBuscarBarrasVisorView( View):
                   Q(codigo_de_barras__startswith=term) |
                   Q(codigo_de_barras__icontains=term)
               )
-              .order_by("codigo_de_barras", "nombre"))
+              .annotate(exact_match=Case(
+                  When(codigo_de_barras=term, then=Value(0)),
+                  default=Value(1), output_field=IntegerField(),
+              ))
+              .order_by("exact_match", "codigo_de_barras", "nombre"))
 
-        paginator = Paginator(qs, self.page_size)
-        page_obj = paginator.get_page(page)
+        start = (page - 1) * self.page_size
+        rows = list(qs[start:start + self.page_size + 1])
 
         results = []
-        for p in page_obj.object_list:
+        for p in rows[:self.page_size]:
             results.append({
                 "id": p.productoid,
                 "text": p.nombre,
@@ -14323,7 +14330,7 @@ class ProductoBuscarBarrasVisorView( View):
 
         return JsonResponse({
             "results": results,
-            "pagination": {"more": page_obj.has_next()}
+            "pagination": {"more": len(rows) > self.page_size}
         })
 
 

@@ -64,6 +64,15 @@ class VisorProductosTests(TestCase):
         response = ProductoBuscarBarrasVisorView.as_view()(request)
         self.assertEqual(json.loads(response.content)["results"], [])
 
+    def test_barcode_autocomplete_uses_one_query_and_prioritizes_exact_match(self):
+        Producto.objects.create(nombre="Prefijo", precio=1, categoria=self.other.categoria, codigo_de_barras="7701234500")
+        request = RequestFactory().get(reverse("visor_barcode_buscar"), {"term": "77012345"})
+        with self.assertNumQueries(1):
+            response = ProductoBuscarBarrasVisorView.as_view()(request)
+        rows = json.loads(response.content)["results"]
+        self.assertEqual(rows[0]["id"], self.other.pk)
+        self.assertEqual(len(rows), 2)
+
     def test_public_page_has_quantity_but_not_name_search(self):
         request = RequestFactory().get(reverse("visor_barcode"))
         request.user = AnonymousUser()
@@ -80,6 +89,15 @@ class VisorProductosTests(TestCase):
 
 
 class VisorMarkupTests(SimpleTestCase):
+    def test_both_autocompletes_share_fast_cache_and_safe_renderer(self):
+        script = (settings.BASE_DIR / "mainApp/static/javascript/visor_barcode.js").read_text(encoding="utf-8")
+        self.assertIn('enhanceAutocomplete($inp, VISOR_BARRAS_URL, "barcode")', script)
+        self.assertIn('enhanceAutocomplete($search, VISOR_CAJERO_URL, "name")', script)
+        self.assertIn("delay: 0, autoFocus: true, source", script)
+        self.assertIn("Date.now() - saved.at < 5000", script)
+        self.assertIn(".text(item.product.nombre)", script)
+        self.assertIn('e.stopImmediatePropagation()', script)
+
     def test_local_autocomplete_assets_and_gram_instructions(self):
         template = (settings.BASE_DIR / "mainApp/templates/visor_producto_barcode.html").read_text(encoding="utf-8")
         self.assertIn("500 = medio kilo", template)

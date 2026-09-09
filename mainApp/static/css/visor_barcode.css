@@ -281,3 +281,48 @@
 .ui-menu-item-wrapper{
   font-family: "Inter", system-ui, -apple-system, Segoe UI, Roboto, Arial;
 }
+
+/* Visor: misma paleta del POS, búsquedas independientes y total destacado. */
+.vb-page, .vb-page * { box-sizing: border-box; }
+.vb-page { align-items: flex-start; color: #f4f8ff; padding-top: clamp(24px, 4vw, 54px); }
+.vb-card { width: min(1180px, 100%); padding: clamp(20px, 3vw, 36px); border-radius: 24px; background: rgba(20, 51, 91, .78); }
+.vb-header { margin-bottom: 28px; gap: 18px; }
+.vb-icon { width: 64px; height: 64px; flex-shrink: 0; border-radius: 18px; }
+.vb-eyebrow { display: block; color: #9fcdf7; font-size: 11px; font-weight: 800; letter-spacing: .1em; margin: 0 0 8px; }
+.vb-title h2 { font-size: clamp(25px, 3vw, 36px); letter-spacing: -.03em; }
+.vb-title p { margin-top: 8px; font-size: 14px; }
+.vb-search-grid { display: grid; grid-template-columns: 1fr; gap: 20px; }
+.vb-page--cashier .vb-search-grid { grid-template-columns: 1fr 1fr; }
+.vb-inputwrap { min-width: 0; padding: 18px; background: rgba(255,255,255,.035); border: 1px solid #ffffff20; border-radius: 16px; }
+.vb-inputwrap label { font-size: 14px; }
+.vb-inputwrap label i { color: #78bfff; margin-right: 6px; }
+.vb-input { width: 100%; min-width: 0; height: 52px; background: rgba(151, 192, 239, .13); border-color: #b8d7ff45; font-size: 16px; }
+.vb-btn { height: 52px; min-width: 46px; }
+.vb-btn--camera { background: linear-gradient(145deg, #54b9ff, #367cda); border-color: #a3d9ff70; }
+.vb-hint { line-height: 1.6; }
+.vb-display { display: grid; grid-template-columns: 1.1fr 1fr; gap: 28px; margin-top: 24px; padding: clamp(20px, 3vw, 32px); background: linear-gradient(125deg, #234d7d88, #142f5277); }
+.vb-product-summary { min-width: 0; align-self: center; }
+.vb-bigname { font-size: clamp(24px, 3vw, 36px); line-height: 1.2; overflow-wrap: anywhere; }
+.vb-price-caption { color: #bdd5ee; display: block; margin: 16px 0 5px; }
+.vb-price { font-size: 28px; color: #c9e9ff; }
+.vb-quantity { margin: 0; padding: 0 0 0 28px; border-top: none; border-left: 1px solid #ffffff25; min-width: 0; }
+.vb-quantity input { max-width: none; font-size: 22px; font-weight: 700; }
+.vb-quantity input:disabled { opacity: .45; }
+.vb-quantity small { color: #b5cbe2; line-height: 1.5; font-size: 11px; }
+.vb-total { background: #53b7ff14; border: 1px solid #65beff40; border-radius: 14px; padding: 16px 18px; }
+.vb-total span { display: block; font-size: 13px; color: #c4def5; }
+.vb-total strong { display: block; color: #87ddff; font-size: clamp(22px, 2.7vw, 34px); margin-top: 6px; overflow-wrap: anywhere; }
+.vb-autocomplete.ui-widget-content { background: #122b4c; color: #eff7ff; border: 1px solid #74afff66; padding: 6px; border-radius: 14px; box-shadow: 0 18px 40px #03122666; max-height: 330px; }
+.vb-autocomplete .vb-result { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px; border: 1px solid transparent; border-radius: 9px; margin: 0; }
+.vb-autocomplete .ui-state-active { background: #285893; border-color: #6bb8ff; color: white; margin: 0; }
+.vb-result-main { display: grid; gap: 5px; min-width: 0; }
+.vb-result-main strong { white-space: normal; overflow-wrap: anywhere; font-size: 14px; }
+.vb-result-main small { font-size: 11px; color: #bad6f2; }
+.vb-result-price { white-space: nowrap; font-size: 14px; font-weight: 700; color: #9addff; }
+@media(max-width: 760px) {
+  .vb-page--cashier .vb-search-grid, .vb-display { grid-template-columns: 1fr; }
+  .vb-quantity { border-left: none; border-top: 1px solid #ffffff25; padding: 22px 0 0; }
+  .vb-header { align-items: flex-start; }
+  .vb-icon { width: 46px; height: 46px; font-size: 19px; }
+  .vb-page { padding: 20px 10px; }
+}
