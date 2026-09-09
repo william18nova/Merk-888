@@ -61,10 +61,25 @@ class VisorProductosTests(TestCase):
         self.assertEqual(item["url"], "/visor/cajeros/")
         self.assertEqual(raw["url_name"], "visor_barcode")
 
-    def test_public_and_other_roles_keep_public_visor_link(self):
+    def test_navbar_visor_opens_cashier_view_for_every_authenticated_account(self):
         raw = {"label": "Visor Barcode", "url_name": "visor_barcode"}
-        for user in (AnonymousUser(), self.user):
-            self.assertEqual(_resolve_nav_item(raw, user)["url"], reverse("visor_barcode"))
+        for role_name in (None, "Web Master", "Administrador", "Empleado"):
+            with self.subTest(role=role_name):
+                self.user.rolid = Rol.objects.create(nombre=role_name) if role_name else None
+                self.assertEqual(_resolve_nav_item(raw, self.user)["url"], reverse("visor_cajero"))
+                self.assertEqual(raw["url_name"], "visor_barcode")
+
+    def test_anonymous_navbar_keeps_public_visor_link(self):
+        raw = {"label": "Visor Barcode", "url_name": "visor_barcode"}
+        self.assertEqual(_resolve_nav_item(raw, AnonymousUser())["url"], reverse("visor_barcode"))
+
+    def test_authenticated_old_visor_url_redirects_directly_to_cashier_page(self):
+        self.client.force_login(self.user)
+        response = self.client.get(reverse("visor_barcode"), follow=True)
+        self.assertEqual(response.redirect_chain, [(reverse("visor_cajero"), 302)])
+        self.assertContains(response, 'id="vb_search"')
+        self.assertContains(response, 'id="vb_barcode"')
+        self.assertNotContains(response, "Buscar por nombre o ID →")
 
     def test_search_does_not_expose_internal_fields(self):
         item = json.loads(self.search("tomate").content)["results"][0]

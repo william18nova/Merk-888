@@ -14222,6 +14222,8 @@ class VisorProductoBarcodeView( View):
     template_name = "visor_producto_barcode.html"
 
     def get(self, request):
+        if request.user.is_authenticated:
+            return redirect("visor_cajero")
         return render(request, self.template_name)
 
 
