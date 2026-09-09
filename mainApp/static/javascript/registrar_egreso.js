@@ -13,6 +13,72 @@
     if (Number.isFinite(value)) element.textContent = money.format(value);
   });
 
+  function formatExpenseAmount(value) {
+    const raw = String(value || "");
+    // No convertir signos o texto inválido en otro importe silenciosamente.
+    if (!/^[0-9.]*,?[0-9]*$/.test(raw)) return raw;
+    const [whole, cents] = raw.split(",");
+    const digits = whole.replace(/\./g, "").replace(/^0+(?=[0-9])/, "");
+    const grouped = (digits || (cents !== undefined ? "0" : "")).replace(/\B(?=([0-9]{3})+(?![0-9]))/g, ".");
+    return grouped + (cents !== undefined ? `,${cents}` : "");
+  }
+
+  function normalizeExpenseAmount(raw) {
+    const value = String(raw || "").trim();
+    // Valores iniciales de Django y cantidades pegadas con punto decimal.
+    if (/^[0-9]+\.[0-9]{1,2}$/.test(value)) return value.replace(".", ",");
+    return value;
+  }
+
+  const amountInput = document.getElementById("id_monto");
+  function updateExpenseAmount() {
+    if (!amountInput) return;
+    const raw = amountInput.value;
+    const start = amountInput.selectionStart ?? raw.length;
+    const end = amountInput.selectionEnd ?? start;
+    const meaningful = text => text.replace(/\./g, "").length;
+    const newValue = formatExpenseAmount(raw);
+    const position = oldPosition => {
+      if (oldPosition === raw.length) return newValue.length;
+      const wanted = meaningful(raw.slice(0, oldPosition));
+      let seen = 0;
+      let index = 0;
+      while (index < newValue.length && seen < wanted) {
+        if (newValue[index] !== ".") seen++;
+        index++;
+      }
+      return index;
+    };
+    amountInput.value = newValue;
+    amountInput.setSelectionRange(position(start), position(end));
+    const valid = /^(?:[0-9]+|[0-9]{1,3}(?:\.[0-9]{3})+)(?:,[0-9]{1,2})?$/.test(newValue);
+    amountInput.setCustomValidity(newValue && !valid ? "Escribe un valor como 1.000 o 1.000,50." : "");
+  }
+
+  if (amountInput) {
+    // No reformatear una respuesta inválida del servidor como si fuera otro valor.
+    const initial = normalizeExpenseAmount(amountInput.value);
+    if (/^(?:[0-9]+|[0-9]{1,3}(?:\.[0-9]{3})+)(?:,[0-9]{1,2})?$/.test(initial)) {
+      amountInput.value = formatExpenseAmount(initial);
+    }
+    amountInput.addEventListener("input", updateExpenseAmount);
+    amountInput.addEventListener("paste", event => {
+      const pasted = event.clipboardData?.getData("text");
+      if (pasted === undefined) return;
+      const normalized = normalizeExpenseAmount(pasted);
+      if (!/^[0-9]+(?:\.[0-9]{3})*(?:,[0-9]{1,2})?$/.test(normalized)) return;
+      event.preventDefault();
+      amountInput.setRangeText(normalized, amountInput.selectionStart, amountInput.selectionEnd, "end");
+      updateExpenseAmount();
+    });
+    amountInput.addEventListener("blur", () => {
+      if (amountInput.value.endsWith(",")) {
+        amountInput.value = amountInput.value.slice(0, -1);
+        updateExpenseAmount();
+      }
+    });
+  }
+
   const conceptInput = document.getElementById("id_concepto");
   const normalizeConcept = (value, trim) => {
     let normalized = String(value || "").toLocaleUpperCase("es-CO");

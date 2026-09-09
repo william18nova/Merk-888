@@ -1,7 +1,8 @@
 import json
 from decimal import Decimal
 
-from django.test import RequestFactory, TestCase
+from django.test import RequestFactory, SimpleTestCase, TestCase
+from django.core.exceptions import ValidationError
 from django.urls import reverse
 from django.utils import timezone
 
@@ -22,6 +23,32 @@ from .models import (
 from .permissions import ALWAYS_ALLOWED_URL_NAMES, NAV_GROUPS
 from .services.feature_flags import TURN_REQUIRED_FEATURE, clear_feature_cache
 from .views import MetricasNegocioDataView, _expected_por_metodo
+from .forms import RegistrarEgresoForm
+
+
+class ExpenseAmountFormattingTests(SimpleTestCase):
+    def test_thousands_millions_and_cents_keep_the_exact_value(self):
+        field = RegistrarEgresoForm().fields["monto"]
+        for raw, expected in (
+            ("1.000", "1000"), ("1.000.000", "1000000"),
+            ("1.234.567,89", "1234567.89"), ("1250.50", "1250.50"),
+            ("0,01", "0.01"), ("500", "500"),
+            ("999.999.999.999,99", "999999999999.99"),
+        ):
+            with self.subTest(raw=raw):
+                self.assertEqual(field.clean(raw), Decimal(expected))
+
+    def test_invalid_amounts_are_rejected_not_silently_changed(self):
+        field = RegistrarEgresoForm().fields["monto"]
+        for raw in ("0", "-1000", "1.23.456", "1,234", "1.000,999", "NaN",
+                    "1.000.000.000.000", "abc1000", "1,2,3", ""):
+            with self.subTest(raw=raw), self.assertRaises(ValidationError):
+                field.clean(raw)
+
+    def test_widget_accepts_visible_thousands_separators(self):
+        html = str(RegistrarEgresoForm()["monto"])
+        self.assertIn('type="text"', html)
+        self.assertIn('inputmode="decimal"', html)
 
 
 class OperationalExpenseTests(TestCase):
@@ -124,6 +151,23 @@ class OperationalExpenseTests(TestCase):
 
         self.assertEqual(ConceptoEgreso.objects.count(), 1)
         self.assertEqual(Egreso.objects.filter(concepto=existing).count(), 2)
+
+    def test_formatted_amount_is_saved_exactly(self):
+        self.client.force_login(self.user)
+        response = self.client.post(reverse("registrar_egreso"), {
+            "concepto": "compra de insumos", "monto": "1.234.567,89", "medio_pago": "efectivo",
+        })
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(Egreso.objects.get().monto, Decimal("1234567.89"))
+
+    def test_amount_stays_visible_when_other_fields_fail_validation(self):
+        self.client.force_login(self.user)
+        response = self.client.post(reverse("registrar_egreso"), {
+            "concepto": "", "monto": "1.234.567,89", "medio_pago": "efectivo",
+        })
+        self.assertEqual(response.status_code, 400)
+        self.assertContains(response, 'value="1.234.567,89"', status_code=400)
+        self.assertEqual(Egreso.objects.count(), 0)
 
     def test_payment_is_independent_from_turns_and_cash_closure(self):
         self.set_turn_required(True)

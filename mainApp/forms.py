@@ -23,6 +23,20 @@ MEDIOS_PAGO = tuple(
 )
 
 
+class MontoEgresoField(forms.DecimalField):
+    """Acepta pesos con puntos de miles y coma decimal sin perder precisión."""
+
+    def to_python(self, value):
+        if isinstance(value, str):
+            value = value.strip()
+            grouped = re.fullmatch(r"[0-9]{1,3}(?:\.[0-9]{3})+(?:,[0-9]{1,2})?", value)
+            if "," in value or grouped:
+                if not re.fullmatch(r"(?:[0-9]+|[0-9]{1,3}(?:\.[0-9]{3})+)(?:,[0-9]{1,2})?", value):
+                    raise forms.ValidationError("Escribe un valor válido, por ejemplo 1.000 o 1.000,50.")
+                value = value.replace(".", "").replace(",", ".")
+        return super().to_python(value)
+
+
 class RegistrarEgresoForm(forms.Form):
     concepto = forms.CharField(
         max_length=160,
@@ -35,16 +49,16 @@ class RegistrarEgresoForm(forms.Form):
             "spellcheck": "false",
         }),
     )
-    monto = forms.DecimalField(
+    monto = MontoEgresoField(
         max_digits=14,
         decimal_places=2,
         min_value=Decimal("0.01"),
         label="Valor pagado",
-        widget=forms.NumberInput(attrs={
-            "min": "0.01",
-            "step": "0.01",
+        widget=forms.TextInput(attrs={
             "inputmode": "decimal",
             "placeholder": "0",
+            "autocomplete": "off",
+            "aria-describedby": "expense-amount-help",
         }),
     )
     medio_pago = forms.ChoiceField(label="Medio de pago", choices=())

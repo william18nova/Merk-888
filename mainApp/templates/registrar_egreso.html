@@ -90,6 +90,7 @@
               <b aria-hidden="true">$</b>
               {{ form.monto }}
             </span>
+            <small id="expense-amount-help">Los puntos de miles se agregan solos. Para centavos usa coma: 1.000,50.</small>
             {% for error in form.monto.errors %}<em>{{ error }}</em>{% endfor %}
           </label>
 
@@ -148,5 +149,5 @@
 {% endblock %}
 
 {% block scripts %}
-  <script defer src="{% static 'javascript/registrar_egreso.js' %}?v=1"></script>
+  <script defer src="{% static 'javascript/registrar_egreso.js' %}?v=2"></script>
 {% endblock %}
