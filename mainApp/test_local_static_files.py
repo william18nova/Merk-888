@@ -40,7 +40,7 @@ class LocalStaticFilesTests(SimpleTestCase):
     )
     def test_runserver_serves_the_complete_current_cash_closing_script(self):
         middleware = WhiteNoiseMiddleware(lambda request: HttpResponse(status=404))
-        request = RequestFactory().get("/static/javascript/turno_caja.js?v=24")
+        request = RequestFactory().get("/static/javascript/turno_caja.js?v=25")
         response = middleware(request)
         try:
             self.assertEqual(response.status_code, 200)

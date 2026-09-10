@@ -45,11 +45,30 @@ test("cierre en páginas distintas, solo hacia adelante y con valores conservado
     .replace(/{% url '([^']+)' %}/g, "/fixture/$1")
     .replace(/{% csrf_token %}/g, '<input type="hidden" name="csrfmiddlewaretoken" value="test-only">')
     .replace(/{%[\s\S]*?%}/g, "").replace(/{{[\s\S]*?}}/g, "");
-  const html = page => `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">${render(block("extra_head"), page)}</head><body>${render(block("content"), page)}</body></html>`;
+  const html = page => `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">${render(block("extra_head"), page)}</head><body><main class="page-wrap" style="transform:translateZ(0)">${render(block("content"), page)}</main></body></html>`;
+  async function assertCenteredModal(page, id = "tc-confirm") {
+    await page.waitForFunction(id => {
+      const dialog = document.getElementById(id);
+      const box = dialog.querySelector(".tc-modal-card").getBoundingClientRect();
+      return !dialog.hidden && getComputedStyle(dialog).position === "fixed"
+        && Math.abs(box.x + box.width / 2 - innerWidth / 2) < 2
+        && Math.abs(box.y + box.height / 2 - innerHeight / 2) < 2;
+    }, id);
+    assert.equal(await page.locator(`#${id}`).evaluate(el => el.parentElement === document.body), true);
+    assert.equal(await page.locator(".page-wrap").evaluate(el => el.inert), true);
+    assert.equal(await page.evaluate(() => getComputedStyle(document.body).overflow), "hidden");
+    assert.ok(await page.locator(`#${id}`).evaluate(el => Number(getComputedStyle(el).zIndex)) > 10000);
+  }
   const posts = [];
   let starts = 0;
+  let completeClose = false;
   const server = http.createServer((req, res) => {
     const url = new URL(req.url, "http://localhost");
+    if (url.pathname === "/fixture/retiro") {
+      res.setHeader("Content-Type", "text/html");
+      res.end("<h1>Retiro de prueba sin operaciones reales</h1>");
+      return;
+    }
     if (url.pathname === "/fixture/turno_caja_iniciar_cierre") {
       starts += 1;
       initial.estado = "CIERRE";
@@ -66,7 +85,9 @@ test("cierre en páginas distintas, solo hacia adelante y con valores conservado
           ? Object.fromEntries([...body.matchAll(/name="([^"]+)"\r\n\r\n([\s\S]*?)\r\n--/g)].map(match => [match[1], match[2]]))
           : Object.fromEntries(new URLSearchParams(body)));
         res.setHeader("Content-Type", "application/json");
-        res.end(JSON.stringify({success: false, error: "Prueba aislada: no se guardó ningún turno real."}));
+        res.end(JSON.stringify(completeClose
+          ? {success: true, turno_id: 8080, deuda_total: 500, retiro_url: "/fixture/retiro"}
+          : {success: false, error: "Prueba aislada: no se guardó ningún turno real."}));
       });
       return;
     }
@@ -90,11 +111,13 @@ test("cierre en páginas distintas, solo hacia adelante y con valores conservado
     await page.goto(url);
     await page.locator("#stepOpen").waitFor({state: "visible"});
     await page.locator("#btnIniciarCierre").click();
+    await assertCenteredModal(page);
     await page.locator("#tc-confirm-ok").click();
     await page.locator("#closePaymentsStep").waitFor({state: "visible"});
     assert.equal(starts, 1);
     assert.match(page.url(), /\/turno_caja\/cierre\/8080\/pagos\/$/);
     assert.equal(await page.locator("#closeCashStep, #closeMediaStep, #closeDenomInputs").count(), 0);
+    const closingWidth = (await page.locator(".tc-card").boundingBox()).width;
     const staleTab = await context.newPage();
     await staleTab.goto(url);
     await staleTab.locator("#closePaymentsStep").waitFor({state: "visible"});
@@ -106,14 +129,28 @@ test("cierre en páginas distintas, solo hacia adelante y con valores conservado
     assert.equal(await page.locator("#closeCashStep").isVisible(), false);
     await page.locator("#facturas_pagadas").fill("2000");
     await page.locator("#btnPaymentsNext").click();
+    await assertCenteredModal(page);
+    assert.match(await page.locator("#tc-confirm-details").innerText(), /2\.000/);
+    await page.locator("#tc-confirm-ok").focus();
+    await page.keyboard.press("Tab");
+    assert.equal(await page.locator(".tc-modal-close").evaluate(el => el === document.activeElement), true);
+    await page.keyboard.press("Shift+Tab");
+    assert.equal(await page.locator("#tc-confirm-ok").evaluate(el => el === document.activeElement), true);
+    if (process.env.POS_TEST_ARTIFACT_DIR) {
+      await page.screenshot({path: path.join(process.env.POS_TEST_ARTIFACT_DIR, "cierre-confirmacion-desktop.png")});
+    }
     assert.equal(await page.locator("#closePaymentsStep").isVisible(), true);
-    await page.locator("#tc-confirm .btn-ghost").click();
+    // Enter sobre Cancelar debe cancelar, no confirmar por un atajo global.
+    await page.locator("#tc-confirm .btn-ghost").press("Enter");
+    assert.equal(await page.locator(".page-wrap").evaluate(el => el.inert), false);
+    assert.equal(await page.locator("#btnPaymentsNext").evaluate(el => el === document.activeElement), true);
     assert.equal(await page.locator("#closePaymentsStep").isVisible(), true);
     assert.equal(await page.locator("#facturas_pagadas").isEditable(), true);
     await page.locator("#btnPaymentsNext").click();
     await page.locator("#tc-confirm-ok").click();
     await page.locator("#closeCashStep").waitFor({state: "visible"});
     assert.match(page.url(), /\/efectivo\/$/);
+    assert.equal((await page.locator(".tc-card").boundingBox()).width, closingWidth);
     assert.equal(await page.locator("#closePaymentsStep, #closeMediaStep").count(), 0);
     await staleTab.locator("#closeCashStep").waitFor({state: "visible"});
     assert.equal(await staleTab.locator("#facturas_pagadas").evaluate(el => el.readOnly), true);
@@ -130,6 +167,7 @@ test("cierre en páginas distintas, solo hacia adelante y con valores conservado
       await page.locator("#stepClose").screenshot({path: path.join(process.env.POS_TEST_ARTIFACT_DIR, "cierre-conteo-desktop.png")});
     }
     await page.locator("#btnCashNext").click();
+    await assertCenteredModal(page);
     await page.locator("#tc-confirm-ok").click();
     await page.locator("#closeMediaStep").waitFor({state: "visible"});
     await staleTab.locator("#closeMediaStep").waitFor({state: "visible"});
@@ -137,12 +175,17 @@ test("cierre en páginas distintas, solo hacia adelante y con valores conservado
     await staleTab.close();
     assert.equal(await page.locator("#closeMediaStep").isVisible(), true);
     assert.match(page.url(), /\/medios\/$/);
+    assert.equal((await page.locator(".tc-card").boundingBox()).width, closingWidth);
     assert.equal(await page.locator("#closePaymentsStep, #closeCashStep, #closeDenomInputs").count(), 0);
     assert.equal(await page.locator("#facturas_pagadas").isVisible(), false);
     await page.locator('[data-in="nequi"]').fill("3000");
     await page.waitForFunction(() => document.getElementById("mVentas").textContent.includes("14.000"));
     assert.equal(await page.locator("#ptm_transacciones").inputValue(), "0");
+    if (process.env.POS_TEST_ARTIFACT_DIR) {
+      await page.locator(".tc-card").screenshot({path: path.join(process.env.POS_TEST_ARTIFACT_DIR, "cierre-medios-desktop.png")});
+    }
     await page.locator("#btnCerrar").click();
+    await assertCenteredModal(page);
     await page.locator("#tc-confirm-ok").click();
     await page.waitForFunction(() => document.getElementById("tc-toasts").textContent.includes("Prueba aislada"));
     assert.equal(posts[0].facturas_pagadas, "2000");
@@ -165,11 +208,27 @@ test("cierre en páginas distintas, solo hacia adelante y con valores conservado
     await otherTab.locator("#closeMediaStep").waitFor({state: "visible"});
     assert.equal(await otherTab.locator("#facturas_pagadas").inputValue(), "2000");
     await otherTab.close();
+    completeClose = true;
+    await page.locator("#btnCerrar").click();
+    await page.locator("#tc-confirm-ok").click();
+    await assertCenteredModal(page, "tc-summary");
+    assert.match(await page.locator("#tc-summary-body").innerText(), /Deuda del turno/);
+    assert.equal(await page.evaluate(() => localStorage.getItem("tc_contados_8080")), null);
+    await page.locator("#tc-summary .btn-primary").click();
+    await page.waitForURL("**/fixture/retiro");
+    assert.equal(await page.evaluate(() => JSON.parse(sessionStorage.getItem("tc_retiro_denoms_8080")).counts.b5000), 2);
     const freshContext = await browser.newContext({viewport: {width: 390, height: 844}});
     await freshContext.route("https://**/*", route => route.abort());
     const fresh = await freshContext.newPage();
     await fresh.goto(url);
     await fresh.locator("#facturas_pagadas").fill("");
+    await fresh.locator("#btnPaymentsNext").click();
+    await assertCenteredModal(fresh);
+    if (process.env.POS_TEST_ARTIFACT_DIR) {
+      await fresh.screenshot({path: path.join(process.env.POS_TEST_ARTIFACT_DIR, "cierre-confirmacion-mobile.png")});
+    }
+    await fresh.keyboard.press("Escape");
+    assert.equal(await fresh.locator("#closePaymentsStep").isVisible(), true);
     await fresh.locator("#btnPaymentsNext").click();
     await fresh.locator("#tc-confirm-ok").click();
     await fresh.locator("#closeCashStep").waitFor({state: "visible"});

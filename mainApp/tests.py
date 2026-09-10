@@ -166,7 +166,7 @@ class TurnoCajaAutofillTests(SimpleTestCase):
         self.assertIn('value="{{ request.user.nombreusuario }}"', template)
         self.assertIn('id="cajero_id" value="{{ request.user.pk }}"', template)
         self.assertIn('name="password"', template)
-        self.assertIn("turno_caja.js' %}?v=24", template)
+        self.assertIn("turno_caja.js' %}?v=25", template)
         self.assertIn("btnIniciar.disabled = inflightAction", script)
         self.assertIn("cajero_nombre", script)
 

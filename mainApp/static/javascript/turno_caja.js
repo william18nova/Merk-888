@@ -82,6 +82,7 @@
      TOAST no-bloqueante (reemplaza al alert/flash anterior)
      ============================================================ */
   const TOASTS = $("#tc-toasts");
+  if (TOASTS) document.body.appendChild(TOASTS);
   function toast(kind, msg, ttl = 3500) {
     if (!TOASTS) return;
     const t = document.createElement("div");
@@ -104,24 +105,62 @@
   /* ============================================================
      MODAL de confirmación + resumen
      ============================================================ */
-  function modal(id) {
-    const el = document.getElementById(id);
-    if (!el) return null;
-    const close = () => {
-      el.hidden = true;
-      el.querySelectorAll("[data-close]").forEach((b) => b.replaceWith(b.cloneNode(true)));
+  function openFloatingModal(el, focusSelector) {
+    const previousFocus = document.activeElement;
+    // Fuera de page-wrap: sus animaciones no deben desplazar el modal.
+    document.body.appendChild(el);
+    const background = Array.from(document.body.children)
+      .filter(node => !node.matches(".tc-modal, .tc-toasts, script, style, link"))
+      .map(node => ({node, inert: node.inert}));
+    background.forEach(({node}) => { node.inert = true; });
+    document.body.classList.add("tc-modal-open");
+    el.hidden = false;
+    const trapFocus = event => {
+      if (event.key !== "Tab") return;
+      const buttons = Array.from(el.querySelectorAll("button:not(:disabled), [href], input:not(:disabled), [tabindex='0']"))
+        .filter(node => !node.hidden && node.getClientRects().length);
+      const first = buttons[0], last = buttons[buttons.length - 1];
+      if (!first) { event.preventDefault(); el.querySelector(".tc-modal-card")?.focus(); return; }
+      if (event.shiftKey && (document.activeElement === first || !el.contains(document.activeElement))) {
+        event.preventDefault(); last.focus();
+      } else if (!event.shiftKey && (document.activeElement === last || !el.contains(document.activeElement))) {
+        event.preventDefault(); first.focus();
+      }
     };
-    el.querySelectorAll("[data-close]").forEach((b) => b.addEventListener("click", close));
-    return { el, close };
+    document.addEventListener("keydown", trapFocus, true);
+    requestAnimationFrame(() => {
+      if (!el.hidden) el.querySelector(focusSelector)?.focus({preventScroll: true});
+    });
+    return () => {
+      el.hidden = true;
+      document.removeEventListener("keydown", trapFocus, true);
+      document.body.classList.remove("tc-modal-open");
+      background.forEach(({node, inert}) => { node.inert = inert; });
+      if (previousFocus?.isConnected && !previousFocus.closest("[hidden], [inert]")) {
+        previousFocus.focus({preventScroll: true});
+      }
+    };
   }
 
-  function confirmModal({ title, msg, okText = "Confirmar", cancelText = "Cancelar", danger = false }) {
+  function confirmModal({ title, msg, details = [], note = "", okText = "Confirmar", cancelText = "Cancelar", danger = false }) {
     return new Promise((resolve) => {
       const el = document.getElementById("tc-confirm");
       if (!el) { resolve(window.confirm(`${title}\n\n${msg}`)); return; }
 
       $("#tc-confirm-title").textContent = title || "¿Confirmar?";
       $("#tc-confirm-msg").textContent   = msg   || "";
+      const detailList = $("#tc-confirm-details");
+      detailList.replaceChildren();
+      details.forEach(([label, value]) => {
+        const row = document.createElement("div");
+        const term = document.createElement("dt"), amount = document.createElement("dd");
+        term.textContent = label; amount.textContent = value;
+        row.append(term, amount); detailList.appendChild(row);
+      });
+      detailList.hidden = !details.length;
+      const noteEl = $("#tc-confirm-note");
+      noteEl.textContent = note; noteEl.hidden = !note;
+      el.dataset.tone = danger ? "warning" : "info";
 
       const btnOk = $("#tc-confirm-ok");
       btnOk.textContent = okText;
@@ -130,26 +169,30 @@
       const ghost = el.querySelector(".btn-ghost");
       if (ghost) ghost.textContent = cancelText;
 
-      el.hidden = false;
+      const release = openFloatingModal(el, ".btn-ghost");
+      let settled = false;
 
       const cleanup = () => {
-        el.hidden = true;
+        release();
         btnOk.removeEventListener("click", onOk);
         el.querySelectorAll("[data-close]").forEach((b) => b.removeEventListener("click", onCancel));
         document.removeEventListener("keydown", onKey, true);
       };
-      const onOk = () => { cleanup(); resolve(true); };
-      const onCancel = () => { cleanup(); resolve(false); };
+      const finish = result => {
+        if (settled) return;
+        settled = true;
+        cleanup(); resolve(result);
+      };
+      const onOk = () => finish(true);
+      const onCancel = () => finish(false);
       const onKey = (e) => {
         if (e.key === "Escape") { e.preventDefault(); onCancel(); }
-        else if (e.key === "Enter") { e.preventDefault(); onOk(); }
       };
 
       btnOk.addEventListener("click", onOk);
       el.querySelectorAll("[data-close]").forEach((b) => b.addEventListener("click", onCancel));
       document.addEventListener("keydown", onKey, true);
 
-      requestAnimationFrame(() => btnOk.focus());
     });
   }
 
@@ -157,20 +200,21 @@
     const el = document.getElementById("tc-summary");
     if (!el) { onClose?.(); return; }
     $("#tc-summary-body").innerHTML = html;
-    el.hidden = false;
+    const release = openFloatingModal(el, ".tc-modal-actions button");
     let closed = false;
     const close = () => {
       if (closed) return;
       closed = true;
-      el.hidden = true;
+      release();
       document.removeEventListener("keydown", onKey, true);
+      el.querySelectorAll("[data-close]").forEach(b => b.removeEventListener("click", close));
       onClose?.();
     };
     el.querySelectorAll("[data-close]").forEach((b) =>
-      b.addEventListener("click", close, { once: true })
+      b.addEventListener("click", close)
     );
     const onKey = (e) => {
-      if (e.key === "Escape" || e.key === "Enter") {
+      if (e.key === "Escape") {
         e.preventDefault();
         close();
       }
@@ -533,6 +577,7 @@
       if (panel) panel.hidden = name !== which;
     }
     document.querySelectorAll("[data-close-step]").forEach((item) => {
+      item.classList.toggle("is-complete", CLOSE_STEPS.indexOf(item.dataset.closeStep) < CLOSE_STEPS.indexOf(which));
       if (item.dataset.closeStep === which) item.setAttribute("aria-current", "step");
       else item.removeAttribute("aria-current");
     });
@@ -610,8 +655,10 @@
       const confirmed = await confirmModal({
         title: from === "payments" ? "Confirmar pagos de caja" : "Confirmar conteo de efectivo",
         msg: from === "payments"
-          ? `Registraste ${money2(invoices)} para facturas y compañeros. Después de confirmar no podrás volver atrás ni cambiar este valor.`
-          : `Contaste ${money2(closeCashTotalValue(denominations))} en billetes y monedas. Después de confirmar no podrás volver atrás ni cambiar el conteo.`,
+          ? "Verifica el dinero pagado o apartado para facturas y compañeros."
+          : "Verifica el efectivo que entregarás en caja, incluida la base.",
+        details: [[from === "payments" ? "Pagos de caja" : "Efectivo contado", money2(from === "payments" ? invoices : closeCashTotalValue(denominations))]],
+        note: "Después de confirmar no podrás volver atrás ni cambiar estos valores.",
         okText: "Confirmar y continuar",
       });
       if (!confirmed) return;
@@ -1130,8 +1177,10 @@
 
     const goAhead = await confirmModal({
       title: "Cerrar turno",
-      msg: `Vas a cerrar el turno con efectivo contado de ${money2(efectivoEntregado)} y pagos de caja (facturas y compañeros) por ${money2(facturasPagadas)}.${nequiMsg} Esta acción no se puede deshacer.`,
-      okText: "Si, continuar",
+      msg: `Revisa los valores antes de guardar el cierre.${nequiMsg}`,
+      details: [["Efectivo contado", money2(efectivoEntregado)], ["Facturas y compañeros", money2(facturasPagadas)], ["Transacciones PTM", ptmTransacciones]],
+      note: "Al confirmar se cerrará el turno. Esta acción no se puede deshacer.",
+      okText: "Confirmar cierre",
       danger: true,
     });
     if (!goAhead) return;
@@ -1161,8 +1210,10 @@
         const deuda = Math.abs(Number(data.deuda_total ?? 0));
         persistRetiroDenoms(oldId);
         clearContados(oldId);
-        window.alert(deuda > 0 ? `Deuda del turno: ${money2(deuda)}` : "Deuda del turno: $0");
-        setTimeout(() => window.location.assign(data.retiro_url), 150);
+        summaryModal(
+          `<div class="sum-row"><span>Deuda del turno</span><b>${money2(deuda)}</b></div>`,
+          () => window.location.assign(data.retiro_url)
+        );
         return;
       }
 
@@ -1278,7 +1329,7 @@
   const initialTurno = readInitialTurno();
   if (initialTurno) {
     hydrateTurno(initialTurno);
-    ok(initialTurno.estado === "CIERRE" ? "Cierre pendiente recuperado." : "Turno abierto recuperado.");
+    if (!closePages.page) ok(initialTurno.estado === "CIERRE" ? "Cierre pendiente recuperado." : "Turno abierto recuperado.");
   } else {
     showSection("start");
     // auto-foco al primer campo

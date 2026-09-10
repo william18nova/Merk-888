@@ -101,6 +101,17 @@ class PaidInvoicesMarkupTests(SimpleTestCase):
         self.assertIn("background:#fff3cd", css)
         self.assertIn("color:#392700", css)
 
+    def test_all_close_pages_share_the_heading_layout_and_floating_confirmation(self):
+        for page in ("payments", "cash", "media"):
+            with self.subTest(page=page):
+                html = render_close_page(page)
+                self.assertIn("tc-wrap--closing", html)
+                self.assertEqual(html.count('class="tc-step-heading"'), 1)
+                self.assertIn('class="tc-actions tc-close-actions"', html)
+                self.assertIn('aria-describedby="tc-confirm-msg tc-confirm-note"', html)
+                self.assertIn('id="tc-confirm-details"', html)
+                self.assertIn('aria-label="Cancelar confirmación"', html)
+
     def test_each_url_only_renders_its_own_step_even_without_css_or_javascript(self):
         from django.urls import resolve
         from .permissions import ROUTE_PERMISSIONS
