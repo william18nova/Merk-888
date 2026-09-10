@@ -11922,6 +11922,27 @@ def _expected_por_metodo(turno: TurnoCaja) -> tuple[dict[str, Decimal], Decimal,
 # =========================
 class TurnoCajaPageView(LoginRequiredMixin, TemplateView):
     template_name = "turno_caja.html"
+    close_page = ""
+
+    def get_turno_activo(self):
+        if not hasattr(self, "_active_turn"):
+            self._active_turn = (
+                TurnoCaja.objects.select_related("puntopago", "cajero")
+                .filter(cajero=self.request.user, estado__in=["ABIERTO", "CIERRE"])
+                .order_by("-inicio").first()
+            )
+        return self._active_turn
+
+    def get(self, request, *args, **kwargs):
+        turno = self.get_turno_activo()
+        if not self.close_page and turno and turno.estado == "CIERRE":
+            # La página inicial ya no contiene los formularios de cierre.
+            # La navegación no debe depender de un JS antiguo en caché.
+            response = redirect("turno_caja_cierre_pagos", turno_id=turno.pk)
+        else:
+            response = super().get(request, *args, **kwargs)
+        response["Cache-Control"] = "no-store, private"
+        return response
 
     def get_context_data(self, **kwargs):
         ctx = super().get_context_data(**kwargs)
@@ -11933,20 +11954,37 @@ class TurnoCajaPageView(LoginRequiredMixin, TemplateView):
         # Opción B: si tienes un campo rol (ej: user.rol)
         # hide_bd = getattr(self.request.user, "rol", "") in ["Cajero", "Auxiliar"]
 
-        turno_activo = (
-            TurnoCaja.objects
-            .select_related("puntopago", "cajero")
-            .filter(cajero=self.request.user, estado__in=["ABIERTO", "CIERRE"])
-            .order_by("-inicio")
-            .first()
-        )
+        turno_activo = self.get_turno_activo()
 
+        ctx["close_page"] = self.close_page
         ctx["hide_bd_cols"] = hide_bd
         ctx["turno_activo_inicial"] = (
             _turno_frontend_payload(turno_activo, self.request.user)
             if turno_activo else None
         )
         return ctx
+
+
+class TurnoCajaCierrePageView(TurnoCajaPageView):
+    """Cada URL renderiza exclusivamente el formulario de su paso de cierre."""
+
+    def get_turno_activo(self):
+        if not hasattr(self, "_close_turn"):
+            self._close_turn = get_object_or_404(
+                TurnoCaja.objects.select_related("puntopago", "cajero"),
+                pk=self.kwargs["turno_id"],
+            )
+            if not _can_operate_turno(self.request.user, self._close_turn):
+                from django.core.exceptions import PermissionDenied
+                raise PermissionDenied("No puedes operar un turno de otro cajero.")
+        return self._close_turn
+
+    def get(self, request, *args, **kwargs):
+        if self.get_turno_activo().estado != "CIERRE":
+            return redirect("turno_caja")
+        response = super().get(request, *args, **kwargs)
+        response["Cache-Control"] = "no-store, private"
+        return response
 
 # =========================
 # AUTOCOMPLETES

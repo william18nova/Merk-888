@@ -319,6 +319,12 @@ urlpatterns = [
 
      path("ptm/", OperacionesPTMView.as_view(), name="operaciones_ptm"),
      path("turno_caja/", views.TurnoCajaPageView.as_view(), name="turno_caja"),
+     path("turno_caja/cierre/<int:turno_id>/pagos/",
+          views.TurnoCajaCierrePageView.as_view(close_page="payments"), name="turno_caja_cierre_pagos"),
+     path("turno_caja/cierre/<int:turno_id>/efectivo/",
+          views.TurnoCajaCierrePageView.as_view(close_page="cash"), name="turno_caja_cierre_efectivo"),
+     path("turno_caja/cierre/<int:turno_id>/medios/",
+          views.TurnoCajaCierrePageView.as_view(close_page="media"), name="turno_caja_cierre_medios"),
 
      path("turnos_caja/recuperar_o_iniciar/",
          views.TurnoCajaRecuperarOIniciarView.as_view(),

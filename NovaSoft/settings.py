@@ -1,6 +1,7 @@
 # settings.py – perfil simple para runserver local
 from pathlib import Path
 import os
+import sys
 from decouple import Config, RepositoryEnv
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -99,6 +100,14 @@ STATIC_URL = "/static/"
 # AppDirectoriesFinder porque mainApp está en INSTALLED_APPS. Declararla de
 # nuevo en STATICFILES_DIRS duplicaba cada archivo durante collectstatic.
 STATIC_ROOT = BASE_DIR / "staticfiles"
+
+# runserver debe servir los CSS/JS fuente y refrescar sus metadatos aunque
+# DEBUG esté desactivado. Así no mezcla plantillas nuevas con copias antiguas
+# de collectstatic ni trunca archivos al actualizar esas copias en caliente.
+# En PythonAnywhere (WSGI) se mantiene el comportamiento de producción.
+WHITENOISE_AUTOREFRESH = DEBUG or "runserver" in sys.argv
+WHITENOISE_USE_FINDERS = WHITENOISE_AUTOREFRESH
+WHITENOISE_MAX_AGE = 0 if WHITENOISE_AUTOREFRESH else 60
 
 STORAGES = {
     "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},

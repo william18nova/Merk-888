@@ -7,7 +7,7 @@
 {% block extra_head %}
   <link rel="stylesheet"
         href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"/>
-  <link rel="stylesheet" href="{% static 'css/turno_caja.css' %}?v=13">
+  <link rel="stylesheet" href="{% static 'css/turno_caja.css' %}?v=16">
 {% endblock %}
 
 {% block content %}
@@ -19,6 +19,7 @@
       <div id="tc-toasts" class="tc-toasts" aria-live="polite" aria-atomic="true"></div>
 
       <!-- ============================== STEP 1 ============================== -->
+      {% if not close_page %}
       <section id="stepStart" class="tc-section" aria-labelledby="stepStartTitle">
         <div class="tc-section-title">
           <span class="badge badge-info" aria-hidden="true">1</span>
@@ -143,12 +144,15 @@
       </section>
 
       <!-- ============================== STEP 3 ============================== -->
+      {% endif %}
+      {% if close_page %}
       <section id="stepClose" class="tc-section" style="display:none;" aria-labelledby="stepCloseTitle">
+        {% csrf_token %}
         <div class="tc-section-title">
           <span class="badge badge-warn" aria-hidden="true">3</span>
           <div>
             <div class="tt" id="stepCloseTitle">Cierre de turno</div>
-            <div class="st">Ingresa lo que reconoces por cada medio. Intervalo: inicio → cierre.</div>
+            <div class="st">Primero los pagos de caja, después el efectivo y los otros medios.</div>
           </div>
           <div class="right">
             <span id="estadoBadge2" class="pill pill-close">CIERRE</span>
@@ -162,40 +166,58 @@
           <div class="info-row"><span>Cierre iniciado:</span> <b id="infoCierre">—</b></div>
         </div>
 
-        <div id="closePaidInvoices" class="tc-grid tc-grid-compact">
-          <label class="tc-label" for="facturas_pagadas">Facturas pagadas</label>
+        <ol class="tc-close-progress" aria-label="Pasos del cierre">
+          <li data-close-step="payments" aria-current="step"><span aria-hidden="true">1</span> Pagos de caja</li>
+          <li data-close-step="cash"><span aria-hidden="true">2</span> Contar efectivo</li>
+          <li data-close-step="media"><span aria-hidden="true">3</span> Otros medios</li>
+        </ol>
+        <p class="tc-close-forward-note"><i class="fa-solid fa-lock" aria-hidden="true"></i> Revisa cada paso antes de confirmar. Después de avanzar no podrás volver atrás ni cambiar esos valores.</p>
+
+        {% if close_page == "payments" %}
+        <div id="closePaymentsStep" class="tc-close-step" aria-labelledby="closePaymentsTitle">
+          <h3 id="closePaymentsTitle" class="tc-payments-title">¿Cuánto dinero de la caja usaste para pagar facturas o compañeros?</h3>
+          <p class="tc-payments-intro">Antes de contar los billetes, registra ese total aquí. Si vas a pagarle a un compañero, aparta primero el dinero e inclúyelo en este valor.</p>
+          <div id="closePaidInvoices" class="tc-grid tc-grid-compact">
+          <label class="tc-label" for="facturas_pagadas">Facturas y pagos a compañeros</label>
           <div class="tc-field">
             <i class="fa-solid fa-file-invoice-dollar" aria-hidden="true"></i>
             <input id="facturas_pagadas"
                    name="facturas_pagadas"
-                   form="formClose"
                    class="tc-input no-spin"
                    type="number"
                    step="0.01"
                    min="0"
                    inputmode="decimal"
+                   value="0"
                    placeholder="0.00"
                    aria-describedby="facturas_pagadas_help">
           </div>
           <p id="facturas_pagadas_help" class="tc-invoice-help">
-            Total de facturas pagadas con efectivo de este turno. Se suma al efectivo contado para el cuadre. No incluyas retiros PTM.
+            Solo efectivo de este turno: lo que ya pagaste y lo que apartaste para pagarle a un compañero. Si no hubo pagos, deja 0. No incluyas pagos por Nequi o tarjeta, ni retiros PTM.
           </p>
-        </div>
-
-        <div class="tc-grid tc-grid-compact" id="closePTM">
-          <label class="tc-label" for="ptm_transacciones">Transacciones PTM</label>
-          <div class="tc-field">
-            <input class="tc-input no-spin" id="ptm_transacciones" name="ptm_transacciones" form="formClose"
-                   type="number" min="0" max="99999999" step="1" inputmode="numeric" value="0" placeholder="0"
-                   aria-describedby="ptm_conteo_help">
           </div>
-          <p class="tc-invoice-help" id="ptm_conteo_help">Si dejas el campo vacío, se toma como 0. Cuenta los comprobantes de retiros y recargas/pagos de este turno. El número debe coincidir con el registro. PTM ya se suma o resta del efectivo esperado; no lo agregues otra vez a facturas pagadas.</p>
+          <div class="tc-actions">
+            <button id="btnPaymentsNext" class="btn btn-primary" type="button">
+              Confirmar pagos y continuar <i class="fa-solid fa-arrow-right" aria-hidden="true"></i>
+            </button>
+          </div>
         </div>
 
-        <div id="closeCashStep" class="tc-close-step">
+        {% else %}
+        <input id="facturas_pagadas" type="hidden" value="0">
+        {% endif %}
+        {% if close_page == "cash" %}
+        <div id="closeCashStep" class="tc-close-step" style="display:none;">
+          <div class="tc-cash-warning" role="note" aria-labelledby="closeCashWarningTitle">
+            <i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i>
+            <div>
+              <strong id="closeCashWarningTitle" tabindex="-1">No cuentes el dinero que ya pagaste o que vas a pagarle a un compañero.</strong>
+              <p>Déjalo registrado en el paso 1 y separado del conteo. Cuenta solo los billetes y monedas que quedan para entregar en caja, incluida la base.</p>
+            </div>
+          </div>
           <div class="tc-close-subtitle">
             <i class="fa-solid fa-money-bills" aria-hidden="true"></i>
-            Conteo de efectivo por denominacion
+            Conteo de efectivo por denominación
           </div>
           <div class="tc-denom-grid" id="closeDenomInputs"></div>
 
@@ -212,17 +234,29 @@
                     type="button"
                     title="Continuar a medios de pago">
               <span class="btn-label">
-                <i class="fa-solid fa-arrow-right" aria-hidden="true"></i> Continuar
+                <i class="fa-solid fa-arrow-right" aria-hidden="true"></i> Confirmar conteo y continuar
               </span>
             </button>
           </div>
         </div>
 
+        {% endif %}
+        {% if close_page == "media" %}
         <div id="closeMediaStep" class="tc-close-step" style="display:none;">
           <div class="tc-close-subtitle">
             <i class="fa-solid fa-credit-card" aria-hidden="true"></i>
             Ventas por medio de pago
           </div>
+
+        <div class="tc-grid tc-grid-compact" id="closePTM">
+          <label class="tc-label" for="ptm_transacciones">Transacciones PTM</label>
+          <div class="tc-field">
+            <input class="tc-input no-spin" id="ptm_transacciones" name="ptm_transacciones" form="formClose"
+                   type="number" min="0" max="99999999" step="1" inputmode="numeric" value="0" placeholder="0"
+                   aria-describedby="ptm_conteo_help">
+          </div>
+          <p class="tc-invoice-help" id="ptm_conteo_help">Si dejas el campo vacío, se toma como 0. Cuenta los comprobantes de retiros y recargas/pagos de este turno. El número debe coincidir con el registro. PTM ya se suma o resta del efectivo esperado; no lo agregues otra vez a facturas pagadas.</p>
+        </div>
 
         <form id="formClose" class="tc-grid tc-grid-compact" autocomplete="off" novalidate>
           <label class="tc-label" for="efectivo_entregado">Efectivo contado</label>
@@ -259,13 +293,7 @@
           </div>
         </div>
 
-        <div class="tc-actions tc-actions-between">
-          <button id="btnBackCash"
-                  class="btn btn-ghost"
-                  type="button"
-                  title="Volver al conteo de efectivo">
-            <i class="fa-solid fa-arrow-left" aria-hidden="true"></i> Volver
-          </button>
+        <div class="tc-actions">
           <button id="btnCerrar"
                   class="btn btn-primary"
                   type="button"
@@ -277,7 +305,12 @@
           </button>
         </div>
         </div>
+        {% else %}
+        <input id="efectivo_entregado" type="hidden" value="0">
+        {% endif %}
       </section>
+      {% endif %}
+      <noscript><p class="tc-close-forward-note">Activa JavaScript para continuar con el turno y conservar el orden del cierre.</p></noscript>
     </div>
   </div>
 
@@ -316,7 +349,14 @@
     const API_RECUPERAR  = "{% url 'turno_recuperar_o_iniciar' %}";
     const API_INI_CIERRE = "{% url 'turno_caja_iniciar_cierre' %}";
     const API_CERRAR     = "{% url 'turno_caja_cerrar' %}";
+    window.TURNO_CIERRE_PAGINAS = {
+      page: "{{ close_page|default:''|escapejs }}",
+      home: "{% url 'turno_caja' %}",
+      payments: "{% url 'turno_caja_cierre_pagos' turno_id=0 %}",
+      cash: "{% url 'turno_caja_cierre_efectivo' turno_id=0 %}",
+      media: "{% url 'turno_caja_cierre_medios' turno_id=0 %}"
+    };
   </script>
 
-  <script defer src="{% static 'javascript/turno_caja.js' %}?v=20"></script>
+  <script defer src="{% static 'javascript/turno_caja.js' %}?v=24"></script>
 {% endblock %}

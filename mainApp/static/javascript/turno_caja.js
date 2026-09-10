@@ -153,19 +153,26 @@
     });
   }
 
-  function summaryModal(html) {
+  function summaryModal(html, onClose) {
     const el = document.getElementById("tc-summary");
-    if (!el) return;
+    if (!el) { onClose?.(); return; }
     $("#tc-summary-body").innerHTML = html;
     el.hidden = false;
+    let closed = false;
+    const close = () => {
+      if (closed) return;
+      closed = true;
+      el.hidden = true;
+      document.removeEventListener("keydown", onKey, true);
+      onClose?.();
+    };
     el.querySelectorAll("[data-close]").forEach((b) =>
-      b.addEventListener("click", () => (el.hidden = true), { once: true })
+      b.addEventListener("click", close, { once: true })
     );
     const onKey = (e) => {
       if (e.key === "Escape" || e.key === "Enter") {
         e.preventDefault();
-        el.hidden = true;
-        document.removeEventListener("keydown", onKey, true);
+        close();
       }
     };
     document.addEventListener("keydown", onKey, true);
@@ -403,12 +410,13 @@
   const facturasPagadasInp = $("#facturas_pagadas");
   const mediosBody = $("#mediosBody");
   const mVentas = $("#mVentas");
+  const closePaymentsStep = $("#closePaymentsStep");
   const closeCashStep = $("#closeCashStep");
   const closeMediaStep = $("#closeMediaStep");
   const closeDenomInputs = $("#closeDenomInputs");
   const closeCashTotal = $("#closeCashTotal");
   const btnCashNext = $("#btnCashNext");
-  const btnBackCash = $("#btnBackCash");
+  const btnPaymentsNext = $("#btnPaymentsNext");
 
   if (typeof PP_AC_URL !== "undefined" && ppInp && ppHid && ppBox)
     setupAutocomplete(ppInp, ppHid, ppBox, PP_AC_URL);
@@ -426,6 +434,20 @@
 
   let inflightAction = null;       // 'iniciar' | 'inicierre' | 'cerrar' | null
   let durationTimer = null;
+  const CLOSE_STEPS = ["payments", "cash", "media"];
+  let closeProgress = { step: "payments", invoices: null, denominations: null };
+  let closeStepAdvancing = false;
+  const closePages = window.TURNO_CIERRE_PAGINAS || {};
+  let closePageLeaving = false;
+  let closeDraftCounts = {};
+  let closeDraftPTM = "0";
+
+  function navigateClosePage(which) {
+    if (!TURNO_ID || !closePages[which] || closePages.page === which) return false;
+    closePageLeaving = true;
+    window.location.replace(closePages[which].replace("/0/", `/${TURNO_ID}/`));
+    return true;
+  }
 
   /* ============================================================
      PERSISTENCIA del contado (sobrevive a F5 mientras estés en CIERRE)
@@ -460,6 +482,8 @@
   }
 
   function readCloseDenomCounts() {
+    if (closeProgress.step === "media" && closeProgress.denominations) return { ...closeProgress.denominations };
+    if (!closeDenomInputs) return { ...closeDraftCounts };
     const counts = {};
     DENOMS.forEach((d) => {
       counts[d.key] = intCount(closeDenomInputs?.querySelector(`[data-close-denom='${d.key}']`)?.value || 0);
@@ -469,6 +493,7 @@
 
   function setCloseDenomCounts(counts) {
     if (!counts || typeof counts !== "object") return;
+    closeDraftCounts = { ...counts };
     buildCloseDenomInputs();
     DENOMS.forEach((d) => {
       const input = closeDenomInputs?.querySelector(`[data-close-denom='${d.key}']`);
@@ -490,9 +515,128 @@
     return total;
   }
 
-  function showCloseSubstep(which) {
+  function showCloseSubstep(which, focus = false) {
+    if (!CLOSE_STEPS.includes(which)) which = "payments";
+    if (CLOSE_STEPS.indexOf(which) < CLOSE_STEPS.indexOf(closeProgress.step)) which = closeProgress.step;
+    if (facturasPagadasInp) {
+      facturasPagadasInp.readOnly = closeProgress.step !== "payments";
+      if (facturasPagadasInp.readOnly) facturasPagadasInp.value = String(closeProgress.invoices);
+    }
+    closeDenomInputs?.querySelectorAll("[data-close-denom]").forEach((input) => {
+      input.readOnly = closeProgress.step === "media";
+      if (input.readOnly) input.value = String(closeProgress.denominations[input.dataset.closeDenom] || 0);
+    });
+    if (closePaymentsStep) closePaymentsStep.style.display = which === "payments" ? "block" : "none";
     if (closeCashStep) closeCashStep.style.display = which === "cash" ? "block" : "none";
     if (closeMediaStep) closeMediaStep.style.display = which === "media" ? "block" : "none";
+    for (const [name, panel] of [["payments", closePaymentsStep], ["cash", closeCashStep], ["media", closeMediaStep]]) {
+      if (panel) panel.hidden = name !== which;
+    }
+    document.querySelectorAll("[data-close-step]").forEach((item) => {
+      if (item.dataset.closeStep === which) item.setAttribute("aria-current", "step");
+      else item.removeAttribute("aria-current");
+    });
+    if (focus) {
+      const target = which === "payments" ? facturasPagadasInp
+        : which === "cash" ? $("#closeCashWarningTitle") : $("#ptm_transacciones");
+      target?.focus();
+    }
+  }
+
+  function validatePaidInvoices() {
+    if (closeProgress.step !== "payments") {
+      if (facturasPagadasInp) facturasPagadasInp.value = String(closeProgress.invoices);
+      return true;
+    }
+    const raw = (facturasPagadasInp?.value || "").trim();
+    const value = raw ? Number(raw) : 0;
+    if (!Number.isFinite(value) || value < 0 || facturasPagadasInp?.validity?.valid === false) {
+      showCloseSubstep("payments", true);
+      err("Escribe un valor válido para facturas y pagos a compañeros: 0 o mayor, con máximo dos decimales.");
+      return false;
+    }
+    if (facturasPagadasInp && !raw) facturasPagadasInp.value = "0";
+    return true;
+  }
+
+  function normalizedCloseProgress(value) {
+    if (!value || !["cash", "media"].includes(value.step)) return null;
+    const invoices = Number(value.invoices);
+    if (value.invoices === null || value.invoices === "" || !Number.isFinite(invoices) || invoices < 0) return null;
+    const progress = {step: value.step, invoices, denominations: null};
+    if (value.step === "media") {
+      if (!value.denominations || typeof value.denominations !== "object") return null;
+      progress.denominations = {};
+      for (const d of DENOMS) {
+        const count = Number(value.denominations[d.key]);
+        if (!Number.isSafeInteger(count) || count < 0) return null;
+        progress.denominations[d.key] = count;
+      }
+    }
+    return progress;
+  }
+
+  function adoptStoredCloseProgress() {
+    if (!TURNO_ID) return false;
+    try {
+      const saved = normalizedCloseProgress(JSON.parse(localStorage.getItem(lsKey(TURNO_ID)) || "null")?.progress);
+      if (saved && CLOSE_STEPS.indexOf(saved.step) >= CLOSE_STEPS.indexOf(closeProgress.step)) {
+        if (JSON.stringify(saved) === JSON.stringify(closeProgress)) return false;
+        closeProgress = saved;
+        if (facturasPagadasInp) facturasPagadasInp.value = String(saved.invoices);
+        if (saved.denominations) setCloseDenomCounts(saved.denominations);
+        return true;
+      }
+    } catch {}
+    return false;
+  }
+
+  async function advanceCloseStep(from, to) {
+    if (closeStepAdvancing || inflightAction || !TURNO_ID) return;
+    adoptStoredCloseProgress();
+    if (closeProgress.step !== from) {
+      if (!navigateClosePage(closeProgress.step)) showCloseSubstep(closeProgress.step, true);
+      return;
+    }
+    if (from === "payments" && !validatePaidInvoices()) return;
+    if (from === "cash") {
+      const invalid = Array.from(closeDenomInputs?.querySelectorAll("[data-close-denom]") || []).find(input => !input.validity.valid);
+      if (invalid) { err("Revisa el conteo: usa cantidades enteras de billetes y monedas, sin valores negativos."); invalid.focus(); return; }
+    }
+    const invoices = from === "payments" ? num(facturasPagadasInp?.value) : closeProgress.invoices;
+    const denominations = from === "cash" ? readCloseDenomCounts() : null;
+    closeStepAdvancing = true;
+    try {
+      const confirmed = await confirmModal({
+        title: from === "payments" ? "Confirmar pagos de caja" : "Confirmar conteo de efectivo",
+        msg: from === "payments"
+          ? `Registraste ${money2(invoices)} para facturas y compañeros. Después de confirmar no podrás volver atrás ni cambiar este valor.`
+          : `Contaste ${money2(closeCashTotalValue(denominations))} en billetes y monedas. Después de confirmar no podrás volver atrás ni cambiar el conteo.`,
+        okText: "Confirmar y continuar",
+      });
+      if (!confirmed) return;
+      const commit = () => {
+        adoptStoredCloseProgress();
+        if (closeProgress.step !== from) {
+          if (!navigateClosePage(closeProgress.step)) showCloseSubstep(closeProgress.step, true);
+          return;
+        }
+        const previous = closeProgress;
+        closeProgress = {step: to, invoices, denominations};
+        if (facturasPagadasInp) facturasPagadasInp.value = String(invoices);
+        if (!persistContados()) {
+          closeProgress = previous;
+          err("No se pudo guardar el avance en este navegador. No se avanzó; revisa el almacenamiento antes de continuar.");
+          return;
+        }
+        if (navigateClosePage(to)) return;
+        showCloseSubstep(to, true);
+        refreshCloseCashTotal();
+        recalc();
+      };
+      if (navigator.locks?.request) await navigator.locks.request(`nova:turno-close:${TURNO_ID}`, commit);
+      else commit();
+    } finally { closeStepAdvancing = false; }
   }
 
   function persistRetiroDenoms(turnoId) {
@@ -508,18 +652,21 @@
   }
 
   function persistContados() {
-    if (!TURNO_ID) return;
+    if (!TURNO_ID || closePageLeaving) return false;
     try {
+      if (adoptStoredCloseProgress()) showCloseSubstep(closeProgress.step);
       const payload = {
         efectivo_entregado: efectivoEntregadoInp?.value || "",
         facturas_pagadas: facturasPagadasInp?.value || "",
-        ptm_transacciones: document.getElementById("ptm_transacciones")?.value.trim() || "0",
+        ptm_transacciones: document.getElementById("ptm_transacciones")?.value.trim() || closeDraftPTM,
         denominaciones: readCloseDenomCounts(),
         contados: { ...CONTADOS },
+        progress: closeProgress,
         ts: Date.now(),
       };
       localStorage.setItem(lsKey(TURNO_ID), JSON.stringify(payload));
-    } catch {}
+      return true;
+    } catch { return false; }
   }
 
   function restoreContados() {
@@ -530,7 +677,8 @@
       const payload = JSON.parse(raw);
       if (!payload || typeof payload !== "object") return;
       // descartar caches de más de 24h
-      if (Date.now() - (payload.ts || 0) > 24 * 3600 * 1000) {
+      const savedProgress = normalizedCloseProgress(payload.progress);
+      if (!savedProgress && Date.now() - (payload.ts || 0) > 24 * 3600 * 1000) {
         localStorage.removeItem(lsKey(TURNO_ID));
         return;
       }
@@ -543,6 +691,7 @@
       if (document.getElementById("ptm_transacciones")) {
         document.getElementById("ptm_transacciones").value = String(payload.ptm_transacciones ?? "").trim() || "0";
       }
+      closeDraftPTM = String(payload.ptm_transacciones ?? "").trim() || "0";
       if (payload.denominaciones && typeof payload.denominaciones === "object") {
         setCloseDenomCounts(payload.denominaciones);
       }
@@ -552,6 +701,11 @@
           const inp = mediosBody?.querySelector(`[data-in='${k}']`);
           if (inp) inp.value = (Number(v) || 0).toFixed(2);
         }
+      }
+      if (savedProgress) {
+        closeProgress = savedProgress;
+        if (facturasPagadasInp) facturasPagadasInp.value = String(savedProgress.invoices);
+        if (savedProgress.denominations) setCloseDenomCounts(savedProgress.denominations);
       }
     } catch {}
   }
@@ -648,7 +802,8 @@
     if (!efectivoEntregadoInp) return;
     const efectivoEntregado = num(efectivoEntregadoInp.value);
     const efectivoContado = efectivoEntregado - BASE;
-    const facturasPagadas = Math.max(0, num(facturasPagadasInp?.value || 0));
+    const facturasPagadas = closeProgress.step === "payments"
+      ? Math.max(0, num(facturasPagadasInp?.value || 0)) : closeProgress.invoices;
     const efectivoParaCuadre = efectivoContado + facturasPagadas;
 
     let sumContado = 0;
@@ -677,6 +832,14 @@
   }
 
   function buildTable() {
+    if (facturasPagadasInp && facturasPagadasInp.type !== "hidden") {
+      facturasPagadasInp.oninput = () => { scheduleRecalc(); };
+      facturasPagadasInp.onblur = () => {
+        if (facturasPagadasInp.value !== "" && facturasPagadasInp.validity.valid) {
+          facturasPagadasInp.value = num(facturasPagadasInp.value).toFixed(2);
+        }
+      };
+    }
     if (!mediosBody) return;
     mediosBody.innerHTML = "";
     CONTADOS["efectivo"] = 0;
@@ -694,7 +857,7 @@
       if (m.metodo === "efectivo") {
         tdC.innerHTML = `
           <span class="readonly" data-contado="${escapeHtml(m.metodo)}">${money2(0)}</span>
-          <div class="hint">Efectivo contado + facturas pagadas</div>
+          <div class="hint">Efectivo contado sin base + pagos de caja del paso 1</div>
         `;
       } else {
         const autoConfirmado = num(m.auto_confirmado || 0);
@@ -752,20 +915,6 @@
       };
     }
 
-    if (facturasPagadasInp) {
-      facturasPagadasInp.oninput = () => {
-        let v = num(facturasPagadasInp.value);
-        if (v < 0) { facturasPagadasInp.value = "0"; }
-        scheduleRecalc();
-      };
-      facturasPagadasInp.onblur = () => {
-        const v = num(facturasPagadasInp.value);
-        if (facturasPagadasInp.value !== "" && Number.isFinite(v)) {
-          facturasPagadasInp.value = v.toFixed(2);
-        }
-      };
-    }
-
     scheduleRecalc();
   }
 
@@ -779,6 +928,9 @@
      Hidratar UI desde respuesta backend
      ============================================================ */
   function hydrateTurno(data) {
+    closeProgress = { step: "payments", invoices: null, denominations: null };
+    closeDraftCounts = {};
+    closeDraftPTM = "0";
     const ptmCount = document.getElementById("ptm_transacciones");
     if (ptmCount) { ptmCount.value = "0"; ptmCount.oninput = persistContados; }
     TURNO_ID = data.turno_id || data.turno?.id || null;
@@ -838,11 +990,11 @@
 
       // limpiar valores anteriores en memoria (no en localStorage — se restaura abajo)
       if (efectivoEntregadoInp) efectivoEntregadoInp.value = "";
-      if (facturasPagadasInp) facturasPagadasInp.value = "";
+      if (facturasPagadasInp) facturasPagadasInp.value = "0";
       for (const k of Object.keys(CONTADOS)) delete CONTADOS[k];
 
       buildCloseDenomInputs();
-      showCloseSubstep("cash");
+      showCloseSubstep("payments");
       buildTable();
       MEDIOS.forEach((m) => {
         if (m.metodo === "efectivo" || m.contado === null || typeof m.contado === "undefined") return;
@@ -854,9 +1006,11 @@
         if (inp) inp.value = CONTADOS[m.metodo].toFixed(2);
       });
       restoreContados();   // ✅ recupera lo que el cajero ya había contado
+      if (navigateClosePage(closeProgress.step)) return;
       refreshCloseCashTotal();
       scheduleRecalc();
       showSection("close");
+      showCloseSubstep(closeProgress.step, true);
       return;
     }
 
@@ -921,7 +1075,7 @@
 
     const goAhead = await confirmModal({
       title: "Iniciar cierre",
-      msg: "El turno pasará a estado CIERRE. Vas a poder ingresar lo contado por cada medio. ¿Continuar?",
+      msg: "Primero registrarás lo pagado en facturas o a compañeros; después contarás el efectivo y revisarás los otros medios. ¿Iniciar el cierre?",
       okText: "Sí, iniciar cierre",
       danger: false,
     });
@@ -953,6 +1107,12 @@
   async function actionCerrar() {
     if (inflightAction) return;
     if (!TURNO_ID) { warn("No hay turno en cierre."); return; }
+    adoptStoredCloseProgress();
+    if (closeProgress.step !== "media") {
+      if (!navigateClosePage(closeProgress.step)) showCloseSubstep(closeProgress.step, true);
+      return;
+    }
+    if (!validatePaidInvoices()) return;
     const ptmTransacciones = document.getElementById("ptm_transacciones")?.value.trim() || "0";
     if (!/^[0-9]{1,8}$/.test(ptmTransacciones)) { err("Escribe cuántas transacciones PTM hiciste (0 si no hubo)."); return; }
 
@@ -970,7 +1130,7 @@
 
     const goAhead = await confirmModal({
       title: "Cerrar turno",
-      msg: `Vas a cerrar el turno con efectivo contado de ${money2(efectivoEntregado)} y facturas pagadas por ${money2(facturasPagadas)}.${nequiMsg} Esta accion no se puede deshacer.`,
+      msg: `Vas a cerrar el turno con efectivo contado de ${money2(efectivoEntregado)} y pagos de caja (facturas y compañeros) por ${money2(facturasPagadas)}.${nequiMsg} Esta acción no se puede deshacer.`,
       okText: "Si, continuar",
       danger: true,
     });
@@ -1015,11 +1175,13 @@
       const nequiApi = Number(data.auto_confirmados?.nequi ?? 0);
       const filas = [
         ["Ventas reconocidas", money2(ventas)],
-        ["Facturas pagadas", money2(facturas)],
+        ["Pagos de caja: facturas y compañeros", money2(facturas)],
         ...(nequiApi > 0 ? [["Nequi confirmado por API", money2(nequiApi)]] : []),
         ["Faltante", money2(Math.abs(deuda))],
       ].map(([k, v]) => `<div class="sum-row"><span>${k}</span><b>${v}</b></div>`).join("");
-      summaryModal(`<div class="sum-grid">${filas}</div>`);
+      summaryModal(`<div class="sum-grid">${filas}</div>`, () => {
+        if (closePages.page && closePages.home) window.location.replace(closePages.home);
+      });
 
       // limpiar persistencia
       const oldId = TURNO_ID;
@@ -1042,7 +1204,7 @@
       if (passInp) passInp.value = "";
       if (baseInp) baseInp.value = "";
       if (efectivoEntregadoInp) efectivoEntregadoInp.value = "";
-      if (facturasPagadasInp) facturasPagadasInp.value = "";
+      if (facturasPagadasInp) facturasPagadasInp.value = "0";
       if (mediosBody) mediosBody.innerHTML = "";
       if (mVentas) mVentas.textContent = "—";
       if (infoDuracion) infoDuracion.textContent = "—";
@@ -1074,15 +1236,20 @@
     persistContados();
   }, true);
 
-  btnCashNext?.addEventListener("click", () => {
-    refreshCloseCashTotal();
-    showCloseSubstep("media");
-    facturasPagadasInp?.focus();
+  btnPaymentsNext?.addEventListener("click", () => { void advanceCloseStep("payments", "cash"); });
+  btnCashNext?.addEventListener("click", () => { void advanceCloseStep("cash", "media"); });
+  window.addEventListener("storage", event => {
+    if (TURNO_ID && event.key === lsKey(TURNO_ID)) {
+      adoptStoredCloseProgress();
+      if (!navigateClosePage(closeProgress.step)) showCloseSubstep(closeProgress.step);
+    }
   });
-
-  btnBackCash?.addEventListener("click", () => {
-    showCloseSubstep("cash");
-    closeDenomInputs?.querySelector("input[data-close-denom]")?.focus();
+  window.addEventListener("pageshow", event => {
+    if (event.persisted && TURNO_ID) {
+      closePageLeaving = false;
+      adoptStoredCloseProgress();
+      if (!navigateClosePage(closeProgress.step)) showCloseSubstep(closeProgress.step);
+    }
   });
 
   formStart?.addEventListener("submit", actionIniciar);
@@ -1104,7 +1271,7 @@
   }
 
   buildCloseDenomInputs();
-  showCloseSubstep("cash");
+  showCloseSubstep("payments");
   refreshCloseCashTotal();
   refreshStartValidity();
 
@@ -1126,7 +1293,7 @@
       if (!k || !k.startsWith("tc_contados_")) continue;
       try {
         const p = JSON.parse(localStorage.getItem(k) || "{}");
-        if (!p?.ts || now - p.ts > 24 * 3600 * 1000) localStorage.removeItem(k);
+        if (!normalizedCloseProgress(p?.progress) && (!p?.ts || now - p.ts > 24 * 3600 * 1000)) localStorage.removeItem(k);
       } catch { localStorage.removeItem(k); }
     }
   } catch {}

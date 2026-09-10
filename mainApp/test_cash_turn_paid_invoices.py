@@ -1,4 +1,4 @@
-"""Facturas pagadas: visibles durante todo el cierre y sin duplicar el cuadre."""
+"""Pagos de caja: primer paso del cierre, sin duplicar el cuadre."""
 
 import json
 from decimal import Decimal
@@ -6,12 +6,30 @@ from html.parser import HTMLParser
 from unittest.mock import patch
 
 from django.conf import settings
+from django.contrib.auth.models import AnonymousUser
+from django.core.exceptions import PermissionDenied
+from django.http import Http404
 from django.test import RequestFactory, SimpleTestCase, TestCase
+from django.template import Context, Engine
 from django.urls import reverse
 from django.utils import timezone
 
 from .models import PuntosPago, Sucursal, TurnoCaja, Usuario
-from .views import TurnoCajaAdminDetailAPI, TurnoCajaAdminUpdateAPI, TurnoCajaCerrarApi
+from .views import (
+    TurnoCajaAdminDetailAPI, TurnoCajaAdminUpdateAPI, TurnoCajaCerrarApi,
+    TurnoCajaCierrePageView, TurnoCajaPageView,
+)
+
+
+def render_close_page(page):
+    engine = Engine(
+        dirs=[settings.BASE_DIR / "mainApp/templates"],
+        loaders=[("django.template.loaders.locmem.Loader", {
+            "base.html": "{% block extra_head %}{% endblock %}{% block content %}{% endblock %}",
+        }), "django.template.loaders.filesystem.Loader"],
+        libraries={"static": "django.templatetags.static"},
+    )
+    return engine.get_template("turno_caja.html").render(Context({"close_page": page}))
 
 
 class _ClosureMarkup(HTMLParser):
@@ -44,25 +62,64 @@ class PaidInvoicesMarkupTests(SimpleTestCase):
         self.assertIn('<div id="mFacturasPagadas" class="v">', template)
         self.assertIn("turnos_caja_admin.js' %}?v=6", template)
 
-    def test_single_input_is_visible_in_both_closure_steps(self):
+    def test_single_invoice_input_is_only_in_the_initial_payments_step(self):
         markup = _ClosureMarkup()
-        markup.feed((settings.BASE_DIR / "mainApp/templates/turno_caja.html").read_text(
-            encoding="utf-8",
-        ))
+        markup.feed(render_close_page("payments"))
         self.assertEqual(len(markup.invoice_inputs), 1)
         attrs, ancestors = markup.invoice_inputs[0]
         ancestor_ids = {attrs.get("id") for _, attrs in ancestors}
         self.assertIn("stepClose", ancestor_ids)
         self.assertIn("closePaidInvoices", ancestor_ids)
+        self.assertIn("closePaymentsStep", ancestor_ids)
         self.assertTrue({"closeCashStep", "closeMediaStep"}.isdisjoint(ancestor_ids))
-        self.assertEqual(attrs["form"], "formClose")
         self.assertEqual(attrs["min"], "0")
+        self.assertEqual(attrs["value"], "0")
         self.assertNotIn("disabled", attrs)
         self.assertNotIn("readonly", attrs)
         for _, ancestor in ancestors:
             if ancestor.get("id") != "stepClose":
                 self.assertNotIn("hidden", ancestor)
                 self.assertNotIn("display:none", ancestor.get("style", "").replace(" ", ""))
+
+    def test_payments_precede_cash_and_cash_warning_precedes_denominations(self):
+        template = (settings.BASE_DIR / "mainApp/templates/turno_caja.html").read_text(encoding="utf-8")
+        self.assertLess(template.index('id="closePaymentsStep"'), template.index('id="closeCashStep"'))
+        self.assertLess(template.index('id="closeCashStep"'), template.index('id="closeMediaStep"'))
+        self.assertLess(template.index('id="closeCashWarningTitle"'), template.index('id="closeDenomInputs"'))
+        self.assertIn("No cuentes el dinero que ya pagaste o que vas a pagarle a un compañero.", template)
+        self.assertIn("incluida la base", template)
+        self.assertIn("aparta primero el dinero", template)
+        self.assertIn('id="btnPaymentsNext"', template)
+        self.assertNotIn('id="btnBackPayments"', template)
+        self.assertNotIn('id="btnBackCash"', template)
+        self.assertIn("no podrás volver atrás ni cambiar esos valores", template)
+
+    def test_cash_warning_has_large_legible_text(self):
+        css = (settings.BASE_DIR / "mainApp/static/css/turno_caja.css").read_text(encoding="utf-8")
+        self.assertIn(".tc-cash-warning", css)
+        self.assertIn("font-size:clamp(20px,2.7vw,27px)", css)
+        self.assertIn("background:#fff3cd", css)
+        self.assertIn("color:#392700", css)
+
+    def test_each_url_only_renders_its_own_step_even_without_css_or_javascript(self):
+        from django.urls import resolve
+        from .permissions import ROUTE_PERMISSIONS
+        for page, slug, panel in (
+            ("payments", "pagos", "closePaymentsStep"),
+            ("cash", "efectivo", "closeCashStep"),
+            ("media", "medios", "closeMediaStep"),
+        ):
+            with self.subTest(page=page):
+                html = render_close_page(page)
+                self.assertIn(f'id="{panel}"', html)
+                for other in {"closePaymentsStep", "closeCashStep", "closeMediaStep"} - {panel}:
+                    self.assertNotIn(f'id="{other}"', html)
+                name = f"turno_caja_cierre_{slug}"
+                route = resolve(reverse(name, kwargs={"turno_id": 123}))
+                self.assertEqual(route.func.view_initkwargs["close_page"], page)
+                self.assertEqual(ROUTE_PERMISSIONS[name], "caja_turno")
+        self.assertNotIn('id="closeDenomInputs"', render_close_page("payments"))
+        self.assertNotIn('id="closePaidInvoices"', render_close_page("cash"))
 
 
 class PaidInvoicesClosureTests(TestCase):
@@ -77,6 +134,75 @@ class PaidInvoicesClosureTests(TestCase):
             cierre_iniciado=timezone.now(),
             saldo_apertura_efectivo=Decimal("1000.00"),
         )
+
+    def close_page(self, page="payments", user=None, turno_id=None):
+        request = RequestFactory().get("/turno_caja/cierre/prueba/")
+        request.user = user if user is not None else self.cashier
+        with (
+            patch("mainApp.views._hide_bd_cols_for_user", return_value=True),
+            patch("mainApp.views._require_admin", return_value=False),
+            patch("mainApp.views._turno_frontend_payload", return_value={
+                "turno_id": self.turn.pk, "estado": self.turn.estado,
+            }),
+        ):
+            return TurnoCajaCierrePageView.as_view(close_page=page)(
+                request, turno_id=self.turn.pk if turno_id is None else turno_id,
+            )
+
+    def test_close_pages_require_login(self):
+        response = self.close_page(user=AnonymousUser())
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(response.url.startswith(reverse("login")))
+
+    def test_pending_close_redirects_from_main_page_without_javascript(self):
+        request = RequestFactory().get(reverse("turno_caja"))
+        request.user = self.cashier
+        with patch("mainApp.views._turno_frontend_payload") as payload:
+            response = TurnoCajaPageView.as_view()(request)
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.url, reverse("turno_caja_cierre_pagos", kwargs={"turno_id": self.turn.pk}))
+        self.assertEqual(response["Cache-Control"], "no-store, private")
+        payload.assert_not_called()
+
+    def test_open_turn_stays_on_main_page(self):
+        self.turn.estado = "ABIERTO"
+        self.turn.save(update_fields=["estado"])
+        request = RequestFactory().get(reverse("turno_caja"))
+        request.user = self.cashier
+        with (
+            patch("mainApp.views._hide_bd_cols_for_user", return_value=True),
+            patch("mainApp.views._turno_frontend_payload", return_value={"turno_id": self.turn.pk, "estado": "ABIERTO"}),
+        ):
+            response = TurnoCajaPageView.as_view()(request)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context_data["close_page"], "")
+
+    def test_close_pages_preserve_the_owned_turn_and_selected_page(self):
+        for page in ("payments", "cash", "media"):
+            with self.subTest(page=page):
+                response = self.close_page(page)
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.context_data["close_page"], page)
+                self.assertEqual(response.context_data["turno_activo_inicial"]["turno_id"], self.turn.pk)
+                self.assertEqual(response["Cache-Control"], "no-store, private")
+
+    def test_close_pages_reject_another_cashiers_turn(self):
+        other = Usuario.objects.create_user("Otro cajero de prueba")
+        with self.assertRaises(PermissionDenied):
+            self.close_page(user=other)
+
+    def test_close_pages_reject_unknown_turn(self):
+        with self.assertRaises(Http404):
+            self.close_page(turno_id=self.turn.pk + 1000)
+
+    def test_close_pages_redirect_if_turn_is_not_in_closing(self):
+        for state in ("ABIERTO", "CERRADO"):
+            with self.subTest(state=state):
+                self.turn.estado = state
+                self.turn.save(update_fields=["estado"])
+                response = self.close_page()
+                self.assertEqual(response.status_code, 302)
+                self.assertEqual(response.url, reverse("turno_caja"))
 
     def close_turn(self, paid_invoices=None):
         payload = {
