@@ -186,10 +186,10 @@
           <label class="tc-label" for="ptm_transacciones">Transacciones PTM</label>
           <div class="tc-field">
             <input class="tc-input no-spin" id="ptm_transacciones" name="ptm_transacciones" form="formClose"
-                   type="number" min="0" max="99999999" step="1" inputmode="numeric" required placeholder="0 si no hubo"
+                   type="number" min="0" max="99999999" step="1" inputmode="numeric" value="0" placeholder="0"
                    aria-describedby="ptm_conteo_help">
           </div>
-          <p class="tc-invoice-help" id="ptm_conteo_help">Cuenta los comprobantes de retiros y recargas/pagos de este turno. El número debe coincidir con el registro. PTM ya se suma o resta del efectivo esperado; no lo agregues otra vez a facturas pagadas.</p>
+          <p class="tc-invoice-help" id="ptm_conteo_help">Si dejas el campo vacío, se toma como 0. Cuenta los comprobantes de retiros y recargas/pagos de este turno. El número debe coincidir con el registro. PTM ya se suma o resta del efectivo esperado; no lo agregues otra vez a facturas pagadas.</p>
         </div>
 
         <div id="closeCashStep" class="tc-close-step">
@@ -318,5 +318,5 @@
     const API_CERRAR     = "{% url 'turno_caja_cerrar' %}";
   </script>
 
-  <script defer src="{% static 'javascript/turno_caja.js' %}?v=19"></script>
+  <script defer src="{% static 'javascript/turno_caja.js' %}?v=20"></script>
 {% endblock %}

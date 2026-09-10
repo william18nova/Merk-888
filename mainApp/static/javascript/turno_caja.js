@@ -513,7 +513,7 @@
       const payload = {
         efectivo_entregado: efectivoEntregadoInp?.value || "",
         facturas_pagadas: facturasPagadasInp?.value || "",
-        ptm_transacciones: document.getElementById("ptm_transacciones")?.value || "",
+        ptm_transacciones: document.getElementById("ptm_transacciones")?.value.trim() || "0",
         denominaciones: readCloseDenomCounts(),
         contados: { ...CONTADOS },
         ts: Date.now(),
@@ -541,7 +541,7 @@
         facturasPagadasInp.value = payload.facturas_pagadas;
       }
       if (document.getElementById("ptm_transacciones")) {
-        document.getElementById("ptm_transacciones").value = payload.ptm_transacciones || "";
+        document.getElementById("ptm_transacciones").value = String(payload.ptm_transacciones ?? "").trim() || "0";
       }
       if (payload.denominaciones && typeof payload.denominaciones === "object") {
         setCloseDenomCounts(payload.denominaciones);
@@ -780,7 +780,7 @@
      ============================================================ */
   function hydrateTurno(data) {
     const ptmCount = document.getElementById("ptm_transacciones");
-    if (ptmCount) { ptmCount.value = ""; ptmCount.oninput = persistContados; }
+    if (ptmCount) { ptmCount.value = "0"; ptmCount.oninput = persistContados; }
     TURNO_ID = data.turno_id || data.turno?.id || null;
 
     const baseFrom =
@@ -953,7 +953,7 @@
   async function actionCerrar() {
     if (inflightAction) return;
     if (!TURNO_ID) { warn("No hay turno en cierre."); return; }
-    const ptmTransacciones = document.getElementById("ptm_transacciones")?.value.trim() || "";
+    const ptmTransacciones = document.getElementById("ptm_transacciones")?.value.trim() || "0";
     if (!/^[0-9]{1,8}$/.test(ptmTransacciones)) { err("Escribe cuántas transacciones PTM hiciste (0 si no hubo)."); return; }
 
     const efectivoEntregado = refreshCloseCashTotal();

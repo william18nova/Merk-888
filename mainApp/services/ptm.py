@@ -37,9 +37,7 @@ def resumen_ptm_json(turno):
 def validar_conteo_ptm(turno, actor, valor):
     """El llamador mantiene bloqueado el turno hasta finalizar el cierre."""
     registrado = resumen_ptm(turno)["cantidad"]
-    text = str(valor if valor is not None else "").strip()
-    if not text and not registrado:
-        return  # Compatibilidad con cierres anteriores sin operaciones PTM.
+    text = str(valor if valor is not None else "").strip() or "0"
     if not re.fullmatch(r"[0-9]{1,8}", text):
         raise ValidationError("Escribe el número de transacciones PTM del turno (0 si no hubo).")
     declarado = int(text)

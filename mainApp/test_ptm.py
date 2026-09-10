@@ -6,6 +6,7 @@ from unittest.mock import patch, MagicMock
 from uuid import uuid4
 
 from django.apps import apps
+from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
 from django.db.models.deletion import ProtectedError
@@ -169,6 +170,31 @@ class PTMTests(TestCase):
         for value in (None, "-1", "1.5", "NaN", "999999999"):
             self.assertEqual(self.close(value).status_code, 400)
 
+    def test_empty_count_without_ptm_closes_as_zero(self):
+        response = self.close("", cash="10000")
+        self.assertEqual(response.status_code, 200, response.content)
+        self.turn.refresh_from_db()
+        self.assertEqual(self.turn.estado, "CERRADO")
+        self.assertFalse(ConteoCierrePTM.objects.exists())
+
+    def test_missing_count_without_ptm_closes_as_zero(self):
+        self.assertEqual(self.close(None, cash="10000").status_code, 200)
+
+    def test_whitespace_count_without_ptm_closes_as_zero(self):
+        self.assertEqual(self.close("   ", cash="10000").status_code, 200)
+
+    def test_blank_count_with_real_ptm_is_audited_as_zero_and_blocks_close(self):
+        self.register()
+        for value in ("", "   ", None):
+            with self.subTest(value=value):
+                response = self.close(value)
+                self.assertEqual(response.status_code, 400)
+                self.assertIn("no coincide", json.loads(response.content)["error"])
+                self.turn.refresh_from_db()
+                self.assertEqual(self.turn.estado, "CIERRE")
+                audit = ConteoCierrePTM.objects.first()
+                self.assertEqual((audit.declarado, audit.registrado), (0, 1))
+
     def test_matching_count_and_cash_close_deposit_without_difference(self):
         self.register()
         response = self.close("1")
@@ -237,6 +263,18 @@ class PTMTests(TestCase):
         self.assertFalse(OperacionPTM.objects.exists())
         self.point.refresh_from_db()
         self.assertEqual(self.point.dinerocaja, 0)
+
+class PTMClosingDefaultMarkupTests(SimpleTestCase):
+    def test_html_and_dynamic_form_start_at_zero_and_allow_empty(self):
+        template = (settings.BASE_DIR / "mainApp/templates/turno_caja.html").read_text(encoding="utf-8")
+        field = template.split('id="ptm_transacciones"', 1)[1].split('>', 1)[0]
+        self.assertIn('value="0"', field)
+        self.assertNotIn('required', field)
+        script = (settings.BASE_DIR / "mainApp/static/javascript/turno_caja.js").read_text(encoding="utf-8")
+        self.assertIn('ptmCount.value = "0"', script)
+        self.assertIn('String(payload.ptm_transacciones ?? "").trim() || "0"', script)
+        self.assertIn('const ptmTransacciones = document.getElementById("ptm_transacciones")?.value.trim() || "0";', script)
+
 
 class PTMSeedTests(TestCase):
     def seed(self):
