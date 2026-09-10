@@ -271,7 +271,7 @@
     <header class="venta-draft-panel-header">
       <div>
         <strong>Ventas pendientes</strong>
-        <small>Guardadas durante 24 horas en este equipo</small>
+        <small>Ventas cuya pestaña se cerró, guardadas hasta 24 horas. Al recuperar salen de esta lista.</small>
       </div>
       <button type="button" id="venta-draft-close" class="venta-draft-close" aria-label="Cerrar ventas pendientes">
         <i class="fa-solid fa-xmark" aria-hidden="true"></i>
@@ -327,5 +327,6 @@
   if (!/^https?:\/\//.test(window.POS_AGENT_URL)) window.POS_AGENT_URL = "http://127.0.0.1:8787";
 </script>
 
-<script src="{% static 'javascript/generar_venta.js' %}?v=40"></script>
+<script src="{% static 'javascript/sale_draft_lifecycle.js' %}?v=1"></script>
+<script src="{% static 'javascript/generar_venta.js' %}?v=42"></script>
 {% endblock %}

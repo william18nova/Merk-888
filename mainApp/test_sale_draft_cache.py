@@ -156,6 +156,7 @@ class SaleDraftCacheContractTests(SimpleTestCase):
         )
         self.assertIn("listSaleDraftsForCurrentScope()", managed)
         self.assertIn("draft.storage_key !== activeKey", managed)
+        self.assertIn("saleDraftRecoverableKeys.has(draft.storage_key)", managed)
         self.assertIn("for (const draft of drafts)", rendered)
         self.assertIn("venta-draft-item", rendered)
         self.assertIn("js-draft-restore", rendered)
@@ -221,6 +222,8 @@ class SaleDraftCacheContractTests(SimpleTestCase):
         ):
             self.assertIn(fragment, restore)
         self.assertIn("void revalidateRestoredSaleDraft(draft)", restore)
+        self.assertIn("saleDraftPaymentState = null", restore)
+        self.assertNotIn("sanitizeSaleDraftPayment(draft.payment)", restore)
 
     def test_charge_button_is_blocked_only_during_revalidation_or_invalid_state(self):
         self.assertIn(
@@ -242,7 +245,7 @@ class SaleDraftCacheContractTests(SimpleTestCase):
         self.assertIn('$button.prop("disabled", blocked)', refresh)
         self.assertGreaterEqual(self.script.count("if (!saleDraftReadyToCharge()) return"), 2)
 
-    def test_restore_and_discard_target_the_selected_drafts_exact_storage_key(self):
+    def test_restore_consumes_closed_draft_only_after_saving_the_new_cart(self):
         self.assertIn("function continueWithNewSale()", self.script)
         restore = self._function_source(
             "restorePendingSaleDraft(draftOverride = null)",
@@ -253,12 +256,48 @@ class SaleDraftCacheContractTests(SimpleTestCase):
         )
         discard_end = self.script.index("const PROMO_BAG_21", discard_start)
         discard = self.script[discard_start:discard_end]
-        self.assertIn("draft.storage_key", restore)
-        self.assertIn("draft.draft_id", restore)
+        self.assertIn("selectedDraft.storage_key", restore)
+        self.assertIn("readSaleDraftByKey(sourceKey)", restore)
+        self.assertIn("saleDraftActiveID = createSaleDraftID()", restore)
+        self.assertIn('saleDraftSubmittedKey = ""', restore)
+        self.assertIn("saleDraftSaleConfirmed = false", restore)
+        self.assertNotIn("draft.draft_id", restore)
+        self.assertNotIn("saleDraftIDFromStorageKey", restore)
+        self.assertIn("saleDraftLifecycle.withClosedDraft", restore)
+        self.assertIn("const saved = persistSaleDraftNow()", restore)
+        self.assertIn("!saved || !removeSaleDraftByKey(sourceKey)", restore)
+        self.assertIn("saleDraftRecoverableKeys.delete(sourceKey)", restore)
+        self.assertIn("carrito vacío", restore)
+        self.assertLess(restore.index("const saved = persistSaleDraftNow()"), restore.index("removeSaleDraftByKey(sourceKey)"))
+        self.assertNotIn("saleDraftAllowTakeoverOnce", self.script)
         self.assertIn("draftOverride || pendingSaleDraft", discard)
         self.assertIn("draft.storage_key", discard)
         self.assertIn("removeSaleDraftByKey", discard)
         self.assertNotIn("removeSaleDraftByKey(saleDraftStorageKey())", discard)
+
+    def test_presence_is_loaded_before_sales_and_only_page_exit_releases_it(self):
+        lifecycle = self.template.index("javascript/sale_draft_lifecycle.js")
+        sale_script = self.template.index("javascript/generar_venta.js")
+        self.assertLess(lifecycle, sale_script)
+        self.assertIn("const saleDraftTabID = createSaleDraftID()", self.script)
+        self.assertIn("saleDraftLifecycle?.openOwners()", self.script)
+        self.assertIn("!owners.has(draft.owner_tab_id)", self.script)
+        self.assertIn("suspendSaleDraftPage();", self.script)
+        self.assertIn("void resumeSaleDraftPage();", self.script)
+        self.assertIn("saleDraftPageHidden", self.script)
+        pagehide = self.script.index('window.addEventListener("pagehide"')
+        self.assertIn("suspendSaleDraftPage()", self.script[pagehide:pagehide + 140])
+        beforeunload = self.script.index('window.addEventListener("beforeunload"')
+        self.assertNotIn("suspendSaleDraftPage()", self.script[beforeunload:pagehide])
+
+    def test_recovery_does_not_interrupt_charges_or_ignore_uncertain_submissions(self):
+        restore = self._function_source(
+            "restorePendingSaleDraft(draftOverride = null)", "discardPendingSaleDraft(draftOverride = null)",
+        )
+        self.assertIn("saleSubmitting || confirmSubmitting || saleDraftSaleConfirmed || saleDraftRestoring || saleDraftValidationPending", restore)
+        self.assertIn('draft.status === "submission_pending"', restore)
+        self.assertIn("!confirm(", restore)
+        self.assertIn("NO está facturada", restore)
 
     def test_serialized_payload_excludes_credentials_otp_tokens_and_nequi_link(self):
         persist = self._function_source("persistSaleDraftNow()", "scheduleSaleDraftSave()")

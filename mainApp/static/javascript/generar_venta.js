@@ -260,7 +260,16 @@ $(function () {
     return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
   }
   const saleDraftTabID = createSaleDraftID();
+  const saleDraftLifecycle = typeof window.createSaleDraftLifecycle === "function"
+    ? window.createSaleDraftLifecycle({ locks: navigator.locks, tabID: saleDraftTabID })
+    : null;
   let saleDraftActiveID = saleDraftTabID;
+  let saleDraftPageHidden = false;
+  let saleDraftRecoveryBusy = false;
+  let saleDraftAvailabilityRefreshing = false;
+  let saleDraftAvailabilityAgain = false;
+  let saleDraftRecoverableKeys = new Set();
+  let saleDraftRecoveredFrom = [];
   let saleDraftAutosaveReady = false;
   let saleDraftRestoring = false;
   let saleDraftSaveTimer = null;
@@ -270,7 +279,6 @@ $(function () {
   let saleDraftSaleConfirmed = false;
   let saleDraftSubmittedKey = "";
   let saleDraftLastStorageKey = "";
-  let saleDraftAllowTakeoverOnce = false;
   let saleDraftOwnershipLost = false;
   let saleDraftValidationPending = false;
   let saleDraftValidationError = "";
@@ -539,6 +547,7 @@ $(function () {
     if (saleDraftSaveTimer) clearTimeout(saleDraftSaveTimer);
     saleDraftSaveTimer = null;
     const key = keyOverride || saleDraftStorageKey();
+    removeConsumedSaleDraftSources(readSaleDraftByKey(key));
     const removed = removeSaleDraftByKey(key);
     if (key && saleDraftLastStorageKey === key) saleDraftLastStorageKey = "";
     saleDraftInvalidProductIds.clear();
@@ -599,6 +608,10 @@ $(function () {
       puntopago_id: scope.puntoPagoId,
       turno_id: scope.turnoId,
       owner_tab_id: sanitizeDraftText(raw.owner_tab_id || "", 100),
+      presence_version: raw.presence_version === 1 ? 1 : 0,
+      recovered_from: (Array.isArray(raw.recovered_from) ? raw.recovered_from : [raw.recovered_from])
+        .filter((source) => typeof source === "string" && source !== key && isSaleDraftKeyForCurrentScope(source))
+        .slice(0, 500),
       created_at: Number.isFinite(createdAt) && createdAt > 0 ? createdAt : updatedAt,
       updated_at: updatedAt,
       status: raw.status === "submission_pending" ? "submission_pending" : "active",
@@ -637,8 +650,14 @@ $(function () {
     return { ...drafts[0], pending_count: drafts.length };
   }
 
+  function removeConsumedSaleDraftSources(draft){
+    for (const key of draft?.recovered_from || []) {
+      if (isSaleDraftKeyForCurrentScope(key) && key !== draft.storage_key) removeSaleDraftByKey(key);
+    }
+  }
+
   function persistSaleDraftNow(){
-    if (!saleDraftAutosaveReady || saleDraftRestoring) return false;
+    if (!saleDraftAutosaveReady || saleDraftRestoring || saleDraftPageHidden) return false;
     let key = saleDraftStorageKey();
     if (!key) return false;
 
@@ -651,6 +670,7 @@ $(function () {
     }
 
     if (saleDraftSaleConfirmed) {
+      removeConsumedSaleDraftSources(readSaleDraftByKey(key));
       removeSaleDraftByKey(key);
       return true;
     }
@@ -667,7 +687,6 @@ $(function () {
       items.length
       && pendingSaleDraft
       && pendingSaleDraft.storage_key === key
-      && !saleDraftAllowTakeoverOnce
     ) {
       // Si el cajero empieza otra venta sin recuperar la ofrecida, el carrito
       // nuevo recibe su propia clave y jamás sobrescribe el pendiente.
@@ -680,8 +699,10 @@ $(function () {
         queueMicrotask(offerSaleDraftForCurrentScope);
         return true;
       }
+      removeConsumedSaleDraftSources(readSaleDraftByKey(key));
       removeSaleDraftByKey(key);
       if (saleDraftLastStorageKey === key) saleDraftLastStorageKey = "";
+      saleDraftRecoveredFrom = [];
       saleDraftInvalidProductIds.clear();
       setSaleDraftValidation();
       updateSaleDraftStatus(
@@ -709,7 +730,6 @@ $(function () {
       && previous.items.length
       && previousOwner
       && previousOwner !== saleDraftTabID
-      && !saleDraftAllowTakeoverOnce
     ) {
       const conflict = "Otra pestaña tiene un borrador activo para esta caja. Recarga la página y elige cuál recuperar antes de continuar.";
       setSaleDraftValidation({ error: conflict });
@@ -727,6 +747,8 @@ $(function () {
       puntopago_id: scope.puntoPagoId,
       turno_id: scope.turnoId,
       owner_tab_id: saleDraftTabID,
+      presence_version: saleDraftLifecycle?.held ? 1 : 0,
+      recovered_from: saleDraftRecoveredFrom,
       created_at: createdAt,
       updated_at: Date.now(),
       status: saleDraftSubmissionPending ? "submission_pending" : "active",
@@ -737,7 +759,6 @@ $(function () {
 
     try {
       localStorage.setItem(key, JSON.stringify(payload));
-      saleDraftAllowTakeoverOnce = false;
       saleDraftOwnershipLost = false;
       saleDraftLastStorageKey = key;
       const stamp = new Date(payload.updated_at).toLocaleTimeString("es-CO", {
@@ -765,7 +786,7 @@ $(function () {
   function listManagedSaleDrafts(){
     const activeKey = productos.length ? saleDraftStorageKey() : "";
     return listSaleDraftsForCurrentScope().filter(
-      (draft) => !activeKey || draft.storage_key !== activeKey,
+      (draft) => draft.storage_key !== activeKey && saleDraftRecoverableKeys.has(draft.storage_key),
     );
   }
 
@@ -847,8 +868,8 @@ $(function () {
         const $restore = $("<button>", {
           type: "button",
           class: "venta-draft-item-action js-draft-restore",
-          title: "Recuperar esta venta",
-          "aria-label": `Recuperar venta guardada ${when}`,
+          title: "Recuperar productos como una venta nueva",
+          "aria-label": `Copiar los productos de la venta guardada ${when} a una venta nueva`,
         }).attr("data-draft-key", draft.storage_key).append(
           $("<i>", { class: "fa-solid fa-rotate-left", "aria-hidden": "true" }),
         );
@@ -877,6 +898,65 @@ $(function () {
 
   function offerSaleDraftForCurrentScope(){
     renderSaleDraftManager();
+    void refreshSaleDraftAvailability();
+  }
+
+  async function refreshSaleDraftAvailability(){
+    if (saleDraftPageHidden || !saleDraftAutosaveReady) return;
+    if (saleDraftAvailabilityRefreshing) { saleDraftAvailabilityAgain = true; return; }
+    saleDraftAvailabilityRefreshing = true;
+    try {
+      const owners = await saleDraftLifecycle?.openOwners();
+      if (!owners || saleDraftPageHidden) return;
+      const drafts = listSaleDraftsForCurrentScope();
+      // Una transferencia interrumpida después de guardar el destino no debe
+      // ofrecer también el origen. El respaldo nuevo contiene todos los datos.
+      const copiedSources = new Set(drafts.flatMap((draft) => draft.recovered_from));
+      saleDraftRecoverableKeys = new Set(drafts.filter((draft) => (
+        !owners.has(draft.owner_tab_id)
+        && draft.owner_tab_id !== saleDraftTabID
+        && !copiedSources.has(draft.storage_key)
+      )).map((draft) => draft.storage_key));
+      renderSaleDraftManager();
+    } catch (_) {
+      // Si no podemos comprobar las pestañas, no arriesgar una recuperación
+      // duplicada. Esto no bloquea las ventas normales ni su respaldo local.
+      saleDraftRecoverableKeys.clear();
+      renderSaleDraftManager();
+    } finally {
+      saleDraftAvailabilityRefreshing = false;
+      if (saleDraftAvailabilityAgain) {
+        saleDraftAvailabilityAgain = false;
+        queueMicrotask(refreshSaleDraftAvailability);
+      }
+    }
+  }
+
+  async function resumeSaleDraftPage(){
+    const ready = await saleDraftLifecycle?.start();
+    if (!ready) return;
+    if (saleDraftPageHidden && productos.length) {
+      const draft = readSaleDraftByKey(saleDraftStorageKey());
+      if (!draft || draft.owner_tab_id !== saleDraftTabID) {
+        // No revivir una venta ya recuperada/facturada al volver con Atrás.
+        clearCartAndTotals();
+        saleDraftActiveID = createSaleDraftID();
+        saleDraftLastStorageKey = "";
+        saleDraftRecoveredFrom = [];
+        saleDraftOwnershipLost = false;
+        setSaleDraftValidation();
+        updateSaleDraftStatus("Ese respaldo ya se recuperó o se descartó. Puedes iniciar otra venta.");
+      }
+    }
+    saleDraftPageHidden = false;
+    persistSaleDraftNow();
+    offerSaleDraftForCurrentScope();
+  }
+
+  function suspendSaleDraftPage(){
+    try { persistSaleDraftNow(); } catch (_) {}
+    saleDraftPageHidden = true;
+    saleDraftLifecycle?.stop();
   }
 
   function continueWithNewSale(){
@@ -884,8 +964,8 @@ $(function () {
     if (!productos.length) {
       saleDraftActiveID = createSaleDraftID();
       saleDraftLastStorageKey = "";
+      saleDraftRecoveredFrom = [];
       saleDraftOwnershipLost = false;
-      saleDraftAllowTakeoverOnce = false;
     }
     closeSaleDraftPanel(true);
     renderSaleDraftManager();
@@ -1038,7 +1118,7 @@ $(function () {
       } else if (draft?.client && !restoredClient) {
         updateSaleDraftStatus("Venta recuperada. El cliente guardado ya no existe y se quitó de la venta.", "error");
       } else {
-        updateSaleDraftStatus("Venta recuperada y validada con la información actual.", "saved");
+        updateSaleDraftStatus("Productos recuperados en una venta nueva e independiente, con precios y existencias actuales.", "saved");
       }
       return true;
     } catch (_) {
@@ -1049,35 +1129,69 @@ $(function () {
     }
   }
 
-  function restorePendingSaleDraft(draftOverride = null){
-    const draft = draftOverride || pendingSaleDraft;
-    if (!draft) return;
-    const sourceKey = String(draft.storage_key || "");
+  async function restorePendingSaleDraft(draftOverride = null){
+    if (saleSubmitting || confirmSubmitting || saleDraftSaleConfirmed || saleDraftRestoring || saleDraftValidationPending) return;
+    if (saleDraftRecoveryBusy || saleDraftPageHidden) return;
+    if (productos.length) {
+      alert("Para recuperar, abre una pestaña con el carrito vacío. Tu venta actual no se cambiará.");
+      return;
+    }
+    const selectedDraft = draftOverride || pendingSaleDraft;
+    if (!selectedDraft) return;
+    const sourceKey = String(selectedDraft.storage_key || "");
+    const selected = readSaleDraftByKey(sourceKey);
+    if (!selected) { offerSaleDraftForCurrentScope(); return; }
+    if (!saleDraftLifecycle?.supported) {
+      alert("Este navegador no permite comprobar qué ventas siguen abiertas. Usa un navegador actualizado con HTTPS o localhost para recuperar sin duplicarlas.");
+      return;
+    }
+    saleDraftRecoveryBusy = true;
+    try {
+      const recovered = await saleDraftLifecycle.withClosedDraft(selected, () => {
+        // Releer dentro del bloqueo: otra pestaña pudo consumirlo primero.
+        const draft = readSaleDraftByKey(sourceKey);
+        if (!draft || draft.owner_tab_id !== selected.owner_tab_id) return false;
+        if (listSaleDraftsForCurrentScope().some((other) => other.recovered_from.includes(sourceKey))) return false;
+        if (productos.length || saleDraftPageHidden || saleSubmitting || confirmSubmitting || saleDraftSaleConfirmed || saleDraftValidationPending) return false;
+        return loadClosedSaleDraft(draft);
+      });
+      if (recovered === false) {
+        updateSaleDraftStatus("Ese respaldo sigue abierto en otra pestaña o ya fue recuperado.");
+      }
+    } catch (_) {
+      updateSaleDraftStatus("No se pudo recuperar con seguridad. El respaldo no se ha descartado.", "error");
+    } finally {
+      saleDraftRecoveryBusy = false;
+      offerSaleDraftForCurrentScope();
+    }
+  }
+
+  function loadClosedSaleDraft(draft){
+    const sourceKey = draft.storage_key;
+    // Compatibilidad con respaldos anteriores: aún no tenían señal de vida.
+    // Solo el usuario puede confirmar que cerró sus pestañas de la versión vieja.
+    if (!draft.presence_version && !confirm("Este respaldo es de una versión anterior. ¿Confirmas que cerraste la pestaña que tenía esta venta? No lo recuperes si sigue abierta.")) return;
     if (
       draft.status === "submission_pending"
-      && !confirm("Esta venta pudo haberse registrado aunque la pestaña se cerrara. Revisa primero Visualizar ventas. ¿Ya verificaste y deseas recuperarla?")
+      && !confirm("Esta venta tiene un cobro sin confirmar y pudo haberse registrado. Revisa primero Visualizar ventas. ¿Confirmaste que NO está facturada y quieres copiar sus productos a una venta nueva?")
     ) return;
-    if (productos.length) {
-      if (!confirm("La venta que tienes abierta también quedará guardada como pendiente. ¿Cambiar a la venta seleccionada?")) return;
-      if (!persistSaleDraftNow()) {
-        alert("No se pudo guardar la venta actual. No se cambiará de carrito para evitar perderla.");
-        return;
-      }
-    }
 
-    const keyDraftID = saleDraftIDFromStorageKey(sourceKey);
-    const payloadDraftID = String(draft.draft_id || "");
-    saleDraftActiveID = keyDraftID
-      || (/^[a-zA-Z0-9_-]{1,100}$/.test(payloadDraftID) ? payloadDraftID : createSaleDraftID());
+    // Recuperar equivale a agregar los productos en otro carrito. Nunca tomar
+    // el identificador, la propiedad ni los pagos del borrador de origen.
+    saleDraftActiveID = createSaleDraftID();
+    saleDraftLastStorageKey = "";
+    saleDraftSubmittedKey = "";
+    saleDraftSaleConfirmed = false;
+    pendingSaleDraft = null;
 
     saleDraftRestoring = true;
-    saleDraftAllowTakeoverOnce = true;
     saleDraftOwnershipLost = false;
     if (saleDraftSaveTimer) clearTimeout(saleDraftSaveTimer);
     saleDraftSaveTimer = null;
     try {
       clearCartAndTotals();
-      saleDraftPaymentState = sanitizeSaleDraftPayment(draft.payment);
+      saleDraftRecoveredFrom = [...new Set([sourceKey, ...draft.recovered_from])].slice(0, 500);
+      saleDraftPaymentState = null;
       saleDraftSubmissionPending = false;
       selectedClientLabel = "";
       selectedEmployeeClient = {
@@ -1139,23 +1253,43 @@ $(function () {
       saleDraftRestoring = false;
     }
 
-    const restoredKey = saleDraftStorageKey();
+    // Primero guardar íntegramente el carrito nuevo, luego consumir el origen.
+    // recovered_from evita ofrecer ambos si el navegador termina entre escrituras.
     const saved = persistSaleDraftNow();
-    if (saved && sourceKey && sourceKey !== restoredKey) removeSaleDraftByKey(sourceKey);
+    if (!saved || !removeSaleDraftByKey(sourceKey)) {
+      if (saved) removeSaleDraftByKey(saleDraftStorageKey());
+      clearCartAndTotals();
+      saleDraftRecoveredFrom = [];
+      saleDraftLastStorageKey = "";
+      alert("No se pudo completar la recuperación. El respaldo original sigue guardado; inténtalo de nuevo.");
+      return;
+    }
+    removeConsumedSaleDraftSources(draft);
+    saleDraftRecoverableKeys.delete(sourceKey);
     saleDraftManagerSignature = "";
     offerSaleDraftForCurrentScope();
     void revalidateRestoredSaleDraft(draft);
+    return true;
   }
 
-  function discardPendingSaleDraft(draftOverride = null){
+  async function discardPendingSaleDraft(draftOverride = null){
     const draft = draftOverride || pendingSaleDraft;
     if (!draft) return;
     if (!confirm("¿Descartar este borrador local? Esto no elimina ninguna venta ya registrada.")) return;
-    const discardedKey = draft.storage_key || saleDraftScopeStorageKey();
-    removeSaleDraftByKey(discardedKey);
-    pendingSaleDraft = null;
-    saleDraftManagerSignature = "";
-    updateSaleDraftStatus("Venta pendiente descartada. Tu venta actual no cambió.");
+    try {
+      await saleDraftLifecycle?.withClosedDraft(draft, () => {
+        const current = readSaleDraftByKey(draft.storage_key);
+        if (!current || current.owner_tab_id !== draft.owner_tab_id) return false;
+        if (!current.presence_version && !confirm("¿Confirmas que la pestaña de este respaldo antiguo está cerrada?")) return false;
+        removeConsumedSaleDraftSources(current);
+        if (!removeSaleDraftByKey(draft.storage_key)) return false;
+        saleDraftRecoverableKeys.delete(draft.storage_key);
+        pendingSaleDraft = null;
+        saleDraftManagerSignature = "";
+        updateSaleDraftStatus("Venta pendiente descartada. Tu venta actual no cambió.");
+        return true;
+      });
+    } catch (_) { updateSaleDraftStatus("No se pudo descartar el respaldo.", "error"); }
     offerSaleDraftForCurrentScope();
   }
 
@@ -1667,6 +1801,9 @@ $(function () {
   function resetAfterSaleFast() {
     // carrito + total + pagos + modal
     clearCartAndTotals();
+    saleDraftActiveID = createSaleDraftID();
+    saleDraftLastStorageKey = "";
+    saleDraftRecoveredFrom = [];
     resetNequiPaymentState({ clearCache: true });
 
     // cliente
@@ -1724,8 +1861,7 @@ $(function () {
     if ($tbody.find("tr").length === 0) setTotal(0);
     else enforceTotalIntegritySoft();
     if (e.persisted) {
-      persistSaleDraftNow();
-      offerSaleDraftForCurrentScope();
+      void resumeSaleDraftPage();
     }
   });
 
@@ -1751,7 +1887,7 @@ $(function () {
   });
 
   window.addEventListener("pagehide", () => {
-    try { persistSaleDraftNow(); } catch (_) {}
+    suspendSaleDraftPage();
   });
 
   /* ================== Helpers: focus qty row ================== */
@@ -6769,9 +6905,17 @@ Cambio: ${money(cambio)}` : "";
     });
   });
   saleDraftAutosaveReady = true;
+  void resumeSaleDraftPage();
   cleanupExpiredSaleDrafts();
   refreshSaleDraftGenerateButton();
   offerSaleDraftForCurrentScope();
+  window.addEventListener("focus", offerSaleDraftForCurrentScope);
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) offerSaleDraftForCurrentScope();
+  });
+  setInterval(() => {
+    if (!document.hidden && !saleDraftPageHidden) offerSaleDraftForCurrentScope();
+  }, 2000);
   window.addEventListener("storage", (event) => {
     if (!event || !isSaleDraftKeyForCurrentScope(event.key) || saleDraftRestoring) return;
     if (!productos.length) {
