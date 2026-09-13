@@ -6,7 +6,7 @@
 {% block extra_head %}
   <link rel="stylesheet"
         href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"/>
-  <link rel="stylesheet" href="{% static 'css/turno_caja_retiro.css' %}?v=4">
+  <link rel="stylesheet" href="{% static 'css/turno_caja_retiro.css' %}?v=5">
 {% endblock %}
 
 {% block content %}
@@ -28,6 +28,10 @@
         <div><span>Cajero</span><b>{{ retiro_data.cajero }}</b></div>
         <div><span>Inicio</span><b>{{ retiro_data.inicio }}</b></div>
         <div><span>Fin</span><b>{{ retiro_data.fin }}</b></div>
+      </div>
+
+      <div id="printStatus" class="cr-print-status" role="status" aria-live="polite" data-state="pending">
+        Preparando la tirilla para imprimir automáticamente…
       </div>
 
       <div class="cr-layout">
@@ -66,8 +70,9 @@
           <div class="cr-actions">
             <button type="button" class="cr-btn cr-btn-primary" id="btnPrint">
               <i class="fa-solid fa-print" aria-hidden="true"></i>
-              Finalizar
+              <span id="btnPrintLabel">Imprimir tirilla</span>
             </button>
+            <a class="cr-btn cr-btn-ghost" href="{% url 'turno_caja' %}">Finalizar</a>
           </div>
         </aside>
       </div>
@@ -111,5 +116,5 @@
     window.TURNO_CAJA_URL = "{% url 'turno_caja' %}";
     if (!/^https?:\/\//.test(window.POS_AGENT_URL)) window.POS_AGENT_URL = "http://127.0.0.1:8787";
   </script>
-  <script defer src="{% static 'javascript/turno_caja_retiro.js' %}?v=10"></script>
+  <script defer src="{% static 'javascript/turno_caja_retiro.js' %}?v=11"></script>
 {% endblock %}

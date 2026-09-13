@@ -10517,6 +10517,7 @@ class RegistrarEgresoView(LoginRequiredMixin, View):
     template_name = "registrar_egreso.html"
 
     def _page_context(self, request, *, form=None):
+        from .services.expense_editing import can_edit_expenses
         metodos = payment_method_options(active_only=True)
         ledger_ready = _egreso_ledger_ready()
         if form is None:
@@ -10561,6 +10562,7 @@ class RegistrarEgresoView(LoginRequiredMixin, View):
             "migration_ready": ledger_ready,
             "history": history,
             "today_total": today_total,
+            "can_edit_expenses": can_edit_expenses(request.user),
         }
 
     def get(self, request, *args, **kwargs):

@@ -925,6 +925,22 @@ class Egreso(models.Model):
         return f"{self.concepto} - {self.medio_pago} - {self.monto}"
 
 
+class CambioEgreso(models.Model):
+    """Historial de correcciones, sin reemplazar la autoría del pago original."""
+
+    egreso = models.ForeignKey(Egreso, on_delete=models.PROTECT, related_name="cambios")
+    usuario = models.ForeignKey(Usuario, on_delete=models.SET_NULL, null=True, related_name="pagos_corregidos")
+    usuario_nombre = models.CharField(max_length=160)
+    motivo = models.CharField(max_length=300)
+    anterior = models.JSONField(default=dict)
+    nuevo = models.JSONField(default=dict)
+    creado_en = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "cambios_egresos"
+        ordering = ["-creado_en", "-pk"]
+
+
 class TurnoEmpleado(models.Model):
     """Planificación laboral; independiente de aperturas/cierres de caja."""
 

@@ -59,6 +59,17 @@ test("cierre en páginas distintas, solo hacia adelante y con valores conservado
     assert.equal(await page.evaluate(() => getComputedStyle(document.body).overflow), "hidden");
     assert.ok(await page.locator(`#${id}`).evaluate(el => Number(getComputedStyle(el).zIndex)) > 10000);
   }
+  async function assertContinuousBackground(page) {
+    const background = await page.evaluate(() => ({
+      repeat: getComputedStyle(document.body).backgroundRepeat,
+      attachment: getComputedStyle(document.body).backgroundAttachment,
+      bodyHeight: document.body.getBoundingClientRect().height,
+      documentHeight: document.documentElement.scrollHeight,
+    }));
+    assert.ok(background.repeat.split(",").every(value => value.trim() === "no-repeat"));
+    assert.ok(background.attachment.split(",").every(value => value.trim() === "scroll"));
+    assert.ok(background.bodyHeight >= background.documentHeight - 1);
+  }
   const posts = [];
   let starts = 0;
   let completeClose = false;
@@ -118,6 +129,7 @@ test("cierre en páginas distintas, solo hacia adelante y con valores conservado
     assert.match(page.url(), /\/turno_caja\/cierre\/8080\/pagos\/$/);
     assert.equal(await page.locator("#closeCashStep, #closeMediaStep, #closeDenomInputs").count(), 0);
     const closingWidth = (await page.locator(".tc-card").boundingBox()).width;
+    await assertContinuousBackground(page);
     const staleTab = await context.newPage();
     await staleTab.goto(url);
     await staleTab.locator("#closePaymentsStep").waitFor({state: "visible"});
@@ -150,6 +162,7 @@ test("cierre en páginas distintas, solo hacia adelante y con valores conservado
     await page.locator("#tc-confirm-ok").click();
     await page.locator("#closeCashStep").waitFor({state: "visible"});
     assert.match(page.url(), /\/efectivo\/$/);
+    await assertContinuousBackground(page);
     assert.equal((await page.locator(".tc-card").boundingBox()).width, closingWidth);
     assert.equal(await page.locator("#closePaymentsStep, #closeMediaStep").count(), 0);
     await staleTab.locator("#closeCashStep").waitFor({state: "visible"});
@@ -175,6 +188,7 @@ test("cierre en páginas distintas, solo hacia adelante y con valores conservado
     await staleTab.close();
     assert.equal(await page.locator("#closeMediaStep").isVisible(), true);
     assert.match(page.url(), /\/medios\/$/);
+    await assertContinuousBackground(page);
     assert.equal((await page.locator(".tc-card").boundingBox()).width, closingWidth);
     assert.equal(await page.locator("#closePaymentsStep, #closeCashStep, #closeDenomInputs").count(), 0);
     assert.equal(await page.locator("#facturas_pagadas").isVisible(), false);

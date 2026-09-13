@@ -2,6 +2,7 @@ from django.urls import path, include
 from . import views
 from . import schedule_views
 from .ptm_views import OperacionesPTMView
+from .expense_views import EgresosEditarListView, EditarEgresoView
 from django.contrib.auth import views as auth_views
 from .views import (
                     LoginView,
@@ -291,7 +292,9 @@ urlpatterns = [
      path("ventas/diarias/stats/", views.VentasDiariasStatsView.as_view(), name="ventas_diarias_stats"),
      path("reportes/metricas/", views.MetricasNegocioView.as_view(), name="metricas_negocio"),
      path("reportes/metricas/data/", views.MetricasNegocioDataView.as_view(), name="metricas_negocio_data"),
-     path("caja/registrar-pago/", views.RegistrarEgresoView.as_view(), name="registrar_egreso"),
+    path("caja/registrar-pago/", views.RegistrarEgresoView.as_view(), name="registrar_egreso"),
+    path("caja/pagos/", EgresosEditarListView.as_view(), name="pagos_editar_lista"),
+    path("caja/pagos/<int:egreso_id>/editar/", EditarEgresoView.as_view(), name="editar_egreso"),
      path("nequi/notificaciones/", views.NequiNotificacionesView.as_view(), name="nequi_notificaciones"),
      path("nequi/notificaciones/data/", views.NequiNotificacionesDataView.as_view(), name="nequi_notificaciones_data"),
      path("nequi/notificaciones/<int:notificacion_id>/eliminar/", views.NequiNotificacionEliminarView.as_view(), name="nequi_notificacion_eliminar"),

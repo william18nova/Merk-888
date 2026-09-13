@@ -6,7 +6,6 @@
 
   const POS_AGENT_URL = (window.POS_AGENT_URL || "http://127.0.0.1:8787").replace(/\/+$/, "");
   const POS_AGENT_TOKEN = (window.POS_AGENT_TOKEN || "").trim();
-  const TURNO_CAJA_URL = window.TURNO_CAJA_URL || "/turno_caja/";
 
   const UNIT = 50;
   const DENOMS = [
@@ -38,8 +37,12 @@
   const planNoteEl = $("#planNote");
   const ticketPreview = $("#ticketPreview");
   const btnPrint = $("#btnPrint");
+  const printStatus = $("#printStatus");
+  const btnPrintLabel = $("#btnPrintLabel");
 
   let currentPlan = null;
+  let hasDenominationDetail = false;
+  let printing = false;
 
   function money(v) {
     const n = Number.isFinite(Number(v)) ? Number(v) : 0;
@@ -86,6 +89,9 @@
     const payload = storedDenomPayload();
     const counts = payload?.counts;
     if (!counts || typeof counts !== "object") return;
+    if (DENOMS.some(d => !Number.isSafeInteger(Number(counts[d.key] || 0)) || Number(counts[d.key] || 0) < 0)) return;
+    if (Math.abs(totalFromCounts(counts) - num(DATA.efectivo_real)) > 0.01) return;
+    hasDenominationDetail = true;
     DENOMS.forEach((d) => {
       const input = $(`[data-denom='${d.key}']`);
       if (input) input.value = String(intVal(counts[d.key] || 0));
@@ -286,6 +292,22 @@
   }
 
   function recalc() {
+    if (!hasDenominationDetail) {
+      currentPlan = null;
+      if (denomInputs) denomInputs.hidden = true;
+      if (baseInput) baseInput.readOnly = true;
+      const label = document.querySelector("label[for='base_final']");
+      if (label) label.textContent = "Base de apertura";
+      if (baseFinalEl?.previousElementSibling) baseFinalEl.previousElementSibling.textContent = "Base de apertura";
+      if (totalContadoEl) totalContadoEl.textContent = money(DATA.efectivo_real);
+      if (baseFinalEl) baseFinalEl.textContent = money(DATA.base_apertura);
+      if (retiroSugeridoEl) retiroSugeridoEl.textContent = "—";
+      if (quedaCajaEl) quedaCajaEl.textContent = "—";
+      if (planNoteEl) planNoteEl.textContent = "Este navegador no tiene el detalle de billetes del cierre. Se imprimirá el resumen guardado, sin inventar un retiro por denominaciones.";
+      if (retiroRows) retiroRows.innerHTML = '<tr><td colspan="5">Detalle de denominaciones no disponible en este navegador.</td></tr>';
+      if (ticketPreview) ticketPreview.textContent = buildTicket(null);
+      return;
+    }
     const counts = readCounts();
     const total = totalFromCounts(counts);
     const base = Math.max(0, num(baseInput?.value || 0));
@@ -327,7 +349,7 @@
   }
 
   function buildTicket(plan) {
-    plan = plan || currentPlan || { removeCounts: emptyCounts(), amount: 0, total: 0, base: 0, remaining: 0 };
+    plan = plan || currentPlan;
     const out = [];
     out.push(line("MERK888"));
     out.push(line("CIERRE DE TURNO"));
@@ -351,6 +373,13 @@
     }
     out.push(lr("Efectivo fisico:", plainMoney(DATA.efectivo_real || 0)));
     out.push("-".repeat(48));
+    if (!hasDenominationDetail || !plan) {
+      out.push(lr("Base de apertura:", plainMoney(DATA.base_apertura || 0)));
+      out.push(line("Detalle de denominaciones no disponible."));
+      out.push(line("No se calcula un retiro sin ese detalle."));
+      out.push("", "");
+      return out.join("\n");
+    }
     out.push(lr("Base a dejar:", plainMoney(plan.base || 0)));
     out.push(lr("Total contado:", plainMoney(plan.total || 0)));
     out.push(lr("Retiro:", plainMoney(plan.amount || 0)));
@@ -369,12 +398,27 @@
     return out.join("\n");
   }
 
-  async function agentPrintSafe(text, { timeout = 700 } = {}) {
-    if (!POS_AGENT_TOKEN) return;
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), timeout);
+  function showPrintStatus(state, message, buttonText) {
+    if (printStatus) { printStatus.dataset.state = state; printStatus.textContent = message; }
+    if (btnPrintLabel && buttonText) btnPrintLabel.textContent = buttonText;
+  }
+
+  const printKey = () => `tc_retiro_print_${DATA.turno_id}`;
+  function storedPrintState() {
+    try { return JSON.parse(localStorage.getItem(printKey()) || "null"); } catch { return null; }
+  }
+  function savePrintState(state) {
     try {
-      await fetch(`${POS_AGENT_URL}/print`, {
+      localStorage.setItem(printKey(), JSON.stringify({state, ts: Date.now()}));
+      return true;
+    } catch { return false; }
+  }
+
+  async function sendTicket(text) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 8000);
+    try {
+      const response = await fetch(`${POS_AGENT_URL}/print`, {
         method: "POST",
         keepalive: true,
         headers: {
@@ -384,58 +428,64 @@
         body: JSON.stringify({ text }),
         signal: ctrl.signal,
       });
-    } catch {
+      const result = await response.json().catch(() => null);
+      if (!response.ok || result?.success === false || result?.ok === false) {
+        const error = new Error("El servicio de impresión rechazó la solicitud. Revisa el agente y la impresora antes de reintentar.");
+        error.rejected = true;
+        throw error;
+      }
     } finally {
       clearTimeout(timer);
     }
   }
 
-  async function agentKickSafe({ timeout = 450 } = {}) {
-    if (!POS_AGENT_TOKEN) return;
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), timeout);
-    try {
-      await fetch(`${POS_AGENT_URL}/kick`, {
-        method: "POST",
-        keepalive: true,
-        headers: { "X-Pos-Agent-Token": POS_AGENT_TOKEN },
-        signal: ctrl.signal,
-      });
-    } catch {
-    } finally {
-      clearTimeout(timer);
-    }
-  }
-
-  (function agentWarmup() {
-    if (!POS_AGENT_TOKEN) return;
-    fetch(`${POS_AGENT_URL}/ping`, {
-      method: "GET",
-      keepalive: true,
-      headers: { "X-Pos-Agent-Token": POS_AGENT_TOKEN },
-    }).catch(() => {});
-  })();
-
-  function settleWithDeadline(promises, maxWaitMs = 250) {
-    return Promise.race([
-      Promise.allSettled(promises),
-      new Promise((resolve) => setTimeout(resolve, maxWaitMs)),
-    ]);
-  }
-
-  async function printCurrent() {
+  async function printCurrent({ automatic = false } = {}) {
+    if (printing || !DATA.turno_id) return;
+    printing = true;
     if (btnPrint) btnPrint.disabled = true;
-    recalc();
-    const text = buildTicket(currentPlan) + "\n\n\n\n";
-    if (ticketPreview) ticketPreview.textContent = text;
+    if (baseInput) baseInput.disabled = true;
     try {
-      const p1 = agentKickSafe({ timeout: 450 });
-      const p2 = agentPrintSafe(text, { timeout: 850 });
-      await settleWithDeadline([p1, p2], 250);
-    } catch {
+      const run = async () => {
+        const previous = storedPrintState();
+        if (automatic && previous?.state === "sent") {
+          showPrintStatus("success", "La tirilla de este turno ya se envió desde este navegador. Puedes reimprimirla si necesitas otra copia.", "Reimprimir tirilla");
+          return;
+        }
+        if (automatic && ["pending", "uncertain"].includes(previous?.state)) {
+          showPrintStatus("uncertain", "Hay un envío anterior sin confirmar. Revisa si la tirilla salió antes de reintentar, para no imprimirla dos veces.", "Reintentar impresión");
+          return;
+        }
+        if (!POS_AGENT_TOKEN) {
+          showPrintStatus("error", "No se pudo imprimir automáticamente: falta configurar el agente de impresión de este equipo. La tirilla sigue disponible abajo.", "Reintentar impresión");
+          return;
+        }
+        if (!savePrintState("pending") && automatic) {
+          showPrintStatus("error", "El navegador no permite guardar el control de impresión. Puedes enviar la tirilla con el botón Imprimir.", "Imprimir tirilla");
+          return;
+        }
+        recalc();
+        const text = buildTicket(currentPlan) + "\n\n\n\n";
+        if (ticketPreview) ticketPreview.textContent = text;
+        showPrintStatus("pending", "Enviando la tirilla a la impresora…", "Enviando…");
+        try {
+          await sendTicket(text);
+          savePrintState("sent");
+          showPrintStatus("success", "Tirilla enviada a la impresora. Puedes consultar el retiro o finalizar cuando termines.", "Reimprimir tirilla");
+        } catch (error) {
+          savePrintState(error.rejected ? "failed" : "uncertain");
+          showPrintStatus(error.rejected ? "error" : "uncertain", error.rejected ? error.message : "No se pudo confirmar la impresión. Revisa si la tirilla salió y que el agente esté abierto antes de reintentar. El detalle del cierre se conservó.", "Reintentar impresión");
+        }
+      };
+      if (navigator.locks?.request) {
+        await navigator.locks.request(`nova:retiro-print:${DATA.turno_id}`, {ifAvailable: true}, async lock => {
+          if (lock) await run();
+          else showPrintStatus("pending", "Otra pestaña está enviando la tirilla de este turno. No se enviará una copia adicional automáticamente.", "Reimprimir tirilla");
+        });
+      } else await run();
     } finally {
-      try { sessionStorage.removeItem(denomsKey()); } catch {}
-      setTimeout(() => window.location.assign(TURNO_CAJA_URL), 300);
+      printing = false;
+      if (btnPrint) btnPrint.disabled = false;
+      if (baseInput) baseInput.disabled = false;
     }
   }
 
@@ -446,7 +496,10 @@
   }
   recalc();
 
-  baseInput?.addEventListener("input", recalc);
+  baseInput?.addEventListener("input", () => {
+    recalc();
+    if (storedPrintState()?.state === "sent") showPrintStatus("pending", "Cambiaste la base después de imprimir. Imprime otra tirilla si deseas incluir este cambio.", "Imprimir cambios");
+  });
   denomInputs?.addEventListener("input", (event) => {
     const target = event.target;
     if (target && target.matches("input[data-denom]")) {
@@ -454,5 +507,7 @@
       recalc();
     }
   });
-  btnPrint?.addEventListener("click", printCurrent);
+  btnPrint?.addEventListener("click", () => { void printCurrent(); });
+  // Al llegar desde el cierre, el conteo y la vista previa ya están preparados.
+  requestAnimationFrame(() => { void printCurrent({automatic: true}); });
 })();

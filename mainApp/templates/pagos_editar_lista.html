@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% load static l10n %}
+{% block title %}Editar pagos{% endblock %}
+{% block extra_head %}<link rel="stylesheet" href="{% static 'css/registrar_egreso.css' %}?v=2">{% endblock %}
+{% block content %}
+<main class="expense-page" aria-labelledby="expense-title">
+  <header class="expense-hero">
+    <div><p class="expense-eyebrow">Caja y pagos · Acceso autorizado</p>
+      <h1 id="expense-title">Editar pagos</h1>
+      <p class="expense-lead">Busca el pago que necesitas corregir. Cada cambio conserva su historial.</p>
+      <nav class="expense-actions"><a class="expense-link" href="{% url 'registrar_egreso' %}">+ Registrar pago</a></nav>
+    </div>
+    <aside class="expense-today"><div><small>Total de la búsqueda</small><strong data-money>{{ total|unlocalize }}</strong><span>{{ page_obj.paginator.count }} pago{{ page_obj.paginator.count|pluralize:"s" }} encontrado{{ page_obj.paginator.count|pluralize:"s" }}</span></div></aside>
+  </header>
+  <section class="expense-panel expense-search" aria-label="Buscar pagos">
+    <form method="get" class="expense-filters">
+      {% for field in form %}<label class="expense-field" for="{{ field.id_for_label }}"><span>{{ field.label }}</span>{{ field }}{% for error in field.errors %}<em>{{ error }}</em>{% endfor %}</label>{% endfor %}
+      <button class="expense-submit" type="submit">Buscar</button>
+      <a class="expense-link" href="{% url 'pagos_editar_lista' %}">Limpiar</a>
+    </form>
+    {% if form.non_field_errors %}<div class="expense-form-errors" role="alert">{{ form.non_field_errors }}</div>{% endif %}
+  </section>
+  <section class="expense-history" aria-label="Pagos encontrados">
+    <header><h2>Pagos registrados</h2><span>Se conserva la fecha y quien registró cada pago.</span></header>
+    <div class="expense-table-wrap"><table>
+      <thead><tr><th>ID / Fecha</th><th>Concepto</th><th>Medio</th><th>Registrado por</th><th>Valor</th><th>Acción</th></tr></thead>
+      <tbody>{% for item in page_obj %}<tr>
+        <td><strong>#{{ item.pk }}</strong><br>{{ item.creado_en|date:"d/m/Y H:i" }}</td>
+        <td><strong>{{ item.concepto.nombre }}</strong></td><td><span class="expense-method">{{ item.medio_pago_label }}</span></td>
+        <td>{{ item.registrado_por_nombre }}</td><td data-money>{{ item.monto|unlocalize }}</td>
+        <td><a class="expense-link" href="{% url 'editar_egreso' item.pk %}" aria-label="Editar pago {{ item.pk }}">Editar</a></td>
+      </tr>{% empty %}<tr><td colspan="6" class="expense-empty">No hay pagos que coincidan con esta búsqueda.</td></tr>{% endfor %}</tbody>
+    </table></div>
+    {% if page_obj.has_other_pages %}<nav class="expense-pagination" aria-label="Páginas de pagos">
+      {% if page_obj.has_previous %}<a class="expense-link" href="?{{ filter_query }}&amp;page={{ page_obj.previous_page_number }}">Anterior</a>{% endif %}
+      <span>Página {{ page_obj.number }} de {{ page_obj.paginator.num_pages }}</span>
+      {% if page_obj.has_next %}<a class="expense-link" href="?{{ filter_query }}&amp;page={{ page_obj.next_page_number }}">Siguiente</a>{% endif %}
+    </nav>{% endif %}
+  </section>
+</main>
+{% endblock %}
+{% block scripts %}<script defer src="{% static 'javascript/registrar_egreso.js' %}?v=3"></script>{% endblock %}

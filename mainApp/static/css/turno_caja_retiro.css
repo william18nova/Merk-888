@@ -36,6 +36,22 @@ body{
   padding:clamp(20px,4vw,40px);
 }
 
+.cr-print-status{
+  margin:0 0 20px;
+  padding:14px 18px;
+  border:1px solid rgba(127,184,255,.5);
+  border-left:4px solid #75bcff;
+  border-radius:12px;
+  background:rgba(9,33,63,.5);
+  color:#edf6ff;
+  font-size:14px;
+  line-height:1.6;
+}
+.cr-print-status[data-state="success"]{ border-left-color:#58d6ad; }
+.cr-print-status[data-state="error"],.cr-print-status[data-state="uncertain"]{ border-left-color:#fbbf24; color:#fff0c6; }
+.cr-actions{ flex-wrap:wrap; gap:10px; }
+.cr-denoms[hidden]{ display:none; }
+
 .cr-shell{
   width:min(1180px, 95vw);
   margin:0 auto;

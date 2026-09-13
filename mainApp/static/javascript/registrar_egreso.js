@@ -4,7 +4,8 @@
   const money = new Intl.NumberFormat("es-CO", {
     style: "currency",
     currency: "COP",
-    maximumFractionDigits: 0,
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2,
   });
 
   document.querySelectorAll("[data-money]").forEach((element) => {
@@ -112,6 +113,6 @@
     }
     submit.disabled = true;
     const label = submit.querySelector("span");
-    if (label) label.textContent = "Registrando…";
+    if (label) label.textContent = form.dataset?.submittingLabel || "Registrando…";
   });
 })();

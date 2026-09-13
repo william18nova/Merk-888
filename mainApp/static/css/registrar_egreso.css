@@ -13,14 +13,20 @@
   --expense-shadow: 0 22px 54px rgba(2, 16, 37, .3);
 }
 
+html { min-height: 100%; background-color: #173c6b; }
 body {
+  margin: 0;
+  height: auto;
   min-height: 100vh;
+  font-family: "Segoe UI", Arial, sans-serif;
   color: var(--expense-text);
   background:
     radial-gradient(circle at 8% 5%, rgba(67, 151, 238, .27), transparent 34rem),
     radial-gradient(circle at 94% 80%, rgba(33, 112, 190, .2), transparent 38rem),
     linear-gradient(135deg, var(--expense-bg-deep), var(--expense-bg));
-  background-attachment: fixed;
+  background-attachment: scroll;
+  background-repeat: no-repeat;
+  background-size: cover;
 }
 
 .expense-page,
@@ -172,6 +178,7 @@ body {
 
 .expense-form { display: grid; gap: 18px; margin-top: 22px; }
 .expense-form__row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.expense-form__row { align-items: start; }
 .expense-field { display: grid; gap: 8px; min-width: 0; }
 .expense-field > span:first-child { color: #eaf4ff; font-size: 13px; font-weight: 900; letter-spacing: .025em; }
 .expense-field input,
@@ -185,12 +192,15 @@ body {
   background: rgba(255, 255, 255, .095);
   color: #fff;
   padding: 0 14px;
-  font: 750 15px/1.2 inherit;
+  font: inherit;
+  font-size: 15px;
+  font-weight: 600;
   transition: border-color .2s, box-shadow .2s, background .2s;
 }
 .expense-field input:focus,
 .expense-field select:focus { border-color: #75c3ff; background: rgba(255,255,255,.13); box-shadow: 0 0 0 4px rgba(77,166,255,.16); }
 .expense-field select { color-scheme: dark; }
+.expense-field input::placeholder { color: #bfd3eb; opacity: .85; }
 .expense-field option { color: #101828; background: #fff; }
 .expense-field small { color: var(--expense-muted); font-size: 12px; line-height: 1.45; }
 .expense-field em { color: #ffd0d7; font-size: 12px; font-style: normal; font-weight: 800; }
@@ -221,7 +231,9 @@ body {
   background: linear-gradient(180deg, #5cb8ff, #3288df);
   box-shadow: 0 15px 30px rgba(34, 131, 221, .3);
   cursor: pointer;
-  font: 900 15px/1 inherit;
+  font: inherit;
+  font-size: 15px;
+  font-weight: 800;
 }
 .expense-submit:hover:not(:disabled) { transform: translateY(-1px); filter: brightness(1.06); }
 .expense-submit:disabled { cursor: not-allowed; opacity: .48; box-shadow: none; }
@@ -253,3 +265,25 @@ body {
   .expense-panel__head { display: grid; }
   .expense-history > header { display: grid; }
 }
+
+.expense-page--edit { max-width: 1120px; }
+.expense-link { display: inline-flex; align-items: center; justify-content: center; min-height: 42px; padding: 10px 16px; border: 1px solid rgba(153,205,255,.4); border-radius: 11px; background: rgba(75,145,225,.18); color: #eaf5ff; font-weight: 750; text-decoration: none; }
+.expense-link:hover { color: #fff; background: rgba(75,145,225,.35); }
+.expense-link:focus-visible, .expense-submit:focus-visible { outline: 3px solid var(--expense-cyan); outline-offset: 3px; }
+.expense-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin-top: 16px; }
+.expense-actions .expense-submit { padding: 16px 28px; }
+.expense-search { margin-top: 18px; }
+.expense-filters { display: grid; grid-template-columns: minmax(190px,2fr) repeat(3,minmax(140px,1fr)) auto auto; align-items: end; gap: 14px; }
+.expense-filters .expense-submit { padding: 0 22px; }
+.expense-pagination { display: flex; justify-content: center; align-items: center; flex-wrap: wrap; gap: 18px; margin-top: 20px; color: var(--expense-muted); }
+.expense-change-list { display: grid; gap: 16px; }
+.expense-change { border: 1px solid var(--expense-border); border-radius: 16px; background: rgba(5,25,55,.25); padding: 20px; overflow-wrap: anywhere; }
+.expense-change > header { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.expense-change time { color: var(--expense-muted); font-size: 13px; }
+.expense-change-values { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.expense-change-values section { min-width: 0; border-radius: 12px; background: rgba(255,255,255,.06); padding: 16px; }
+.expense-change-values h3 { margin: 0; font-size: 12px; color: var(--expense-cyan); text-transform: uppercase; letter-spacing: .08em; }
+.expense-change-values strong, .expense-change-values span { display: block; margin-top: 6px; }
+.expense-change-values span { color: var(--expense-muted); }
+@media (max-width: 1100px) { .expense-filters { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 620px) { .expense-filters, .expense-change-values { grid-template-columns: 1fr; } .expense-actions > * { width: 100%; } }

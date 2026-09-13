@@ -80,6 +80,39 @@ class RegistrarEgresoForm(forms.Form):
         return concepto
 
 
+class EditarEgresoForm(RegistrarEgresoForm):
+    version = forms.CharField(widget=forms.HiddenInput)
+    motivo = forms.CharField(
+        max_length=300, label="Motivo de la corrección",
+        widget=forms.TextInput(attrs={"placeholder": "Ej. El valor se digitó incorrectamente"}),
+    )
+
+    def __init__(self, *args, current_method=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        if current_method and current_method[0] not in dict(self.fields["medio_pago"].choices):
+            self.fields["medio_pago"].choices = [*self.fields["medio_pago"].choices, (
+                current_method[0], f"{current_method[1]} (retirado; puedes conservarlo)",
+            )]
+
+
+class BuscarEgresosForm(forms.Form):
+    q = forms.CharField(required=False, max_length=160, label="Buscar",
+                        widget=forms.TextInput(attrs={"placeholder": "Concepto, usuario o ID"}))
+    desde = forms.DateField(required=False, widget=forms.DateInput(attrs={"type": "date"}))
+    hasta = forms.DateField(required=False, widget=forms.DateInput(attrs={"type": "date"}))
+    medio = forms.ChoiceField(required=False, choices=(), label="Medio de pago")
+
+    def __init__(self, *args, payment_methods=(), **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["medio"].choices = [("", "Todos los medios"), *payment_methods]
+
+    def clean(self):
+        data = super().clean()
+        if data.get("desde") and data.get("hasta") and data["desde"] > data["hasta"]:
+            raise forms.ValidationError("La fecha inicial no puede ser posterior a la final.")
+        return data
+
+
 # Nombres de rol que otorgan acceso administrativo. La normalización se
 # mantiene local para no acoplar los formularios con ``mainApp.permissions``
 # (ese módulo también importa modelos y servicios usados por las vistas).

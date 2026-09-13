@@ -35,6 +35,12 @@ PERMISSION_CACHE_VERSION_KEY = "mainapp:permissions:version"
 
 PERMISSION_DEFINITIONS = [
     {
+        "code": "pagos_editar",
+        "label": "Editar pagos registrados",
+        "description": "Permite buscar y corregir pagos del negocio y consultar su historial de cambios.",
+        "aliases": ["editar_egreso", "editar pagos"],
+    },
+    {
         "code": "sucursales_crear",
         "label": "Agregar sucursal",
         "description": "Permite crear sucursales.",
@@ -626,6 +632,8 @@ PERMISSION_IMPLICATIONS = {
 
 
 ROUTE_PERMISSIONS = {
+    "editar_egreso": "pagos_editar",
+    "pagos_editar_lista": "pagos_editar",
     "agregar_sucursal": "sucursales_crear",
     "visualizar_sucursales": "sucursales_ver",
     "editar_sucursal": "sucursales_editar",
@@ -954,6 +962,7 @@ NAV_GROUPS = [
             {"label": "Turno de caja", "url_name": "turno_caja"},
             {"label": "Operaciones PTM", "url_name": "operaciones_ptm"},
             {"label": "Registrar pago", "url_name": "registrar_egreso"},
+            {"label": "Editar pagos", "url_name": "pagos_editar_lista"},
             {"label": "Retiro base de caja", "url_name": "turno_caja_retiro_actual"},
             {"label": "Dashboard turnos", "url_name": "turnos_caja_dashboard"},
             {"label": "Admin turnos", "url_name": "turnos_caja_admin"},
