@@ -82,6 +82,13 @@ class RegistrarEgresoForm(forms.Form):
 
 class EditarEgresoForm(RegistrarEgresoForm):
     version = forms.CharField(widget=forms.HiddenInput)
+    fecha_pago = forms.DateField(
+        required=False, label="Fecha del pago",
+        widget=forms.DateInput(format="%Y-%m-%d", attrs={
+            "type": "date", "aria-labelledby": "expense-date-label", "aria-describedby": "expense-date-help",
+        }),
+        error_messages={"invalid": "Selecciona una fecha de pago válida."},
+    )
     motivo = forms.CharField(
         max_length=300, label="Motivo de la corrección",
         widget=forms.TextInput(attrs={"placeholder": "Ej. El valor se digitó incorrectamente"}),

@@ -67,6 +67,14 @@ migraciones pendientes con `python manage.py migrate`, reiniciar la **misma**
 tarea Always-on del bot y recargar la Web. No iniciar un segundo trabajador.
 No se cambian claves, proveedores ni planes de pago.
 
+La página **Editar pago** también permite corregir la fecha del pago. Conserva
+la hora y el usuario original, y registra la fecha anterior y la nueva en el
+historial (visible también desde Telegram). Las métricas y listas utilizan el
+día corregido. Esta corrección de fecha no requiere una migración nueva y no
+modifica turnos ni efectivo. Desde el bot, la edición sigue limitada al concepto,
+valor y medio: no cambia la fecha. Una propuesta del bot preparada antes de una
+corrección web debe solicitarse de nuevo, para no sobrescribirla.
+
 ### Criterio de respuesta
 
 El bot responde primero el dato solicitado, sin saludos repetidos, introducciones

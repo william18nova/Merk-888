@@ -4,6 +4,7 @@ from django.core.exceptions import PermissionDenied
 from django.core.paginator import Paginator
 from django.db.models import Q, Sum
 from django.shortcuts import get_object_or_404, redirect, render
+from django.utils import timezone
 from django.views import View
 
 from .forms import BuscarEgresosForm, EditarEgresoForm
@@ -72,6 +73,7 @@ class EditarEgresoView(ExpenseEditAccessMixin, View):
             initial={
                 "concepto": expense.concepto.nombre, "monto": expense.monto,
                 "medio_pago": expense.medio_pago,
+                "fecha_pago": timezone.localtime(expense.creado_en, timezone.get_default_timezone()).date(),
                 "version": expense_edit_token(expense, user) if data is None else "",
             },
         )
@@ -98,6 +100,7 @@ class EditarEgresoView(ExpenseEditAccessMixin, View):
                 user=request.user, expense_id=expense.pk, concept=data["concepto"],
                 amount=data["monto"], payment_method=data["medio_pago"],
                 reason=data["motivo"], version=data["version"],
+                payment_date=data.get("fecha_pago"),
             )
         except OperationalExpenseError as exc:
             form.add_error(None, str(exc))

@@ -6,7 +6,7 @@
 <main class="expense-page expense-page--edit" aria-labelledby="expense-title">
   <header class="expense-hero">
     <div><p class="expense-eyebrow">Corrección de un pago</p><h1 id="expense-title">Editar pago{% if expense %} #{{ expense.pk }}{% endif %}</h1>
-      <p class="expense-lead">Corrige el concepto, el valor o el medio de pago sin borrar el registro original de quién lo agregó.</p>
+      <p class="expense-lead">Corrige el concepto, el valor, el medio o la fecha del pago sin borrar el registro original de quién lo agregó.</p>
     </div>
     <a class="expense-link" href="{% url 'pagos_editar_lista' %}">Volver a los pagos</a>
   </header>
@@ -15,7 +15,7 @@
     <section class="expense-warning" role="alert"><div><strong>La edición de pagos aún no está habilitada.</strong><p>Aplica la migración 0041 con <code>python manage.py migrate</code> y vuelve a cargar. Los pagos existentes no se han modificado.</p></div></section>
   {% else %}
     <section class="expense-layout"><article class="expense-panel">
-      <header class="expense-panel__head"><div><p class="expense-eyebrow">Registro original</p><h2>{{ expense.concepto.nombre }}</h2><p>Registrado por <strong>{{ expense.registrado_por_nombre }}</strong> el {{ expense.creado_en|date:"d/m/Y" }} a las {{ expense.creado_en|date:"H:i" }}.</p></div></header>
+      <header class="expense-panel__head"><div><p class="expense-eyebrow">Datos actuales del pago</p><h2>{{ expense.concepto.nombre }}</h2><p>Registrado por <strong>{{ expense.registrado_por_nombre }}</strong>. Fecha del pago: {{ expense.creado_en|date:"d/m/Y" }} a las {{ expense.creado_en|date:"H:i" }}.</p></div></header>
       <form method="post" class="expense-form" data-expense-form data-submitting-label="Guardando…" autocomplete="off">
         {% csrf_token %}{{ form.version }}
         {% if form.non_field_errors or form.version.errors %}<div class="expense-form-errors" role="alert">{{ form.non_field_errors }}{{ form.version.errors }}<p><a class="expense-link" href="{% url 'editar_egreso' expense.pk %}">Cargar los valores actuales</a></p></div>{% endif %}
@@ -25,15 +25,16 @@
           <label class="expense-field" for="{{ form.monto.id_for_label }}"><span>{{ form.monto.label }}</span><span class="expense-money-input"><b aria-hidden="true">$</b>{{ form.monto }}</span><small id="expense-amount-help">Los miles se separan automáticamente. Para centavos usa coma: 1.000,50.</small>{% for error in form.monto.errors %}<em>{{ error }}</em>{% endfor %}</label>
           <label class="expense-field" for="{{ form.medio_pago.id_for_label }}"><span>{{ form.medio_pago.label }}</span>{{ form.medio_pago }}{% for error in form.medio_pago.errors %}<em>{{ error }}</em>{% endfor %}</label>
         </div>
+        <label class="expense-field" for="{{ form.fecha_pago.id_for_label }}"><span id="expense-date-label">{{ form.fecha_pago.label }}</span>{{ form.fecha_pago }}<small id="expense-date-help">El pago contará en esta fecha en los listados y las métricas. La hora se conserva. Si dejas el campo vacío, se mantiene la fecha actual del pago.</small>{% for error in form.fecha_pago.errors %}<em>{{ error }}</em>{% endfor %}</label>
         <label class="expense-field" for="{{ form.motivo.id_for_label }}"><span>{{ form.motivo.label }}</span>{{ form.motivo }}<small>Explica brevemente qué estás corrigiendo.</small>{% for error in form.motivo.errors %}<em>{{ error }}</em>{% endfor %}</label>
-        <div class="expense-audit-note"><p>La corrección quedará a nombre de <strong>{{ nav_session_name }}</strong>. Se actualizarán las métricas del día original del pago, sin modificar turnos ni dinero de caja.</p></div>
+        <div class="expense-audit-note"><p>La corrección quedará a nombre de <strong>{{ nav_session_name }}</strong>. Si cambias la fecha, el pago dejará de contar en el día anterior y contará en el elegido, sin modificar turnos ni dinero de caja.</p></div>
         <div class="expense-actions"><button type="submit" class="expense-submit"><span>Guardar cambios</span></button><a class="expense-link" href="{% url 'pagos_editar_lista' %}">Cancelar</a></div>
       </form>
     </article></section>
     <section class="expense-history" aria-labelledby="history-title"><header><div><p class="expense-eyebrow">Trazabilidad</p><h2 id="history-title">Historial de correcciones</h2></div><span>{{ history_page.paginator.count }} {{ history_page.paginator.count|pluralize:"corrección,correcciones" }}</span></header>
       <div class="expense-change-list">{% for change in history_page %}
         <article class="expense-change"><header><strong>{{ change.usuario_nombre }}</strong><time datetime="{{ change.creado_en|date:'c' }}">{{ change.creado_en|date:"d/m/Y H:i" }}</time></header><p>{{ change.motivo }}</p>
-          <div class="expense-change-values"><section><h3>Antes</h3><p>{{ change.anterior.concepto }}</p><strong data-money>{{ change.anterior.monto }}</strong><span>{{ change.anterior.medio_nombre }}</span></section><section><h3>Después</h3><p>{{ change.nuevo.concepto }}</p><strong data-money>{{ change.nuevo.monto }}</strong><span>{{ change.nuevo.medio_nombre }}</span></section></div>
+          <div class="expense-change-values"><section><h3>Antes</h3><p>{{ change.anterior.concepto }}</p><strong data-money>{{ change.anterior.monto }}</strong><span>{{ change.anterior.medio_nombre }}</span>{% if change.anterior.fecha_pago_texto %}<p>Fecha del pago: {{ change.anterior.fecha_pago_texto }}</p>{% endif %}</section><section><h3>Después</h3><p>{{ change.nuevo.concepto }}</p><strong data-money>{{ change.nuevo.monto }}</strong><span>{{ change.nuevo.medio_nombre }}</span>{% if change.nuevo.fecha_pago_texto %}<p>Fecha del pago: {{ change.nuevo.fecha_pago_texto }}</p>{% endif %}</section></div>
         </article>
       {% empty %}<p class="expense-empty">Este pago todavía no tiene correcciones.</p>{% endfor %}</div>
       {% if history_page.has_other_pages %}<nav class="expense-pagination" aria-label="Páginas del historial">{% if history_page.has_previous %}<a class="expense-link" href="?historial={{ history_page.previous_page_number }}">Anterior</a>{% endif %}<span>{{ history_page.number }} de {{ history_page.paginator.num_pages }}</span>{% if history_page.has_next %}<a class="expense-link" href="?historial={{ history_page.next_page_number }}">Siguiente</a>{% endif %}</nav>{% endif %}

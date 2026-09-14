@@ -44,6 +44,9 @@ test('edición de pagos: diseño adaptable, importe exacto y envío visible', {
     assert.equal(await page.evaluate(() => getComputedStyle(document.body).backgroundAttachment), 'scroll, scroll, scroll');
     assert.equal(await page.locator('#id_monto').inputValue(), '1.250.000,50');
     assert.equal(await page.locator('#id_medio_pago').inputValue(), 'nequi');
+    assert.ok(await page.getByLabel('Fecha del pago', {exact: true}).isVisible());
+    assert.match(await page.locator('#id_fecha_pago').inputValue(), /^\d{4}-\d{2}-\d{2}$/);
+    await page.locator('#id_fecha_pago').fill('2026-07-01');
     assert.ok(await page.getByRole('heading', {name: 'Historial de correcciones'}).isVisible());
     await page.screenshot({path: path.join(artifacts, 'editar-pago-desktop.png'), fullPage: true});
     await page.locator('#id_concepto').fill('servicio de agua');
@@ -57,6 +60,7 @@ test('edición de pagos: diseño adaptable, importe exacto y envío visible', {
     assert.equal(submitted.get('concepto'), 'SERVICIO DE AGUA');
     assert.ok(submitted.get('version'));
     assert.equal(submitted.get('motivo'), 'Corregir factura');
+    assert.equal(submitted.get('fecha_pago'), '2026-07-01');
     await page.goto(base + '/caja/pagos/');
     assert.ok(await page.getByRole('link', {name: 'Editar pago 1'}).isVisible());
     await page.screenshot({path: path.join(artifacts, 'editar-pagos-lista.png'), fullPage: true});

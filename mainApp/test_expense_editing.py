@@ -1,5 +1,6 @@
-from datetime import timedelta
+from datetime import date, datetime, timedelta, timezone as datetime_timezone
 from decimal import Decimal
+import json
 import os
 from pathlib import Path
 from unittest.mock import patch
@@ -15,6 +16,7 @@ from .expense_views import EditarEgresoView
 from .models import CambioEgreso, ConceptoEgreso, Egreso, MetodoPago, Permiso, Rol, RolPermiso, Usuario, UsuarioPermiso
 from .permissions import clear_permission_cache
 from .services.expense_editing import ExpenseEditConflict, edit_operational_expense, expense_edit_token
+from .services.operational_expenses import OperationalExpenseError
 
 
 class ExpenseEditingTests(TestCase):
@@ -226,6 +228,116 @@ class ExpenseEditingTests(TestCase):
         response = self.client.get(self.list_url, {"desde": date, "hasta": date, "medio": "nequi"})
         self.assertEqual(response.context["total"], Decimal("400.25"))
         self.assertEqual(self.client.get(self.list_url, {"medio": "efectivo"}).context["total"], 0)
+
+    def test_date_input_uses_colombia_day_not_utc_day(self):
+        stamp = datetime(2026, 9, 11, 2, 30, 45, 123456, tzinfo=datetime_timezone.utc)
+        Egreso.objects.filter(pk=self.expense.pk).update(creado_en=stamp)
+        response = self.client.get(self.url)
+        self.assertContains(response, 'name="fecha_pago"')
+        self.assertContains(response, 'type="date"')
+        self.assertEqual(response.context["form"]["fecha_pago"].value(), date(2026, 9, 10))
+        self.assertContains(response, 'value="2026-09-10"')
+
+    def test_date_only_correction_keeps_time_author_and_audits_before_after(self):
+        stamp = datetime(2026, 9, 11, 2, 30, 45, 123456, tzinfo=datetime_timezone.utc)
+        Egreso.objects.filter(pk=self.expense.pk).update(creado_en=stamp)
+        self.expense.refresh_from_db()
+        response = self.client.post(self.url, self.payload(
+            concepto="AGUA", monto="1.000", medio_pago="efectivo", fecha_pago="2026-09-12",
+        ))
+        self.assertRedirects(response, self.url)
+        self.expense.refresh_from_db()
+        self.assertEqual(self.expense.creado_en, datetime(2026, 9, 13, 2, 30, 45, 123456, tzinfo=datetime_timezone.utc))
+        self.assertEqual(self.expense.registrado_por_id, self.creator.pk)
+        self.assertEqual(self.expense.registrado_por_nombre, self.creator.nombreusuario)
+        self.assertEqual(self.expense.monto, Decimal("1000.00"))
+        history = CambioEgreso.objects.get()
+        self.assertEqual(history.anterior["fecha_pago"], "2026-09-10")
+        self.assertEqual(history.nuevo["fecha_pago"], "2026-09-12")
+        self.assertEqual(history.anterior["creado_en"], stamp.isoformat())
+        self.assertEqual(history.nuevo["creado_en"], self.expense.creado_en.isoformat())
+        self.assertEqual(history.usuario_id, self.editor.pk)
+        self.assertLess(abs(timezone.now() - history.creado_en), timedelta(seconds=30))
+        page = self.client.get(self.url)
+        self.assertContains(page, "Fecha del pago: 10/09/2026")
+        self.assertContains(page, "Fecha del pago: 12/09/2026")
+
+    def test_invalid_date_is_rejected_without_changing_other_fields(self):
+        for invalid in ("incorrecta", "2026-02-30", "2026-09-10T12:30", "0000-01-01"):
+            with self.subTest(value=invalid):
+                response = self.client.post(self.url, self.payload(fecha_pago=invalid))
+                self.assertEqual(response.status_code, 400)
+                self.assertContains(response, "fecha de pago válida", status_code=400)
+        self.expense.refresh_from_db()
+        self.assertEqual(self.expense.monto, Decimal("1000.00"))
+        self.assertEqual(CambioEgreso.objects.count(), 0)
+
+    def test_same_or_blank_date_does_not_create_a_correction(self):
+        stamp = self.expense.creado_en
+        for value in (timezone.localdate(stamp).isoformat(), ""):
+            response = self.client.post(self.url, self.payload(
+                concepto="AGUA", monto="1.000", medio_pago="efectivo", fecha_pago=value,
+            ))
+            self.assertEqual(response.status_code, 302)
+            self.expense.refresh_from_db()
+            self.assertEqual(self.expense.creado_en, stamp)
+        self.assertEqual(CambioEgreso.objects.count(), 0)
+
+    def test_corrected_day_moves_list_and_metrics_totals(self):
+        from .views import MetricasNegocioDataView
+
+        previous = timezone.localdate(self.expense.creado_en)
+        selected = timezone.localdate() - timedelta(days=1)
+        self.service(payment_date=selected, amount="400.25")
+        for day, expected in ((previous, Decimal("0")), (selected, Decimal("400.25"))):
+            params = {"desde": day.isoformat(), "hasta": day.isoformat()}
+            self.assertEqual(self.client.get(self.list_url, params).context["total"], expected)
+            request = RequestFactory().get(reverse("metricas_negocio_data"), params)
+            request.user = self.editor
+            response = MetricasNegocioDataView.as_view()(request)
+            self.assertEqual(response.status_code, 200)
+            summary = json.loads(response.content)["summary"]
+            self.assertEqual(summary["expenses_total"], float(expected))
+            self.assertEqual(summary["remaining_total"], -float(expected))
+
+    def test_date_change_invalidates_stale_forms_even_after_reverting_the_date(self):
+        original_date = timezone.localdate(self.expense.creado_en)
+        stale = self.payload()
+        self.service(payment_date=original_date + timedelta(days=1))
+        self.expense.refresh_from_db()
+        self.service(payment_date=original_date)
+        self.assertEqual(self.client.post(self.url, stale).status_code, 409)
+        self.assertEqual(CambioEgreso.objects.count(), 2)
+
+    def test_service_rejects_invalid_dates_and_rolls_back_date_on_audit_failure(self):
+        stamp = self.expense.creado_en
+        for invalid in ("2026-02-30", 123, True, datetime(2026, 1, 1)):
+            with self.subTest(value=invalid), self.assertRaises(OperationalExpenseError):
+                self.service(payment_date=invalid)
+        with patch("mainApp.services.expense_editing.CambioEgreso.objects.create", side_effect=IntegrityError("test")):
+            with self.assertRaises(IntegrityError):
+                self.service(payment_date=timezone.localdate())
+        self.expense.refresh_from_db()
+        self.assertEqual(self.expense.creado_en, stamp)
+        self.assertEqual(self.expense.monto, Decimal("1000.00"))
+        self.assertEqual(CambioEgreso.objects.count(), 0)
+
+    def test_date_change_is_denied_without_permission(self):
+        stamp = self.expense.creado_en
+        self.client.force_login(self.creator)
+        response = self.client.post(self.url, self.payload(fecha_pago=timezone.localdate().isoformat()))
+        self.assertIn(response.status_code, (302, 403))
+        self.expense.refresh_from_db()
+        self.assertEqual(self.expense.creado_en, stamp)
+        self.assertEqual(CambioEgreso.objects.count(), 0)
+
+    def test_old_history_without_dates_still_renders(self):
+        CambioEgreso.objects.create(
+            egreso=self.expense, usuario=self.editor, usuario_nombre=self.editor.nombreusuario,
+            motivo="Corrección histórica", anterior={"concepto": "AGUA", "monto": "900.00", "medio_nombre": "Efectivo"},
+            nuevo={"concepto": "AGUA", "monto": "1000.00", "medio_nombre": "Efectivo"},
+        )
+        self.assertContains(self.client.get(self.url), "Corrección histórica")
 
     def test_history_escapes_user_text(self):
         self.service(reason='<script>alert("x")</script>')

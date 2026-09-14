@@ -109,6 +109,23 @@ class ExpandedBotTests(TestCase):
         self.assertIn("Error al digitar", reply.text)
         self.assertNotIn("Medio:", reply.text)
 
+    def test_web_date_correction_is_visible_in_bot_and_invalidates_its_proposal(self):
+        from .services.expense_editing import edit_operational_expense, expense_edit_token
+
+        proposal = self.propose()
+        previous = timezone.localdate(self.expense.creado_en)
+        selected = previous + timedelta(days=1)
+        edit_operational_expense(
+            user=self.user, expense_id=self.expense.pk, concept=self.expense.concepto.nombre,
+            amount=self.expense.monto, payment_method=self.expense.medio_pago,
+            reason="Corregir la fecha", version=expense_edit_token(self.expense, self.user), payment_date=selected,
+        )
+        reply = self.query("consultar_pago", pago_id=self.expense.pk, historial=True)
+        self.assertIn(f"Fecha del pago: {previous:%d/%m/%Y} → {selected:%d/%m/%Y}", reply.text)
+        self.assertIn("Corregir la fecha", reply.text)
+        self.assertIn("No guardé", self.confirm(proposal).text)
+        self.assertEqual(CambioEgreso.objects.count(), 1)
+
     def test_other_identity_cannot_confirm_and_cancel_does_not_change_payment(self):
         reply = self.propose()
         self.assertIn("otra cuenta", self.confirm(reply, self.other_profile).text)

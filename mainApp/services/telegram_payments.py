@@ -35,7 +35,7 @@ def tool_payment(profile, arguments):
     date = timezone.localtime(expense.creado_en).strftime("%d/%m/%Y %H:%M")
     lines = [f"Pago #{expense.pk}: {expense.concepto.nombre}",
              f"{bot._list_money(expense.monto)} en {payment_method_label(expense.medio_pago)}.",
-             f"Lo registró {bot._list_text(expense.registrado_por_nombre)} el {date}."]
+             f"Fecha del pago: {date}. Lo registró {bot._list_text(expense.registrado_por_nombre)}."]
     pagination = None
     if history:
         rows = expense.cambios.all()
@@ -46,7 +46,7 @@ def tool_payment(profile, arguments):
         for change in rows[offset:offset + bot.LIST_PAGE_SIZE]:
             before, after = change.anterior, change.nuevo
             lines.append(f"\n{bot._list_text(change.usuario_nombre)} · {timezone.localtime(change.creado_en):%d/%m/%Y %H:%M}")
-            for key, label in (("concepto", "Concepto"), ("monto", "Valor"), ("medio_pago", "Medio")):
+            for key, label in (("concepto", "Concepto"), ("monto", "Valor"), ("medio_pago", "Medio"), ("fecha_pago_texto", "Fecha del pago")):
                 if before.get(key) == after.get(key):
                     continue
                 fmt = bot._list_money if key == "monto" else payment_method_label if key == "medio_pago" else bot._list_text
