@@ -22,8 +22,9 @@ from .telegram_returns import RETURN_TOOL_DEFINITION, tool_prepare_return
 from .telegram_assistant import TOOL_DEFINITIONS as ASSISTANT_DEFINITIONS, TOOL_FUNCTIONS as ASSISTANT_FUNCTIONS
 from .telegram_schedule import TOOL_DEFINITIONS as SCHEDULE_DEFINITIONS, TOOL_FUNCTIONS as SCHEDULE_FUNCTIONS
 from .telegram_search import ranked_queryset, resolve_name
-from .telegram_queries import QUERY_DEFINITION, tool_query
+from .telegram_queries import QUERY_DEFINITION, SOURCES, tool_query
 from .telegram_wording import page_note
+from .telegram_payments import TOOL_DEFINITIONS as PAYMENT_DEFINITIONS, TOOL_FUNCTIONS as PAYMENT_FUNCTIONS
 
 
 @dataclass(frozen=True)
@@ -248,6 +249,35 @@ def tool_detail(profile, arguments):
         if kind == "venta":
             raise bot.TelegramBotError("No encontré esa venta o no tienes acceso a su sucursal. Comprueba el ID.")
         raise bot.TelegramBotError("No existe ese registro. Comprueba su ID.")
+    view = arguments.get("vista", "completo")
+    if view != "completo":
+        if kind != "venta":
+            raise bot.TelegramBotError("La vista resumida por dato está disponible para ventas. Para pedidos o turnos puedo mostrarte el detalle completo.")
+        title = f"Venta #{row.pk}"
+        if view == "total":
+            return bot.BotReply(f"{title}: {bot._list_money(row.total)}.", "consultar_detalle_operativo")
+        if view == "cliente":
+            name = " ".join(part for part in (getattr(row.clienteid, "nombre", ""), getattr(row.clienteid, "apellido", "")) if part)
+            return bot.BotReply(f"{title}: cliente {bot._list_text(name)}." if name else f"{title}: no tiene cliente asociado.", "consultar_detalle_operativo")
+        if view == "cajero":
+            return bot.BotReply(f"{title}: la registró {_format(row.empleadoid)} en {_format(row.puntopagoid.nombre)}.", "consultar_detalle_operativo")
+        if view == "pagos":
+            payments = _model("PagoVenta").objects.filter(ventaid=row).values("medio_pago").annotate(total=Sum("monto")).order_by("medio_pago")
+            lines = [f"{title}, medios de pago:"] + [f"• {bot.payment_method_label(p['medio_pago'])}: {bot._list_money(p['total'])}" for p in payments]
+            if len(lines) == 1:
+                lines.append(f"Medio registrado: {bot.payment_method_label(row.mediopago)}. No hay desglose de cobros guardado.")
+            return bot.BotReply("\n".join(lines), "consultar_detalle_operativo")
+        if view == "nequi":
+            notifications = _model("NotificacionNequi").objects.filter(venta_id=row.pk, es_ingreso=True)
+            count = notifications.count()
+            return bot.BotReply(f"{title}: {'sí tiene un ingreso de Nequi vinculado' if count else 'no tiene ingresos de Nequi vinculados'}. Esto no comprueba por sí solo si el cliente pagó.", "consultar_detalle_operativo")
+        if view == "reintegros":
+            rows = _model("ReintegroVenta").objects.filter(venta=row).order_by("pk")
+            return _page_reply("consultar_detalle_operativo", arguments, f"{title}, dinero devuelto al cliente", rows,
+                               cols("Valor:monto:money", "Medio:medio_pago:method", "Registró:registrado_por__nombreusuario", "Fecha:creado_en"))
+        if view == "productos":
+            return _page_reply("consultar_detalle_operativo", arguments, f"{title}, productos", _model("DetalleVenta").objects.filter(ventaid=row).order_by("pk"),
+                               cols("Producto:productoid__nombre", "ID producto:productoid_id", "Cantidad:cantidad", "Precio unitario:preciounitario:money"))
     heading = f"{kind.capitalize()} #{row.pk}"
     if kind == "turno":
         heading += f" · {row.estado}\nCajero: {_format(row.cajero.nombreusuario)} · Caja: {_format(row.puntopago.nombre)}"
@@ -523,22 +553,26 @@ def tool_capabilities(profile, arguments):
         writable.append("devolver productos de una venta y registrar su reintegro")
     if bot.user_can_access_url_name(profile.usuario, "guardar_turno_empleado"):
         writable.append("crear, editar, mover y cancelar horarios de empleados")
+    if bot.user_can_access_url_name(profile.usuario, "editar_egreso"):
+        writable.append("corregir pagos y consultar quién los modificó")
+    analytics = [name.replace("_", " ") for name, source in SOURCES.items()
+                 if any(bot.user_can_access_url_name(profile.usuario, route) for route in source.permissions)]
     return "\n".join([
-        "Consultas habilitadas para tu usuario: " + (", ".join(readable) or "ninguna"),
-        "También están disponibles los totales, pagos, balance, empleados y turnos según tus permisos; detalle de venta/pedido/turno y ranking de productos.",
-        "Usa /horario para ver tus próximas jornadas laborales. Puedes pedir fechas concretas; consultar otros empleados requiere permiso de calendario. Los horarios laborales son independientes de las cajas.",
-        "Informes: ventas por empleado/cajero, cliente, sucursal, punto de pago o día; pagos por concepto, usuario o día. Totales, promedios y comparación con el período anterior.",
-        "También puedo combinar filtros y calcular sumas, promedios, mínimos, máximos y valores distintos de ventas, productos vendidos, pagos, inventario, productos, empleados y pedidos. Busco los nombres más parecidos y te pido elegir si hay varias coincidencias.",
-        "Puedes combinar hasta cuatro consultas en una petición, pedir un resumen del negocio o continuar con '¿y ayer?' y 'siguiente página'. El contexto es solo de tu cuenta y chat durante 24 horas.",
-        "Cambios con confirmación: registrar pagos" + ("; " + ", ".join(writable) if writable else "") + ".",
-        "Usa /acciones producto (o categoría, cliente, proveedor, sucursal, empleado) para consultar los campos. /pendientes muestra tus propuestas vigentes.",
-        "Puedes solicitar devoluciones por texto/audio o /devolver VENTA PRODUCTO:CANTIDAD MEDIO, con permiso y confirmación. Efectivo es el medio predeterminado; no realiza transferencias bancarias.",
-        "Usa /vistas PALABRA para buscar páginas. Cierres, facturación, ajustes manuales de stock, eliminación y configuración sensible se realizan en la web, no automáticamente desde el chat.",
-        "Puedes escribir o enviar audio. Pide solo el total, una lista, filtros, fechas o la siguiente página. No muestro contraseñas ni claves API.",
+        "Puedes pedirme lo siguiente por texto o audio:",
+        "• Buscar y listar: " + (", ".join(readable) or "los datos que permita tu cuenta") + ".",
+        "• Calcular totales, comparar períodos y agrupar por persona, fecha u otros datos: " + ", ".join(analytics) + ".",
+        "• Consultar una venta por su número, o pedir solo quién la hizo, sus productos o cómo se pagó, según tus permisos.",
+        "• Ver tu horario con /horario; para consultar o cambiar el de otros se revisan tus permisos.",
+        "• Preparar cambios: registrar pagos" + ("; " + "; ".join(writable) if writable else "") + ". Siempre te pido confirmar antes de guardar.",
+        "Puedes decir «solo el total», «muéstrame la lista», «solo nombre y precio» o continuar con «¿y ayer?». También puedo combinar hasta cuatro consultas de lectura.",
+        "Si hay nombres parecidos, te pido elegir. No invento datos ni hago transferencias bancarias.",
+        "Para más detalle usa /acciones producto, /pago ID o /historial_pago ID. /pendientes muestra propuestas sin confirmar; /vistas busca las páginas que puedes usar.",
+        "Los cierres, la facturación, la eliminación y los cambios de permisos se hacen en la web.",
     ])
 
 
 TOOL_FUNCTIONS = {
+    **PAYMENT_FUNCTIONS,
     "consultar_datos": tool_query,
     **ASSISTANT_FUNCTIONS,
     **SCHEDULE_FUNCTIONS,
@@ -552,6 +586,7 @@ TOOL_FUNCTIONS = {
 }
 
 TOOL_DEFINITIONS = [
+    *PAYMENT_DEFINITIONS,
     QUERY_DEFINITION,
     *ASSISTANT_DEFINITIONS,
     *SCHEDULE_DEFINITIONS,
@@ -568,7 +603,7 @@ TOOL_DEFINITIONS = [
         "incluir_contacto": {"type": "BOOLEAN", "description": "Solo si pide explícitamente teléfono/correo de clientes o proveedores."},
         "pagina": {"type": "INTEGER"},
     }, "required": ["recurso"]}},
-    {"name": "consultar_detalle_operativo", "description": "Detalle de una venta o pedido con productos, o valores guardados de turno con facturas pagadas. Requiere ID exacto.", "parameters": {"type": "OBJECT", "properties": {"tipo": {"type": "STRING", "enum": ["venta", "pedido", "turno"]}, "id": {"type": "INTEGER"}, "pagina": {"type": "INTEGER"}}, "required": ["tipo", "id"]}},
+    {"name": "consultar_detalle_operativo", "description": "Consulta una venta, pedido o turno por ID sin exigir fecha. En ventas usa vista para devolver SOLO lo preguntado: total, cliente, cajero, productos, pagos, reintegros o vinculación Nequi. completo para toda la factura.", "parameters": {"type": "OBJECT", "properties": {"tipo": {"type": "STRING", "enum": ["venta", "pedido", "turno"]}, "id": {"type": "INTEGER"}, "pagina": {"type": "INTEGER"}, "vista": {"type": "STRING", "enum": ["completo", "total", "cliente", "cajero", "productos", "pagos", "reintegros", "nequi"]}}, "required": ["tipo", "id"]}},
     {"name": "ranking_productos", "description": "Productos más/menos vendidos por cantidad o importe de renglones en un intervalo; no incluye productos sin ventas.", "parameters": {"type": "OBJECT", "properties": {"desde": {"type": "STRING"}, "hasta": {"type": "STRING"}, "sucursal": {"type": "STRING"}, "orden": {"type": "STRING", "enum": ["cantidad", "importe"]}, "ascendente": {"type": "BOOLEAN"}, "pagina": {"type": "INTEGER"}}}},
     {"name": "buscar_vistas", "description": "Devuelve enlaces a las páginas permitidas del sistema. Usar para procesos no ejecutables por chat; NO ejecuta operaciones.", "parameters": {"type": "OBJECT", "properties": {"consulta": {"type": "STRING"}, "pagina": {"type": "INTEGER"}}}},
     {"name": "preparar_cambio_catalogo", "description": "Prepara crear/editar un registro de catálogo. No guarda hasta confirmación. Usa consultar_capacidades para conocer campos; no inventes datos obligatorios. Editar acepta ID o nombre; busca similitud y pregunta si hay ambigüedad.", "parameters": {"type": "OBJECT", "properties": {
@@ -584,6 +619,10 @@ def validate_arguments(tool_name, arguments):
     """Validar también en servidor: la IA no es una frontera de seguridad."""
     schema = next(item["parameters"] for item in _bot().GEMINI_TOOLS[0]["functionDeclarations"] if item["name"] == tool_name)
 
+    def label(path):
+        names = {"pago_id": "número del pago", "registro_id": "número del registro", "id": "número del registro", "venta_id": "número de la venta", "concepto": "concepto", "monto": "valor", "medio_pago": "medio de pago", "motivo": "motivo", "desde": "fecha inicial", "hasta": "fecha final", "fuente": "información que quieres consultar", "campos": "datos que quieres cambiar", "columnas": "datos que quieres ver"}
+        return names.get(path.split(".")[-1], "dato solicitado")
+
     def check(value, rule, path):
         kind = rule["type"]
         valid = {
@@ -595,13 +634,16 @@ def validate_arguments(tool_name, arguments):
             "NUMBER": isinstance(value, (int, float)) and not isinstance(value, bool) and Decimal(str(value)).is_finite(),
         }.get(kind, False)
         if not valid or ("enum" in rule and value not in rule["enum"]):
-            raise _bot().TelegramBotError(f"Valor no permitido en {path}. Revisa los datos de la solicitud.")
+            raise _bot().TelegramBotError(f"No entendí bien el {label(path)}. ¿Puedes indicarlo de nuevo?")
         if kind == "STRING" and len(value) > 8000:
             raise _bot().TelegramBotError("El texto de la solicitud es demasiado largo.")
         if kind == "OBJECT":
             properties = rule.get("properties", {})
-            if set(value) - set(properties) or set(rule.get("required", [])) - set(value):
-                raise _bot().TelegramBotError(f"Hay campos faltantes o no permitidos en {path}. Consulta /acciones para ver las opciones.")
+            missing = set(rule.get("required", [])) - set(value)
+            if missing:
+                raise _bot().TelegramClarification("Me falta " + ", ".join(label(key) for key in sorted(missing)) + ". ¿Me lo indicas?")
+            if set(value) - set(properties):
+                raise _bot().TelegramBotError("No pude interpretar una parte de la solicitud. Dime qué necesitas consultar o cambiar, sin instrucciones técnicas.")
             for key, item in value.items():
                 check(item, properties[key], f"{path}.{key}")
         elif kind == "ARRAY":

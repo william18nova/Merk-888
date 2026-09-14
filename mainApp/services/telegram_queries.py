@@ -34,6 +34,48 @@ class Source:
 
 
 SOURCES = {
+    "cierres_caja": Source("TurnoCaja", ("turnos_caja_admin", "turnos_caja_dashboard"), {
+        "id": Field("pk", "Turno", "id"), "cajero": Field("cajero__nombreusuario", "Cajero"),
+        "fecha": Field("fin__date", "Fecha de cierre", "date"), "ventas": Field("ventas_total", "Ventas guardadas", "money"),
+        "diferencia": Field("diferencia_total", "Diferencia", "money"), "deuda": Field("deuda_total", "Deuda", "money"),
+        "efectivo": Field("efectivo_real", "Efectivo contado", "money"),
+        "sucursal": Field("puntopago__sucursalid", "Sucursal", "entity", "Sucursal"),
+    }, "fin__date", "puntopago__sucursalid", "Solo turnos cerrados y valores guardados al cierre. Una diferencia negativa indica faltante; no demuestra por sí sola su causa."),
+    "nequi": Source("NotificacionNequi", ("nequi_notificaciones",), {
+        "id": Field("pk", "Notificación", "id"), "remitente": Field("remitente", "Remitente"),
+        "importe": Field("monto", "Recibido", "money"), "referencia": Field("referencia", "Referencia", "code"),
+        "vinculado": Field("_bot_linked", "Vinculado"), "venta": Field("venta", "Venta", "id"),
+        "fecha": Field("recibido_en__date", "Fecha", "date"),
+    }, "recibido_en__date", note="Solo notificaciones de dinero recibido. Vinculado indica asociación a una venta, no conciliación bancaria."),
+    "cobros_ventas": Source("PagoVenta", ("visualizar_ventas",), {
+        "id": Field("pk", "Cobro", "id"), "venta": Field("ventaid", "Venta", "id"),
+        "importe": Field("monto", "Cobrado", "money"), "medio_pago": Field("medio_pago", "Medio", "method"),
+        "fecha": Field("ventaid__fecha", "Fecha", "date"), "sucursal": Field("ventaid__sucursalid", "Sucursal", "entity", "Sucursal"),
+        "empleado": Field("ventaid__empleadoid", "Empleado", "entity", "Empleado"),
+    }, "ventaid__fecha", "ventaid__sucursalid", "Son cobros registrados por medio de pago; no incluyen la salida de dinero de los reintegros."),
+    "reintegros": Source("ReintegroVenta", ("ver_venta",), {
+        "id": Field("pk", "Reintegro", "id"), "venta": Field("venta", "Venta", "id"),
+        "importe": Field("monto", "Devuelto", "money"), "medio_pago": Field("medio_pago", "Medio", "method"),
+        "fecha": Field("creado_en__date", "Fecha", "date"), "usuario": Field("registrado_por__nombreusuario", "Registró"),
+        "sucursal": Field("venta__sucursalid", "Sucursal", "entity", "Sucursal"),
+    }, "creado_en__date", "venta__sucursalid", "Dinero devuelto al cliente, según el medio de reintegro registrado; no ejecuta transferencias."),
+    "ptm": Source("OperacionPTM", ("operaciones_ptm",), {
+        "id": Field("pk", "Operación PTM", "id"), "tipo": Field("tipo", "Operación"),
+        "importe": Field("monto", "Importe", "money"), "referencia": Field("referencia", "Comprobante", "code"),
+        "usuario": Field("usuario__nombreusuario", "Registró"), "turno": Field("turno", "Turno", "id"),
+        "fecha": Field("creado_en__date", "Fecha", "date"), "sucursal": Field("turno__puntopago__sucursalid", "Sucursal", "entity", "Sucursal"),
+    }, "creado_en__date", "turno__puntopago__sucursalid", "PTM solo mueve efectivo: recarga entra y retiro sale. Sumar ambos tipos mide volumen, no saldo ni ventas."),
+    "historial_pagos": Source("CambioEgreso", ("editar_egreso",), {
+        "id": Field("pk", "Corrección", "id"), "pago": Field("egreso", "Pago", "id"),
+        "usuario": Field("usuario_nombre", "Corrigió"), "motivo": Field("motivo", "Motivo"),
+        "fecha": Field("creado_en__date", "Fecha", "date"),
+    }, "creado_en__date"),
+    "conteos_ptm": Source("ConteoCierrePTM", ("turnos_caja_admin",), {
+        "id": Field("pk", "Conteo", "id"), "turno": Field("turno", "Turno", "id"),
+        "declarado": Field("declarado", "Declaró", "number"), "registrado": Field("registrado", "Registradas", "number"),
+        "diferencia": Field("_bot_count_difference", "Diferencia", "number"),
+        "usuario": Field("usuario__nombreusuario", "Registró"), "fecha": Field("creado_en__date", "Fecha", "date"),
+    }, "creado_en__date", note="Historial de intentos de conteo PTM, no operaciones nuevas ni ventas."),
     "ventas": Source("Venta", ("metricas_negocio", "ventas_diarias"), {
         "id": Field("pk", "Venta", "id"), "importe": Field("total", "Total vendido", "money"),
         "fecha": Field("fecha", "Fecha", "date"), "sucursal": Field("sucursalid", "Sucursal", "entity", "Sucursal"),
@@ -76,6 +118,7 @@ SOURCES = {
 
 OPERATORS = {"igual": "exact", "distinto": "exact", "contiene": "icontains", "mayor": "gt", "menor": "lt", "al_menos": "gte", "hasta": "lte"}
 AGGREGATES = {"sumar": Sum, "promedio": Avg, "minimo": Min, "maximo": Max}
+SOURCE_LABELS = {"ptm": "PTM", "conteos_ptm": "Conteos PTM", "cierres_caja": "Cierres de caja", "cobros_ventas": "Cobros de ventas", "historial_pagos": "Correcciones de pagos"}
 
 
 def _bot():
@@ -170,12 +213,28 @@ def tool_query(profile, arguments):
     source = SOURCES[arguments["fuente"]]
     bot._require_access(profile, *source.permissions)
     rows = apps.get_model("mainApp", source.model).objects.all()
+    if source.model == "NotificacionNequi":
+        rows = rows.filter(es_ingreso=True).annotate(_bot_linked=Case(
+            When(venta__isnull=True, then=Value("no")), default=Value("si"), output_field=CharField(),
+        ))
+    if source.model == "TurnoCaja":
+        rows = rows.filter(estado="CERRADO", fin__isnull=False)
     if source.model == "DetalleVenta":
         rows = rows.annotate(_bot_line_total=ExpressionWrapper(F("cantidad") * F("preciounitario"), output_field=DecimalField(max_digits=24, decimal_places=2)))
-    if source.model in {"Venta", "DetalleVenta"}:
+    if source.model == "ConteoCierrePTM":
+        rows = rows.annotate(_bot_count_difference=F("declarado") - F("registrado"))
+    if source.model in {"Venta", "DetalleVenta", "PagoVenta", "ReintegroVenta"}:
         rows = _sale_branch_scope(profile, rows, source.branch)
+    if source.model == "OperacionPTM" and not bot.user_can_access_url_name(profile.usuario, "turnos_caja_admin"):
+        rows = rows.filter(usuario=profile.usuario)
+    if source.model == "CambioEgreso":
+        from .expense_editing import expense_editing_ready
+        if not expense_editing_ready():
+            raise bot.TelegramBotError("El historial de correcciones requiere que el administrador aplique la migración 0041.")
     args = dict(arguments)
-    heading = [arguments["fuente"].replace("_", " ").capitalize()]
+    heading = [SOURCE_LABELS.get(arguments["fuente"], arguments["fuente"].replace("_", " ").capitalize())]
+    if source.model == "OperacionPTM" and not bot.user_can_access_url_name(profile.usuario, "turnos_caja_admin"):
+        heading.append("Solo tus operaciones PTM.")
     if args.get("sucursal"):
         if not source.branch:
             raise bot.TelegramBotError("Estos datos no están asociados a una sucursal.")
@@ -225,7 +284,10 @@ def tool_query(profile, arguments):
             field = Field("_bot_method", field.label, "method")
         group_fields.append(field)
     if operation == "listar":
-        selected = list(source.fields.values())[:6]
+        columns = args.get("columnas")
+        if columns is not None and (not columns or len(columns) > 8 or len(columns) != len(set(columns)) or set(columns) - set(source.fields)):
+            raise bot.TelegramBotError("Puedo mostrar hasta ocho datos distintos de esta lista. Dime cuáles necesitas, por ejemplo nombre y precio.")
+        selected = [source.fields[name] for name in columns] if columns else list(source.fields.values())[:6]
         count = rows.count()
         page, pages, offset = bot._list_page(args, count)
         order_name = args.get("ordenar", "id")
@@ -237,8 +299,10 @@ def tool_query(profile, arguments):
         for row in values:
             heading.append("• " + " · ".join(f"{field.label}: {_display(field, row[field.path])}" for field in selected))
     else:
+        if args.get("columnas"):
+            raise bot.TelegramBotError("Para un total o promedio no necesitas elegir columnas; dime qué importe o cantidad quieres calcular.")
         aggregate = (Count(measure.path, distinct=True) if measure else Count("pk")) if operation == "contar" else AGGREGATES[operation](measure.path)
-        count_label = {"productos_vendidos": "Líneas de productos vendidos", "inventario": "Registros de inventario"}.get(args["fuente"], args["fuente"].capitalize())
+        count_label = {"productos_vendidos": "Líneas de productos vendidos", "inventario": "Registros de inventario", **SOURCE_LABELS}.get(args["fuente"], args["fuente"].capitalize())
         output = Field("_value", {"contar": count_label, "sumar": "Total", "promedio": "Promedio", "minimo": "Mínimo", "maximo": "Máximo"}[operation], "number" if operation == "contar" else measure.kind)
         if operation == "contar" and measure:
             plural = {"Cliente": "Clientes", "Empleado": "Empleados", "Producto": "Productos", "Sucursal": "Sucursales", "Medio": "Medios", "Concepto": "Conceptos", "Registró": "Usuarios", "Fecha": "Fechas"}.get(measure.label, measure.label)
@@ -289,10 +353,16 @@ QUERY_DEFINITION = {
         "desde": {"type": "STRING"}, "hasta": {"type": "STRING"}, "sucursal": {"type": "STRING"},
         "ordenar": {"type": "STRING", "description": "Campo de la fuente para listas; los agregados se ordenan por su resultado."},
         "descendente": {"type": "BOOLEAN"}, "pagina": {"type": "INTEGER"},
+        "columnas": {"type": "ARRAY", "items": {"type": "STRING"}, "description": "Solo para listar: hasta 8 campos permitidos de la fuente. Si pide solo nombres o ciertos datos, mostrar exclusivamente estos campos; no inventar rutas."},
     }, "required": ["fuente"]},
 }
 
 SMART_QUERY_RULES = (
+    "Puedes consultar cobros_ventas por medio, empleado y sucursal; reintegros por medio y usuario; operaciones ptm por tipo, comprobante, usuario, turno y sucursal; historial_pagos y conteos_ptm según permisos. "
+    "En cierres_caja puedes consultar faltantes con diferencia menor que cero; fecha es el día de cierre y solo contiene turnos cerrados. No acuses a nadie por una diferencia. "
+    "En nequi consulta solo ingresos; vinculado usa si/no según asociación a venta. Conteos PTM con diferencia distinto de cero son intentos cuyo número declarado no coincide, no prueba de fraude. "
+    "PTM no es venta: tipo retiro sale efectivo y recarga entra. Nunca llames saldo a sumar ambos tipos. Para comparar entradas y salidas agrupa por tipo. "
+    "En listas usa columnas para mostrar exclusivamente los campos pedidos, por ejemplo nombre y precio. Mantén filtros aunque pida una respuesta más breve. "
     "Antes de decir que no puedes, comprueba si la petición se resuelve con una consulta simple, consultar_datos, "
     "consultar_varias o una propuesta de cambio permitida. Descompón mentalmente fuente, fechas, filtros, agrupación y cálculo. "
     "Para preguntas analíticas no cubiertas por informes simples usa consultar_datos: el servidor genera consultas seguras, nunca envíes SQL. "

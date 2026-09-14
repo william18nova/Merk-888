@@ -12,6 +12,63 @@ de confirmación. Un «sí» escrito o hablado no guarda el cambio.
 
 ## Respuestas naturales y al grano
 
+### Ampliación de consultas y correcciones de pagos
+
+El asistente conserva todas las herramientas anteriores y añade:
+
+- **Pagos por ID:** «Muéstrame el pago 123» o `/pago 123`, aunque sea antiguo.
+- **Corregir pagos:** «Corrige el pago 123 a 25.000 en Nequi; el motivo es un
+  error de digitación». Requiere Web Master o el permiso **Editar pagos
+  registrados**. Muestra el antes y el después y solo guarda al pulsar
+  **Confirmar corrección**. Conserva fecha y creador; deja una corrección en el
+  mismo historial que la web. No registra otro pago ni modifica cajas.
+- **Auditoría de pagos:** «¿Quién modificó el pago 123?» o `/historial_pago 123`.
+  Requiere permiso de edición. También permite listar/contar correcciones por
+  usuario, fecha, motivo o pago, mediante la fuente `historial_pagos`.
+- **Datos puntuales de una venta:** «¿Cómo pagaron la venta 123?», «¿Quién hizo
+  la venta 123?», «Dame solo los productos de la venta 123», «Total de la venta
+  123». También puede mostrar cliente, reintegros o vinculación Nequi, sin
+  enviar todos los demás datos de la factura.
+- **PTM:** listas, conteos y sumas por tipo, usuario, comprobante, turno,
+  sucursal o fechas. Ejemplos: «Muéstrame las transacciones PTM hoy», «¿Cuánto
+  se retiró por PTM hoy?», «Separa PTM de esta semana por tipo». Los usuarios
+  sin acceso al administrador de turnos solo ven sus operaciones, como en la
+  web. No registra, modifica ni elimina operaciones PTM desde el chat.
+- **Control de cierre:** consultar intentos de conteo PTM cuyo declarado no
+  coincide con lo registrado, y cierres de caja con diferencia negativa. La
+  fuente `cierres_caja` usa la **fecha de cierre**, incluye solo turnos cerrados
+  y devuelve valores guardados. Una diferencia no demuestra su causa ni fraude.
+- **Cobros y reintegros:** agrupar cobros de ventas por medio, cajero o sucursal;
+  agrupar dinero devuelto por medio o usuario. Son fuentes distintas y no se
+  descuentan automáticamente una de otra.
+- **Nequi:** filtrar o sumar ingresos vinculados/no vinculados por fecha,
+  remitente, referencia o venta. Los envíos de dinero no se incluyen.
+- **Listas a medida:** «Solo nombre y precio», «Solo fecha, concepto y valor».
+  La consulta admite hasta ocho columnas autorizadas, sin exponer campos
+  internos, contraseñas ni claves. Se pueden conservar filtros y cambiar solo
+  las columnas en el siguiente mensaje.
+
+Las frases inequívocas de consulta de pago, precio, catálogo, venta y PTM pueden
+resolverse sin IA de texto. Un audio sigue necesitando transcripción. Las frases
+ambiguas, compuestas o de modificación conservan el intérprete; los atajos no
+confirman cambios ni convierten una orden en una consulta parcial.
+
+No hay una llamada extra a la IA para reescribir respuestas. Los nombres,
+importes, permisos y cálculos siguen procediendo de las herramientas del sistema.
+Los errores de datos faltantes usan preguntas legibles, sin rutas de parámetros.
+
+Esta ampliación no crea migraciones nuevas. **Corregir pagos y consultar su
+historial requieren la migración 0041 de la página de edición**; PTM requiere
+0040, y Nequi las migraciones previas correspondientes. No se aplican cambios a
+la base de datos por desplegar este código.
+
+Para activar en PythonAnywhere: subir y actualizar el código, aplicar las
+migraciones pendientes con `python manage.py migrate`, reiniciar la **misma**
+tarea Always-on del bot y recargar la Web. No iniciar un segundo trabajador.
+No se cambian claves, proveedores ni planes de pago.
+
+### Criterio de respuesta
+
 El bot responde primero el dato solicitado, sin saludos repetidos, introducciones
 ni explicaciones adicionales. El mismo criterio se aplica al texto y al audio
 transcrito, tanto con el proveedor principal como con los respaldos.

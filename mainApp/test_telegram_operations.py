@@ -328,7 +328,7 @@ class TelegramOperationsTests(TestCase):
         voice = TelegramActualizacion.objects.create(update_id=9922, telegram_user_id=771, telegram_chat_id=771, tipo="VOZ", transcripcion="Muestra las categorías")
         with patch.object(bot, "_intelligent_function_call", return_value=("consultar_registros", {"recurso": "categorias"}, "")) as ai:
             reply = bot.build_reply(voice, self.callback_client)
-        self.assertEqual(ai.call_args.args[0], voice.transcripcion)
+        ai.assert_not_called()  # La lista inequívoca también funciona por audio sin gastar IA de texto.
         self.assertIn("BEBIDAS", reply.text)
 
     def test_sale_order_shift_details_are_paginated_and_read_only(self):

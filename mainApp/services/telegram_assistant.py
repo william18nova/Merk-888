@@ -21,6 +21,7 @@ def _bot():
 
 
 READ_TOOLS = (
+    "consultar_pago",
     "consultar_datos",
     "consultar_ventas", "buscar_producto", "consultar_inventario", "consultar_pagos",
     "listar_empleados", "consultar_balance", "consultar_turnos", "consultar_registros",
@@ -446,6 +447,8 @@ TOOL_DEFINITIONS = [
             **REPORT_FIELDS,
             **{key: SCHEDULE_READ_PROPERTIES[key] for key in ("tipo", "vista", "todos")},
             **{key: value for key, value in QUERY_DEFINITION["parameters"]["properties"].items() if key not in {"fuente", "desde", "hasta", "sucursal", "pagina", "agrupar"}},
+            "vista": {"type": "STRING", "enum": ["agenda", "entrada", "salida", "completo", "total", "cliente", "cajero", "productos", "pagos", "reintegros", "nequi", "precio", "categoria", "codigo"]},
+            "historial": {"type": "BOOLEAN"},
             "grupos": QUERY_DEFINITION["parameters"]["properties"]["agrupar"],
             **{key: {"type": "STRING"} for key in ("consulta", "categoria", "estado", "cargo")},
             **{key: {"type": "BOOLEAN"} for key in ("detalle", "solo_total", "desglose_por_medio", "solo_bajo", "sin_ventas", "vinculado", "incluir_contacto")},

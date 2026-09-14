@@ -110,7 +110,7 @@ def selected_tool_names(text, history, available):
         previous = next((normalized(item.get("text", "")) for item in reversed(history or []) if item.get("role") == "user"), "")
         query += " " + previous
     domains = [
-        (r"\b(?:pago\w*|pague|pagado\w*|pagamos|pagar|paga|pagaron|egreso\w*|gasto\w*)\b", {"consultar_pagos", "preparar_registro_pago", "consultar_informe"}),
+        (r"\b(?:pago\w*|pague|pagado\w*|pagamos|pagar|paga|pagaron|egreso\w*|gasto\w*)\b", {"consultar_pagos", "consultar_pago", "preparar_edicion_pago", "preparar_registro_pago", "consultar_informe"}),
         (r"\b(?:venta\w*|vendi\w*|vende\w*|vendio|factura\w*)\b", {"consultar_ventas", "consultar_detalle_operativo", "ranking_productos", "consultar_informe", "consultar_registros"}),
         (r"\b(?:producto\w*|precio\w*|stock|inventario\w*|agotado\w*|existencia\w*)\b", {"buscar_producto", "consultar_inventario", "consultar_registros", "ranking_productos", "preparar_cambio_catalogo"}),
         (r"\b(?:empleado\w*|personal|equipo)\b", {"listar_empleados", "consultar_registros", "preparar_cambio_catalogo", "consultar_horarios_empleados"}),
@@ -169,9 +169,16 @@ def compact_prompt(today, names):
     if "preparar_registro_pago" in names:
         rules.append("Registrar pagos usa preparar_registro_pago. Conserva el concepto dictado: la herramienta ofrece elegir conceptos parecidos o uno nuevo. "
                      "La elección y confirmación son por botones; nunca inventes una elección.")
+    if "preparar_edicion_pago" in names:
+        rules.append("Corregir un pago existente usa preparar_edicion_pago con pago_id y SOLO los datos solicitados; NO registrar otro pago. "
+                     "Pregunta el motivo si no lo dijo. No cambies fecha ni creador. concepto_nuevo=true solo si eligió crear un concepto frente a coincidencias. "
+                     "Para el dato de un pago usa consultar_pago; historial=true si pide quién lo editó o qué cambió, con permiso. El ID basta sin fecha.")
+    if "buscar_producto" in names:
+        rules.append("Si solo pregunta cuánto cuesta un producto usa buscar_producto con vista=precio. Para categoría o código usa vista=categoria/codigo. No añadas más campos de los pedidos.")
     if "consultar_detalle_operativo" in names:
         rules.append("Una venta/factura por ID usa consultar_detalle_operativo, tipo=venta, id real. El ID basta: no pidas fecha, cliente ni sucursal, ni filtres por hoy. "
-                     "No digas que no puedes verla sin consultar la herramienta. Pedidos y cajas también usan su tipo e ID real.")
+                     "No digas que no puedes verla sin consultar la herramienta. Pedidos y cajas también usan su tipo e ID real. "
+                     "En ventas usa vista=total/cliente/cajero/pagos/productos/reintegros/nequi para devolver SOLO lo preguntado; completo si pide todo. Vinculación Nequi no prueba por sí sola un pago.")
     if "consultar_registros" in names:
         rules.append("Listas/conteos de catálogos y operaciones usan consultar_registros; solo_total=true solo si pide total. "
                      "Eventos son de hoy salvo fechas o ID exacto. Productos nunca vendidos: recurso=productos, sin_ventas=true sin fechas; agotados: inventario, stock_max=0.")
