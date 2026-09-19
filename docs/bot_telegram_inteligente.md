@@ -690,8 +690,8 @@ por proveedor/configuración dentro del proceso del trabajador.
 Se prueban primero los proveedores alternativos configurados. Con dos proveedores,
 si ambos fallan por problemas transitorios o respuestas inválidas, se permite un
 único reintento adicional con una espera de 0,4–0,8 segundos, hasta tres llamadas.
-Con los cuatro proveedores se da una oportunidad a cada uno, sin intento extra:
-**máximo cuatro llamadas de interpretación por mensaje**.
+Con los cuatro proveedores se da una oportunidad a cada uno y puede hacerse ese
+único intento extra: **máximo cinco llamadas de interpretación por mensaje**.
 No se reintenta inmediatamente un 429, una clave inválida, un modelo inexistente
 ni un error con espera explícita. Tampoco se hace ese intento extra si ya han
 transcurrido 35 segundos. Las conexiones tienen timeout de 5 segundos y las
@@ -709,6 +709,47 @@ configurados; tener una clave guardada no garantiza su validez.
 Las notas de voz se transcriben con los respaldos de audio y el texto resultante
 pasa por la cadena de interpretación. No se envía cada solicitud a todos si el
 primer proveedor responde correctamente.
+
+### Recuperación de formatos y respuestas cortadas
+
+- Se reconocen equivalencias inequívocas de **lectura**: opcionales `null`
+  ausentes, IDs/páginas enteros como texto, booleanos `true`/`false` y mayúsculas
+  de opciones enumeradas. No se reinterpretan importes, fechas, nombres ni
+  códigos de barras. Los argumentos de escritura siguen siendo estrictos.
+- Si solo falta un dato obligatorio, el bot lo pregunta directamente, sin
+  llamar a otros proveedores ni ejecutar parte de la petición. Antes de
+  preguntar también valida los datos presentes.
+- Una llamada JSON completa dentro de un bloque de texto pasa por las mismas
+  comprobaciones que una llamada nativa. No se ejecutan fragmentos, código,
+  funciones desconocidas, claves duplicadas ni argumentos adicionales.
+- Hasta cuatro llamadas nativas de lectura se convierten en una consulta
+  compuesta validada. No se aceptan escrituras múltiples ni se descartan partes
+  inválidas para ejecutar las restantes. Cada consulta conserva sus permisos.
+- El margen máximo de salida pasa de 1.400 a 4.096 tokens. Si el proveedor
+  informa que cortó la respuesta, esta se descarta y el reintento dirigido puede
+  disponer de 8.192. Es un máximo, no una cantidad que siempre se genere; puede
+  consumir más cuota cuando el modelo necesita razonamiento adicional. No se
+  reduce su nivel de razonamiento ni se seleccionan modelos pagos.
+- El reintento prioriza un error reparable de formato frente a un servidor
+  caído. Recibe una instrucción específica y la petición/historial originales,
+  sin incluir cuerpos de error ni respuestas incompletas del proveedor. Sigue
+  respetando el límite de intentos y las pausas por cuota o `Retry-After`.
+- Los diagnósticos distinguen `truncated`, `schema`, `empty`, `format`,
+  `multiple_actions` y `unknown_tool`, sin registrar el contenido privado del
+  mensaje en esos logs. Los bloqueos de contenido no se reintentan como un
+  problema de formato.
+- Frases de cortesía como «¿me puedes decir cuánto pagamos hoy?» aprovechan los
+  atajos existentes. No se eliminan filtros ni instrucciones adicionales para
+  forzar una coincidencia. También funciona sobre audios ya transcritos.
+
+Referencias de los proveedores: [límites y razonamiento de Gemini](https://ai.google.dev/gemini-api/docs/generate-content/thinking)
+y [razonamiento de Groq](https://console.groq.com/docs/reasoning).
+
+No requiere nuevas migraciones ni claves. Para activar, actualizar el código y
+reiniciar la misma tarea Always-on del bot (sin crear otro trabajador); recargar
+la Web si se usa el procesamiento desde la aplicación. Las pruebas automatizadas
+simulan proveedores: no demuestran una reducción porcentual de fallos en producción.
+Persisten posibles caídas externas, cuotas agotadas y configuraciones incorrectas.
 
 ### Menor consumo y continuidad de las conversaciones
 

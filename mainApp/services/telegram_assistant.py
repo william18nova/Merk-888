@@ -362,8 +362,9 @@ def _period_dates(period):
 
 def common_read_request(text):
     """Atajos de solo lectura, estrictos: lo demás conserva la interpretación IA."""
+    from .telegram_shortcuts import conversational_read_text
     bot = _bot()
-    normalized = re.sub(r"\s+", " ", bot._normalized_text(text)).strip(" ¿?¡!.")
+    normalized = re.sub(r"\s+", " ", bot._normalized_text(conversational_read_text(text))).strip(" ¿?¡!.")
     normalized = re.sub(r"^jarvis[, ]+", "", normalized)
     normalized = re.sub(r"^por favor[, ]+|[, ]+por favor$", "", normalized)
     sale = bot._sale_detail_request(normalized)
@@ -388,7 +389,7 @@ def common_read_request(text):
     if re.fullmatch(r"(?:(?:muestrame|dame|quiero ver|ver) )?(?:la )?lista de (?:los )?empleados|(?:muestrame|dame|quiero ver|ver) (?:todos )?(?:los )?empleados", normalized):
         return "listar_empleados", {}
     payment_total = r"(?:cuanto (?:(?:he|hemos|se ha) pagado|pague|pagamos|se pago)|(?:(?:dame|muestrame|cual es) )?(?:el )?total (?:de )?(?:los )?pagos)"
-    payment_list = r"(?:(?:muestrame|dame|lista|quiero ver|ver) (?:la lista de )?(?:los )?pagos|(?:la )?lista de (?:los )?pagos)"
+    payment_list = r"(?:(?:muestrame|dame|lista|quiero ver|ver) (?:la lista de )?(?:los )?pagos|(?:la )?lista de (?:los )?pagos|los pagos)"
     payment = re.fullmatch(
         r"(?P<request>" + payment_total + "|" + payment_list + r")"
         r"(?: (?:(?:de|del|durante|en) )?(?P<period>" + periods + r"))?"

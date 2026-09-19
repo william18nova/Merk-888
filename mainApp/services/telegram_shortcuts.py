@@ -3,9 +3,27 @@ import re
 import unicodedata
 
 
+def conversational_read_text(text):
+    """Quita cortesía inicial, no filtros ni órdenes al final de la petición."""
+    text = str(text).strip()
+    for _ in range(4):
+        previous = text
+        text = re.sub(r"^[¿¡\s]*(?:(?:hola|oye|jarvis|por favor)[,\s]+)", "", text, flags=re.IGNORECASE)
+        text = re.sub(
+            r"^[¿¡\s]*(?:(?:me\s+)?(?:puedes|podr[ií]as)\s+(?:decir(?:me)?|mostrar(?:me)?|consultar(?:me)?)|"
+            r"(?:quiero|quisiera|necesito|me gustar[ií]a)\s+saber)\s+",
+            "", text, flags=re.IGNORECASE,
+        )
+        text = re.sub(r"[,\s]+por favor[?!.\s]*$", "", text, flags=re.IGNORECASE)
+        text = re.sub(r"^dime\s+(?=(?:cu[aá]nt[oa]s?|qui[eé]n(?:es)?|qu[eé]|c[oó]mo)\b)", "", text, flags=re.IGNORECASE)
+        if previous == text:
+            break
+    return text
+
+
 def specific_read_request(text):
     from .telegram_assistant import _period_dates
-    normalized = "".join(c for c in unicodedata.normalize("NFKD", str(text).lower()) if not unicodedata.combining(c))
+    normalized = "".join(c for c in unicodedata.normalize("NFKD", conversational_read_text(text).lower()) if not unicodedata.combining(c))
     normalized = re.sub(r"\s+", " ", normalized).strip(" ¿?¡!.,")
     normalized = re.sub(r"^(?:(?:hola|oye|jarvis|por favor)[, ]+)+", "", normalized)
     normalized = re.sub(r"[, ]+por favor$", "", normalized)

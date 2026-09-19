@@ -615,7 +615,7 @@ TOOL_DEFINITIONS = [
 ]
 
 
-def validate_arguments(tool_name, arguments):
+def validate_arguments(tool_name, arguments, *, allow_missing=False):
     """Validar también en servidor: la IA no es una frontera de seguridad."""
     schema = next(item["parameters"] for item in _bot().GEMINI_TOOLS[0]["functionDeclarations"] if item["name"] == tool_name)
 
@@ -640,7 +640,7 @@ def validate_arguments(tool_name, arguments):
         if kind == "OBJECT":
             properties = rule.get("properties", {})
             missing = set(rule.get("required", [])) - set(value)
-            if missing:
+            if missing and not allow_missing:
                 raise _bot().TelegramClarification("Me falta " + ", ".join(label(key) for key in sorted(missing)) + ". ¿Me lo indicas?")
             if set(value) - set(properties):
                 raise _bot().TelegramBotError("No pude interpretar una parte de la solicitud. Dime qué necesitas consultar o cambiar, sin instrucciones técnicas.")

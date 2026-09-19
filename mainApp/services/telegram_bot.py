@@ -43,7 +43,10 @@ from mainApp.services.telegram_operations import (
 from mainApp.services.telegram_returns import command_prepare_return, confirm_return
 from mainApp.services.telegram_payments import confirm_payment_edit
 from mainApp.services.telegram_schedule import confirm_schedule, handle_schedule_callback, schedule_buttons
-from mainApp.services.telegram_assistant import DATE_TOOLS, common_read_request, resolve_continuation
+from mainApp.services.telegram_assistant import DATE_TOOLS, READ_TOOLS, common_read_request, resolve_continuation
+from mainApp.services.telegram_ai_output import (
+    AIOutputError, normalize_read_arguments, read_envelope, repair_instruction, strict_json,
+)
 from mainApp.services.telegram_ai_policy import compact_history, compact_prompt, response_failure, selected_tool_names
 from mainApp.services.telegram_wording import CONVERSATION_STYLE, period_phrase, social_reply
 from mainApp.services.telegram_search import choose_match, rank_candidates, rank_queryset, ranked_queryset, resolve_name
@@ -57,8 +60,9 @@ logger = logging.getLogger(__name__)
 TELEGRAM_FILE_LIMIT = 20 * 1024 * 1024
 ACTION_TTL_MINUTES = 10
 LINK_CODE_TTL_MINUTES = 10
-AI_MAX_ATTEMPTS = 3
+AI_MAX_ATTEMPTS = 5  # Hasta cuatro proveedores configurados y un único reintento.
 AI_RETRY_BUDGET_SECONDS = 35
+AI_OUTPUT_TOKENS = 4096
 LIST_PAGE_SIZE = 5
 PAGINATED_READ_TOOLS = frozenset({
     "consultar_pago",
@@ -91,8 +95,9 @@ class TelegramClarification(TelegramBotError):
 class TelegramAIProviderError(TelegramExternalError):
     """Error seguro y clasificado; nunca incluye el cuerpo ni las claves de la API."""
 
-    def __init__(self, provider, kind, *, status=None, delay=0, retry_soon=None):
+    def __init__(self, provider, kind, *, status=None, delay=0, retry_soon=None, reason=""):
         self.provider, self.kind, self.status, self.delay = provider, kind, status, delay
+        self.reason = reason if reason in {"format", "schema", "truncated", "empty", "multiple_actions", "unknown_tool", "blocked"} else ""
         self.retry_soon = kind in {"connection", "invalid_response"} if retry_soon is None else retry_soon
         reasons = {
             "rate_limit": "alcanzó un límite de uso",
@@ -1294,7 +1299,7 @@ def _ai_response(provider, url, **kwargs):
     return data
 
 
-def _gemini_function_call(user_text, history=None):
+def _gemini_function_call(user_text, history=None, *, repair=None):
     api_key = _configured("GEMINI_API_KEY")
     if not api_key:
         raise TelegramConfigurationError(
@@ -1302,6 +1307,8 @@ def _gemini_function_call(user_text, history=None):
         )
     model = _configured("GEMINI_MODEL") or "gemini-3.8-flash"
     definitions, system, history = _ai_request_context(user_text, history)
+    if repair:
+        system += "\n" + repair_instruction(repair)
     contents = []
     for item in history or []:
         role = "model" if item.get("role") == "model" else "user"
@@ -1314,7 +1321,7 @@ def _gemini_function_call(user_text, history=None):
         "contents": contents,
         "tools": [{"functionDeclarations": definitions}],
         "toolConfig": {"functionCallingConfig": {"mode": "AUTO"}},
-        "generationConfig": {"temperature": 0.1, "maxOutputTokens": 1400},
+        "generationConfig": {"temperature": 0.1, "maxOutputTokens": 8192 if repair == "truncated" else AI_OUTPUT_TOKENS},
     }
     data = _ai_response(
         "Gemini",
@@ -1324,53 +1331,105 @@ def _gemini_function_call(user_text, history=None):
     )
     try:
         candidate = data["candidates"][0]
-        if candidate.get("finishReason") in {"MAX_TOKENS", "SAFETY", "RECITATION"}:
-            raise ValueError("Respuesta incompleta")
+        if candidate.get("finishReason") == "MAX_TOKENS":
+            raise AIOutputError("truncated")
+        if candidate.get("finishReason") in {"SAFETY", "RECITATION", "BLOCKLIST", "PROHIBITED_CONTENT", "SPII"}:
+            raise TelegramAIProviderError("Gemini", "invalid_response", reason="blocked", retry_soon=False)
         parts = candidate["content"]["parts"]
         if not isinstance(parts, list) or not all(isinstance(part, dict) for part in parts):
             raise ValueError("Contenido inválido")
         calls = [part["functionCall"] for part in parts if "functionCall" in part]
         if calls:
-            if len(calls) != 1 or not isinstance(calls[0], dict):
-                raise ValueError("Se esperaba una sola función")
-            return _validated_ai_call(calls[0].get("name"), calls[0].get("args", {}), {item["name"] for item in definitions})
+            return _validated_ai_calls([
+                (call.get("name"), call.get("args", {})) for call in calls
+            ], {item["name"] for item in definitions})
         answer = "\n".join(
             part["text"] for part in parts
             if isinstance(part.get("text"), str) and not part.get("thought")
         ).strip()
-        if not answer:
-            raise ValueError("Respuesta vacía")
-        return "", {}, answer
-    except (KeyError, IndexError, TypeError, AttributeError, ValueError):
-        raise TelegramAIProviderError("Gemini", "invalid_response") from None
+        return _validated_ai_text(answer, {item["name"] for item in definitions})
+    except (KeyError, IndexError, TypeError, AttributeError, ValueError, RecursionError) as exc:
+        raise TelegramAIProviderError("Gemini", "invalid_response", reason=getattr(exc, "reason", "format")) from None
 
 
 def _validated_ai_call(name, arguments, allowed=None):
-    if not isinstance(name, str) or name not in TOOL_FUNCTIONS or (allowed is not None and name not in allowed) or not isinstance(arguments, dict):
-        raise ValueError("Función o argumentos inválidos")
+    if not isinstance(name, str) or name not in TOOL_FUNCTIONS or (allowed is not None and name not in allowed):
+        raise AIOutputError("unknown_tool")
+    if not isinstance(arguments, dict):
+        raise AIOutputError("schema")
+    if name in READ_TOOLS:
+        schema = next(d["parameters"] for d in GEMINI_TOOLS[0]["functionDeclarations"] if d["name"] == name)
+        arguments = normalize_read_arguments(arguments, schema)
     try:
         validate_operation_arguments(name, arguments)
+    except TelegramClarification as exc:
+        # Si SOLO faltan datos, preguntar directamente sin gastar otros proveedores.
+        # Comprobar también lo presente: no ocultar campos desconocidos o tipos malos.
+        try:
+            validate_operation_arguments(name, arguments, allow_missing=True)
+        except TelegramBotError:
+            raise AIOutputError("schema") from None
+        return "", {}, str(exc)
     except TelegramBotError:
-        raise ValueError("Argumentos de la IA no conformes al esquema") from None
+        raise AIOutputError("schema") from None
+    if name == "consultar_varias":
+        queries = arguments["consultas"]
+        if not 1 <= len(queries) <= 4:
+            raise AIOutputError("schema")
+        arguments = {"consultas": []}
+        for query in queries:
+            child = query["herramienta"]
+            if child not in READ_TOOLS or (allowed is not None and child not in allowed):
+                raise AIOutputError("unknown_tool")
+            child_name, clean, question = _validated_ai_call(child, strict_json(query["argumentos_json"]), allowed)
+            if not child_name:
+                return "", {}, question
+            encoded = json.dumps(clean, ensure_ascii=False, allow_nan=False)
+            if len(encoded) > 4000:
+                raise AIOutputError("schema")
+            arguments["consultas"].append({"herramienta": child, "argumentos_json": encoded})
     return name, arguments, ""
 
 
-def _groq_function_call(user_text, history=None):
+def _validated_ai_calls(calls, allowed):
+    if not 1 <= len(calls) <= 4:
+        raise AIOutputError("multiple_actions")
+    if len(calls) > 1 and any(name not in READ_TOOLS for name, _ in calls):
+        raise AIOutputError("multiple_actions")
+    # Validar TODAS antes de devolver el plan; jamás ejecutar una parte del lote.
+    parsed = [_validated_ai_call(name, strict_json(args) if isinstance(args, str) else args, allowed) for name, args in calls]
+    clarification = next((result for result in parsed if not result[0]), None)
+    if clarification:
+        return clarification
+    if len(parsed) == 1:
+        return parsed[0]
+    combined = {"consultas": [{"herramienta": name, "argumentos_json": json.dumps(args, ensure_ascii=False, allow_nan=False)} for name, args, _ in parsed]}
+    return _validated_ai_call("consultar_varias", combined, set(allowed) | {"consultar_varias"})
+
+
+def _validated_ai_text(answer, allowed):
+    envelope = read_envelope(answer)
+    if envelope is not None:
+        return _validated_ai_calls([envelope], allowed)
+    return "", {}, answer.strip()
+
+
+def _groq_function_call(user_text, history=None, *, repair=None):
     return _compatible_function_call("Groq", "GROQ_API_KEY", "GROQ_CHAT_MODEL", "openai/gpt-oss-120b",
-                                     "https://api.groq.com/openai/v1/chat/completions", user_text, history)
+                                     "https://api.groq.com/openai/v1/chat/completions", user_text, history, repair=repair)
 
 
-def _cerebras_function_call(user_text, history=None):
+def _cerebras_function_call(user_text, history=None, *, repair=None):
     return _compatible_function_call("Cerebras", "CEREBRAS_API_KEY", "CEREBRAS_CHAT_MODEL", "gpt-oss-120b",
-                                     "https://api.cerebras.ai/v1/chat/completions", user_text, history)
+                                     "https://api.cerebras.ai/v1/chat/completions", user_text, history, repair=repair)
 
 
-def _openrouter_function_call(user_text, history=None):
+def _openrouter_function_call(user_text, history=None, *, repair=None):
     return _compatible_function_call("OpenRouter", "OPENROUTER_API_KEY", "OPENROUTER_CHAT_MODEL", "openai/gpt-oss-120b:free",
-                                     "https://openrouter.ai/api/v1/chat/completions", user_text, history)
+                                     "https://openrouter.ai/api/v1/chat/completions", user_text, history, repair=repair)
 
 
-def _compatible_function_call(provider, key_setting, model_setting, default_model, url, user_text, history):
+def _compatible_function_call(provider, key_setting, model_setting, default_model, url, user_text, history, *, repair=None):
     api_key = _configured(key_setting)
     if not api_key:
         raise TelegramConfigurationError(f"Falta configurar {key_setting}.")
@@ -1378,6 +1437,8 @@ def _compatible_function_call(provider, key_setting, model_setting, default_mode
     if provider == "OpenRouter" and not model.endswith(":free"):
         raise TelegramConfigurationError("OpenRouter solo permite un modelo fijo con sufijo :free.")
     definitions, system, history = _ai_request_context(user_text, history)
+    if repair:
+        system += "\n" + repair_instruction(repair)
     names = {item["name"] for item in definitions}
     messages = [{"role": "system", "content": system}]
     for item in history or []:
@@ -1392,7 +1453,7 @@ def _compatible_function_call(provider, key_setting, model_setting, default_mode
         "tools": [item for item in GROQ_CHAT_TOOLS if item["function"]["name"] in names],
         "tool_choice": "auto",
         "temperature": 0.1,
-        "max_completion_tokens": 1400,
+        "max_completion_tokens": 8192 if repair == "truncated" else AI_OUTPUT_TOKENS,
     }
     if provider == "OpenRouter":
         payload["max_tokens"] = payload.pop("max_completion_tokens")
@@ -1410,23 +1471,23 @@ def _compatible_function_call(provider, key_setting, model_setting, default_mode
     )
     try:
         choice = data["choices"][0]
-        if choice.get("finish_reason") in {"length", "content_filter"}:
-            raise ValueError("Respuesta incompleta")
+        if choice.get("finish_reason") == "length":
+            raise AIOutputError("truncated")
+        if choice.get("finish_reason") == "content_filter":
+            raise TelegramAIProviderError(provider, "invalid_response", reason="blocked", retry_soon=False)
         message = choice["message"]
         tool_calls = message.get("tool_calls") or []
         if tool_calls:
-            if not isinstance(tool_calls, list) or len(tool_calls) != 1:
-                raise ValueError("Se esperaba una sola función")
-            function = tool_calls[0]["function"]
-            raw_arguments = function.get("arguments", "{}")
-            arguments = raw_arguments if isinstance(raw_arguments, dict) else json.loads(raw_arguments)
-            return _validated_ai_call(function.get("name"), arguments, names)
+            if not isinstance(tool_calls, list):
+                raise AIOutputError("format")
+            return _validated_ai_calls([
+                (call["function"].get("name"), call["function"].get("arguments", "{}"))
+                for call in tool_calls
+            ], names)
         answer = message.get("content")
-        if not isinstance(answer, str) or not answer.strip():
-            raise ValueError("Respuesta vacía")
-        return "", {}, answer.strip()
-    except (KeyError, IndexError, TypeError, AttributeError, ValueError):
-        raise TelegramAIProviderError(provider, "invalid_response") from None
+        return _validated_ai_text(answer, names)
+    except (KeyError, IndexError, TypeError, AttributeError, ValueError, RecursionError) as exc:
+        raise TelegramAIProviderError(provider, "invalid_response", reason=getattr(exc, "reason", "format")) from None
 
 
 def _intelligent_function_call(user_text, history=None):
@@ -1445,12 +1506,12 @@ def _intelligent_function_call(user_text, history=None):
     started, attempts = time.monotonic(), 0
     errors, retry_candidates = {}, []
 
-    def attempt(provider, fingerprint):
+    def attempt(provider, fingerprint, repair=None):
         nonlocal attempts
         name, _, _, function = provider
         attempts += 1
         try:
-            result = function(user_text, history=history)
+            result = function(user_text, history=history, **({"repair": repair} if repair else {}))
         except TelegramBotError as raw:
             exc = raw if isinstance(raw, TelegramAIProviderError) else TelegramAIProviderError(
                 name, "unavailable" if raw.retryable else "request", delay=10 if raw.retryable else 0,
@@ -1468,9 +1529,10 @@ def _intelligent_function_call(user_text, history=None):
                 # del proveedor para todos los mensajes de los próximos minutos.
                 _AI_PROVIDER_FAILURES.pop(name, None)
             errors[name] = exc
-            logger.warning("IA Telegram proveedor=%s tipo=%s http=%s pausa_segundos=%s intento=%s", name, exc.kind, exc.status or "-", math.ceil(cooldown), attempts)
+            logger.warning("IA Telegram proveedor=%s tipo=%s motivo=%s http=%s pausa_segundos=%s intento=%s", name, exc.kind, exc.reason or "-", exc.status or "-", math.ceil(cooldown), attempts)
             return None, exc
         _AI_PROVIDER_FAILURES.pop(name, None)
+        logger.info("IA Telegram proveedor=%s resultado=ok intento=%s reparacion=%s", name, attempts, repair or "no")
         return result, None
 
     for provider in configured:
@@ -1486,12 +1548,16 @@ def _intelligent_function_call(user_text, history=None):
         if error is None:
             return result
         if error.retry_soon:
-            retry_candidates.append((provider, fingerprint))
+            retry_candidates.append((provider, fingerprint, error))
     # Cambiar de proveedor tiene prioridad sobre repetir uno fallido. Solo un
     # reintento extra, nunca por 429, credenciales, modelo o Retry-After explícito.
     if retry_candidates and attempts < AI_MAX_ATTEMPTS and time.monotonic() - started < AI_RETRY_BUDGET_SECONDS:
         time.sleep(random.uniform(0.4, 0.8))
-        result, error = attempt(*retry_candidates[0])
+        # Reparar una salida inválida tiene prioridad sobre repetir una caída.
+        retry_candidates.sort(key=lambda candidate: candidate[2].kind != "invalid_response")
+        provider, fingerprint, previous_error = retry_candidates[0]
+        repair = (previous_error.reason or "format") if previous_error.kind == "invalid_response" else None
+        result, error = attempt(provider, fingerprint, repair=repair)
         if error is None:
             return result
     details = []
