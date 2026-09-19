@@ -11,7 +11,7 @@ from django.utils import timezone
 
 from mainApp.models import (
     CambioDevolucion, Categoria, ConfiguracionFuncionalidad, DetalleVenta,
-    Empleado, Inventario, MetodoPago, PagoVenta, Permiso, Producto, PuntosPago,
+    Empleado, Inventario, MetodoPago, NotificacionNequi, PagoVenta, Permiso, Producto, PuntosPago,
     ReintegroVenta, Rol, RolPermiso, Sucursal, TelegramAccionPendiente, TelegramActualizacion,
     TelegramAuditoria, TelegramUsuario, TurnoCaja, TurnoCajaMedio, Usuario,
     UsuarioPermiso, Venta,
@@ -209,12 +209,64 @@ class TelegramReturnTests(TestCase):
         self.assertEqual(self.point.dinerocaja, 9500)
         self.assertEqual(self.shift.ventas_total, 0)
 
-    def test_no_active_turn_blocks_paid_return_before_proposal(self):
+    def test_no_active_turn_allows_confirmed_cash_return_preserving_nequi_link(self):
         self.shift.estado = "CERRADO"
         self.shift.save(update_fields=["estado"])
-        with self.assertRaisesMessage(bot.TelegramBotError, "No hay un turno activo"):
-            self.prepare()
-        self.assertFalse(TelegramAccionPendiente.objects.exists())
+        notification = NotificacionNequi.objects.create(
+            venta=self.sale, monto=2000, es_ingreso=True,
+            texto="Ingreso de prueba", fingerprint="return-without-turn",
+        )
+        reply = self.prepare()
+        self.assertIn("No hay un turno activo", reply.text)
+        self.assertIn("se guardará sin turno", reply.text)
+        self.assert_unchanged()
+        result = self.callback(reply)
+        self.assertIn("registrada sin turno", result.text)
+        refund = ReintegroVenta.objects.get()
+        self.assertIsNone(refund.turno_id)
+        self.assertEqual(refund.registrado_por_id, self.user.pk)
+        self.assertEqual((refund.medio_pago, refund.monto), ("efectivo", 500))
+        self.point.refresh_from_db()
+        self.shift.refresh_from_db()
+        notification.refresh_from_db()
+        self.assertEqual(self.point.dinerocaja, 9500)
+        self.assertEqual(self.shift.estado, "CERRADO")
+        self.assertEqual(self.shift.ventas_total, 0)
+        self.assertEqual(notification.venta_id, self.sale.pk)
+        self.assertEqual(PagoVenta.objects.get(ventaid=self.sale).monto, 2000)
+        self.callback(reply)
+        self.assertEqual(ReintegroVenta.objects.count(), 1)
+        self.point.refresh_from_db()
+        self.assertEqual(self.point.dinerocaja, 9500)
+
+    def test_no_active_turn_nequi_refund_does_not_change_cash(self):
+        self.shift.estado = "CERRADO"
+        self.shift.save(update_fields=["estado"])
+        reply = self.prepare(method="nequi")
+        self.assertNotIn("El efectivo se descontará", reply.text)
+        self.callback(reply)
+        self.point.refresh_from_db()
+        refund = ReintegroVenta.objects.get()
+        self.assertIsNone(refund.turno_id)
+        self.assertEqual(refund.medio_pago, "nequi")
+        self.assertEqual(self.point.dinerocaja, 10000)
+
+    def test_new_turn_between_proposal_and_confirmation_requires_new_proposal(self):
+        self.shift.estado = "CERRADO"
+        self.shift.save(update_fields=["estado"])
+        reply = self.prepare()
+        TurnoCaja.objects.create(puntopago=self.point, cajero=self.user, estado="ABIERTO")
+        result = self.callback(reply)
+        self.assertIn("cambiaron", result.text)
+        self.assert_unchanged()
+
+    def test_closed_turn_between_proposal_and_confirmation_requires_new_proposal(self):
+        reply = self.prepare()
+        self.shift.estado = "CERRADO"
+        self.shift.save(update_fields=["estado"])
+        result = self.callback(reply)
+        self.assertIn("cambiaron", result.text)
+        self.assert_unchanged()
 
     def test_invalid_and_excess_quantities_and_unknown_sale(self):
         for quantity in (0, -1, 5, 1.5, "1", True, 99999999999999):

@@ -1629,6 +1629,11 @@ class CambioDevolucion(models.Model):
         - detalleventa.cantidad -= devuelto (para consistencia visual)
         - venta.total -= total devuelto
         - Ajusta turno (ventas_total / ventas_efectivo / ventas_no_efectivo + turno_caja_medios.esperado)
+
+        ``turno_requerido`` conserva el nombre por compatibilidad con el control
+        de turnos de ventas: activa la búsqueda de un turno vigente, pero una
+        devolución no exige que exista. Sin turno, guarda el reintegro con
+        turno=None y descuenta solo el efectivo del saldo del punto de pago.
         """
         from .models import DetalleVenta, ReintegroVenta, TurnoCaja
 
@@ -1655,10 +1660,6 @@ class CambioDevolucion(models.Model):
             reintegro_map = cls._normalizar_reintegro_map(reintegro_map, total_dev)
             if turno_requerido:
                 turno = cls._turno_abierto_para_venta_locked(venta)
-            if turno_requerido and turno is None:
-                raise ValueError(
-                    "No hay un turno de caja activo para registrar la salida de esta devolución."
-                )
 
         now = timezone.localdate()
 
@@ -1727,9 +1728,9 @@ class CambioDevolucion(models.Model):
                         ventas_no_efectivo=F("ventas_no_efectivo") - monto
                     )
         else:
-            # Sin control de turnos no existe un cuadre individual. Aun así,
-            # el saldo global de la caja física debe reflejar el efectivo que
-            # realmente salió durante la devolución.
+            # Sin turno vigente (o con su control desactivado), la devolución
+            # no altera cierres anteriores ni se carga a un turno futuro.
+            # El saldo de la caja física refleja únicamente el efectivo salido.
             efectivo_devuelto = reintegro_map.get(
                 "efectivo",
                 Decimal("0.00"),

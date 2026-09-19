@@ -623,9 +623,12 @@ actual y su cajero. Debes pulsar **Confirmar devolución** para registrarla.
   no inventa ni reemplaza una distribución existente.
 - Con control de turnos, el reintegro se carga al turno **vigente del punto de
   pago original**, aunque atienda otro cajero. No reabre ni modifica turnos
-  históricos cerrados. Si no hay turno activo para una salida de dinero, bloquea
-  la propuesta. Sin control de turnos, el efectivo ajusta el saldo global de ese
-  punto de pago y el reintegro queda sin turno.
+  históricos cerrados. **Si no hay turno activo, sí permite la devolución** y
+  guarda el reintegro sin turno, con su usuario, fecha, medio e importe. Lo mismo
+  ocurre cuando el control de turnos está desactivado. En ambos casos, solo el
+  efectivo ajusta el saldo global de ese punto de pago; Nequi/tarjeta no cambian
+  el efectivo. No se carga el reintegro a un turno futuro ni se crean turnos
+  automáticamente. Este comportamiento también se aplica en la página web.
 - Comparte con la web el permiso `ventas_cambios`; el rol Cajero continúa sin
   autorización para ejecutar devoluciones, aunque pueda consultar/imprimir.
 - La propuesta vence en diez minutos. Volver a pulsar Confirmar no duplica la

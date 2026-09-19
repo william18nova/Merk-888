@@ -5,7 +5,7 @@
 
 {% block extra_head %}
   <link rel="stylesheet" href="{% static 'css/generar_venta.css' %}">
-  <link rel="stylesheet" href="{% static 'css/ver_venta.css' %}?v=3">
+  <link rel="stylesheet" href="{% static 'css/ver_venta.css' %}?v=4">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"/>
 {% endblock %}
 
@@ -15,6 +15,16 @@
     <i class="fas fa-file-invoice-dollar me-2"></i>
     Detalle de la Venta #{{ venta.pk }}
   </h1>
+
+  {% if messages %}
+  <div class="venta-feedback" aria-live="polite">
+    {% for message in messages %}
+    <div class="venta-feedback__message {{ message.tags }}" role="{% if message.level_tag == 'error' %}alert{% else %}status{% endif %}">
+      {{ message }}
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
 
   <form method="post" id="venta-form">
     {% csrf_token %}
@@ -250,7 +260,7 @@
             {% if reintegro.turno_id %}
               Turno #{{ reintegro.turno_id }}
             {% else %}
-              Sin turno · modo directo
+              Sin turno
             {% endif %}
             · {{ reintegro.creado_en|date:"d/m/Y H:i" }}
           </small>

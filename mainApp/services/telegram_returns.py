@@ -149,8 +149,6 @@ def _context(sale, details, selected, method, *, confirming=False):
     turn = None
     if required and total > 0:
         turn = CambioDevolucion._turno_abierto_para_venta_locked(sale)
-        if turn is None:
-            raise bot.TelegramBotError("No hay un turno activo en el punto de pago de esta venta para registrar el reintegro. Abre el turno en la web y solicita nuevamente la devolución.")
     # Se incluyen todos los renglones: el descuento prorrateado depende también
     # de productos que no se están devolviendo en esta solicitud.
     snapshot = {
@@ -192,7 +190,10 @@ def tool_prepare_return(profile, arguments, update=None):
         if turn:
             lines.append(f"Se registrará en el turno actual #{turn.pk} · cajero {bot._list_text(turn.cajero.nombreusuario, 80)}.")
         elif total > 0:
-            lines.append("El control de turnos está desactivado. El efectivo ajustará el saldo global del punto de pago de esta venta.")
+            reason = "No hay un turno activo." if snapshot["turno_requerido"] else "El control de turnos está desactivado."
+            lines.append(reason + " La devolución se guardará sin turno; no modificará cierres anteriores.")
+            if snapshot["medio"]["codigo"] == CASH_PAYMENT_CODE:
+                lines.append("El efectivo se descontará del saldo del punto de pago de esta venta.")
         else:
             lines.append("Esta devolución no entrega dinero: solo restaura inventario y registra los productos devueltos.")
         lines.extend([
@@ -243,7 +244,8 @@ def confirm_return(profile, action):
             action.resuelto_en = timezone.now()
             action.save(update_fields=["estado", "resuelto_en"])
             bot._audit(profile, "confirmar_devolucion_venta", arguments, detail=f"Venta #{sale.pk}; reintegro {total}; turno {turn.pk if turn else 'sin turno'}")
-        return f"Listo, registré la devolución de la venta #{sale.pk}: {bot._list_money(total)} en {snapshot['medio']['nombre']}. Inventario actualizado; sin transferencia bancaria automática."
+        turn_note = " Quedó registrada sin turno." if total > 0 and turn is None else ""
+        return f"Listo, registré la devolución de la venta #{sale.pk}: {bot._list_money(total)} en {snapshot['medio']['nombre']}.{turn_note} Inventario actualizado; sin transferencia bancaria automática."
     except (bot.TelegramBotError, ValueError, DatabaseError) as exc:
         # El savepoint ya revirtió inventario, venta, caja y reintegros. No hacer
         # consultas dentro de una transacción rota ni filtrar SQL al usuario.

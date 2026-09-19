@@ -65,6 +65,28 @@
   letter-spacing: .2px;
 }
 
+.venta-feedback{ margin: 0 0 18px; text-align: left; }
+.venta-feedback__message{
+  margin-bottom: 10px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--card-2);
+  color: var(--text);
+  font-weight: 700;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.venta-feedback__message.error{
+  background: var(--danger-bg);
+  border-color: var(--danger-br);
+  color: var(--danger-tx);
+}
+.venta-feedback__message.success{
+  background: var(--ok-bg);
+  border-color: var(--ok-br);
+}
+
 /* ---------------- Rejilla de campos ---------------- */
 .venta-grid{
   margin-top: 14px;
