@@ -337,5 +337,22 @@
 </script>
 
 <script src="{% static 'javascript/sale_draft_lifecycle.js' %}?v=1"></script>
-<script src="{% static 'javascript/generar_venta.js' %}?v=43"></script>
+<script src="{% static 'javascript/generar_venta.js' %}?v=44"></script>
+{% if producto_desde_visor %}
+<script>
+  // Si se sirven estáticos antiguos, mostrar una salida clara en vez de dejar
+  // indefinidamente un carrito vacío con «Preparando el producto».
+  window.addEventListener("load", function () {
+    window.setTimeout(function () {
+      const source = document.getElementById("venta-visor-producto");
+      const notice = document.getElementById("venta-visor-notice");
+      if (!source || !notice || !notice.classList.contains("is-info")) return;
+      notice.classList.replace("is-info", "is-error");
+      notice.setAttribute("role", "alert");
+      notice.textContent = "No se cargó el producto del visor. Recarga con Ctrl+F5. Si continúa, solicita actualizar los archivos estáticos del sistema (collectstatic).";
+    }, 3000);
+  }, { once: true });
+</script>
+<noscript>Activa JavaScript para cargar el producto del visor en el carrito.</noscript>
+{% endif %}
 {% endblock %}

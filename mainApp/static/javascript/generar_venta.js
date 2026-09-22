@@ -6860,30 +6860,41 @@ Cambio: ${money(cambio)}` : "";
 
   function importProductFromVisor(){
     const source = document.getElementById("venta-visor-producto");
-    // La URL no debe volver a precargar el producto al recargar o duplicar.
-    try {
-      const url = new URL(window.location.href);
-      const keys = ["visor_producto", "visor_cantidad", "visor_turno"];
-      if (keys.some(key => url.searchParams.has(key))) {
-        keys.forEach(key => url.searchParams.delete(key));
-        window.history.replaceState(window.history.state, "", url.href);
-      }
-    } catch (_) {}
     if (!source) return;
-    let item;
-    try { item = JSON.parse(source.textContent); } catch (_) { return; }
-    source.remove();
     const $notice = $("#venta-visor-notice");
+    const reportError = () => {
+      $notice.text("No se pudo cargar el producto del visor. Recarga esta página para volver a intentarlo; tus otros carritos no cambian.");
+      $notice.removeClass("is-info").addClass("is-error").attr("role", "alert");
+    };
+    let item;
+    try { item = JSON.parse(source.textContent); } catch (_) { reportError(); return; }
     if (productos.length || !hasSucursal() || !item?.id
         || !Number.isInteger(item.cantidad) || item.cantidad < 1 || item.cantidad > 1000000) {
-      $notice.text("No se agregó el producto del visor. Consulta de nuevo desde el visor para abrir un carrito nuevo.");
+      reportError();
       return;
     }
     // Usa la identidad independiente de esta pestaña y el flujo normal del POS.
     // No restaura, consume ni vacía ningún borrador de otro carrito.
-    updateCache(String(item.id), item);
-    addToCart(String(item.id), item.cantidad);
-    persistSaleDraftNow();
+    try {
+      updateCache(String(item.id), item);
+      addToCart(String(item.id), item.cantidad);
+    } catch (error) {
+      console.warn("[VISOR] No se pudo precargar el producto", error);
+      reportError();
+      return;
+    }
+    if (!productos.includes(String(item.id))) { reportError(); return; }
+    // Consumir la precarga solo después de añadirla. Un fallo conserva la URL
+    // para poder reintentar; el éxito no duplica productos al recargar.
+    source.remove();
+    try {
+      const url = new URL(window.location.href);
+      ["visor_producto", "visor_cantidad", "visor_turno"].forEach(key => url.searchParams.delete(key));
+      window.history.replaceState(window.history.state, "", url.href);
+    } catch (_) {}
+    try { persistSaleDraftNow(); } catch (error) {
+      console.warn("[VISOR] El producto se agregó, pero falló su respaldo local", error);
+    }
     $notice.text(`${item.nombre}: ${item.cantidad.toLocaleString("es-CO")} agregado(s) desde el visor. Este carrito es independiente.`);
   }
 
@@ -6934,8 +6945,11 @@ Cambio: ${money(cambio)}` : "";
     });
   });
   saleDraftAutosaveReady = true;
-  // Registrar la presencia de esta pestaña antes de publicar su carrito.
-  void resumeSaleDraftPage().then(importProductFromVisor);
+  // Solicitar la presencia antes de publicar el carrito (las solicitudes de
+  // Web Locks pendientes también cuentan como pestañas abiertas). La precarga
+  // no debe depender de que el respaldo local resuelva o funcione.
+  void resumeSaleDraftPage().catch(error => console.warn("[BORRADOR] No se pudo iniciar el respaldo", error));
+  importProductFromVisor();
   cleanupExpiredSaleDrafts();
   refreshSaleDraftGenerateButton();
   offerSaleDraftForCurrentScope();

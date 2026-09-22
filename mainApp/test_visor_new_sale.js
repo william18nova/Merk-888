@@ -43,23 +43,28 @@ test("limpiar la selección o introducir cantidades inválidas quita el enlace",
   assert.equal(attrs.href, undefined);
 });
 
-function destination({existing = [], quantity = 500} = {}) {
+function destination({existing = [], quantity = 500, failAdd = false, failBackup = false} = {}) {
   const item = {id: "2978", cantidad: quantity, precio_unitario: "4.20", nombre: "Tomate"};
   let source = {textContent: JSON.stringify(item), remove() {source = null;}};
   const calls = [], messages = [], urls = [];
   const products = [...existing];
+  const notice = {text(text) {messages.push(text); return this;},
+    removeClass() {return this;}, addClass() {return this;}, attr() {return this;}};
   const context = vm.createContext({
-    URL, productos: products, hasSucursal: () => true,
+    URL, productos: products, hasSucursal: () => true, console: {warn() {}},
     document: {getElementById: () => source},
     window: {location: {href: "https://pos.example/generar_venta/?visor_producto=2978&visor_cantidad=500&visor_turno=17&keep=1"},
       history: {state: null, replaceState: (_, __, url) => urls.push(url)}},
-    $: () => ({text: text => messages.push(text)}),
+    $: () => notice,
     updateCache: (id, data) => calls.push(["cache", id, data.precio_unitario]),
-    addToCart: (id, qty) => {calls.push(["add", id, qty]); products.push(id);},
-    persistSaleDraftNow: () => calls.push(["save"]),
+    addToCart: (id, qty) => {
+      if (failAdd) throw new Error("No se pudo insertar");
+      calls.push(["add", id, qty]); products.push(id);
+    },
+    persistSaleDraftNow: () => {if (failBackup) throw new Error("Storage bloqueado"); calls.push(["save"]);},
   });
   vm.runInContext(importCode + "\nimportProductFromVisor();", context);
-  return {calls, messages, urls, context};
+  return {calls, messages, urls, context, get source() {return source;}};
 }
 
 test("el destino agrega los gramos por el flujo normal y guarda su propio borrador", () => {
@@ -75,4 +80,35 @@ test("la importación nunca vacía ni se mezcla con un carrito existente", () =>
   assert.deepEqual(destination({existing: ["99"]}).calls, []);
   assert.deepEqual(destination({quantity: -5}).calls, []);
   assert.doesNotMatch(importCode, /clearCart|removeSaleDraft|restorePendingSaleDraft|localStorage\./);
+});
+
+test("si falla la inserción conserva el producto y la URL para reintentar", () => {
+  const result = destination({failAdd: true});
+  assert.ok(result.source);
+  assert.equal(result.urls.length, 0);
+  assert.match(result.messages[0], /Recarga esta página/);
+  result.context.addToCart = (id, qty) => {
+    result.calls.push(["add", id, qty]); result.context.productos.push(id);
+  };
+  vm.runInContext("importProductFromVisor();", result.context);
+  assert.equal(result.source, null);
+  assert.equal(result.calls.filter(call => call[0] === "add").length, 1);
+});
+
+test("un fallo en el respaldo no impide cargar el producto y mostrar confirmación", () => {
+  const result = destination({failBackup: true});
+  assert.deepEqual(result.calls, [["cache", "2978", "4.20"], ["add", "2978", 500]]);
+  assert.equal(result.source, null);
+  assert.match(result.messages[0], /independiente/);
+});
+
+test("la precarga no espera un bloqueo del navegador ni falla si rechaza el respaldo", async () => {
+  const startup = extract("generar_venta.js", "void resumeSaleDraftPage().catch(", "cleanupExpiredSaleDrafts();");
+  for (const resume of [() => new Promise(() => {}), () => Promise.reject(new Error("Sin almacenamiento"))]) {
+    let imported = 0;
+    const context = vm.createContext({resumeSaleDraftPage: resume, importProductFromVisor: () => imported++, console: {warn() {}}});
+    vm.runInContext(startup, context);
+    assert.equal(imported, 1);
+    await new Promise(resolve => setImmediate(resolve));
+  }
 });
