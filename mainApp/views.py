@@ -4875,8 +4875,8 @@ class GenerarVentaView(LoginRequiredMixin, View):
         product = item.productoid
         if product.tipo_ptm:
             return None, "PTM se registra en Operaciones PTM, no en el carrito de productos."
-        if item.cantidad < int(quantity):
-            return None, f"No hay cantidad suficiente de {product.nombre}. Disponible: {item.cantidad}."
+        # Precargar un carrito no reserva ni descuenta inventario. Se permite
+        # trasladar la cantidad elegida aunque el stock sea cero o negativo.
         return {
             "id": str(product.pk), "cantidad": int(quantity),
             "nombre": product.nombre, "precio_unitario": str(product.precio),

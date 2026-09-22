@@ -43,8 +43,8 @@ test("limpiar la selección o introducir cantidades inválidas quita el enlace",
   assert.equal(attrs.href, undefined);
 });
 
-function destination({existing = [], quantity = 500, failAdd = false, failBackup = false} = {}) {
-  const item = {id: "2978", cantidad: quantity, precio_unitario: "4.20", nombre: "Tomate"};
+function destination({existing = [], quantity = 500, stock = 10000, failAdd = false, failBackup = false} = {}) {
+  const item = {id: "2978", cantidad: quantity, precio_unitario: "4.20", nombre: "Tomate", cantidad_disponible: stock};
   let source = {textContent: JSON.stringify(item), remove() {source = null;}};
   const calls = [], messages = [], urls = [];
   const products = [...existing];
@@ -80,6 +80,14 @@ test("la importación nunca vacía ni se mezcla con un carrito existente", () =>
   assert.deepEqual(destination({existing: ["99"]}).calls, []);
   assert.deepEqual(destination({quantity: -5}).calls, []);
   assert.doesNotMatch(importCode, /clearCart|removeSaleDraft|restorePendingSaleDraft|localStorage\./);
+});
+
+test("la precarga mantiene la cantidad solicitada aunque el stock sea cero o negativo", () => {
+  for (const stock of [0, -1, -804712, 10]) {
+    const result = destination({stock, quantity: 650});
+    assert.deepEqual(result.calls, [["cache", "2978", "4.20"], ["add", "2978", 650], ["save"]]);
+    assert.match(result.messages[0], /independiente/);
+  }
 });
 
 test("si falla la inserción conserva el producto y la URL para reintentar", () => {

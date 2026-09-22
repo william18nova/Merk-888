@@ -257,12 +257,30 @@ class VisorNuevaVentaTests(TestCase):
                 response = self.transfer(visor_producto=value)
                 self.assertIsNone(response.context["producto_desde_visor"])
 
-    def test_missing_product_and_insufficient_stock_are_explained(self):
+    def test_missing_product_is_explained(self):
         response = self.transfer(visor_producto=self.product.pk + 10)
         self.assertContains(response, "no está en el inventario")
-        response = self.transfer(visor_cantidad=10001)
         self.assertIsNone(response.context["producto_desde_visor"])
-        self.assertContains(response, "Disponible: 10000")
+
+    def test_zero_negative_and_insufficient_stock_do_not_block_transfer(self):
+        sales_before = Venta.objects.count()
+        for available in (0, -1, -804712, 10):
+            with self.subTest(stock=available):
+                self.stock.cantidad = available
+                self.stock.save(update_fields=["cantidad"])
+                response = self.transfer(visor_cantidad=650)
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.context["visor_venta_error"], "")
+                item = response.context["producto_desde_visor"]
+                self.assertEqual(item["id"], str(self.product.pk))
+                self.assertEqual(item["cantidad"], 650)
+                self.assertEqual(item["cantidad_disponible"], available)
+                self.assertEqual(item["precio_unitario"], "3.80")
+                self.assertContains(response, 'id="venta-visor-producto"')
+                self.assertNotContains(response, "No hay cantidad suficiente")
+                self.stock.refresh_from_db()
+                self.assertEqual(self.stock.cantidad, available)
+                self.assertEqual(Venta.objects.count(), sales_before)
 
     def test_ptm_cannot_be_sent_as_merchandise(self):
         self.product.tipo_ptm = "retiro"
