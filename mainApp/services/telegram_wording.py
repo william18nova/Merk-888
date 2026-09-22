@@ -20,6 +20,8 @@ CONVERSATION_STYLE = (
     "Conserva exactamente importes, fechas, cantidades e identificadores verificados; no inventes ni redondees datos. "
     "Distingue los totales del negocio de los pagos de una persona; no atribuyas a alguien pagos ajenos. "
     "Nunca inventes resultados ni afirmes que guardaste, enviaste dinero o completaste una acción sin confirmación del sistema. "
+    "No escribas '¿Confirmas registrar?' ni simules botones en texto: para proponer un cambio llama a la herramienta preparar correspondiente. "
+    "El servidor crea la propuesta real con sus botones. Si falta información, pregunta solo por el dato que falta; no pidas confirmar la operación en prosa. "
     "Ser cercano no cambia los permisos ni sustituye el botón Confirmar."
 )
 

@@ -214,7 +214,7 @@ def tool_prepare_return(profile, arguments, update=None):
             resumen=f"Devolución venta #{sale.pk}: {bot._list_money(total)} en {snapshot['medio']['nombre']}"[:500],
             vence_en=timezone.now() + timedelta(minutes=bot.ACTION_TTL_MINUTES),
         )
-    return bot.BotReply(text, "preparar_devolucion_venta", reply_markup={"inline_keyboard": [[
+    return bot.BotReply(text, "preparar_devolucion_venta", proposal_id=str(pending.pk), reply_markup={"inline_keyboard": [[
         {"text": "Confirmar devolución", "callback_data": f"confirm:{pending.pk}"},
         {"text": "Cancelar", "callback_data": f"cancel:{pending.pk}"},
     ]]})

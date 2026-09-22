@@ -102,7 +102,7 @@ def tool_prepare_payment_edit(profile, arguments, update=None):
         resumen=f"Corregir pago #{expense.pk}: {clean['concepto']}"[:500],
         vence_en=timezone.now() + timedelta(minutes=bot.ACTION_TTL_MINUTES),
     )
-    return bot.BotReply("\n".join(lines), "preparar_edicion_pago", reply_markup={"inline_keyboard": [[
+    return bot.BotReply("\n".join(lines), "preparar_edicion_pago", proposal_id=str(pending.pk), reply_markup={"inline_keyboard": [[
         {"text": "Confirmar corrección", "callback_data": f"confirm:{pending.pk}"},
         {"text": "Cancelar", "callback_data": f"cancel:{pending.pk}"},
     ]]})

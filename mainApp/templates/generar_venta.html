@@ -17,6 +17,15 @@
   <!-- IZQUIERDA -->
   <section class="panel panel-left">
     <h1>Generar Venta</h1>
+    {% if visor_venta_error %}
+      <div class="venta-mode-notice is-error" role="alert">{{ visor_venta_error }}</div>
+    {% endif %}
+    {% if producto_desde_visor %}
+      <div id="venta-visor-notice" class="venta-mode-notice is-info" role="status">
+        Preparando el producto del visor en un carrito nuevo…
+      </div>
+      {{ producto_desde_visor|json_script:"venta-visor-producto" }}
+    {% endif %}
     <div class="venta-mode-notice is-info">
       <a href="{% url 'operaciones_ptm' %}?tipo=retiro" target="_blank" rel="noopener">PTM RETIROS ↗</a>
       · <a href="{% url 'operaciones_ptm' %}?tipo=recarga" target="_blank" rel="noopener">PTM RECARGA O PAGOS ↗</a>
@@ -328,5 +337,5 @@
 </script>
 
 <script src="{% static 'javascript/sale_draft_lifecycle.js' %}?v=1"></script>
-<script src="{% static 'javascript/generar_venta.js' %}?v=42"></script>
+<script src="{% static 'javascript/generar_venta.js' %}?v=43"></script>
 {% endblock %}

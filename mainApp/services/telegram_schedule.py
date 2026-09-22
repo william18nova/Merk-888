@@ -320,7 +320,7 @@ def tool_prepare_schedule(profile, arguments, update=None):
             resumen=f"{operation.capitalize()} horario de {after['empleado']}: {_shift_text(after)}"[:500],
             vence_en=timezone.now() + timedelta(minutes=bot.ACTION_TTL_MINUTES),
         )
-        return bot.BotReply("\n".join(lines), "preparar_turno_empleado", reply_markup={"inline_keyboard": [[
+        return bot.BotReply("\n".join(lines), "preparar_turno_empleado", proposal_id=str(pending.pk), reply_markup={"inline_keyboard": [[
             {"text": "Confirmar horario" if operation != "cancelar" else "Confirmar cancelación", "callback_data": f"confirm:{pending.pk}"},
             {"text": "Descartar propuesta", "callback_data": f"cancel:{pending.pk}"},
         ]]})

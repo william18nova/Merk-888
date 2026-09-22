@@ -17,6 +17,7 @@ $(function () {
   const $quantity = $("#vb_quantity");
   const $total = $("#vb_total");
   const $search = $("#vb_search");
+  const $newSale = $("#vb_new_sale");
   let currentProduct = null;
   let lookupRevision = 0;
 
@@ -381,6 +382,7 @@ $(function () {
   function paintEmpty(){
     lookupRevision++;
     currentProduct = null;
+    updateNewSaleLink();
     $quantity.val("1").prop("disabled", true);
     $total.text("—");
     lastPaintedBarcode = "";
@@ -418,7 +420,28 @@ $(function () {
     pop();
   }
 
+  function updateNewSaleLink(){
+    if (!$newSale.length) return;
+    const rawQuantity = String($quantity.val() || "").trim();
+    const quantity = Number(rawQuantity);
+    const productID = String(currentProduct?.id || "");
+    const valid = /^[1-9]\d{0,9}$/.test(productID)
+      && /^[1-9]\d{0,6}$/.test(rawQuantity) && quantity <= 1000000;
+    $newSale.attr("aria-disabled", valid ? "false" : "true").attr("tabindex", valid ? "0" : "-1");
+    if (!valid) { $newSale.removeAttr("href"); return; }
+    const url = new URL($newSale.attr("data-sale-url"), window.location.origin);
+    url.searchParams.set("visor_producto", productID);
+    url.searchParams.set("visor_cantidad", String(quantity));
+    url.searchParams.set("visor_turno", $newSale.attr("data-turno-id"));
+    $newSale.attr("href", url.href);
+  }
+  $newSale.on("click", function(event){
+    updateNewSaleLink();
+    if ($newSale.attr("aria-disabled") === "true") event.preventDefault();
+  });
+
   function updateQuantityTotal(){
+    updateNewSaleLink();
     if (!currentProduct) { $total.text("—"); return; }
     const quantity = String($quantity.val() || "").trim();
     const price = String(currentProduct.precio || "0").match(/^(\d+)(?:\.(\d{1,2}))?$/);

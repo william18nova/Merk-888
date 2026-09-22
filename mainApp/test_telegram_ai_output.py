@@ -170,10 +170,13 @@ class AIOutputRecoveryTests(SimpleTestCase):
         self.assertEqual(post.call_count, 1)
 
     def test_retry_prefers_repairable_format_over_failed_server(self):
-        with patch.object(bot.requests, "post", side_effect=[response({}, 503), chat_calls(("buscar_producto", {"consulta": "tomate", "extra": True})), chat_calls(("buscar_producto", {"consulta": "tomate"}))]) as post:
+        repaired = response({"choices": [{"message": {"content": json.dumps({"name": "buscar_producto", "arguments": {"consulta": "tomate"}})}}]})
+        with patch.object(bot.requests, "post", side_effect=[response({}, 503), chat_calls(("buscar_producto", {"consulta": "tomate", "extra": True})), repaired]) as post:
             self.assertEqual(bot._intelligent_function_call("Busca el producto tomate")[0], "buscar_producto")
         self.assertIn("api.groq.com", post.call_args.args[0])
         self.assertIn("RECUPERACIÓN DE FORMATO", post.call_args.kwargs["json"]["messages"][0]["content"])
+        self.assertEqual(post.call_args.kwargs["json"]["response_format"], {"type": "json_object"})
+        self.assertNotIn("tools", post.call_args.kwargs["json"])
         self.assertEqual(post.call_count, 3)
 
     @override_settings(CEREBRAS_API_KEY="fake-c", OPENROUTER_API_KEY="fake-o")

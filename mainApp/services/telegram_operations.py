@@ -478,7 +478,7 @@ def tool_prepare_catalog(profile, arguments, update=None):
         argumentos={"entidad": entity, "operacion": operation, "registro_id": instance.pk if before else None, "datos": cleaned, "anterior": before},
         resumen=lines[0][:500], vence_en=timezone.now() + timedelta(minutes=bot.ACTION_TTL_MINUTES),
     )
-    return bot.BotReply(text, "preparar_cambio_catalogo", reply_markup={"inline_keyboard": [[
+    return bot.BotReply(text, "preparar_cambio_catalogo", proposal_id=str(pending.pk), reply_markup={"inline_keyboard": [[
         {"text": "Confirmar cambio", "callback_data": f"confirm:{pending.pk}"},
         {"text": "Cancelar", "callback_data": f"cancel:{pending.pk}"},
     ]]})

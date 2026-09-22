@@ -4853,11 +4853,45 @@ class GenerarVentaView(LoginRequiredMixin, View):
         return empleado_comprador
 
     # ---------- GET ----------
+    def _producto_desde_visor(self, request, turno, sucursal):
+        """El visor solo aporta ID y cantidad; precio e inventario salen del POS."""
+        if not user_can_access_url_name(request.user, "generar_venta"):
+            return None, "No tienes permiso para generar ventas."
+        if not turno or request.GET.get("visor_turno") != str(turno.pk):
+            return None, "El turno del visor ya no está abierto. Regresa al visor y vuelve a consultar el producto."
+        product_id = request.GET.get("visor_producto", "")
+        quantity = request.GET.get("visor_cantidad", "")
+        if (not re.fullmatch(r"[1-9][0-9]{0,9}", product_id)
+                or int(product_id) > 2147483647
+                or not re.fullmatch(r"[1-9][0-9]{0,6}", quantity)
+                or int(quantity) > 1000000):
+            return None, "La cantidad del visor debe estar entre 1 y 1.000.000, en unidades o gramos."
+        if not sucursal:
+            return None, "Configura la sucursal antes de enviar productos desde el visor."
+        item = (Inventario.objects.select_related("productoid")
+                .filter(sucursalid=sucursal, productoid_id=int(product_id)).first())
+        if not item:
+            return None, "Ese producto no está en el inventario de la sucursal de esta venta."
+        product = item.productoid
+        if product.tipo_ptm:
+            return None, "PTM se registra en Operaciones PTM, no en el carrito de productos."
+        if item.cantidad < int(quantity):
+            return None, f"No hay cantidad suficiente de {product.nombre}. Disponible: {item.cantidad}."
+        return {
+            "id": str(product.pk), "cantidad": int(quantity),
+            "nombre": product.nombre, "precio_unitario": str(product.precio),
+            "codigo_de_barras": product.codigo_de_barras or "",
+            "cantidad_disponible": item.cantidad,
+        }, ""
+
     def get(self, request, *args, **kwargs):
         turno_requerido = is_feature_enabled(
             TURN_REQUIRED_FEATURE,
             fresh=True,
         )
+        desde_visor = any(key in request.GET for key in (
+            "visor_producto", "visor_cantidad", "visor_turno",
+        ))
         turno = self._get_turno_activo(request.user) if turno_requerido else None
         if turno_requerido and not turno:
             messages.error(request, "Debes iniciar un turno de caja para poder generar ventas.")
@@ -4901,7 +4935,10 @@ class GenerarVentaView(LoginRequiredMixin, View):
         if pp_inst:
             initial["puntopago"] = getattr(pp_inst, "pk", pp_inst)
 
-        form = GenerarVentaForm(request.GET or None, initial=initial)
+        form_data = request.GET.copy()
+        for key in ("visor_producto", "visor_cantidad", "visor_turno"):
+            form_data.pop(key, None)
+        form = GenerarVentaForm(form_data or None, initial=initial)
 
         if turno:
             form = self._lock_fields(form)
@@ -4920,6 +4957,11 @@ class GenerarVentaView(LoginRequiredMixin, View):
         ctx["turno_id"]     = getattr(turno, "pk", None)
         ctx["sucursal_nombre"]  = getattr(suc_inst, "nombre", "") if suc_inst else ""
         ctx["puntopago_nombre"] = getattr(pp_inst, "nombre", "") if pp_inst else ""
+        if desde_visor:
+            visor_turno = turno if turno_requerido else self._get_turno_activo(request.user)
+            ctx["producto_desde_visor"], ctx["visor_venta_error"] = self._producto_desde_visor(
+                request, visor_turno, suc_inst,
+            )
 
         return render(request, self.template_name, ctx)
 
@@ -14289,16 +14331,30 @@ class InventarioPlazaWhatsappView(LoginRequiredMixin, TemplateView):
 
 
 
+def _visor_venta_context(user):
+    if not getattr(user, "is_authenticated", False):
+        return {}
+    if not user_can_access_url_name(user, "generar_venta"):
+        return {}
+    turno_id = (TurnoCaja.objects.filter(cajero=user, estado="ABIERTO")
+                .order_by("-inicio").values_list("pk", flat=True).first())
+    return {"visor_turno_id": turno_id} if turno_id else {}
+
+
 class VisorProductoBarcodeView( View):
     template_name = "visor_producto_barcode.html"
 
     def get(self, request):
-        return render(request, self.template_name, {"visor_cajero": False})
+        return render(request, self.template_name, {
+            "visor_cajero": False, **_visor_venta_context(request.user),
+        })
 
 
 class VisorProductosCajeroView(LoginRequiredMixin, View):
     def get(self, request):
-        return render(request, "visor_producto_barcode.html", {"visor_cajero": True})
+        return render(request, "visor_producto_barcode.html", {
+            "visor_cajero": True, **_visor_venta_context(request.user),
+        })
 
 
 class ProductoBuscarVisorCajeroView(LoginRequiredMixin, View):

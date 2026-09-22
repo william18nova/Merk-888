@@ -1,12 +1,13 @@
 import json
 from decimal import Decimal
+from unittest.mock import patch
 
 from django.conf import settings
 from django.contrib.auth.models import AnonymousUser
 from django.test import RequestFactory, SimpleTestCase, TestCase
 from django.urls import reverse
 
-from .models import Categoria, Producto, Usuario, Rol
+from .models import Categoria, Producto, Usuario, Rol, Sucursal, PuntosPago, TurnoCaja, Inventario, Venta
 from .permissions import user_can_access_url_name, _resolve_nav_item
 from .views import (ProductoBuscarVisorCajeroView, VisorProductosCajeroView,
                     ProductoBuscarBarrasVisorView, VisorProductoBarcodeView)
@@ -154,3 +155,118 @@ class VisorMarkupTests(SimpleTestCase):
         self.assertNotIn("setInterval(forceFocus", script)
         self.assertNotIn('$(document).on("focusin"', script)
         self.assertIn("BigInt(quantity)", script)
+
+
+class VisorNuevaVentaTests(TestCase):
+    def setUp(self):
+        self.user = Usuario.objects.create_user(
+            "Visor con turno", rolid=Rol.objects.create(nombre="Web Master"),
+        )
+        self.branch = Sucursal.objects.create(nombre="Sucursal visor")
+        point = PuntosPago.objects.create(nombre="Caja visor", sucursalid=self.branch)
+        self.turn = TurnoCaja.objects.create(cajero=self.user, puntopago=point)
+        category = Categoria.objects.create(nombre="Plaza visor")
+        self.product = Producto.objects.create(nombre="TOMATE POR GRAMO", precio="3.80", categoria=category)
+        self.stock = Inventario.objects.create(productoid=self.product, sucursalid=self.branch, cantidad=10000)
+        self.client.force_login(self.user)
+
+    def transfer(self, **overrides):
+        query = {"visor_producto": self.product.pk, "visor_cantidad": 500, "visor_turno": self.turn.pk}
+        query.update(overrides)
+        with patch("mainApp.views.is_feature_enabled", return_value=True):
+            return self.client.get(reverse("generar_venta"), query)
+
+    def test_active_shift_shows_new_cart_button_in_both_scanners(self):
+        for route in ("visor_cajero", "visor_barcode"):
+            response = self.client.get(reverse(route))
+            self.assertContains(response, 'id="vb_new_sale"')
+            self.assertContains(response, 'target="_blank" rel="noopener noreferrer"')
+            self.assertContains(response, f'data-turno-id="{self.turn.pk}"')
+            if route == "visor_barcode":
+                self.assertNotContains(response, 'id="vb_search"')
+
+    def test_button_absent_for_closed_or_closing_shift(self):
+        for state in ("CIERRE", "CERRADO"):
+            self.turn.estado = state
+            self.turn.save(update_fields=["estado"])
+            self.assertNotContains(self.client.get(reverse("visor_cajero")), 'id="vb_new_sale"')
+
+    def test_other_cashier_and_anonymous_do_not_use_someone_elses_shift(self):
+        other = Usuario.objects.create_user("Otro visor", rolid=self.user.rolid)
+        self.client.force_login(other)
+        self.assertNotContains(self.client.get(reverse("visor_cajero")), 'id="vb_new_sale"')
+        self.client.logout()
+        self.assertNotContains(self.client.get(reverse("visor_barcode")), 'id="vb_new_sale"')
+
+    def test_active_shift_does_not_bypass_sales_permissions(self):
+        with patch("mainApp.views.user_can_access_url_name", return_value=False):
+            self.assertNotContains(self.client.get(reverse("visor_cajero")), 'id="vb_new_sale"')
+            response = self.transfer()
+            self.assertIsNone(response.context["producto_desde_visor"])
+            self.assertContains(response, "No tienes permiso para generar ventas.")
+
+    def test_weight_and_latest_price_are_seeded_without_writing_sale_or_stock(self):
+        self.product.precio = Decimal("4.20")
+        self.product.save(update_fields=["precio"])
+        count = Venta.objects.count()
+        response = self.transfer(precio="0.01", nombre="FALSO")
+        self.assertEqual(response.status_code, 200)
+        item = response.context["producto_desde_visor"]
+        self.assertEqual(item["id"], str(self.product.pk))
+        self.assertEqual(item["cantidad"], 500)
+        self.assertEqual(item["precio_unitario"], "4.20")
+        self.assertEqual(item["nombre"], self.product.nombre)
+        self.assertEqual(Venta.objects.count(), count)
+        self.stock.refresh_from_db()
+        self.assertEqual(self.stock.cantidad, 10000)
+        self.assertContains(response, 'id="venta-visor-producto"')
+
+    def test_transfer_parameters_do_not_bind_the_sales_form(self):
+        response = self.transfer()
+        self.assertFalse(response.context["form"].is_bound)
+        self.assertEqual(response.context["form"].initial["puntopago"], self.turn.puntopago_id)
+
+    def test_stale_or_foreign_shift_is_rejected(self):
+        response = self.transfer(visor_turno=self.turn.pk + 1)
+        self.assertIsNone(response.context["producto_desde_visor"])
+        self.assertContains(response, "El turno del visor ya no está abierto")
+
+    def test_closed_shift_redirects_to_shift_page(self):
+        self.turn.estado = "CIERRE"
+        self.turn.save(update_fields=["estado"])
+        response = self.transfer()
+        self.assertRedirects(response, reverse("turno_caja"), fetch_redirect_response=False)
+
+    def test_optional_shifts_do_not_allow_transfer_from_a_closed_shift(self):
+        self.turn.estado = "CERRADO"
+        self.turn.save(update_fields=["estado"])
+        with patch("mainApp.views.is_feature_enabled", return_value=False):
+            response = self.client.get(reverse("generar_venta"), {
+                "visor_producto": self.product.pk, "visor_cantidad": 1, "visor_turno": self.turn.pk,
+            })
+        self.assertIsNone(response.context["producto_desde_visor"])
+        self.assertContains(response, "El turno del visor ya no está abierto")
+
+    def test_invalid_quantities_and_product_ids_never_preload(self):
+        for value in ("0", "-1", "0.5", "500g", "1000001", "9" * 100, ""):
+            with self.subTest(quantity=value):
+                response = self.transfer(visor_cantidad=value)
+                self.assertIsNone(response.context["producto_desde_visor"])
+        for value in ("-1", "abc", "2147483648", "9" * 100):
+            with self.subTest(product=value):
+                response = self.transfer(visor_producto=value)
+                self.assertIsNone(response.context["producto_desde_visor"])
+
+    def test_missing_product_and_insufficient_stock_are_explained(self):
+        response = self.transfer(visor_producto=self.product.pk + 10)
+        self.assertContains(response, "no está en el inventario")
+        response = self.transfer(visor_cantidad=10001)
+        self.assertIsNone(response.context["producto_desde_visor"])
+        self.assertContains(response, "Disponible: 10000")
+
+    def test_ptm_cannot_be_sent_as_merchandise(self):
+        self.product.tipo_ptm = "retiro"
+        self.product.save(update_fields=["tipo_ptm"])
+        response = self.transfer()
+        self.assertIsNone(response.context["producto_desde_visor"])
+        self.assertContains(response, "PTM se registra en Operaciones PTM")

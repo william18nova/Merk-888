@@ -225,10 +225,13 @@ def tool_pending(profile, arguments):
     keyboard = []
     for index, action in enumerate(rows[offset:offset + bot.LIST_PAGE_SIZE], offset + 1):
         lines.append(f"{index}. {bot._list_text(action.resumen, 300)} · vence {timezone.localtime(action.vence_en):%H:%M}")
-        # No confirma desde un resumen abreviado: debe revisar la propuesta original.
-        keyboard.append([{"text": f"Cancelar propuesta {index}", "callback_data": f"cancel:{action.pk}"}])
+        # Abrir primero el detalle completo; nunca confirmar el resumen abreviado.
+        keyboard.append([
+            {"text": f"Ver propuesta {index}", "callback_data": f"show:{action.pk}"},
+            {"text": f"Cancelar propuesta {index}", "callback_data": f"cancel:{action.pk}"},
+        ])
     if count:
-        lines.append("Confirma desde la propuesta original. /cancelar descarta todas las pendientes.")
+        lines.append("Pulsa Ver propuesta para revisar sus datos y recuperar los botones. /cancelar descarta todas las pendientes.")
     return bot.BotReply("\n".join(lines), "consultar_pendientes", reply_markup={"inline_keyboard": keyboard} if keyboard else None, pagination={"page": page, "pages": pages, "arguments": arguments})
 
 
@@ -365,6 +368,9 @@ def common_read_request(text):
     from .telegram_shortcuts import conversational_read_text
     bot = _bot()
     normalized = re.sub(r"\s+", " ", bot._normalized_text(conversational_read_text(text))).strip(" ¿?¡!.")
+    # Solo para estos patrones completos de lectura; no renombrar conceptos o
+    # productos que contengan estas palabras en el buscador o en una escritura.
+    normalized = re.sub(r"\b(?:el|del) dia de (hoy|ayer)\b", r"\1", normalized)
     normalized = re.sub(r"^jarvis[, ]+", "", normalized)
     normalized = re.sub(r"^por favor[, ]+|[, ]+por favor$", "", normalized)
     sale = bot._sale_detail_request(normalized)

@@ -96,7 +96,10 @@ def response_failure(response, data):
     if status >= 500 or status in {408, 409, 425}:
         return "unavailable", max(10, delay or 0), delay is None
     if error.get("code") == "tool_use_failed":
-        return "invalid_response", 0, True
+        return "invalid_response", delay or 0, delay is None
+    if status == 413:
+        # Solo el adaptador con recuperación de tamaño puede reintentarlo.
+        return "request", delay or 0, False
     # Un 400/413 puede depender del tamaño o contenido de ESTE mensaje, no de
     # la disponibilidad del proveedor para los demás usuarios.
     return "request", 0, False
@@ -105,12 +108,20 @@ def response_failure(response, data):
 def selected_tool_names(text, history, available):
     """Selección conservadora: si el tema es incierto mantiene el catálogo completo."""
     query = normalized(text)
-    continuation = bool(re.match(r"\s*(?:y\b|ahora\b|tambien\b|eso\b|ese\b|esa\b|si\b|no\b|cambial|ponl|hazl|separal|desglos|siguiente|anterior)", query))
+    short_reply = bool(re.fullmatch(
+        r"\s*(?:(?:por|en)\s*)?(?:nequi|neki|efectivo|tarjeta|daviplata|banco caja social|caja social)[.!?\s]*",
+        query,
+    ))
+    continuation = short_reply or bool(re.match(r"\s*(?:y\b|ahora\b|tambien\b|eso\b|ese\b|esa\b|si\b|no\b|cambial|ponl|hazl|separal|desglos|siguiente|anterior)", query))
     if continuation:
         previous = next((normalized(item.get("text", "")) for item in reversed(history or []) if item.get("role") == "user"), "")
         query += " " + previous
+        if short_reply:
+            clarification = next((normalized(item.get("text", "")) for item in reversed(history or []) if item.get("role") == "model"), "")
+            query += " " + clarification
     domains = [
         (r"\b(?:pago\w*|pague|pagado\w*|pagamos|pagar|paga|pagaron|egreso\w*|gasto\w*)\b", {"consultar_pagos", "consultar_pago", "preparar_edicion_pago", "preparar_registro_pago", "consultar_informe"}),
+        (r"\b(?:compra\w*|compre|compramos)\b", {"consultar_pagos", "preparar_registro_pago", "consultar_registros", "consultar_detalle_operativo", "consultar_informe"}),
         (r"\b(?:venta\w*|vendi\w*|vende\w*|vendio|factura\w*)\b", {"consultar_ventas", "consultar_detalle_operativo", "ranking_productos", "consultar_informe", "consultar_registros"}),
         (r"\b(?:producto\w*|precio\w*|stock|inventario\w*|agotado\w*|existencia\w*)\b", {"buscar_producto", "consultar_inventario", "consultar_registros", "ranking_productos", "preparar_cambio_catalogo"}),
         (r"\b(?:empleado\w*|personal|equipo)\b", {"listar_empleados", "consultar_registros", "preparar_cambio_catalogo", "consultar_horarios_empleados"}),

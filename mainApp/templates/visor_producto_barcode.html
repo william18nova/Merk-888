@@ -8,7 +8,7 @@
         href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"/>
   <link rel="stylesheet"
         href="{% static 'vendor/jquery-ui/jquery-ui-1.13.2.min.css' %}"/>
-  <link rel="stylesheet" href="{% static 'css/visor_barcode.css' %}?v=3">
+  <link rel="stylesheet" href="{% static 'css/visor_barcode.css' %}?v=4">
 {% endblock %}
 
 {% block content %}
@@ -73,6 +73,17 @@
         <p class="vb-hint" id="vb_quantity_help">Para productos por peso escribe gramos: 500 = medio kilo, 1000 = un kilo. Para los demás productos escribe unidades. Se usa el mismo precio registrado en el POS.</p>
         <div class="vb-total"><span>Total estimado</span><strong id="vb_total" aria-live="polite">—</strong></div>
         <small>Precio registrado × cantidad. Sin descuentos ni promociones.</small>
+        {% if visor_turno_id %}
+        <div class="vb-sale-action">
+          <a id="vb_new_sale" class="vb-btn vb-btn--sale" role="link"
+             target="_blank" rel="noopener noreferrer" aria-disabled="true" tabindex="-1"
+             data-sale-url="{% url 'generar_venta' %}" data-turno-id="{{ visor_turno_id }}"
+             aria-describedby="vb_new_sale_help">
+            <i class="fas fa-cart-plus" aria-hidden="true"></i> Vender en carrito nuevo
+          </a>
+          <p class="vb-hint" id="vb_new_sale_help">Abre otra pestaña con este producto y su cantidad. Tus otros carritos no cambian.</p>
+        </div>
+        {% endif %}
       </section>
     </div>
   </div>
@@ -86,5 +97,5 @@
 
 <script src="{% static 'vendor/jquery/jquery-3.6.4.min.js' %}"></script>
 <script src="{% static 'vendor/jquery-ui/jquery-ui-1.13.2.min.js' %}"></script>
-<script defer src="{% static 'javascript/visor_barcode.js' %}?v=3"></script>
+<script defer src="{% static 'javascript/visor_barcode.js' %}?v=4"></script>
 {% endblock %}

@@ -6858,6 +6858,35 @@ Cambio: ${money(cambio)}` : "";
     }, true);
   })();
 
+  function importProductFromVisor(){
+    const source = document.getElementById("venta-visor-producto");
+    // La URL no debe volver a precargar el producto al recargar o duplicar.
+    try {
+      const url = new URL(window.location.href);
+      const keys = ["visor_producto", "visor_cantidad", "visor_turno"];
+      if (keys.some(key => url.searchParams.has(key))) {
+        keys.forEach(key => url.searchParams.delete(key));
+        window.history.replaceState(window.history.state, "", url.href);
+      }
+    } catch (_) {}
+    if (!source) return;
+    let item;
+    try { item = JSON.parse(source.textContent); } catch (_) { return; }
+    source.remove();
+    const $notice = $("#venta-visor-notice");
+    if (productos.length || !hasSucursal() || !item?.id
+        || !Number.isInteger(item.cantidad) || item.cantidad < 1 || item.cantidad > 1000000) {
+      $notice.text("No se agregó el producto del visor. Consulta de nuevo desde el visor para abrir un carrito nuevo.");
+      return;
+    }
+    // Usa la identidad independiente de esta pestaña y el flujo normal del POS.
+    // No restaura, consume ni vacía ningún borrador de otro carrito.
+    updateCache(String(item.id), item);
+    addToCart(String(item.id), item.cantidad);
+    persistSaleDraftNow();
+    $notice.text(`${item.nombre}: ${item.cantidad.toLocaleString("es-CO")} agregado(s) desde el visor. Este carrito es independiente.`);
+  }
+
   /* ================== Init ================== */
   if ($cantidad && $cantidad.length) $cantidad.prop("disabled", true);
   if ($agregar && $agregar.length)  $agregar.prop("disabled", true);
@@ -6905,7 +6934,8 @@ Cambio: ${money(cambio)}` : "";
     });
   });
   saleDraftAutosaveReady = true;
-  void resumeSaleDraftPage();
+  // Registrar la presencia de esta pestaña antes de publicar su carrito.
+  void resumeSaleDraftPage().then(importProductFromVisor);
   cleanupExpiredSaleDrafts();
   refreshSaleDraftGenerateButton();
   offerSaleDraftForCurrentScope();

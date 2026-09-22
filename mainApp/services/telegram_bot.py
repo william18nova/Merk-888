@@ -45,10 +45,15 @@ from mainApp.services.telegram_payments import confirm_payment_edit
 from mainApp.services.telegram_schedule import confirm_schedule, handle_schedule_callback, schedule_buttons
 from mainApp.services.telegram_assistant import DATE_TOOLS, READ_TOOLS, common_read_request, resolve_continuation
 from mainApp.services.telegram_ai_output import (
-    AIOutputError, normalize_read_arguments, read_envelope, repair_instruction, strict_json,
+    AIOutputError, AIToolSelection, json_plan_instruction, normalize_read_arguments,
+    parse_selection, plan_question, read_envelope, repair_instruction, selection_prompt, strict_json, validate_plain_reply,
 )
 from mainApp.services.telegram_ai_policy import compact_history, compact_prompt, response_failure, selected_tool_names
 from mainApp.services.telegram_wording import CONVERSATION_STYLE, period_phrase, social_reply
+from mainApp.services.telegram_proposals import (
+    ensure_proposal_buttons, remember_confirmation, restore_confirmation,
+    reuse_update_proposal, show_pending_buttons,
+)
 from mainApp.services.telegram_search import choose_match, rank_candidates, rank_queryset, ranked_queryset, resolve_name
 from mainApp.services.telegram_queries import SMART_QUERY_RULES
 from mainApp.services.telegram_shortcuts import specific_read_request
@@ -60,7 +65,7 @@ logger = logging.getLogger(__name__)
 TELEGRAM_FILE_LIMIT = 20 * 1024 * 1024
 ACTION_TTL_MINUTES = 10
 LINK_CODE_TTL_MINUTES = 10
-AI_MAX_ATTEMPTS = 5  # Hasta cuatro proveedores configurados y un único reintento.
+AI_MAX_ATTEMPTS = 5  # Incluye selección de herramientas y recuperación de formato/tamaño.
 AI_RETRY_BUDGET_SECONDS = 35
 AI_OUTPUT_TOKENS = 4096
 LIST_PAGE_SIZE = 5
@@ -97,7 +102,7 @@ class TelegramAIProviderError(TelegramExternalError):
 
     def __init__(self, provider, kind, *, status=None, delay=0, retry_soon=None, reason=""):
         self.provider, self.kind, self.status, self.delay = provider, kind, status, delay
-        self.reason = reason if reason in {"format", "schema", "truncated", "empty", "multiple_actions", "unknown_tool", "blocked"} else ""
+        self.reason = reason if reason in {"format", "schema", "truncated", "empty", "multiple_actions", "unknown_tool", "blocked", "context_size", "missing_action"} else ""
         self.retry_soon = kind in {"connection", "invalid_response"} if retry_soon is None else retry_soon
         reasons = {
             "rate_limit": "alcanzó un límite de uso",
@@ -191,6 +196,8 @@ class BotReply:
     intent: str = ""
     reply_markup: dict | None = None
     pagination: dict | None = None
+    # Identidad generada por el dominio, nunca extraída del texto de la IA.
+    proposal_id: str | None = None
 
 
 def _configured(name):
@@ -411,7 +418,17 @@ class TelegramApiClient:
             )
         return data.get("result")
 
-    def send_message(self, chat_id, text, *, reply_markup=None):
+    def send_message(self, chat_id, text, *, reply_markup=None, require_buttons=False):
+        if require_buttons:
+            rows = reply_markup.get("inline_keyboard") if isinstance(reply_markup, dict) else None
+            if not (isinstance(rows, list) and rows and all(
+                isinstance(row, list) and row and all(
+                    isinstance(button, dict) and isinstance(button.get("text"), str) and button["text"].strip()
+                    and isinstance(button.get("callback_data"), str) and 1 <= len(button["callback_data"].encode("utf-8")) <= 64
+                    for button in row
+                ) for row in rows
+            )):
+                raise TelegramBotError("No pude adjuntar los botones de la propuesta. No se envió una confirmación incompleta.")
         clean_text = str(text or "").strip() or "Sin información para mostrar."
         # No recortar informes silenciosamente. El límite cuenta unidades UTF-16
         # para dejar margen incluso cuando hay emojis fuera del plano básico.
@@ -462,6 +479,7 @@ class TelegramApiClient:
                 {"command": "resumen", "description": "Resumen del negocio según tus permisos"},
                 {"command": "ranking", "description": "Quién vendió más: empleados, sucursales o clientes"},
                 {"command": "pendientes", "description": "Revisar tus propuestas pendientes"},
+                {"command": "botones", "description": "Recuperar los botones de una propuesta pendiente"},
                 {"command": "producto", "description": "Buscar un producto"},
                 {"command": "inventario", "description": "Consultar inventario"},
                 {"command": "pagos", "description": "Consultar pagos registrados"},
@@ -968,12 +986,15 @@ def tool_cash_shifts(profile, arguments):
 
 
 def _expense_confirmation_reply(pending):
+    arguments = pending.argumentos
+    summary = f"Registrar {arguments['concepto']} por {_list_money(arguments['monto'])} en {payment_method_label(arguments['medio_pago'])}"
     return BotReply(
         text=(
-            f"¿Confirmas que registre este pago?\n{pending.resumen}\n\n"
-            "Todavía no lo he guardado. Pulsa Confirmar; la propuesta vence en 10 minutos."
+            f"¿Confirmas que registre este pago?\n{summary}\n\n"
+            f"Todavía no lo he guardado. Pulsa Confirmar; vence el {timezone.localtime(pending.vence_en):%d/%m/%Y a las %H:%M}."
         ),
         intent="preparar_registro_pago",
+        proposal_id=str(pending.pk),
         reply_markup={
             "inline_keyboard": [[
                 {"text": "✅ Confirmar", "callback_data": f"confirm:{pending.pk}"},
@@ -1002,6 +1023,7 @@ def _expense_concept_choice_reply(pending):
             f"\n\n¿Usamos uno de estos o creamos {concept}? Elige un botón; después confirmarás el pago."
         ),
         intent="seleccionar_concepto_pago",
+        proposal_id=str(pending.pk),
         reply_markup={"inline_keyboard": keyboard},
     )
 
@@ -1272,8 +1294,10 @@ GROQ_CHAT_TOOLS = [
 ]
 
 
-def _ai_request_context(user_text, history=None):
-    names = selected_tool_names(user_text, history, TOOL_FUNCTIONS)
+def _ai_request_context(user_text, history=None, *, selected_names=None):
+    names = selected_tool_names(user_text, history, TOOL_FUNCTIONS) if selected_names is None else set(selected_names)
+    if not names or not names <= set(TOOL_FUNCTIONS):
+        raise AIOutputError("unknown_tool")
     definitions = [item for item in GEMINI_TOOLS[0]["functionDeclarations"] if item["name"] in names]
     system = _assistant_system_prompt() if names == set(TOOL_FUNCTIONS) else compact_prompt(timezone.localdate().isoformat(), names)
     return definitions, system, compact_history(history)
@@ -1293,20 +1317,23 @@ def _ai_response(provider, url, **kwargs):
     failure = response_failure(response, data)
     if failure:
         kind, delay, retry_soon = failure
-        raise TelegramAIProviderError(provider, kind, status=response.status_code, delay=delay, retry_soon=retry_soon)
+        reason = "context_size" if provider == "Groq" and response.status_code == 413 and kind == "request" else ""
+        explicit_wait = any(str(key).lower() == "retry-after" for key in (getattr(response, "headers", None) or {}))
+        raise TelegramAIProviderError(provider, kind, status=response.status_code, delay=delay,
+                                      retry_soon=(not explicit_wait and not delay) if reason else retry_soon, reason=reason)
     if not isinstance(data, dict):
         raise TelegramAIProviderError(provider, "invalid_response")
     return data
 
 
-def _gemini_function_call(user_text, history=None, *, repair=None):
+def _gemini_function_call(user_text, history=None, *, repair=None, selected_names=None):
     api_key = _configured("GEMINI_API_KEY")
     if not api_key:
         raise TelegramConfigurationError(
             "La comprensión libre no está disponible: falta GEMINI_API_KEY. Usa /ayuda para ver los comandos."
         )
     model = _configured("GEMINI_MODEL") or "gemini-3.8-flash"
-    definitions, system, history = _ai_request_context(user_text, history)
+    definitions, system, history = _ai_request_context(user_text, history, selected_names=selected_names)
     if repair:
         system += "\n" + repair_instruction(repair)
     contents = []
@@ -1411,12 +1438,12 @@ def _validated_ai_text(answer, allowed):
     envelope = read_envelope(answer)
     if envelope is not None:
         return _validated_ai_calls([envelope], allowed)
-    return "", {}, answer.strip()
+    return "", {}, validate_plain_reply(answer.strip())
 
 
-def _groq_function_call(user_text, history=None, *, repair=None):
+def _groq_function_call(user_text, history=None, *, repair=None, selected_names=None):
     return _compatible_function_call("Groq", "GROQ_API_KEY", "GROQ_CHAT_MODEL", "openai/gpt-oss-120b",
-                                     "https://api.groq.com/openai/v1/chat/completions", user_text, history, repair=repair)
+                                     "https://api.groq.com/openai/v1/chat/completions", user_text, history, repair=repair, selected_names=selected_names)
 
 
 def _cerebras_function_call(user_text, history=None, *, repair=None):
@@ -1429,16 +1456,22 @@ def _openrouter_function_call(user_text, history=None, *, repair=None):
                                      "https://openrouter.ai/api/v1/chat/completions", user_text, history, repair=repair)
 
 
-def _compatible_function_call(provider, key_setting, model_setting, default_model, url, user_text, history, *, repair=None):
+def _compatible_function_call(provider, key_setting, model_setting, default_model, url, user_text, history, *, repair=None, selected_names=None):
     api_key = _configured(key_setting)
     if not api_key:
         raise TelegramConfigurationError(f"Falta configurar {key_setting}.")
     model = _configured(model_setting) or default_model
     if provider == "OpenRouter" and not model.endswith(":free"):
         raise TelegramConfigurationError("OpenRouter solo permite un modelo fijo con sufijo :free.")
-    definitions, system, history = _ai_request_context(user_text, history)
-    if repair:
-        system += "\n" + repair_instruction(repair)
+    definitions, system, history = _ai_request_context(user_text, history, selected_names=selected_names)
+    routing = provider == "Groq" and repair == "context_size"
+    json_repair = provider == "Groq" and repair in {"format", "schema", "truncated", "empty", "unknown_tool", "multiple_actions", "missing_action"}
+    if routing:
+        # Solo envía el catálogo, no los 25 esquemas; la interpretación posterior
+        # recupera los esquemas elegidos sin recortar petición ni historial.
+        system = selection_prompt(GEMINI_TOOLS[0]["functionDeclarations"])
+    elif repair:
+        system += "\n" + repair_instruction(repair, json_mode=json_repair)
     names = {item["name"] for item in definitions}
     messages = [{"role": "system", "content": system}]
     for item in history or []:
@@ -1460,6 +1493,12 @@ def _compatible_function_call(provider, key_setting, model_setting, default_mode
         payload["provider"] = {"require_parameters": True, "max_price": {"prompt": 0, "completion": 0, "request": 0}}
     if provider == "Cerebras":
         payload["parallel_tool_calls"] = False
+    if routing or json_repair:
+        payload.pop("tools")
+        payload.pop("tool_choice")
+        payload["response_format"] = {"type": "json_object"}
+        if json_repair:
+            messages[0]["content"] += "\n" + json_plan_instruction(definitions)
     data = _ai_response(
         provider,
         url,
@@ -1476,6 +1515,16 @@ def _compatible_function_call(provider, key_setting, model_setting, default_mode
         if choice.get("finish_reason") == "content_filter":
             raise TelegramAIProviderError(provider, "invalid_response", reason="blocked", retry_soon=False)
         message = choice["message"]
+        if routing:
+            return parse_selection(message.get("content"), set(TOOL_FUNCTIONS))
+        if json_repair:
+            value = strict_json(message.get("content"))
+            question = plan_question(value)
+            if question is not None:
+                return "", {}, question
+            if not isinstance(value, dict) or set(value) != {"name", "arguments"}:
+                raise AIOutputError("schema")
+            return _validated_ai_calls([(value["name"], value["arguments"])], names)
         tool_calls = message.get("tool_calls") or []
         if tool_calls:
             if not isinstance(tool_calls, list):
@@ -1506,12 +1555,23 @@ def _intelligent_function_call(user_text, history=None):
     started, attempts = time.monotonic(), 0
     errors, retry_candidates = {}, []
 
-    def attempt(provider, fingerprint, repair=None):
+    def attempt(provider, fingerprint, repair=None, selected_names=None):
         nonlocal attempts
         name, _, _, function = provider
         attempts += 1
         try:
-            result = function(user_text, history=history, **({"repair": repair} if repair else {}))
+            options = {"repair": repair} if repair else {}
+            if selected_names is not None:
+                options["selected_names"] = selected_names
+            result = function(user_text, history=history, **options)
+            if isinstance(result, AIToolSelection):
+                if attempts >= AI_MAX_ATTEMPTS or time.monotonic() - started >= AI_RETRY_BUDGET_SECONDS:
+                    raise TelegramAIProviderError(name, "request", status=413, reason="context_size", retry_soon=False)
+                names = set(result.names)
+                if len(names) > 1:
+                    names.add("consultar_varias")
+                logger.info("IA Telegram proveedor=%s contexto_reducido_funciones=%s intento=%s", name, len(names), attempts)
+                return attempt(provider, fingerprint, selected_names=names)
         except TelegramBotError as raw:
             exc = raw if isinstance(raw, TelegramAIProviderError) else TelegramAIProviderError(
                 name, "unavailable" if raw.retryable else "request", delay=10 if raw.retryable else 0,
@@ -1549,14 +1609,20 @@ def _intelligent_function_call(user_text, history=None):
             return result
         if error.retry_soon:
             retry_candidates.append((provider, fingerprint, error))
-    # Cambiar de proveedor tiene prioridad sobre repetir uno fallido. Solo un
-    # reintento extra, nunca por 429, credenciales, modelo o Retry-After explícito.
+    # Cambiar de proveedor tiene prioridad. Una recuperación extra: normalmente
+    # una llamada, o selección + interpretación para 413, siempre dentro de cinco
+    # intentos totales. Nunca reintentar 429, claves, modelo o Retry-After explícito.
+    retry_candidates = [candidate for candidate in retry_candidates
+                        if attempts + (2 if candidate[2].reason == "context_size" else 1) <= AI_MAX_ATTEMPTS]
+    retry_candidates.sort(key=lambda candidate: (0 if candidate[2].kind == "invalid_response" else
+                                                 1 if candidate[2].reason == "context_size" else 2))
     if retry_candidates and attempts < AI_MAX_ATTEMPTS and time.monotonic() - started < AI_RETRY_BUDGET_SECONDS:
         time.sleep(random.uniform(0.4, 0.8))
-        # Reparar una salida inválida tiene prioridad sobre repetir una caída.
-        retry_candidates.sort(key=lambda candidate: candidate[2].kind != "invalid_response")
+    if retry_candidates and attempts < AI_MAX_ATTEMPTS and time.monotonic() - started < AI_RETRY_BUDGET_SECONDS:
         provider, fingerprint, previous_error = retry_candidates[0]
-        repair = (previous_error.reason or "format") if previous_error.kind == "invalid_response" else None
+        repair = (previous_error.reason or "format") if previous_error.kind == "invalid_response" else (
+            "context_size" if previous_error.reason == "context_size" else None
+        )
         result, error = attempt(provider, fingerprint, repair=repair)
         if error is None:
             return result
@@ -1620,6 +1686,7 @@ def _execute_tool(profile, tool_name, arguments, update=None):
             arguments = _expense_query_arguments(profile, arguments)
         if tool_name in {"preparar_registro_pago", "preparar_cambio_catalogo", "preparar_devolucion_venta", "preparar_turno_empleado", "preparar_edicion_pago"}:
             result = function(profile, arguments, update=update)
+            remember_confirmation(profile, result)
         else:
             result = function(profile, arguments)
         pagination = result.pagination if isinstance(result, BotReply) else None
@@ -1655,6 +1722,7 @@ HELP_TEXT = (
     "• /resumen — panorama del negocio según tus permisos\n"
     "• /ranking empleados [DESDE HASTA] — ventas por empleado; también clientes, sucursales o cajas\n"
     "• /pendientes — tus propuestas sin confirmar\n"
+    "• /botones — volver a mostrar una propuesta pendiente y sus botones\n"
     "• /producto NOMBRE_O_ID\n"
     "• /inventario NOMBRE_O_ID\n"
     "• /pagos — lista de pagos de hoy con detalle y totales\n"
@@ -1759,7 +1827,7 @@ def _handle_callback(update, profile, client):
         return handle_schedule_callback(update, profile, client)
     if data.startswith("page:"):
         return _handle_list_page_callback(update, profile, client)
-    match = re.fullmatch(r"(confirm|cancel|concept|newconcept):([0-9a-fA-F-]{36})(?::([0-9]{1,2}))?", data)
+    match = re.fullmatch(r"(confirm|cancel|concept|newconcept|show):([0-9a-fA-F-]{36})(?::([0-9]{1,2}))?", data)
     if not match or (match.group(1) == "concept") != (match.group(3) is not None):
         client.answer_callback(update.callback_query_id, "Botón no reconocido")
         return BotReply("Ese botón ya no es válido.", "callback_invalido")
@@ -1790,6 +1858,9 @@ def _handle_callback(update, profile, client):
             action.resuelto_en = timezone.now()
             action.save(update_fields=["estado", "resuelto_en"])
             message = "Ya pasó el tiempo para confirmar. Pídeme el cambio de nuevo para revisar los datos actuales."
+        elif verb == "show":
+            reply = restore_confirmation(profile, action)
+            message = "Revisa el detalle antes de confirmar. No se guardó ningún cambio."
         elif verb == "cancel":
             action.estado = "CANCELADA"
             action.resuelto_en = timezone.now()
@@ -1898,6 +1969,8 @@ def _handle_command(update, profile, text):
     if command == "/estado":
         role = getattr(getattr(profile.usuario, "rolid", None), "nombre", "Sin rol")
         return BotReply(f"Vinculado como {profile.usuario.nombreusuario} · rol {role}.", "estado")
+    if command == "/botones":
+        return show_pending_buttons(profile, update)
     if command == "/cancelar":
         from mainApp.models import TelegramAccionPendiente
         changed = TelegramAccionPendiente.objects.filter(
@@ -1996,6 +2069,14 @@ def _build_reply(update, client):
         return BotReply("Envíame texto o una nota de voz con tu solicitud.", "sin_texto")
     if not getattr(profile.usuario, "is_active", False):
         raise PermissionDenied("Usuario inactivo.")
+    if re.sub(r"\s+", " ", _normalized_text(text)).strip(" ¿?¡!.,") in {
+        "confirmar", "confirmo", "confirmar pago", "confirmar devolucion", "botones",
+        "no veo los botones", "no aparecen los botones", "no me salen los botones",
+        "no salen los botones", "no me aparecen los botones", "no veo el boton confirmar",
+        "muestra los botones", "muestrame los botones", "recuperar botones",
+    }:
+        # Volver a mostrar no confirma nada ni crea una propuesta duplicada.
+        return show_pending_buttons(profile, update)
     greeting = social_reply(text)
     if greeting is not None:
         return BotReply(greeting, "conversacion")
@@ -2105,8 +2186,10 @@ def process_next_update():
                     raise TelegramBotError("El audio supera el límite de 20 MB.")
                 update.transcripcion = transcribe_voice(client.download_voice(update.voice_file_id), update=update)
                 update.save(update_fields=["transcripcion"])
-            reply = build_reply(update, client)
-            client.send_message(update.telegram_chat_id, reply.text, reply_markup=reply.reply_markup)
+            reply = reuse_update_proposal(update) or build_reply(update, client)
+            reply = ensure_proposal_buttons(update, reply)
+            client.send_message(update.telegram_chat_id, reply.text, reply_markup=reply.reply_markup,
+                                require_buttons=bool(reply.proposal_id))
             update.estado = "PROCESADO"
             update.intencion = reply.intent[:80]
             update.respuesta = reply.text[:8000]

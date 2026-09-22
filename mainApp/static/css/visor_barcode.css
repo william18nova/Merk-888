@@ -312,6 +312,11 @@
 .vb-total { background: #53b7ff14; border: 1px solid #65beff40; border-radius: 14px; padding: 16px 18px; }
 .vb-total span { display: block; font-size: 13px; color: #c4def5; }
 .vb-total strong { display: block; color: #87ddff; font-size: clamp(22px, 2.7vw, 34px); margin-top: 6px; overflow-wrap: anywhere; }
+.vb-sale-action { margin-top: 22px; padding-top: 20px; border-top: 1px solid #ffffff25; }
+.vb-btn--sale { display: flex; align-items: center; justify-content: center; gap: 10px; width: 100%; height: auto; min-height: 54px; padding: 14px 18px; border-radius: 14px; color: #fff; background: linear-gradient(135deg, #358de8, #2463c3); font-size: 15px; font-weight: 750; text-decoration: none; text-align: center; box-shadow: 0 8px 22px #071a3744; }
+.vb-btn--sale:hover { color: #fff; background: #286fcd; }
+.vb-btn--sale:focus-visible { outline: 3px solid #9cdeff; outline-offset: 4px; }
+.vb-btn--sale[aria-disabled="true"] { opacity: .45; cursor: not-allowed; box-shadow: none; }
 .vb-autocomplete.ui-widget-content { background: #122b4c; color: #eff7ff; border: 1px solid #74afff66; padding: 6px; border-radius: 14px; box-shadow: 0 18px 40px #03122666; max-height: 330px; }
 .vb-autocomplete .vb-result { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px; border: 1px solid transparent; border-radius: 9px; margin: 0; }
 .vb-autocomplete .ui-state-active { background: #285893; border-color: #6bb8ff; color: white; margin: 0; }

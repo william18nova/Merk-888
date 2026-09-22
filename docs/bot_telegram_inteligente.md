@@ -690,11 +690,14 @@ Credenciales rechazadas o modelos inexistentes mantienen cinco minutos de pausa;
 cambiar la clave o el modelo permite reintentarlo inmediatamente. Las pausas son
 por proveedor/configuración dentro del proceso del trabajador.
 
-Se prueban primero los proveedores alternativos configurados. Con dos proveedores,
-si ambos fallan por problemas transitorios o respuestas inválidas, se permite un
-único reintento adicional con una espera de 0,4–0,8 segundos, hasta tres llamadas.
-Con los cuatro proveedores se da una oportunidad a cada uno y puede hacerse ese
-único intento extra: **máximo cinco llamadas de interpretación por mensaje**.
+Se prueban primero los proveedores alternativos configurados. Después puede haber
+una recuperación adicional, con una espera de 0,4–0,8 segundos: normalmente una
+llamada; para un HTTP 413 de Groq puede necesitar dos (seleccionar herramientas e
+interpretar con sus esquemas). Con dos proveedores son como máximo cuatro llamadas;
+con los cuatro se da una oportunidad a cada uno y queda un intento extra. En todos
+los casos hay un **máximo de cinco llamadas de interpretación por mensaje**, contando
+también la selección de herramientas. Si no quedan dos intentos, no empieza la
+recuperación de tamaño.
 No se reintenta inmediatamente un 429, una clave inválida, un modelo inexistente
 ni un error con espera explícita. Tampoco se hace ese intento extra si ya han
 transcurrido 35 segundos. Las conexiones tienen timeout de 5 segundos y las
@@ -737,22 +740,98 @@ primer proveedor responde correctamente.
   caído. Recibe una instrucción específica y la petición/historial originales,
   sin incluir cuerpos de error ni respuestas incompletas del proveedor. Sigue
   respetando el límite de intentos y las pausas por cuota o `Retry-After`.
+- Si Groq rechaza la generación de una llamada nativa (`tool_use_failed`, HTTP
+  400) o devuelve un formato no válido, la recuperación usa modo objeto JSON,
+  con los esquemas completos de las funciones seleccionadas. Ese modo solo ayuda
+  al formato: el servidor vuelve a comprobar función, argumentos, permisos y
+  confirmación. No ejecuta SQL, fragmentos de texto ni respuestas parciales.
+- Un HTTP 413 de Groq activa, si queda presupuesto, una selección de una a cuatro
+  funciones usando nombres y descripciones del catálogo, sin sus esquemas. Después
+  se envían los esquemas completos seleccionados y la misma pregunta e historial
+  ya preparado. No se acorta más el audio transcrito ni se eliminan sus filtros.
+  La selección no es una acción ejecutable; si falta información puede pedir una
+  aclaración. Las consultas múltiples siguen siendo exclusivamente de lectura.
 - Los diagnósticos distinguen `truncated`, `schema`, `empty`, `format`,
-  `multiple_actions` y `unknown_tool`, sin registrar el contenido privado del
+  `multiple_actions`, `unknown_tool`, `context_size` y `missing_action`, sin registrar el contenido privado del
   mensaje en esos logs. Los bloqueos de contenido no se reintentan como un
   problema de formato.
 - Frases de cortesía como «¿me puedes decir cuánto pagamos hoy?» aprovechan los
   atajos existentes. No se eliminan filtros ni instrucciones adicionales para
   forzar una coincidencia. También funciona sobre audios ya transcritos.
+- «¿Cuánto se ha pagado el día de hoy?» y «Muéstrame los pagos del día de hoy»
+  usan consultas locales, sin interpretación de IA. Los filtros o instrucciones
+  adicionales no reconocidos siguen pasando a la IA, sin descartarlos.
+- «Confirmar» o «Confirmar.» por texto o audio vuelven a mostrar las propuestas
+  pendientes sin llamar a la IA ni guardar cambios. Una respuesta corta como
+  «Neki» o «pornéki» conserva el contexto reciente del pago al elegir herramientas;
+  el texto original no se modifica y no confirma operaciones automáticamente.
 
 Referencias de los proveedores: [límites y razonamiento de Gemini](https://ai.google.dev/gemini-api/docs/generate-content/thinking)
-y [razonamiento de Groq](https://console.groq.com/docs/reasoning).
+y [razonamiento de Groq](https://console.groq.com/docs/reasoning),
+[modo JSON de Groq](https://console.groq.com/docs/structured-outputs) y
+[llamadas a herramientas de Groq](https://console.groq.com/docs/tool-use/local-tool-calling).
 
 No requiere nuevas migraciones ni claves. Para activar, actualizar el código y
 reiniciar la misma tarea Always-on del bot (sin crear otro trabajador); recargar
 la Web si se usa el procesamiento desde la aplicación. Las pruebas automatizadas
 simulan proveedores: no demuestran una reducción porcentual de fallos en producción.
 Persisten posibles caídas externas, cuotas agotadas y configuraciones incorrectas.
+
+### Confirmaciones reales y recuperación de botones
+
+Una respuesta de IA que imita «¿Confirmas registrar este pago?» o indica pulsar
+botones sin crear una propuesta no es una confirmación válida. Se detecta como
+`missing_action` y se intenta recuperar mediante la función de preparación real,
+con los mismos límites de reintentos. Nunca se crean botones a partir de importes,
+nombres o identificadores extraídos de esa respuesta inventada. Las preguntas por
+datos faltantes, como «¿Cuánto pagaste y con qué medio?», siguen siendo preguntas;
+no implican que haya una operación preparada.
+
+- `/botones`, «no veo los botones» y «no me salen los botones» funcionan sin
+  interpretación de IA. Una propuesta vigente se muestra de nuevo completa;
+  si hay varias, se ofrece la lista para elegir. Si no hay ninguna, se explica
+  que hay que enviar nuevamente la solicitud completa, sin fingir una pendiente.
+- `/pendientes` añade **Ver propuesta** junto a Cancelar. El resumen de la lista
+  no permite confirmar: primero se abre el detalle con sus botones propios.
+- Se recuperan propuestas de pagos, correcciones, devoluciones, horarios y
+  cambios de catálogo. Un pago con conceptos parecidos vuelve a mostrar sus
+  opciones; elegir un concepto aún requiere confirmar después.
+- Las propuestas nuevas conservan el texto completo generado por el sistema en
+  sus argumentos internos, ligado a los datos de la acción mediante una huella.
+  Si el detalle de una propuesta antigua no está disponible o ya no corresponde
+  a esos datos, no se habilita Confirmar desde su resumen: debe pedirse de nuevo.
+- Recuperar no crea otra propuesta, no ejecuta cambios ni amplía su vencimiento.
+  Se comprueban identidad, estado y permisos; al confirmar se vuelven a aplicar
+  las validaciones del dominio y la protección contra dobles confirmaciones.
+- Todas las propuestas de escritura llevan un identificador estructurado que
+  asigna el servidor. Antes de enviar, el trabajador vuelve a cargar esa propuesta
+  de la misma cuenta y reconstruye obligatoriamente su detalle y su teclado desde
+  el estado guardado. No depende de la redacción de la IA ni del teclado que haya
+  devuelto el generador del mensaje. Si aún falta elegir concepto, muestra esas
+  opciones y no permite saltar directamente a Confirmar.
+- Si un generador omite el teclado, la comprobación previa al envío lo repone
+  automáticamente. El transporte también rechaza una propuesta marcada como
+  confirmable si no lleva botones válidos: no envía ese texto solo. Una propuesta
+  sin identidad, sin detalle verificable, ajena o vencida no recibe botones de
+  confirmación inventados.
+- Si falla temporalmente el envío y el trabajador reintenta la actualización,
+  reutiliza la propuesta ligada a ese mismo mensaje de entrada. No vuelve a
+  interpretar ni a crear otra propuesta. Conserva el vencimiento, no revive
+  propuestas resueltas o vencidas y respeta el máximo existente de tres intentos
+  del trabajador. `/botones` queda como alternativa manual, no como paso habitual.
+- En mensajes largos, Telegram recibe los botones al final del último fragmento,
+  después de todo el detalle, no junto a una parte incompleta.
+
+Estas comprobaciones garantizan el requisito interno de adjuntar el teclado a
+las confirmaciones válidas; no garantizan la entrega ni la visualización en la
+aplicación de Telegram ante fallos externos de red, plataforma o dispositivo.
+
+No requiere migraciones ni credenciales nuevas. Actualizar el código y reiniciar
+la misma tarea Always-on del bot; recargar también la Web si procesa mensajes.
+`/botones` funciona al escribirlo aunque el menú no se haya actualizado. Para
+añadirlo al menú visible, volver a configurar el webhook desde el panel existente.
+Las pruebas usan Telegram e IA simulados, sin enviar mensajes ni registrar pagos
+en producción.
 
 ### Menor consumo y continuidad de las conversaciones
 
