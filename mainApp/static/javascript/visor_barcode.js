@@ -646,29 +646,69 @@ $(function () {
   });
 
   if ($search.length && VISOR_CAJERO_URL) {
-    let searchController = null;
-    $search.on("input", function(){ pendingPick = null; paintEmpty(); });
-    $search.autocomplete({
-      minLength: 1, delay: 0, autoFocus: true, appendTo: "body",
-      source: function(req, resp){
-        searchController?.abort();
-        searchController = new AbortController();
-        fetch(`${VISOR_CAJERO_URL}?term=${encodeURIComponent(req.term)}`, {cache: "no-store", signal: searchController.signal})
-          .then(r => { if (!r.ok) throw new Error("No se pudo consultar. Revisa tu sesión e inténtalo de nuevo."); return r.json(); })
-          .then(data => resp((data.results || []).map(p => ({
-            label: `ID ${p.id} — ${p.text} — ${moneyCOP(p.precio)}`,
-            value: p.text,
-            product: {id:p.id, nombre:p.text, codigo_de_barras:p.barcode, precio:p.precio, precio_anterior:p.precio_anterior}
-          }))))
-          .catch(error => { resp([]); if (error.name !== "AbortError") showErr(error.message); });
-      },
-      select: function(_event, ui){
-        pendingPick = null;
-        $search.val(ui.item.value);
-        $inp.val(ui.item.product.codigo_de_barras || "");
-        paintProduct(ui.item.product);
-        return false;
+    const engine = window.NovaProductAutocomplete;
+    const cacheKey = `nova:visor-catalog:v1:u${VISOR_USUARIO_ID}`;
+    const boostKey = `nova:visor-picks:v1:u${VISOR_USUARIO_ID}`;
+    let storage = null, picks = {}, revision = 0;
+    try { storage = window.localStorage; picks = JSON.parse(storage.getItem(boostKey) || "{}"); } catch (_) {}
+    if (!picks || typeof picks !== "object" || Array.isArray(picks)) picks = {};
+    const catalog = engine.createCatalog({
+      url: `${VISOR_CAJERO_URL}?catalogo=1`, storageKey: cacheKey, storage,
+      getBoost: () => picks,
+    });
+    function itemsFor(term) {
+      return catalog.search(term, 40).map(p => ({
+        id: p.id, label: p.name, value: p.name, name: p.name, price: p.price, barcode: p.barcode,
+        product: {id: p.id, nombre: p.name, codigo_de_barras: p.barcode, precio: p.price,
+          precio_anterior: catalog.get(p.id)?.previous_price || ""},
+      }));
+    }
+    async function refreshCatalog() {
+      try { await catalog.ensure(); hideErr(); }
+      catch (error) {
+        showErr(catalog.ready
+          ? "Mostrando los últimos precios guardados. No se pudo actualizar el catálogo."
+          : "No pudimos cargar los productos. Revisa tu conexión y vuelve a buscar.");
       }
+    }
+    $search.on("input", function(){ revision++; pendingPick = null; paintEmpty(); });
+    engine.createAutocomplete($, {
+      $inp: $search, minChars: 1, openIfEmpty: false,
+      enterTermKey: engine.normalizeUnits,
+      sourceFn(req, respond) {
+        const term = String(req.term || "").trim();
+        const ownRevision = ++revision;
+        if (!term) { respond([]); return; }
+        if (catalog.ready) { respond(itemsFor(term)); void refreshCatalog(); return; }
+        refreshCatalog().then(() => {
+          respond(ownRevision === revision && engine.normalizeUnits($search.val()) === engine.normalizeUnits(term)
+            ? itemsFor(term) : []);
+        });
+      },
+      async onEnterFallback(term) {
+        await refreshCatalog();
+        return itemsFor(term)[0] || null;
+      },
+      onSelect(item) {
+        revision++;
+        pendingPick = null;
+        $search.val(item.value);
+        $inp.val(item.product.codigo_de_barras || "");
+        picks[String(item.id)] = (Number(picks[String(item.id)]) || 0) + 1;
+        try { storage?.setItem(boostKey, JSON.stringify(picks)); } catch (_) {}
+        paintProduct(item.product);
+      },
+    });
+    applyVisorResultTemplate($search);
+    $search.on("autocompleteopen", () => $search.autocomplete("widget").addClass("vb-autocomplete"));
+    // Igual que el POS: preparar el catálogo antes de que el usuario escriba.
+    void refreshCatalog();
+    window.addEventListener("focus", () => {
+      void refreshCatalog().then(() => {
+        if (document.activeElement === $search[0] && !currentProduct && $search.val()) {
+          $search.autocomplete("search", $search.val());
+        }
+      });
     });
   }
 
@@ -720,6 +760,10 @@ $(function () {
         $field.autocomplete("close");
       }
     });
+    applyVisorResultTemplate($field);
+  }
+
+  function applyVisorResultTemplate($field) {
     const instance = $field.autocomplete("instance");
     instance._renderItem = function(ul, item) {
       const left = $("<div>").addClass("vb-result-main");
@@ -731,7 +775,6 @@ $(function () {
     };
   }
   enhanceAutocomplete($inp, VISOR_BARRAS_URL, "barcode");
-  if ($search.length) enhanceAutocomplete($search, VISOR_CAJERO_URL, "name");
 
   // Un lector no debe elegir un código parcial solo porque quedó resaltado.
   let barcodeKeyboardChoice = false;

@@ -14359,6 +14359,17 @@ class VisorProductosCajeroView(LoginRequiredMixin, View):
 
 class ProductoBuscarVisorCajeroView(LoginRequiredMixin, View):
     def get(self, request):
+        if request.GET.get("catalogo") == "1":
+            # Catálogo de precios del visor, sin filtrar por existencias. No
+            # expone costos, proveedores ni otros datos internos del producto.
+            rows = Producto.objects.order_by("nombre", "pk").values(
+                "productoid", "nombre", "precio", "precio_anterior", "codigo_de_barras",
+            )
+            return JsonResponse({"results": [{
+                "id": p["productoid"], "name": p["nombre"],
+                "barcode": p["codigo_de_barras"] or "", "price": str(p["precio"]),
+                "previous_price": str(p["precio_anterior"]) if p["precio_anterior"] is not None else "",
+            } for p in rows]}, headers={"Cache-Control": "private, no-store"})
         term = (request.GET.get("term") or "").strip()[:160]
         if not term:
             return JsonResponse({"results": []})

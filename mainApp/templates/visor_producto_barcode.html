@@ -29,7 +29,8 @@
     {% if visor_cajero %}
     <div class="vb-inputwrap">
       <label for="vb_search"><i class="fas fa-magnifying-glass" aria-hidden="true"></i> Nombre o ID del producto</label>
-      <input id="vb_search" class="vb-input" autocomplete="off" placeholder="Ej.: tomate o 2978">
+      <input id="vb_search" class="vb-input" autocomplete="off" autocapitalize="off"
+             autocorrect="off" spellcheck="false" placeholder="Ej.: tomate o 2978">
       <p class="vb-hint">Escribe para buscar · ↑ ↓ para elegir · Enter para consultar</p>
     </div>
     {% endif %}
@@ -93,9 +94,11 @@
   const VISOR_BARRAS_URL  = "{% url 'visor_barcode_buscar' %}";
   const VISOR_LOOKUP_URL  = "{% url 'visor_barcode_lookup' %}";
   const VISOR_CAJERO_URL = "{% if visor_cajero %}{% url 'visor_cajero_buscar' %}{% endif %}";
+  const VISOR_USUARIO_ID = "{{ request.user.pk|default:''|escapejs }}";
 </script>
 
 <script src="{% static 'vendor/jquery/jquery-3.6.4.min.js' %}"></script>
 <script src="{% static 'vendor/jquery-ui/jquery-ui-1.13.2.min.js' %}"></script>
-<script defer src="{% static 'javascript/visor_barcode.js' %}?v=5"></script>
+<script src="{% static 'javascript/product_autocomplete.js' %}?v=1"></script>
+<script defer src="{% static 'javascript/visor_barcode.js' %}?v=6"></script>
 {% endblock %}

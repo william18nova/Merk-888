@@ -102,6 +102,24 @@ class VisorProductosTests(TestCase):
         item = json.loads(self.search("tomate").content)["results"][0]
         self.assertEqual(set(item), {"id", "text", "barcode", "precio", "precio_anterior"})
 
+    def test_local_catalog_contains_all_prices_without_inventory_filter(self):
+        branch = Sucursal.objects.create(nombre="Catálogo visor")
+        Inventario.objects.create(productoid=self.product, sucursalid=branch, cantidad=-804712)
+        Inventario.objects.create(productoid=self.other, sucursalid=branch, cantidad=0)
+        request = RequestFactory().get(reverse("visor_cajero_buscar"), {"catalogo": "1"})
+        request.user = self.user
+        with self.assertNumQueries(1):
+            response = ProductoBuscarVisorCajeroView.as_view()(request)
+        rows = json.loads(response.content)["results"]
+        self.assertEqual({row["id"] for row in rows}, {self.product.pk, self.other.pk})
+        self.assertEqual(set(rows[0]), {"id", "name", "barcode", "price", "previous_price"})
+        self.assertIn("no-store", response["Cache-Control"])
+
+    def test_anonymous_cannot_download_the_cashier_catalog(self):
+        request = RequestFactory().get(reverse("visor_cajero_buscar"), {"catalogo": "1"})
+        request.user = AnonymousUser()
+        self.assertEqual(ProductoBuscarVisorCajeroView.as_view()(request).status_code, 302)
+
     def test_public_barcode_search_does_not_search_names(self):
         request = RequestFactory().get(reverse("visor_barcode_buscar"), {"term": "MANZANA", "page": "abc"})
         request.user = AnonymousUser()
@@ -138,11 +156,22 @@ class VisorMarkupTests(SimpleTestCase):
     def test_both_autocompletes_share_fast_cache_and_safe_renderer(self):
         script = (settings.BASE_DIR / "mainApp/static/javascript/visor_barcode.js").read_text(encoding="utf-8")
         self.assertIn('enhanceAutocomplete($inp, VISOR_BARRAS_URL, "barcode")', script)
-        self.assertIn('enhanceAutocomplete($search, VISOR_CAJERO_URL, "name")', script)
+        self.assertIn('engine.createAutocomplete($, {', script)
+        self.assertIn('catalog.search(term, 40)', script)
+        self.assertNotIn('$search.autocomplete({', script)
         self.assertIn("delay: 0, autoFocus: true, source", script)
         self.assertIn("Date.now() - saved.at < 5000", script)
         self.assertIn(".text(item.product.nombre)", script)
         self.assertIn('e.stopImmediatePropagation()', script)
+
+    def test_pos_and_cashier_use_the_same_search_engine_and_keyboard_widget(self):
+        pos = (settings.BASE_DIR / "mainApp/static/javascript/generar_venta.js").read_text(encoding="utf-8")
+        self.assertIn("window.NovaProductAutocomplete.createSearch", pos)
+        self.assertIn("window.NovaProductAutocomplete.createAutocomplete", pos)
+        self.assertIn("window.NovaProductAutocomplete.createIndex", pos)
+        for page, script in (("generar_venta", "generar_venta"), ("visor_producto_barcode", "visor_barcode")):
+            template = (settings.BASE_DIR / f"mainApp/templates/{page}.html").read_text(encoding="utf-8")
+            self.assertLess(template.index("javascript/product_autocomplete.js"), template.index(f"javascript/{script}.js"))
 
     def test_local_autocomplete_assets_and_gram_instructions(self):
         template = (settings.BASE_DIR / "mainApp/templates/visor_producto_barcode.html").read_text(encoding="utf-8")
