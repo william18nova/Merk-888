@@ -10196,16 +10196,21 @@ class NequiNotificacionesDisponiblesView(LoginRequiredMixin, View):
     def get(self, request, *args, **kwargs):
         if not is_feature_enabled(NEQUI_API_FEATURE):
             return _nequi_api_disabled_response()
-        items = list(
-            NotificacionNequi.objects
-            .filter(
-                es_ingreso=True,
-                venta__isnull=True,
-                monto__isnull=False,
-                monto__gt=0,
-            )
-            .order_by("-recibido_en", "-notificacionid")[:120]
+        available = NotificacionNequi.objects.filter(
+            es_ingreso=True,
+            venta__isnull=True,
+            monto__isnull=False,
+            monto__gt=0,
         )
+        items = list(available.order_by("-recibido_en", "-notificacionid")[:120])
+        # Mantener el seleccionado aunque nuevas notificaciones lo desplacen
+        # fuera de la ventana de 120; no reservarlo ni vincularlo en este GET.
+        selected_id = (request.GET.get("selected_id") or "").strip()
+        if re.fullmatch(r"[1-9][0-9]{0,18}", selected_id) and int(selected_id) <= 9223372036854775807:
+            if not any(str(item.pk) == selected_id for item in items):
+                selected = available.filter(pk=int(selected_id)).first()
+                if selected is not None:
+                    items.append(selected)
         response = JsonResponse({
             "success": True,
             "items": [_nequi_sale_item_json(item) for item in items],
