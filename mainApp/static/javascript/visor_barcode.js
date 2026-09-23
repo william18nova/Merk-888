@@ -20,6 +20,8 @@ $(function () {
   const $newSale = $("#vb_new_sale");
   let currentProduct = null;
   let lookupRevision = 0;
+  const publicBarcodeOnly = !VISOR_CAJERO_URL;
+  let barcodeInput = null;
 
   // ====== cache (barcode -> product) ======
   const cache = new Map();
@@ -381,6 +383,7 @@ $(function () {
 
   function paintEmpty(){
     lookupRevision++;
+    setLoading(false);
     currentProduct = null;
     updateNewSaleLink();
     $quantity.val("1").prop("disabled", true);
@@ -396,6 +399,7 @@ $(function () {
 
   function paintProduct(p){
     if (!p) return;
+    setLoading(false);
 
     const bc = String(p.codigo_de_barras || "").trim();
     lookupRevision++;
@@ -475,11 +479,13 @@ $(function () {
 
     try { lookupAbort?.abort(); } catch {}
     lookupAbort = ("AbortController" in window) ? new AbortController() : null;
+    const ownAbort = lookupAbort;
+    const ownRevision = lookupRevision;
 
     setLoading(true);
     try{
       const url = `${VISOR_LOOKUP_URL}?barcode=${encodeURIComponent(bc)}&_ts=${Date.now()}`;
-      const r = await fetch(url, { cache:"no-store", signal: lookupAbort?.signal });
+      const r = await fetch(url, { cache:"no-store", signal: ownAbort?.signal });
       if (!r.ok) return null;
 
       const d = await r.json();
@@ -490,7 +496,7 @@ $(function () {
     }catch{
       return null;
     }finally{
-      setLoading(false);
+      if (ownRevision === lookupRevision) setLoading(false);
     }
   }
 
@@ -504,7 +510,7 @@ $(function () {
     $inp.autocomplete("search", v);
   }
 
-  $inp.autocomplete({
+  if (!publicBarcodeOnly) $inp.autocomplete({
     minLength: 1,
     delay: 0,
     autoFocus: false,
@@ -590,8 +596,9 @@ $(function () {
 
   /* ================= Acción principal por scan ================= */
   async function handleScanNow(barcode){
-    const bc = sanitizeBarcode(barcode);
+    const bc = barcodeInput ? barcodeInput.accept(barcode) : sanitizeBarcode(barcode);
     if (!bc) return;
+    if (publicBarcodeOnly) paintEmpty();
     const revision = ++lookupRevision;
 
     hideErr();
@@ -611,7 +618,11 @@ $(function () {
       return;
     }
 
-    // fallback
+    if (publicBarcodeOnly) {
+      showErr(`No se encontró un producto con el código de barras ${bc}.`);
+      return;
+    }
+    // Solo el visor de cajeros ofrece sugerencias; el público exige barras exactas.
     openAutocompletePickFirst();
   }
 
@@ -631,15 +642,18 @@ $(function () {
 
     if (isPrintableChar(e)) {
       e.preventDefault();
-      $inp.val(e.key).trigger("input");
+      if (barcodeInput) barcodeInput.start(e.key);
+      else $inp.val(e.key).trigger("input");
     }
   }, true);
 
   $inp.on("input", function(){
+    if (publicBarcodeOnly) return;
     pendingPick = null;
     paintEmpty();
   });
   $inp.on("keydown", function(e){
+    if (publicBarcodeOnly) return;
     if (e.key !== "Enter" || e.isDefaultPrevented()) return;
     e.preventDefault();
     handleScanNow($inp.val());
@@ -774,12 +788,27 @@ $(function () {
       return $("<li>").append(row).appendTo(ul);
     };
   }
-  enhanceAutocomplete($inp, VISOR_BARRAS_URL, "barcode");
+  if (!publicBarcodeOnly) enhanceAutocomplete($inp, VISOR_BARRAS_URL, "barcode");
+
+  if (publicBarcodeOnly) {
+    barcodeInput = window.NovaBarcodeScanInput.attach($inp[0], {
+      onScan: handleScanNow,
+      onChange() {
+        pendingPick = null;
+        try { lookupAbort?.abort(); } catch (_) {}
+        paintEmpty();
+        setLoading(false);
+        hideErr();
+      },
+      onInvalid: showErr,
+    });
+  }
 
   // Un lector no debe elegir un código parcial solo porque quedó resaltado.
   let barcodeKeyboardChoice = false;
   $inp.on("input", () => { barcodeKeyboardChoice = false; });
   $inp[0].addEventListener("keydown", function(e) {
+    if (publicBarcodeOnly) return;
     if (e.key === "ArrowDown" || e.key === "ArrowUp") barcodeKeyboardChoice = true;
     if (e.key !== "Enter" || barcodeKeyboardChoice) return;
     e.preventDefault();
@@ -795,6 +824,7 @@ $(function () {
 
   $clear.on("click", function(){
     hideErr();
+    if (barcodeInput) barcodeInput.clear();
     $inp.val("");
     $search.val("");
     paintEmpty();

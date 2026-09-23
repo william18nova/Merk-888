@@ -14403,6 +14403,8 @@ class ProductoLookupPorBarrasVisorView(View):
         barcode = (request.GET.get("barcode") or "").strip()
         if not barcode:
             return JsonResponse({"success": False, "error": "barcode vacío."}, status=400)
+        if len(barcode) > 100 or re.search(r"[\s\x00-\x1f\x7f]", barcode):
+            return JsonResponse({"success": False, "error": "Ingresa un solo código de barras."}, status=400)
 
         p = (Producto._base_manager
              .only("productoid", "nombre", "codigo_de_barras", "precio", "precio_anterior")

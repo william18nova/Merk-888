@@ -39,6 +39,7 @@
       <label for="vb_barcode"><i class="fas fa-barcode" aria-hidden="true"></i> Código de barras</label>
       <div class="vb-inputrow">
         <input id="vb_barcode" class="vb-input" inputmode="numeric" autocomplete="off"
+               autocapitalize="off" autocorrect="off" spellcheck="false" maxlength="100"
                placeholder="Escanea aquí…">
         <button id="vb_camera" type="button" class="vb-btn vb-btn--camera"
                 title="Escanear con camara" aria-label="Escanear con camara">
@@ -50,7 +51,7 @@
       </div>
       <div class="vb-hint">
         <span><i class="fas fa-camera"></i> Camara del celular: en iPhone usa Safari con HTTPS.</span>
-        <i class="fas fa-bolt"></i> Tip: Si usas lector USB, normalmente envía “Enter” al final.
+        <i class="fas fa-bolt"></i> {% if visor_cajero %}Tip: Si usas lector USB, normalmente envía “Enter” al final.{% else %}Cada lectura reemplaza la anterior. Configura el lector para enviar Enter o Tab al terminar.{% endif %}
       </div>
     </div>
     </div>
@@ -100,5 +101,6 @@
 <script src="{% static 'vendor/jquery/jquery-3.6.4.min.js' %}"></script>
 <script src="{% static 'vendor/jquery-ui/jquery-ui-1.13.2.min.js' %}"></script>
 <script src="{% static 'javascript/product_autocomplete.js' %}?v=1"></script>
-<script defer src="{% static 'javascript/visor_barcode.js' %}?v=6"></script>
+<script src="{% static 'javascript/barcode_scan_input.js' %}?v=1"></script>
+<script defer src="{% static 'javascript/visor_barcode.js' %}?v=7"></script>
 {% endblock %}

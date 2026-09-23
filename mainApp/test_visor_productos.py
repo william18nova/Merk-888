@@ -92,7 +92,7 @@ class VisorProductosTests(TestCase):
             for term in (self.other.nombre, str(self.product.pk)):
                 with self.subTest(authenticated=authenticated, term=term):
                     response = self.client.get(reverse("visor_barcode_lookup"), {"barcode": term})
-                    self.assertEqual(response.status_code, 404)
+                    self.assertIn(response.status_code, (400, 404))
                     self.assertFalse(response.json()["success"])
             response = self.client.get(reverse("visor_barcode_lookup"), {"barcode": self.other.codigo_de_barras})
             self.assertEqual(response.status_code, 200)
@@ -101,6 +101,13 @@ class VisorProductosTests(TestCase):
     def test_search_does_not_expose_internal_fields(self):
         item = json.loads(self.search("tomate").content)["results"][0]
         self.assertEqual(set(item), {"id", "text", "barcode", "precio", "precio_anterior"})
+
+    def test_public_lookup_rejects_multiple_codes_and_oversized_input(self):
+        for barcode in ("77012345\n77012345", "77012345 77012345", "77012345\t77012345", "7" * 101):
+            with self.subTest(barcode=barcode), self.assertNumQueries(0):
+                response = self.client.get(reverse("visor_barcode_lookup"), {"barcode": barcode})
+                self.assertEqual(response.status_code, 400)
+                self.assertFalse(response.json()["success"])
 
     def test_local_catalog_contains_all_prices_without_inventory_filter(self):
         branch = Sucursal.objects.create(nombre="Catálogo visor")
@@ -178,6 +185,14 @@ class VisorMarkupTests(SimpleTestCase):
         self.assertIn("500 = medio kilo", template)
         self.assertNotIn("code.jquery.com", template)
         self.assertIn("vendor/jquery-ui/jquery-ui-1.13.2.min.js", template)
+
+    def test_public_scanner_has_independent_delimited_input_and_no_autocomplete(self):
+        script = (settings.BASE_DIR / "mainApp/static/javascript/visor_barcode.js").read_text(encoding="utf-8")
+        template = (settings.BASE_DIR / "mainApp/templates/visor_producto_barcode.html").read_text(encoding="utf-8")
+        self.assertIn('if (!publicBarcodeOnly) $inp.autocomplete({', script)
+        self.assertIn('window.NovaBarcodeScanInput.attach($inp[0]', script)
+        self.assertIn('Configura el lector para enviar Enter o Tab', template)
+        self.assertLess(template.index('javascript/barcode_scan_input.js'), template.index('javascript/visor_barcode.js'))
 
     def test_quantity_entry_does_not_lose_focus_periodically(self):
         script = (settings.BASE_DIR / "mainApp/static/javascript/visor_barcode.js").read_text(encoding="utf-8")
