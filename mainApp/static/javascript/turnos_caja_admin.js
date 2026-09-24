@@ -20,8 +20,8 @@
     const box = $("#flash");
     box.className = "alert " + (ok ? "alert-success" : "alert-error");
     box.textContent = msg;
-    box.style.display = "block";
-    setTimeout(() => (box.style.display = "none"), 3500);
+    box.hidden = false;
+    setSaveStatus(msg, ok ? "success" : "error");
   }
 
   function num(v) {
@@ -30,11 +30,11 @@
   }
 
   async function getJSON(url) {
-    const r = await fetch(url, { headers: { "X-Requested-With": "XMLHttpRequest" } });
+    const r = await fetch(url, { cache: "no-store", headers: { "X-Requested-With": "XMLHttpRequest" } });
     const txt = await r.text();
     let data = null;
     try { data = JSON.parse(txt); } catch (e) {}
-    if (!r.ok) throw new Error((data && data.error) || `HTTP ${r.status}`);
+    if (!r.ok || !data?.success) throw new Error(data?.error || "No se pudo cargar el turno. Revisa tu conexión o sesión.");
     return data;
   }
 
@@ -50,7 +50,7 @@
     const txt = await r.text();
     let data = null;
     try { data = JSON.parse(txt); } catch (e) {}
-    if (!r.ok) throw new Error((data && data.error) || `HTTP ${r.status}`);
+    if (!r.ok || !data?.success) throw new Error(data?.error || "No se pudo completar la operación. Revisa tu conexión o sesión antes de reintentar.");
     return data;
   }
 
@@ -58,6 +58,8 @@
   const turnoId = $("#turnoId");
   const btnLoad = $("#btnLoad");
   const editor = $("#editor");
+  const loadState = $("#loadState");
+  const saveStatus = $("#saveStatus");
 
   const estado = $("#estado");
   const base = $("#base");
@@ -85,6 +87,28 @@
   // ===== state
   let TURNO = null;
   let MEDIOS = []; // [{metodo, esperado, contado, diferencia}]
+  let busy = false;
+  let protectedPTM = false;
+
+  function setSaveStatus(message, state = "") {
+    saveStatus.textContent = message;
+    saveStatus.dataset.state = state;
+  }
+
+  function syncControls() {
+    btnLoad.disabled = busy;
+    turnoId.disabled = busy;
+    editor.setAttribute("aria-busy", String(busy));
+    editor.querySelectorAll("input,select").forEach(input => { input.disabled = busy || protectedPTM; });
+    btnSave.disabled = busy || protectedPTM || !TURNO;
+    if (btnDelete) btnDelete.disabled = busy || protectedPTM || !TURNO;
+  }
+
+  function showLoadState(title, message) {
+    loadState.hidden = false;
+    $("#loadStateTitle").textContent = title;
+    $("#loadStateText").textContent = message;
+  }
 
   function numClass(v) {
     const n = Number(v || 0);
@@ -129,7 +153,7 @@
 
     // pintar diffs por fila
     for (const m of MEDIOS) {
-      const el = mediosBody.querySelector(`[data-diff='${m.metodo}']`);
+      const el = Array.from(mediosBody.querySelectorAll("[data-diff]")).find(node => node.dataset.diff === m.metodo);
       if (el) {
         el.textContent = money2(m.diferencia);
         el.className = "diff " + numClass(m.diferencia);
@@ -143,6 +167,7 @@
 
     MEDIOS.forEach((m) => {
       const tr = document.createElement("tr");
+      tr.setAttribute("role", "row");
 
       const tdM = document.createElement("td");
       const chip = document.createElement("span");
@@ -153,24 +178,28 @@
 
       const tdE = document.createElement("td");
       tdE.className = "num";
+      tdE.dataset.label = "Esperado";
       const inputEsperado = document.createElement("input");
       inputEsperado.className = "in in-sm numin";
       inputEsperado.type = "number";
       inputEsperado.step = "0.01";
       inputEsperado.min = "0";
       inputEsperado.dataset.esp = m.metodo;
+      inputEsperado.setAttribute("aria-label", `Esperado · ${chip.textContent}`);
       inputEsperado.value = String(num(m.esperado));
       tdE.appendChild(inputEsperado);
       tr.appendChild(tdE);
 
       const tdC = document.createElement("td");
       tdC.className = "num";
+      tdC.dataset.label = "Contado";
       const inputContado = document.createElement("input");
       inputContado.className = "in in-sm numin";
       inputContado.type = "number";
       inputContado.step = "0.01";
       inputContado.min = "0";
       inputContado.dataset.con = m.metodo;
+      inputContado.setAttribute("aria-label", `Contado · ${chip.textContent}`);
       inputContado.value = m.contado === null ? "" : String(num(m.contado));
       inputContado.placeholder = "(vacío = 0)";
       tdC.appendChild(inputContado);
@@ -178,6 +207,7 @@
 
       const tdD = document.createElement("td");
       tdD.className = "num";
+      tdD.dataset.label = "Diferencia";
       const diff = document.createElement("span");
       diff.className = "diff";
       diff.dataset.diff = m.metodo;
@@ -189,6 +219,14 @@
     });
 
     mediosBody.appendChild(frag);
+    mediosBody.querySelectorAll("td").forEach(cell => cell.setAttribute("role", "cell"));
+    if (!MEDIOS.length) {
+      const row = mediosBody.insertRow();
+      row.className = "tca-no-medios";
+      const cell = row.insertCell();
+      cell.colSpan = 4;
+      cell.textContent = "Este turno no tiene medios de pago registrados.";
+    }
 
     mediosBody.querySelectorAll("[data-esp]").forEach((inp) => {
       inp.addEventListener("input", (e) => {
@@ -231,50 +269,75 @@
 
     ppName.textContent = TURNO.puntopago || "—";
     cajName.textContent = TURNO.cajero || "—";
+    $("#loadedTurnoId").textContent = `#${TURNO.id}`;
+    $("#turnoStatus").textContent = {ABIERTO:"ABIERTO", CIERRE:"EN CIERRE", CERRADO:"CERRADO"}[TURNO.estado] || TURNO.estado;
+    $("#turnoStatus").dataset.state = TURNO.estado;
     // Dato informativo: el contado de Efectivo ya incluye estas facturas.
     mFacturasPagadas.textContent = money2(TURNO.facturas_pagadas ?? 0);
     const ptm = TURNO.ptm || {};
-    document.getElementById("mPTM").textContent = `${ptm.cantidad || 0} transacciones · Declaradas: ${ptm.declarado ?? "—"} · Entradas: ${money2(ptm.recargas || 0)} · Salidas: ${money2(ptm.retiros || 0)} · Neto: ${money2(ptm.neto || 0)}`;
+    $("#ptmCantidad").textContent = ptm.cantidad || 0;
+    $("#ptmDeclarado").textContent = ptm.declarado ?? "—";
+    $("#ptmRecargas").textContent = money2(ptm.recargas || 0);
+    $("#ptmRetiros").textContent = money2(ptm.retiros || 0);
+    $("#ptmNeto").textContent = money2(ptm.neto || 0);
+    $("#ptmNeto").className = numClass(ptm.neto || 0);
     document.getElementById("mPTMHistorial").search = `?turno=${TURNO.id}`;
 
     buildMediosTable();
-    const protectedPTM = Number(ptm.cantidad || 0) > 0;
-    document.getElementById("mVentasLabel").textContent = protectedPTM ? "Neto reconocido (incluye PTM)" : "Ventas total";
-    document.getElementById("mEfectivoLabel").textContent = protectedPTM ? "Efectivo neto (incluye PTM)" : "Efectivo (ventas)";
-    [estado, base, inicio, cierre, fin, efectivoReal, ...mediosBody.querySelectorAll("input")].forEach(input => { input.disabled = protectedPTM; });
-    btnSave.disabled = protectedPTM;
-    if (btnDelete) btnDelete.disabled = protectedPTM;
+    protectedPTM = Number(ptm.cantidad || 0) > 0;
+    document.getElementById("mVentasLabel").textContent = protectedPTM ? "Neto reconocido (incluye PTM)" : "Total reportado";
+    document.getElementById("mEfectivoLabel").textContent = protectedPTM ? "Efectivo neto (incluye PTM)" : "Efectivo reportado";
+    $("#ptmProtection").hidden = !protectedPTM;
     btnSave.title = protectedPTM ? "Este turno tiene registros PTM protegidos. Utiliza el cierre normal." : "";
-    editor.style.display = "block";
+    setSaveStatus(protectedPTM ? "Solo consulta: turno protegido por PTM." : "Sin cambios pendientes.");
+    syncControls();
+    editor.hidden = false;
+    loadState.hidden = true;
   }
 
   async function loadTurno() {
+    if (busy) return;
     const id = (turnoId.value || "").trim();
-    if (!id || !/^\d+$/.test(id)) {
+    if (!/^[1-9]\d*$/.test(id) || !Number.isSafeInteger(Number(id))) {
       flash(false, "Ingresa un ID válido.");
+      turnoId.focus();
       return;
     }
-    btnLoad.disabled = true;
+    busy = true;
+    TURNO = null;
+    MEDIOS = [];
+    $("#flash").hidden = true;
+    editor.hidden = true;
+    showLoadState(`Cargando turno #${id}…`, "Estamos consultando sus datos y medios de pago.");
+    syncControls();
     try {
       const data = await getJSON(API_DETAIL(id));
-      if (!data.success) throw new Error(data.error || "Error");
       hydrate(data);
-      flash(true, `Turno #${id} cargado.`);
+      const url = new URL(window.location.href);
+      url.searchParams.set("turno_id", String(TURNO.id));
+      window.history.replaceState(window.history.state, "", url);
     } catch (e) {
-      editor.style.display = "none";
+      editor.hidden = true;
+      TURNO = null;
+      showLoadState("No pudimos cargar el turno", "Comprueba el ID e inténtalo de nuevo.");
       flash(false, e.message || "Error cargando turno.");
     } finally {
-      btnLoad.disabled = false;
+      busy = false;
+      syncControls();
     }
   }
 
-  btnLoad.addEventListener("click", loadTurno);
-  turnoId.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") loadTurno();
+  $("#turnoSearch").addEventListener("submit", (e) => {
+    e.preventDefault();
+    loadTurno();
+  });
+  editor.addEventListener("input", () => {
+    if (!busy && !protectedPTM) setSaveStatus("Hay cambios pendientes de guardar.", "dirty");
   });
 
   btnSave.addEventListener("click", async () => {
-    if (!TURNO?.id) return;
+    if (!TURNO?.id || busy || protectedPTM) return;
+    const id = TURNO.id;
 
     const payload = {
       estado: estado.value,
@@ -290,40 +353,57 @@
       })),
     };
 
-    btnSave.disabled = true;
+    busy = true;
+    $("#flash").hidden = true;
+    setSaveStatus("Guardando cambios…");
+    syncControls();
     try {
-      const data = await postJSON(API_UPDATE(TURNO.id), payload);
-      flash(true, data.msg || "Guardado.");
+      const data = await postJSON(API_UPDATE(id), payload);
       // recarga para ver lo recalculado por backend (dif total, deuda, etc.)
-      const fresh = await getJSON(API_DETAIL(TURNO.id));
-      hydrate(fresh);
+      try {
+        const fresh = await getJSON(API_DETAIL(id));
+        hydrate(fresh);
+        flash(true, data.msg || "Cambios guardados.");
+      } catch (_) {
+        flash(false, "Los cambios se guardaron, pero no pudimos actualizar el resumen. Vuelve a cargar el turno para verificarlo.");
+      }
     } catch (e) {
       flash(false, e.message || "Error guardando.");
     } finally {
-      btnSave.disabled = false;
+      busy = false;
+      syncControls();
     }
   });
 
   btnDelete?.addEventListener("click", async () => {
-    if (!TURNO?.id) return;
+    if (!TURNO?.id || busy || protectedPTM) return;
+    const id = TURNO.id;
 
     const ok = confirm(
       `¿Eliminar el turno #${TURNO.id}?\n\nEsto borrará también sus medios asociados.`
     );
     if (!ok) return;
 
-    btnDelete.disabled = true;
+    busy = true;
+    $("#flash").hidden = true;
+    setSaveStatus("Eliminando turno…");
+    syncControls();
     try {
-      const data = await postJSON(API_DELETE(TURNO.id), {});
+      const data = await postJSON(API_DELETE(id), {});
       flash(true, data.msg || "Eliminado.");
-      editor.style.display = "none";
+      editor.hidden = true;
       TURNO = null;
       MEDIOS = [];
       turnoId.value = "";
+      showLoadState("Turno eliminado", "Puedes introducir el ID de otro turno para consultarlo.");
+      const url = new URL(window.location.href);
+      url.searchParams.delete("turno_id");
+      window.history.replaceState(window.history.state, "", url);
     } catch (e) {
       flash(false, e.message || "Error eliminando.");
     } finally {
-      btnDelete.disabled = false;
+      busy = false;
+      syncControls();
     }
   });
 

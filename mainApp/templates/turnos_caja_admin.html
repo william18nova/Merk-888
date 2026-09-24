@@ -1,157 +1,110 @@
 {% extends "base.html" %}
 {% load static %}
 
-{% block title %}Administrar Turnos de Caja{% endblock %}
+{% block title %}Administrar turnos de caja{% endblock %}
 
 {% block extra_head %}
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"/>
-  <link rel="stylesheet" href="{% static 'css/turnos_caja_admin.css' %}">
+  <link rel="stylesheet" href="{% static 'css/turnos_caja_admin.css' %}?v=2">
 {% endblock %}
 
 {% block content %}
 <div class="tca-wrap">
-  <div class="tca-card">
-    <div class="tca-head">
-      <h2><i class="fa-solid fa-gear"></i> Administrar — Turnos de caja</h2>
-      <div id="flash" class="alert" style="display:none"></div>
-    </div>
-
-    <!-- Lista rápida (reusa tu dashboard existente si quieres). Aquí dejamos simple: -->
-    <div class="tca-note">
-      <i class="fa-solid fa-circle-info"></i>
-      Abre un turno desde el dashboard y aquí puedes editar/eliminar (solo admin).
-    </div>
-
-    <div class="tca-row">
-      <label class="lbl">ID del turno</label>
-      <div class="field">
-        <input id="turnoId" class="in" placeholder="Ej: 47" inputmode="numeric">
-        <button id="btnLoad" class="btn btn-primary" type="button"><i class="fa-solid fa-magnifying-glass"></i> Cargar</button>
+  <header class="tca-page-head">
+    <div class="tca-heading">
+      <span class="tca-heading-icon" aria-hidden="true"><svg class="tca-icon" viewBox="0 0 24 24"><path d="M4 3v17h17M8 14l4-5 4 3 5-7"/></svg></span>
+      <div>
+        <p class="tca-eyebrow">CAJA Y CONTROL</p>
+        <h1>Administrar turno</h1>
+        <p class="tca-description">Revisa los valores del cierre y ajusta la información del turno.</p>
       </div>
     </div>
+    <a class="btn btn-ghost" href="{% url 'turnos_caja_dashboard' %}"><svg class="tca-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m10 5-7 7 7 7M3 12h18"/></svg> Ver todos los turnos</a>
+  </header>
 
-    <!-- Editor -->
-    <div id="editor" class="editor" style="display:none;">
-      <div class="grid">
-        <div class="block">
-          <div class="btitle"><i class="fa-solid fa-pen-to-square"></i> Datos del turno</div>
+  <div id="flash" class="alert" role="alert" hidden></div>
 
-          <div class="form-grid">
-            <div>
-              <label>Estado</label>
-              <select id="estado" class="in">
-                <option value="ABIERTO">ABIERTO</option>
-                <option value="CIERRE">CIERRE</option>
-                <option value="CERRADO">CERRADO</option>
-              </select>
-            </div>
+  <section class="tca-card tca-search" aria-labelledby="searchTitle">
+    <div><h2 id="searchTitle">Buscar turno</h2><p>Introduce el número del turno o ábrelo desde el dashboard.</p></div>
+    <form id="turnoSearch" class="tca-search-form">
+      <div><label for="turnoId">ID del turno</label><input id="turnoId" class="in" placeholder="Ej.: 1676" inputmode="numeric" autocomplete="off" required pattern="[0-9]+"></div>
+      <button id="btnLoad" class="btn btn-primary" type="submit"><svg class="tca-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="10" cy="10" r="6"/><path d="m15 15 6 6"/></svg><span>Cargar turno</span></button>
+    </form>
+  </section>
 
-            <div>
-              <label>Base (saldo apertura efectivo)</label>
-              <input id="base" class="in" type="number" step="0.01" min="0" placeholder="0.00">
-            </div>
+  <div id="loadState" class="tca-card tca-empty" role="status">
+    <svg class="tca-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3h14v18l-3-2-4 2-4-2-3 2V3Zm4 5h6m-6 4h6"/></svg>
+    <h2 id="loadStateTitle">Selecciona un turno</h2>
+    <p id="loadStateText">Aquí podrás consultar sus totales, revisar los medios de pago y hacer ajustes.</p>
+  </div>
 
-            <div>
-              <label>Inicio</label>
-              <input id="inicio" class="in" type="datetime-local">
-            </div>
+  <div id="editor" class="editor" hidden>
+    <section class="tca-card tca-turno-summary" aria-label="Turno seleccionado">
+      <div class="tca-turno-number"><span class="tca-eyebrow">TURNO SELECCIONADO</span><h2 id="loadedTurnoId">—</h2></div>
+      <dl class="tca-identity"><div><dt>Punto de pago</dt><dd id="ppName">—</dd></div><div><dt>Cajero</dt><dd id="cajName">—</dd></div></dl>
+      <span id="turnoStatus" class="tca-pill">—</span>
+    </section>
 
-            <div>
-              <label>Cierre iniciado</label>
-              <input id="cierre" class="in" type="datetime-local">
-            </div>
+    <div id="ptmProtection" class="tca-notice" role="status" hidden>
+      <svg class="tca-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3m-4 5v2"/></svg>
+      <div><strong>Turno protegido por operaciones PTM</strong><p>Puedes consultar sus valores y comprobantes, pero no editarlos ni eliminar el turno. Utiliza el cierre normal.</p></div>
+    </div>
 
-            <div>
-              <label>Fin</label>
-              <input id="fin" class="in" type="datetime-local">
-            </div>
-
-            <div>
-              <label>Efectivo real (TOTAL caja) (opcional)</label>
-              <input id="efectivoReal" class="in" type="number" step="0.01" min="0" placeholder="0.00">
-            </div>
-          </div>
-
-          <div class="mini">
-            <div><span>Punto de pago:</span> <b id="ppName">—</b></div>
-            <div><span>Cajero:</span> <b id="cajName">—</b></div>
-          </div>
+    <div class="tca-grid">
+      <section class="tca-card tca-section" aria-labelledby="datosTitle">
+        <div class="tca-section-head"><span class="tca-section-number">01</span><div><h2 id="datosTitle">Datos del turno</h2><p>Estado, fechas y efectivo de apertura.</p></div></div>
+        <div class="form-grid">
+          <div><label for="estado">Estado</label><select id="estado" class="in"><option value="ABIERTO">Abierto</option><option value="CIERRE">En cierre</option><option value="CERRADO">Cerrado</option></select></div>
+          <div><label for="base">Base de apertura en efectivo</label><input id="base" class="in" type="number" step="0.01" min="0" placeholder="0.00"></div>
+          <div><label for="inicio">Inicio</label><input id="inicio" class="in" type="datetime-local"></div>
+          <div><label for="cierre">Cierre iniciado</label><input id="cierre" class="in" type="datetime-local"></div>
+          <div><label for="fin">Fin</label><input id="fin" class="in" type="datetime-local"></div>
+          <div><label for="efectivoReal">Efectivo real en caja <span class="tca-optional">(opcional)</span></label><input id="efectivoReal" class="in" type="number" step="0.01" min="0" placeholder="Sin registrar"></div>
         </div>
+        <p class="tca-help">Los cambios se aplican únicamente al pulsar <strong>Guardar cambios</strong>.</p>
+      </section>
 
-        <div class="block">
-          <div class="btitle"><i class="fa-solid fa-chart-simple"></i> Totales (auto)</div>
-          <div class="metrics">
-            <div class="m">
-              <div class="k">Esperado total</div>
-              <div id="mEsperado" class="v">—</div>
-            </div>
-            <div class="m">
-              <div class="k" id="mVentasLabel">Ventas total</div>
-              <div id="mVentas" class="v">—</div>
-            </div>
-            <div class="m">
-              <div class="k">Diferencia</div>
-              <div id="mDiff" class="v">—</div>
-            </div>
-            <div class="m">
-              <div class="k">Deuda</div>
-              <div id="mDeuda" class="v">—</div>
-            </div>
-            <div class="m">
-              <div class="k" id="mEfectivoLabel">Efectivo (ventas)</div>
-              <div id="mEf" class="v">—</div>
-            </div>
-            <div class="m">
-              <div class="k">No efectivo</div>
-              <div id="mNoEf" class="v">—</div>
-            </div>
-            <div class="m">
-              <div class="k">Facturas pagadas (caja)</div>
-              <div id="mFacturasPagadas" class="v">—</div>
-              <div class="k">Incluidas en el cuadre de efectivo.</div>
-            </div>
-            <div class="m">
-              <div class="k">PTM · efectivo</div>
-              <div id="mPTM" class="v">—</div>
-              <a id="mPTMHistorial" href="{% url 'operaciones_ptm' %}">Ver comprobantes →</a>
-            </div>
-          </div>
+      <section class="tca-card tca-section" aria-labelledby="totalsTitle">
+        <div class="tca-section-head"><span class="tca-section-number">02</span><div><h2 id="totalsTitle">Resumen del cuadre</h2><p>Se recalcula al editar los medios de pago.</p></div></div>
+        <div class="metrics">
+          <div class="m"><div class="k">Esperado total</div><div id="mEsperado" class="v">—</div></div>
+          <div class="m"><div class="k" id="mVentasLabel">Total reportado</div><div id="mVentas" class="v">—</div></div>
+          <div class="m"><div class="k">Diferencia</div><div id="mDiff" class="v">—</div></div>
+          <div class="m"><div class="k">Deuda</div><div id="mDeuda" class="v">—</div></div>
+          <div class="m"><div class="k" id="mEfectivoLabel">Efectivo reportado</div><div id="mEf" class="v">—</div></div>
+          <div class="m"><div class="k">Otros medios reportados</div><div id="mNoEf" class="v">—</div></div>
         </div>
+      </section>
+    </div>
+
+    <div class="tca-context-grid">
+      <section class="tca-card tca-section tca-invoices" aria-labelledby="facturasTitle">
+        <h2 id="facturasTitle">Facturas pagadas de caja</h2>
+        <div id="mFacturasPagadas" class="v">—</div>
+        <p>Ya están incluidas en el cuadre de efectivo.</p>
+      </section>
+      <section class="tca-card tca-section tca-ptm" aria-labelledby="ptmTitle">
+        <div class="tca-ptm-head"><h2 id="ptmTitle">Operaciones PTM</h2><a id="mPTMHistorial" href="{% url 'operaciones_ptm' %}">Ver comprobantes <span aria-hidden="true">→</span></a></div>
+        <dl class="tca-ptm-values"><div><dt>Transacciones</dt><dd id="ptmCantidad">—</dd></div><div><dt>Declaradas</dt><dd id="ptmDeclarado">—</dd></div><div><dt>Entradas</dt><dd id="ptmRecargas">—</dd></div><div><dt>Salidas</dt><dd id="ptmRetiros">—</dd></div><div><dt>Neto en efectivo</dt><dd id="ptmNeto">—</dd></div></dl>
+      </section>
+    </div>
+
+    <section class="tca-card tca-payments" aria-labelledby="mediosTitle">
+      <div class="tca-section-head"><span class="tca-section-number">03</span><div><h2 id="mediosTitle">Medios de pago</h2><p>Compara lo esperado con lo contado y revisa cada diferencia.</p></div></div>
+      <div class="table-wrap">
+        <table class="tbl" role="table" aria-label="Editar medios de pago del turno">
+          <thead><tr><th scope="col">Medio de pago</th><th scope="col" class="num">Esperado</th><th scope="col" class="num">Contado</th><th scope="col" class="num">Diferencia</th></tr></thead>
+          <tbody id="mediosBody"></tbody>
+        </table>
       </div>
+      <div class="warn"><svg class="tca-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 10 18H2L12 3Zm0 6v5m0 3h.01"/></svg><span>Editar o eliminar un turno afecta la contabilidad del día. Revisa los valores antes de guardar.</span></div>
+    </section>
 
-      <div class="block">
-        <div class="btitle"><i class="fa-solid fa-wallet"></i> Medios de pago (editar)</div>
-
-        <div class="table-wrap">
-          <table class="tbl">
-            <thead>
-              <tr>
-                <th>Medio</th>
-                <th class="num">Esperado</th>
-                <th class="num">Contado</th>
-                <th class="num">Diferencia</th>
-              </tr>
-            </thead>
-            <tbody id="mediosBody"></tbody>
-          </table>
-        </div>
-
-        <div class="actions">
-          <button id="btnSave" class="btn btn-primary" type="button">
-            <i class="fa-solid fa-floppy-disk"></i> Guardar cambios
-          </button>
-
-          {% if can_delete_turnos %}
-            <button id="btnDelete" class="btn btn-danger" type="button">
-              <i class="fa-solid fa-trash"></i> Eliminar turno
-            </button>
-          {% endif %}
-        </div>
-
-        <div class="warn">
-          <i class="fa-solid fa-triangle-exclamation"></i>
-          Editar o borrar turnos cambia la contabilidad del día. Hazlo solo si estás seguro.
-        </div>
+    <div class="tca-savebar">
+      <p id="saveStatus" role="status">Sin cambios pendientes.</p>
+      <div class="actions">
+        {% if can_delete_turnos %}<button id="btnDelete" class="btn btn-danger" type="button"><svg class="tca-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7m4-7v7"/></svg> Eliminar turno</button>{% endif %}
+        <button id="btnSave" class="btn btn-primary" type="button"><svg class="tca-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 3h13l4 4v14H3V3h1Zm3 0v6h9V3M7 21v-8h10v8"/></svg> Guardar cambios</button>
       </div>
     </div>
   </div>
@@ -162,6 +115,5 @@
   const API_UPDATE = (id) => "{% url 'api_admin_turno_update' 999999 %}".replace("999999", String(id));
   const API_DELETE = (id) => "{% url 'api_admin_turno_delete' 999999 %}".replace("999999", String(id));
 </script>
-
-<script defer src="{% static 'javascript/turnos_caja_admin.js' %}?v=6"></script>
+<script defer src="{% static 'javascript/turnos_caja_admin.js' %}?v=7"></script>
 {% endblock %}

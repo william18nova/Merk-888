@@ -58,9 +58,9 @@ class PaidInvoicesMarkupTests(SimpleTestCase):
         template = (settings.BASE_DIR / "mainApp/templates/turnos_caja_admin.html").read_text(
             encoding="utf-8",
         )
-        self.assertIn("Facturas pagadas (caja)", template)
+        self.assertIn("Facturas pagadas de caja", template)
         self.assertIn('<div id="mFacturasPagadas" class="v">', template)
-        self.assertIn("turnos_caja_admin.js' %}?v=6", template)
+        self.assertIn("turnos_caja_admin.js' %}?v=7", template)
 
     def test_single_invoice_input_is_only_in_the_initial_payments_step(self):
         markup = _ClosureMarkup()
