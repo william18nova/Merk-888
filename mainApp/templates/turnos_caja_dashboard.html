@@ -5,67 +5,77 @@
 
 {% block extra_head %}
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"/>
-  <link rel="stylesheet" href="{% static 'css/turnos_caja_dashboard.css' %}?v=2">
+  <link rel="stylesheet" href="{% static 'css/turnos_caja_dashboard.css' %}?v=3">
 {% endblock %}
 
 {% block content %}
 <div class="tcd-wrap">
+  <header class="tcd-page-head">
+    <div class="tcd-heading">
+      <span class="tcd-heading-icon" aria-hidden="true"><svg class="tcd-icon" viewBox="0 0 24 24"><path d="M4 3v17h17M8 14l4-5 4 3 5-7"/></svg></span>
+      <div><p class="tcd-eyebrow">CAJA Y CONTROL</p><h1>Turnos de caja</h1>
+        <p class="tcd-description">Consulta los cierres, revisa diferencias y encuentra cada turno.</p></div>
+    </div>
+    <span id="lastUpdated" class="tcd-updated" role="status">Preparando información…</span>
+  </header>
+  <div id="flash" class="alert" role="alert" hidden></div>
   <div class="tcd-card">
     <div class="tcd-head">
-      <h2><i class="fa-solid fa-chart-line"></i> Dashboard — Turnos de caja</h2>
-      <div id="flash" class="alert" style="display:none"></div>
+      <h2><svg class="tcd-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h8m4 0h4M4 17h3m4 0h9M12 4v6M7 14v6"/></svg> Filtrar turnos</h2>
+      <span>Busca por cajero, punto de pago o fecha de inicio.</span>
     </div>
 
     <!-- Filtros -->
-    <div class="tcd-filters">
+    <form class="tcd-filters" id="turnosFilters" aria-label="Filtros de turnos de caja">
       <div class="f">
-        <label>Estado</label>
+        <label for="fEstado">Estado</label>
         <select id="fEstado" class="in">
-          <option value="ALL">Todos</option>
-          <option value="ABIERTO">ABIERTO</option>
-          <option value="CIERRE">CIERRE</option>
-          <option value="CERRADO">CERRADO</option>
+          <option value="ALL">Todos los estados</option>
+          <option value="ABIERTO">Abierto</option>
+          <option value="CIERRE">En cierre</option>
+          <option value="CERRADO">Cerrado</option>
         </select>
       </div>
 
-      <div class="f">
-        <label>Buscar</label>
-        <input id="fQ" class="in" placeholder="Punto de pago o cajero…">
+      <div class="f f-search">
+        <label for="fQ">Punto de pago o cajero</label>
+        <input id="fQ" class="in" type="search" placeholder="Ej.: Principal o nombre del cajero" autocomplete="off">
       </div>
 
       <div class="f">
-        <label>Desde</label>
+        <label for="fFrom">Desde</label>
         <input id="fFrom" class="in" type="date">
       </div>
 
       <div class="f">
-        <label>Hasta</label>
+        <label for="fTo">Hasta</label>
         <input id="fTo" class="in" type="date">
       </div>
 
       <div class="f actions">
-        <button id="btnRefresh" class="btn btn-primary" type="button">
-          <i class="fa-solid fa-rotate"></i> Actualizar
+        <button id="btnRefresh" class="btn btn-primary" type="submit">
+          <svg class="tcd-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5M6 7a7 7 0 0 1 12-1l2 3M4 15l2 3a7 7 0 0 0 12-1"/></svg> Actualizar
         </button>
+        <button id="btnClear" class="btn btn-ghost" type="button" title="Limpiar filtros" aria-label="Limpiar filtros"><svg class="tcd-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h16l-6 7v4M10 19v-8L4 4M16 17l5 5m0-5-5 5"/></svg><span>Limpiar</span></button>
       </div>
-    </div>
+    </form>
+  </div>
 
+  <section class="tcd-card tcd-results" aria-labelledby="resultsTitle">
+    <div class="tcd-results-head">
+      <div><h2 id="resultsTitle">Historial de turnos</h2><p id="resultSummary" role="status">Cargando turnos…</p></div>
+      <div class="tcd-legend" aria-label="Estados"><span><i class="dot dot-open"></i>Abierto</span><span><i class="dot dot-closing"></i>En cierre</span><span><i class="dot dot-closed"></i>Cerrado</span></div>
+    </div>
     <!-- Tabla -->
     <div class="tcd-table-wrap">
-      <table class="tcd-table" id="tblTurnos">
+      <table class="tcd-table" id="tblTurnos" role="table" aria-label="Turnos de caja" aria-describedby="resultSummary">
         <thead>
           <tr>
-            <th>ID</th>
-            <th>Estado</th>
-            <th>Punto de pago</th>
-            <th>Cajero</th>
-            <th>Inicio</th>
-            <th>Fin</th>
-            <th class="num">Esperado (BD)</th>
-            <th class="num">Real (Usuario)</th>
-            <th class="num">Diferencia</th>
-            <th class="num">Deuda</th>
-            <th class="act">Acciones</th>
+            <th scope="col">Turno</th><th scope="col">Estado</th><th scope="col">Punto de pago</th><th scope="col">Cajero</th>
+            <th scope="col">Inicio</th><th scope="col">Fin</th>
+            <th scope="col" class="num" title="Esperado registrado en la base de datos">Esperado</th>
+            <th scope="col" class="num" title="Valor reportado por el usuario">Reportado</th>
+            <th scope="col" class="num">Diferencia</th><th scope="col" class="num">Deuda</th><th scope="col" class="act">Acciones</th>
           </tr>
         </thead>
         <tbody id="tbodyTurnos">
@@ -75,39 +85,40 @@
     </div>
 
     <!-- Paginación -->
-    <div class="tcd-pager">
-      <button id="btnPrev" class="btn btn-ghost" type="button"><i class="fa-solid fa-chevron-left"></i></button>
+    <nav class="tcd-pager" aria-label="Paginación de turnos">
+      <button id="btnPrev" class="btn btn-ghost" type="button" disabled aria-label="Página anterior"><svg class="tcd-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m15 5-7 7 7 7"/></svg><span>Anterior</span></button>
       <div class="pg">
-        <span id="pgInfo">—</span>
+        <span id="pgInfo" aria-live="polite">—</span>
       </div>
-      <button id="btnNext" class="btn btn-ghost" type="button"><i class="fa-solid fa-chevron-right"></i></button>
-    </div>
-  </div>
+      <button id="btnNext" class="btn btn-ghost" type="button" disabled aria-label="Página siguiente"><span>Siguiente</span><svg class="tcd-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 5 7 7-7 7"/></svg></button>
+    </nav>
+  </section>
 </div>
 
 <!-- Modal detalle -->
 <div id="modal" class="m-backdrop" style="display:none;">
-  <div class="m-card">
+  <div class="m-card" role="dialog" aria-modal="true" aria-labelledby="detailTitle" aria-describedby="mSub" tabindex="-1">
     <div class="m-head">
       <div class="ttl">
-        <div class="t1"><i class="fa-solid fa-receipt"></i> Detalle del turno</div>
+        <h2 class="t1" id="detailTitle"><svg class="tcd-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3h14v18l-3-2-4 2-4-2-3 2V3Zm4 5h6m-6 4h6"/></svg> Detalle del turno</h2>
         <div class="t2" id="mSub">—</div>
       </div>
-      <button id="mClose" class="m-x" type="button"><i class="fa-solid fa-xmark"></i></button>
+      <button id="mClose" class="m-x" type="button" aria-label="Cerrar detalle"><svg class="tcd-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
     </div>
 
     <div class="m-body">
+      <p id="detailStatus" class="tcd-detail-status" role="status" hidden></p>
       <div class="m-metrics">
         <div class="metric">
-          <div class="lbl">Esperado (BD)</div>
+          <div class="lbl">Esperado registrado</div>
           <div id="mEsperadoBD" class="val">—</div>
         </div>
         <div class="metric">
-          <div class="lbl">Esperado (calc)</div>
+          <div class="lbl">Esperado calculado</div>
           <div id="mEsperadoCalc" class="val">—</div>
         </div>
         <div class="metric">
-          <div class="lbl">Real (usuario)</div>
+          <div class="lbl">Reportado por el usuario</div>
           <div id="mReal" class="val">—</div>
         </div>
         <div class="metric">
@@ -122,19 +133,16 @@
 
       <div class="m-actions">
         <button id="btnCalcExpected" class="btn btn-warn" type="button">
-          <i class="fa-solid fa-bolt"></i> Calcular esperado (live)
+          <svg class="tcd-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="2"/><path d="M8 6h8M8 11h1m6 0h1m-8 4h1m6 0h1m-8 4h1m6 0h1"/></svg> Calcular esperado actual
         </button>
       </div>
 
       <div class="m-table-wrap">
-        <table class="m-table">
+        <table class="m-table" role="table" aria-label="Desglose por medio de pago">
           <thead>
             <tr>
-              <th>Medio</th>
-              <th class="num">Esperado (BD)</th>
-              <th class="num">Esperado (calc)</th>
-              <th class="num">Contado</th>
-              <th class="num">Diferencia</th>
+              <th scope="col">Medio</th><th scope="col" class="num">Esperado registrado</th>
+              <th scope="col" class="num">Esperado calculado</th><th scope="col" class="num">Contado</th><th scope="col" class="num">Diferencia</th>
             </tr>
           </thead>
           <tbody id="mBodyMedios">
@@ -153,5 +161,5 @@
   const CAN_EDIT_TURNOS = {{ can_edit_turnos|yesno:"true,false" }};
 </script>
 
-<script defer src="{% static 'javascript/turnos_caja_dashboard.js' %}?v=2"></script>
+<script defer src="{% static 'javascript/turnos_caja_dashboard.js' %}?v=3"></script>
 {% endblock %}
