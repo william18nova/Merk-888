@@ -46,4 +46,10 @@ fi
 cd "$PROJECT_DIR" || exit 2
 # Diagnóstico de configuración sin consumir API ni mostrar secretos.
 "$PYTHON_BIN" manage.py comprobar_ia_telegram --status || exit 2
-exec "$PYTHON_BIN" -u manage.py procesar_telegram_bot
+# Solo envía informes creados y confirmados por el usuario; no crea reglas.
+# TELEGRAM_FOLLOWUPS_ENABLED=0 permite desactivar el módulo sin detener el chat.
+worker_args=()
+if [[ "${TELEGRAM_FOLLOWUPS_ENABLED:-1}" == "1" ]]; then
+    worker_args+=(--followups)
+fi
+exec "$PYTHON_BIN" -u manage.py procesar_telegram_bot "${worker_args[@]}"

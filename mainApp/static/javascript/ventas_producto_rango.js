@@ -23,15 +23,20 @@ $(function () {
   const $okBox  = $("#success-message");
 
   const $resultCard = $("#resultCard");
+  const $resultsEmpty = $("#resultsEmpty");
+  const quantityFormat = new Intl.NumberFormat("es-CO", { maximumFractionDigits: 2 });
+  const currencyFormat = new Intl.NumberFormat("es-CO", {
+    style: "currency", currency: "COP", minimumFractionDigits: 2, maximumFractionDigits: 2
+  });
 
   /* ================= Helpers UI ================= */
   function showErr(msg){
     $okBox.hide().text("");
-    $errBox.html(`<i class="fas fa-exclamation-circle"></i> ${msg}`).show();
+    $errBox.text(msg).show();
   }
   function showOk(msg){
     $errBox.hide().text("");
-    $okBox.html(`<i class="fas fa-check-circle"></i> ${msg}`).show();
+    $okBox.text(msg).show();
   }
   function clearMsgs(){
     $errBox.hide().text("");
@@ -56,6 +61,7 @@ $(function () {
 
     // al cambiar sucursal, ocultamos resultados previos
     $resultCard.hide();
+    $resultsEmpty.prop("hidden", false);
 
     // limpia mensajes (evita “Debe seleccionar sucursal” pegado)
     clearMsgs();
@@ -65,23 +71,34 @@ $(function () {
   syncSucursalUI(); // inicial
 
   /* ================= Datepicker (rango) ================= */
+  const calendarOptions = {
+    dateFormat: "yy-mm-dd", changeMonth: true, changeYear: true, firstDay: 1,
+    dayNamesMin: ["Do", "Lu", "Ma", "Mi", "Ju", "Vi", "Sá"],
+    monthNames: ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"],
+    monthNamesShort: ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"],
+    prevText: "Anterior", nextText: "Siguiente"
+  };
+  function markQuickRange(value){
+    $(".quick-btn").each(function(){
+      $(this).attr("aria-pressed", String($(this).attr("data-q") === value));
+    });
+  }
   $desde.datepicker({
-    dateFormat: "yy-mm-dd",
-    changeMonth: true,
-    changeYear: true,
+    ...calendarOptions,
     onSelect: function(val){
       $hasta.datepicker("option", "minDate", val);
+      markQuickRange("");
     }
   });
 
   $hasta.datepicker({
-    dateFormat: "yy-mm-dd",
-    changeMonth: true,
-    changeYear: true,
+    ...calendarOptions,
     onSelect: function(val){
       $desde.datepicker("option", "maxDate", val);
+      markQuickRange("");
     }
   });
+  $desde.add($hasta).on("input", function(){ markQuickRange(""); });
 
   function pad2(n){ return String(n).padStart(2, "0"); }
   function isoDate(d){
@@ -93,6 +110,10 @@ $(function () {
     if (days !== 0) start.setDate(start.getDate() - (days - 1));
     $desde.val(isoDate(start));
     $hasta.val(isoDate(end));
+    $desde.datepicker("option", "maxDate", null).datepicker("setDate", start);
+    $hasta.datepicker("option", "minDate", start).datepicker("setDate", end);
+    $desde.datepicker("option", "maxDate", end);
+    markQuickRange(days === 0 ? "hoy" : String(days));
   }
 
   $(".quick-btn").on("click", function(){
@@ -111,7 +132,14 @@ $(function () {
     info: false,
     ordering: true,
     order: [[0, "asc"]],
-    language: { emptyTable: "Sin resultados en el rango seleccionado." }
+    columnDefs: [
+      { targets: 0, render: $.fn.dataTable.render.text() },
+      { targets: [1, 2], render: (value, type) => type === "display" ? quantityFormat.format(Number(value) || 0) : value }
+    ],
+    language: {
+      emptyTable: "Este producto no tiene ventas en el período seleccionado.",
+      aria: { sortAscending: ": ordenar de menor a mayor", sortDescending: ": ordenar de mayor a menor" }
+    }
   });
 
   function clearDaily(){
@@ -224,7 +252,8 @@ $(function () {
 
   /* ================= Consultar stats ================= */
   function moneyLike(s){
-    return String(s ?? "0");
+    const value = Number(s ?? 0);
+    return currencyFormat.format(Number.isFinite(value) ? value : 0);
   }
 
   function paintResult(data){
@@ -236,8 +265,8 @@ $(function () {
     $("#r_id").text(p.id ?? "-");
     $("#r_bar").text(p.codigo_de_barras || "-");
 
-    $("#k_veces").text(st.ventas_distintas ?? 0);
-    $("#k_unidades").text(st.unidades ?? 0);
+    $("#k_veces").text(quantityFormat.format(Number(st.ventas_distintas) || 0));
+    $("#k_unidades").text(quantityFormat.format(Number(st.unidades) || 0));
     $("#k_ingresos").text(moneyLike(st.ingresos));
 
     $("#r_desde").text(rg.desde || "-");
@@ -249,7 +278,9 @@ $(function () {
     });
     dt.draw(false);
 
+    $resultsEmpty.prop("hidden", true);
     $resultCard.show();
+    dt.columns.adjust();
   }
 
   function validate(){
@@ -290,7 +321,7 @@ $(function () {
     });
 
     loading = true;
-    $btnConsultar.prop("disabled", true).text("Consultando…");
+    $btnConsultar.prop("disabled", true).attr("aria-busy", "true").text("Consultando…");
 
     fetch(url, { cache: "no-store" })
       .then(r => r.ok ? r.json() : r.json().then(j => Promise.reject(j)))
@@ -305,7 +336,7 @@ $(function () {
       .catch(e => showErr(e?.error || "Error consultando ventas."))
       .finally(() => {
         loading = false;
-        $btnConsultar.prop("disabled", false).text("Consultar ventas");
+        $btnConsultar.prop("disabled", false).attr("aria-busy", "false").text("Consultar ventas");
       });
   });
 

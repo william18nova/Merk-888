@@ -18,12 +18,15 @@ let browser;
 before(async () => { browser = await chromium.launch({headless:true, channel:process.env.PLAYWRIGHT_CHANNEL || 'msedge'}); });
 after(async () => { await browser?.close(); });
 const item = id => ({id, monto_num: 5000, monto_label:'$5.000', nombre:'Persona '+id, texto:'Pago de prueba', fecha:'2026-09-23', hora:'10:00'});
-async function fixture() {
+async function fixture({realConfirm = false, total = 1000} = {}) {
   const page = await browser.newPage();
   await page.route('**/*', route => {throw Error('No external requests allowed: '+route.request().url());});
-  await page.setContent(`<form id="venta-form"><input type="hidden" id="nequi_notificacion_id" name="nequi_notificacion_id"></form>
+  await page.setContent(`<form id="venta-form"><input type="hidden" id="nequi_notificacion_id" name="nequi_notificacion_id">
+    <input type="hidden" id="pagos" name="pagos"><input type="hidden" id="medio_pago" name="medio_pago">
+    <input type="hidden" id="efectivo_recibido" name="efectivo_recibido">
+    <input type="hidden" id="empleado_password"><input type="hidden" id="codigo_descuento_merk2888"></form>
     <div id="myModal" style="display:block"><input class="pm-check" type="checkbox" value="nequi" checked>
-    <input id="mix-mode" type="checkbox"><div id="mix-error"></div><div id="nequi-payment-panel">
+    <input id="monto-recibido"><input id="mix-mode" type="checkbox"><div id="mix-error"></div><div id="nequi-payment-panel">
     <button id="nequi-refresh-payments">Actualizar</button><div id="nequi-selected-payment" hidden></div>
     <div id="nequi-payment-list" style="max-height:260px;overflow:auto;width:500px"></div><small id="nequi-payment-status"></small>
     </div><button id="confirmar-pago">Confirmar</button></div>
@@ -36,15 +39,31 @@ async function fixture() {
     const $ = window.jQuery, $modal = $('#myModal'), $hidNequiNotification = $('#nequi_notificacion_id'), $mixMode = $('#mix-mode');
     const NEQUI_DISPONIBLES_URL = '/payments', NEQUI_FEATURE_KEY = 'nequi_api_recepcion';
     let nequiApiEnabled = true;
-    const saleTotalForPayment = () => 1000, parseAmt = Number, safeNumber = Number, money = x => '$'+x;
+    const saleTotalForPayment = () => ${JSON.stringify(total)}, parseAmt = Number, safeNumber = Number, money = x => '$'+x;
     const isModalOpen = () => $modal.is(':visible');
-    const isModalConfirmBlocked = () => false;
+    let modalConfirmBlocked = false;
+    const isModalConfirmBlocked = () => modalConfirmBlocked;
     let confirmed = 0;
-    function triggerConfirmPago() {confirmed++;}
+    ${realConfirm ? section('  const confirmPagoGuard', '  function getDigitFromAltEvent') : 'function triggerConfirmPago() {confirmed++;}'}
     function closeModal() {stopNequiAutoRefresh(); $modal.hide();}
     ${section('  const $nequiPanel =', '  function refreshEfectivoUI()')}
     ${section(handlersStart, '  const confirmPagoGuard')}
     ${keyboard}
+    ${realConfirm ? `
+      let confirmSubmitting = false;
+      const REPRICE_ON_MODAL = false;
+      const isMerk2888ClientSelected = () => false, isEmployeeClientSelected = () => false;
+      const to2 = value => Number(value).toFixed(2);
+      const $amountIn = $('#monto-recibido'), $hidPagos = $('#pagos'), $hidMedioPago = $('#medio_pago');
+      const $hidEfectivoRecibido = $('#efectivo_recibido');
+      const $hidEmpleadoPassword = $('#empleado_password'), $hidMerk2888Password = $('#codigo_descuento_merk2888');
+      $('#venta-form').on('submit', event => {
+        event.preventDefault(); event.stopImmediatePropagation(); confirmed++;
+        window.submittedPayment = Object.fromEntries(new FormData(event.target));
+      });
+      ${section('  function buildPagosJSONOrError()', '  $nequiRefresh.on("click"')}
+      ${section('  /* ================== CLICK CONFIRM (MIXTO / NO MIXTO)', '  /* ================== POS Agent helpers')}
+    ` : ''}
     window.nequiTest = {
       render: renderNequiPaymentList, select: selectNequiPayment,
       reset: resetNequiPaymentState, load: loadNequiPayments, stop: stopNequiAutoRefresh,
@@ -52,6 +71,7 @@ async function fixture() {
       setItems(items) {nequiPaymentsCache = items; nequiPaymentsLoaded = true; renderNequiPaymentList();},
       selected() {return selectedNequiPayment?.id || null;},
       confirmed() {return confirmed;},
+      setConfirmBlocked(value) {modalConfirmBlocked = value;},
       state() {return {loading:nequiPaymentsLoading, items:nequiPaymentsCache.map(x=>x.id)};},
     };
   })();`});
@@ -79,6 +99,121 @@ test('Enter sobre un pago lo selecciona sin confirmar la venta', async () => {
     await page.keyboard.press('Enter');
     assert.equal(await page.locator('#nequi_notificacion_id').inputValue(), '1');
     assert.equal(await page.evaluate(() => window.nequiTest.confirmed()), 0);
+  } finally {await page.close();}
+});
+
+test('Enter después de seleccionar con clic confirma sin quitar el Nequi', async () => {
+  const page = await fixture();
+  try {
+    await page.locator('.nequi-payment-item').first().click();
+    await page.keyboard.press('Enter');
+    assert.equal(await page.evaluate(() => window.nequiTest.confirmed()), 1);
+    assert.equal(await page.locator('#nequi_notificacion_id').inputValue(), '1');
+  } finally {await page.close();}
+});
+
+test('el flujo real de confirmar envía los pagos y el Nequi seleccionado una sola vez', async () => {
+  const page = await fixture({realConfirm:true});
+  try {
+    await page.locator('.nequi-payment-item').first().click();
+    await page.keyboard.press('Enter');
+    await page.keyboard.press('Enter');
+    assert.equal(await page.evaluate(() => window.nequiTest.confirmed()), 1);
+    assert.equal(await page.locator('#myModal').isVisible(), false);
+    assert.equal(await page.locator('#nequi_notificacion_id').inputValue(), '1');
+    assert.deepEqual(JSON.parse(await page.locator('#pagos').inputValue()), [{medio_pago:'nequi',monto:'1000.00'}]);
+  } finally {await page.close();}
+});
+
+test('Enter no envía la venta si el Nequi seleccionado no cubre el importe', async () => {
+  const page = await fixture({realConfirm:true});
+  try {
+    await page.evaluate(p => window.nequiTest.setItems([p]), {...item(1),monto_num:500});
+    await page.locator('.nequi-payment-item').first().click();
+    await page.keyboard.press('Enter');
+    assert.equal(await page.evaluate(() => window.nequiTest.confirmed()), 0);
+    assert.equal(await page.locator('#myModal').isVisible(), true);
+    assert.match(await page.locator('#mix-error').textContent(), /no cubre/);
+  } finally {await page.close();}
+});
+
+test('Enter no borra el aviso ni confirma un Nequi que pasó a no disponible', async () => {
+  const page = await fixture({realConfirm:true});
+  try {
+    await page.locator('.nequi-payment-item').first().click();
+    await page.evaluate(async () => {
+      window.fetch=async()=>({ok:true,json:async()=>({success:true,items:[]})});
+      await window.nequiTest.load(true,{silent:true});
+    });
+    await page.keyboard.press('Enter');
+    assert.equal(await page.evaluate(() => window.nequiTest.confirmed()), 0);
+    assert.equal(await page.locator('#nequi_notificacion_id').inputValue(), '1');
+    assert.match(await page.locator('#mix-error').textContent(), /ya no está disponible/);
+  } finally {await page.close();}
+});
+
+test('primer Enter selecciona y segundo Enter confirma la venta', async () => {
+  const page = await fixture();
+  try {
+    await page.locator('.nequi-payment-item').first().focus();
+    await page.keyboard.press('Enter');
+    assert.equal(await page.evaluate(() => window.nequiTest.confirmed()), 0);
+    await page.keyboard.press('Enter');
+    assert.equal(await page.evaluate(() => window.nequiTest.confirmed()), 1);
+    assert.equal(await page.locator('#nequi_notificacion_id').inputValue(), '1');
+  } finally {await page.close();}
+});
+
+test('Enter en otra tarjeta cambia la selección sin cobrar con el Nequi anterior', async () => {
+  const page = await fixture();
+  try {
+    await page.locator('.nequi-payment-item').first().click();
+    await page.locator('.nequi-payment-item').nth(1).focus();
+    await page.keyboard.press('Enter');
+    assert.equal(await page.evaluate(() => window.nequiTest.confirmed()), 0);
+    assert.equal(await page.locator('#nequi_notificacion_id').inputValue(), '2');
+    await page.keyboard.press('Enter');
+    assert.equal(await page.evaluate(() => window.nequiTest.confirmed()), 1);
+  } finally {await page.close();}
+});
+
+test('mantener Enter al seleccionar no confirma por repetición de la tecla', async () => {
+  const page = await fixture();
+  try {
+    await page.locator('.nequi-payment-item').first().focus();
+    await page.keyboard.down('Enter');
+    await page.keyboard.down('Enter');
+    await page.keyboard.down('Enter');
+    assert.equal(await page.locator('#nequi_notificacion_id').inputValue(), '1');
+    assert.equal(await page.evaluate(() => window.nequiTest.confirmed()), 0);
+    await page.keyboard.up('Enter');
+    await page.keyboard.press('Enter');
+    assert.equal(await page.evaluate(() => window.nequiTest.confirmed()), 1);
+  } finally {await page.close();}
+});
+
+test('Enter sobre el Nequi seleccionado respeta el bloqueo del escáner', async () => {
+  const page = await fixture();
+  try {
+    await page.locator('.nequi-payment-item').first().click();
+    await page.evaluate(() => window.nequiTest.setConfirmBlocked(true));
+    await page.keyboard.press('Enter');
+    assert.equal(await page.evaluate(() => window.nequiTest.confirmed()), 0);
+    assert.equal(await page.locator('#nequi_notificacion_id').inputValue(), '1');
+    await page.evaluate(() => window.nequiTest.setConfirmBlocked(false));
+    await page.keyboard.press('Enter');
+    assert.equal(await page.evaluate(() => window.nequiTest.confirmed()), 1);
+  } finally {await page.close();}
+});
+
+test('Enter sobre Actualizar no confirma aunque haya un Nequi seleccionado', async () => {
+  const page = await fixture();
+  try {
+    await page.locator('.nequi-payment-item').first().click();
+    await page.locator('#nequi-refresh-payments').focus();
+    await page.keyboard.press('Enter');
+    assert.equal(await page.evaluate(() => window.nequiTest.confirmed()), 0);
+    assert.equal(await page.locator('#nequi_notificacion_id').inputValue(), '1');
   } finally {await page.close();}
 });
 
@@ -221,5 +356,92 @@ test('un importe insuficiente se selecciona visiblemente pero no autoriza el cob
     await page.locator('.nequi-payment-item').first().click();
     assert.equal(await page.locator('#nequi_notificacion_id').inputValue(), '1');
     assert.match(await page.evaluate(()=>window.nequiTest.validate()), /no cubre/);
+  } finally {await page.close();}
+});
+
+for (const key of ['click', 'Enter']) {
+  test(`efectivo: ${key} envía el recibido antes del submit para imprimir el cambio`, async () => {
+    const page = await fixture({realConfirm:true});
+    try {
+      await page.locator('.pm-check').evaluate(el => {el.value = 'efectivo';});
+      await page.locator('#monto-recibido').fill('2000');
+      if (key === 'Enter') await page.keyboard.press('Enter');
+      else await page.locator('#confirmar-pago').click();
+      const sent = await page.evaluate(() => window.submittedPayment);
+      assert.equal(sent.efectivo_recibido, '2000.00');
+      assert.deepEqual(JSON.parse(sent.pagos), [{medio_pago:'efectivo',monto:'1000.00'}]);
+      assert.equal(await page.evaluate(() => window.nequiTest.confirmed()), 1);
+    } finally {await page.close();}
+  });
+}
+
+test('efectivo: sin escribir recibido se envía el total exacto', async () => {
+  const page = await fixture({realConfirm:true});
+  try {
+    await page.locator('.pm-check').evaluate(el => {el.value = 'efectivo';});
+    await page.locator('#confirmar-pago').click();
+    assert.equal(await page.evaluate(() => window.submittedPayment.efectivo_recibido), '1000.00');
+  } finally {await page.close();}
+});
+
+test('efectivo insuficiente no envía una venta ni imprime una factura', async () => {
+  const page = await fixture({realConfirm:true});
+  try {
+    await page.locator('.pm-check').evaluate(el => {el.value = 'efectivo';});
+    await page.locator('#monto-recibido').fill('500');
+    await page.locator('#confirmar-pago').click();
+    assert.equal(await page.evaluate(() => window.nequiTest.confirmed()), 0);
+    assert.equal(await page.evaluate(() => window.submittedPayment), undefined);
+    assert.match(await page.locator('#mix-error').textContent(), /insuficiente/);
+  } finally {await page.close();}
+});
+
+for (const medio of ['nequi', 'tarjeta']) {
+  test(`${medio}: no arrastra el recibido de un pago anterior en efectivo`, async () => {
+    const page = await fixture({realConfirm:true});
+    try {
+      await page.locator('.pm-check').evaluate((el, value) => {el.value = value;}, medio);
+      await page.locator('#efectivo_recibido').evaluate(el => {el.value = '2000.00';});
+      await page.locator('#monto-recibido').fill('2000');
+      await page.locator('#confirmar-pago').click();
+      assert.equal(await page.evaluate(() => window.submittedPayment.efectivo_recibido), '');
+      assert.equal(await page.evaluate(() => window.nequiTest.confirmed()), 1);
+    } finally {await page.close();}
+  });
+}
+
+test('una venta de total cero no envía efectivo recibido de una venta anterior', async () => {
+  const page = await fixture({realConfirm:true,total:0});
+  try {
+    await page.locator('#efectivo_recibido').evaluate(el => {el.value = '2000.00';});
+    await page.locator('#confirmar-pago').click();
+    assert.equal(await page.evaluate(() => window.submittedPayment.efectivo_recibido), '');
+    assert.deepEqual(JSON.parse(await page.locator('#pagos').inputValue()), []);
+  } finally {await page.close();}
+});
+
+test('pago mixto conserva los importes y borra el recibido del modo efectivo', async () => {
+  const page = await fixture({realConfirm:true});
+  try {
+    await page.evaluate(() => {
+      document.querySelector('#efectivo_recibido').value = '2000.00';
+      document.querySelector('#monto-recibido').value = '2000';
+      document.querySelector('#mix-mode').checked = true;
+      const nequiCheck = document.querySelector('.pm-check');
+      const nequiRow = document.createElement('div');
+      nequiRow.className = 'pm-row';
+      nequiCheck.replaceWith(nequiRow);
+      nequiRow.append(nequiCheck);
+      nequiRow.insertAdjacentHTML('beforeend', '<input class="pm-amt" data-medio="nequi" value="600">');
+      document.querySelector('#myModal').insertAdjacentHTML('beforeend',
+        '<div class="pm-row"><input class="pm-check" type="checkbox" value="efectivo" checked><input class="pm-amt" data-medio="efectivo" value="400"></div>');
+    });
+    await page.locator('#confirmar-pago').click();
+    const sent = await page.evaluate(() => window.submittedPayment);
+    assert.equal(sent.efectivo_recibido, '');
+    assert.equal(sent.medio_pago, 'mixto');
+    assert.deepEqual(JSON.parse(sent.pagos), [
+      {medio_pago:'nequi',monto:'600.00'}, {medio_pago:'efectivo',monto:'400.00'},
+    ]);
   } finally {await page.close();}
 });

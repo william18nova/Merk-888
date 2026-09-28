@@ -198,6 +198,8 @@ class BotReply:
     pagination: dict | None = None
     # Identidad generada por el dominio, nunca extraída del texto de la IA.
     proposal_id: str | None = None
+    # Referencias de filas realmente mostradas, nunca extraídas de prosa de la IA.
+    references: list | None = None
 
 
 def _configured(name):
@@ -485,6 +487,9 @@ class TelegramApiClient:
                 {"command": "pagos", "description": "Consultar pagos registrados"},
                 {"command": "empleados", "description": "Listar o buscar empleados"},
                 {"command": "balance", "description": "Ver ventas menos pagos"},
+                {"command": "analisis", "description": "Balance de hoy frente a ayer"},
+                {"command": "alias", "description": "Nombres que recuerdo para tu cuenta"},
+                {"command": "seguimientos", "description": "Ver tus informes diarios programados"},
                 {"command": "turnos", "description": "Consultar turnos de caja"},
                 {"command": "horario", "description": "Consultar mi horario laboral"},
                 {"command": "horarios", "description": "Calendario de empleados según permisos"},
@@ -712,6 +717,8 @@ def tool_find_product(profile, arguments):
         )
     if len(products) == 10:
         lines.append("Mostré los primeros 10 resultados; afina la búsqueda si hace falta.")
+    from .telegram_search import record_references
+    record_references("productos", [product.pk for product in products])
     return "\n".join(lines)
 
 
@@ -743,6 +750,8 @@ def tool_inventory(profile, arguments):
         )
     if len(rows) == 15:
         lines.append("Mostré los primeros 15 resultados.")
+    from .telegram_search import record_references
+    record_references("productos", [row.productoid_id for row in rows])
     return "\n".join(lines)
 
 
@@ -876,7 +885,8 @@ def tool_expenses(profile, arguments):
     else:
         lines.append("Detalle:")
     expenses = rows.select_related("concepto").order_by("-creado_en", "-egresoid")
-    for expense in expenses[offset:offset + LIST_PAGE_SIZE]:
+    shown = list(expenses[offset:offset + LIST_PAGE_SIZE])
+    for expense in shown:
         paid_at = timezone.localtime(expense.creado_en)
         lines.extend([
             f"• #{expense.pk} · {_list_text(expense.concepto.nombre)} · {_list_money(expense.monto)} · {_list_text(payment_method_label(expense.medio_pago, labels=labels), 60)}",
@@ -885,7 +895,7 @@ def tool_expenses(profile, arguments):
     query = dict(arguments, desde=start.isoformat(), hasta=end.isoformat(), pagina=page, detalle=True)
     return BotReply("\n".join(lines), "consultar_pagos", pagination={
         "page": page, "pages": pages, "arguments": query,
-    })
+    }, references=[{"entidad": "pagos", "id": item.pk} for item in shown])
 
 
 def tool_employees(profile, arguments):
@@ -919,14 +929,15 @@ def tool_employees(profile, arguments):
     if pages > 1:
         lines.append(f"Página {page} de {pages}:")
     ordered = employees if query and not query.isdigit() else employees.order_by("nombre", "apellido", "empleadoid")
-    for employee in ordered[offset:offset + LIST_PAGE_SIZE]:
+    shown = list(ordered[offset:offset + LIST_PAGE_SIZE])
+    for employee in shown:
         lines.append(f"• ID {employee.pk} · {_list_text(f'{employee.nombre} {employee.apellido}', 201)} · "
                      f"{_list_text(employee.puesto, 50) or 'Sin cargo'} · {_list_text(getattr(employee.sucursalid, 'nombre', None), 100) or 'Sin sucursal'}")
         if arguments.get("detalle"):
             lines.append(f"  Usuario: {_list_text(getattr(employee.usuarioid, 'nombreusuario', None), 100) or 'Sin usuario vinculado'}")
     return BotReply("\n".join(lines), "listar_empleados", pagination={
         "page": page, "pages": pages, "arguments": dict(arguments, pagina=page),
-    })
+    }, references=[{"entidad": "empleados", "id": item.pk} for item in shown])
 
 
 def tool_balance(profile, arguments):
@@ -1239,7 +1250,12 @@ def _assistant_system_prompt():
         "No inventes el monto ni aceptes uno dictado: lo calcula el dominio respetando descuentos. "
         "La herramienta solo prepara; el usuario debe pulsar Confirmar devolución. Se registra "
         "la salida y el inventario, pero NO se envía dinero por Nequi ni se reversa una tarjeta. "
-        "No ejecutes eliminaciones, cierres, ventas, ajustes manuales de stock, contraseñas o permisos: "
+        "Inventario solo mediante preparar_movimiento_inventario con sucursal, cantidad, modo y motivo explícitos. "
+        "Pedidos solo En espera con preparar_pedido_proveedor; no recibir ni pagar automáticamente. "
+        "Puedes encadenar hasta cinco herramientas usando resolver_tarea, solo lecturas y una preparación final. "
+        "Para el segundo/tercero de una lista usa consultar_resultado, nunca inventes su ID. "
+        "Alias y seguimientos solo si los solicita explícitamente, con confirmación; seguimientos únicamente diarios a la hora de Colombia indicada. "
+        "No ejecutes eliminaciones, cierres, ventas, contraseñas o permisos: "
         "usa buscar_vistas para ofrecer la página correspondiente y aclara que no se ejecutó nada. "
         "Para 'qué puedes hacer' usa consultar_capacidades. Mantén estas mismas reglas para audios. "
         "Solo puedes usar las herramientas disponibles; no inventes listas ni capacidades. "
@@ -1669,6 +1685,18 @@ def _expense_query_arguments(profile, arguments):
 
 
 def _execute_tool(profile, tool_name, arguments, update=None):
+    from .telegram_search import search_profile, search_references
+    token = search_profile.set(profile)
+    refs_token = search_references.set([])
+    try:
+        return _execute_scoped_tool(profile, tool_name, arguments, update)
+    finally:
+        search_profile.reset(token)
+        search_references.reset(refs_token)
+
+
+def _execute_scoped_tool(profile, tool_name, arguments, update=None):
+    from .telegram_business import PREPARATION_TOOLS
     function = TOOL_FUNCTIONS.get(tool_name)
     if function is None:
         raise TelegramBotError("La acción solicitada no está permitida.")
@@ -1684,16 +1712,23 @@ def _execute_tool(profile, tool_name, arguments, update=None):
         if tool_name == "consultar_pagos":
             _require_access(profile, "registrar_egreso")
             arguments = _expense_query_arguments(profile, arguments)
-        if tool_name in {"preparar_registro_pago", "preparar_cambio_catalogo", "preparar_devolucion_venta", "preparar_turno_empleado", "preparar_edicion_pago"}:
+        if tool_name in PREPARATION_TOOLS | {"preparar_registro_pago", "preparar_cambio_catalogo", "preparar_devolucion_venta", "preparar_turno_empleado", "preparar_edicion_pago"}:
             result = function(profile, arguments, update=update)
             remember_confirmation(profile, result)
+        elif tool_name in {"resolver_tarea", "consultar_resultado"}:
+            result = function(profile, arguments, update=update)
         else:
             result = function(profile, arguments)
-        pagination = result.pagination if isinstance(result, BotReply) else None
+        from .telegram_search import search_references
+        result = result if isinstance(result, BotReply) else BotReply(str(result), tool_name)
+        if result.references is None:
+            result.references = search_references.get() or None
+        pagination = result.pagination
         audit = _audit(
             profile, tool_name,
             pagination["arguments"] if pagination else arguments,
             successful=True,
+            detail=json.dumps({"referencias": result.references[:20]}, default=str) if isinstance(result, BotReply) and result.references else "",
         )
         if pagination and tool_name in PAGINATED_READ_TOOLS:
             page, pages = pagination["page"], pagination["pages"]
@@ -1716,7 +1751,7 @@ def _execute_tool(profile, tool_name, arguments, update=None):
 
 HELP_TEXT = (
     "Puedo consultar catálogos, ventas, inventario, pagos, empleados, pedidos, Nequi y más según tus permisos. "
-    "También preparo pagos, devoluciones y cambios de catálogo con confirmación. Puedes escribir, enviar audio o usar:\n"
+    "También preparo pagos, devoluciones, pedidos, inventario y cambios de catálogo con confirmación. Puedes escribir, enviar audio o usar:\n"
     "• /ventas — ventas de hoy\n"
     "• /venta ID — detalle, productos y pagos de una venta (también /factura ID)\n"
     "• /resumen — panorama del negocio según tus permisos\n"
@@ -1730,6 +1765,9 @@ HELP_TEXT = (
     "• /historial_pago ID — quién lo corrigió y qué cambió, con permiso\n"
     "• /empleados [NOMBRE] — lista o búsqueda de empleados\n"
     "• /balance — ventas menos pagos de hoy\n"
+    "• /analisis — balance de hoy frente a ayer y mayores pagos\n"
+    "• /alias — nombres que recuerdas para tu cuenta\n"
+    "• /seguimientos — tus informes diarios programados\n"
     "• /turnos — turnos abiertos\n"
     "• /horario [EMPLEADO] — mi horario laboral o el de un empleado, con permiso\n"
     "• /horarios — calendario laboral de todos, con permiso\n"
@@ -1874,6 +1912,9 @@ def _handle_callback(update, profile, client):
             message = confirm_return(profile, action) if verb == "confirm" else "Usa Confirmar devolución o Cancelar en esta propuesta."
         elif action.accion == "turno_empleado":
             message = confirm_schedule(profile, action) if verb == "confirm" else "Usa Confirmar o Descartar propuesta en este horario."
+        elif action.accion == "operacion_negocio":
+            from .telegram_business import confirm_business
+            message = confirm_business(profile, action) if verb == "confirm" else "Usa Confirmar o Cancelar en esta propuesta."
         elif action.accion == "cambio_catalogo":
             if verb != "confirm":
                 message = "Usa Confirmar cambio o Cancelar en la propuesta del catálogo."
@@ -2019,6 +2060,9 @@ def _handle_command(update, profile, text):
         return _execute_tool(profile, "listar_empleados", {"consulta": remainder}, update)
     if command == "/balance":
         return _execute_tool(profile, "consultar_balance", {}, update)
+    if command in {"/analisis", "/alias", "/seguimientos"}:
+        name = {"/analisis": "analizar_balance", "/alias": "consultar_aliases", "/seguimientos": "consultar_seguimientos"}[command]
+        return _execute_tool(profile, name, {}, update)
     if command == "/turnos":
         return _execute_tool(profile, "consultar_turnos", {"estado": "ABIERTO"}, update)
     if command == "/acciones":
@@ -2100,7 +2144,7 @@ def _build_reply(update, client):
             recibido_en__gte=max(profile.vinculado_en, timezone.now() - timedelta(hours=24)),
         )
         .exclude(pk=update.pk)
-        .order_by("-procesado_en", "-update_id")[:4]
+        .order_by("-procesado_en", "-update_id")[:12]
     )
     history = []
     for item in reversed(previous):

@@ -21,6 +21,7 @@ def _bot():
 
 
 READ_TOOLS = (
+    "planificar_reabastecimiento", "consultar_aliases", "consultar_seguimientos", "consultar_resultado", "analizar_balance",
     "consultar_pago",
     "consultar_datos",
     "consultar_ventas", "buscar_producto", "consultar_inventario", "consultar_pagos",
@@ -29,7 +30,7 @@ READ_TOOLS = (
     "consultar_informe", "consultar_resumen_negocio", "consultar_pendientes", "consultar_horarios_empleados",
 )
 
-DATE_TOOLS = {"consultar_ventas", "consultar_pagos", "consultar_balance", "ranking_productos", "consultar_informe", "consultar_resumen_negocio"}
+DATE_TOOLS = {"consultar_ventas", "consultar_pagos", "consultar_balance", "ranking_productos", "consultar_informe", "consultar_resumen_negocio", "analizar_balance"}
 
 GROUPS = {
     "ventas": {

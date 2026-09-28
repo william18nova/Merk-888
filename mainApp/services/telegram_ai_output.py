@@ -48,6 +48,7 @@ def selection_prompt(definitions):
         "Devuelve SOLO JSON: {\"herramientas\":[\"nombre\"]}, de una a cuatro funciones de este catálogo. "
         "El siguiente paso recibirá sus esquemas completos y la misma petición e historial. "
         "Si son varias lecturas, el servidor incluirá consultar_varias automáticamente. "
+        "Si una consulta sirve para preparar un cambio después, selecciona resolver_tarea y las herramientas de sus pasos. "
         "Continuaciones usan continuar_consulta. Crear o editar solo prepara propuestas que requieren botones. "
         "Si no puedes seleccionar sin adivinar o necesitas más de cuatro herramientas, pregunta en español "
         "con {\"pregunta\":\"¿Qué necesitas aclarar?\"}; nunca afirmes haber hecho una acción. Catálogo:\n"

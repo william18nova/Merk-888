@@ -1058,6 +1058,45 @@ class TelegramUsuario(models.Model):
         return f"{self.usuario} ↔ Telegram {self.telegram_user_id}"
 
 
+class TelegramAlias(models.Model):
+    """Nombres alternativos explícitos y privados de cada cuenta vinculada."""
+    telegram_usuario = models.ForeignKey(TelegramUsuario, on_delete=models.CASCADE, related_name="aliases")
+    entidad = models.CharField(max_length=30)
+    clave = models.CharField(max_length=100)
+    nombre = models.CharField(max_length=100)
+    registro_id = models.PositiveBigIntegerField()
+    creado_en = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "telegram_aliases"
+        constraints = [models.UniqueConstraint(fields=["telegram_usuario", "entidad", "clave"], name="telegram_alias_usuario_unico")]
+
+
+class TelegramSeguimiento(models.Model):
+    """Consultas programadas autorizadas; nunca acciones contables automáticas."""
+    telegram_usuario = models.ForeignKey(TelegramUsuario, on_delete=models.CASCADE, related_name="seguimientos")
+    tipo = models.CharField(max_length=30)
+    hora = models.TimeField()
+    activo = models.BooleanField(default=True)
+    creado_en = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "telegram_seguimientos"
+        constraints = [models.UniqueConstraint(fields=["telegram_usuario", "tipo"], name="telegram_seguimiento_unico")]
+
+
+class TelegramEnvioSeguimiento(models.Model):
+    seguimiento = models.ForeignKey(TelegramSeguimiento, on_delete=models.CASCADE, related_name="envios")
+    fecha = models.DateField()
+    estado = models.CharField(max_length=20, default="RESERVADO")
+    detalle = models.CharField(max_length=250, blank=True, default="")
+    creado_en = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "telegram_envios_seguimiento"
+        constraints = [models.UniqueConstraint(fields=["seguimiento", "fecha"], name="telegram_seguimiento_dia_unico")]
+
+
 class TelegramCodigoVinculacion(models.Model):
     """Código de un solo uso para enlazar Telegram sin exponer contraseñas."""
 

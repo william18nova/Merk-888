@@ -25,6 +25,8 @@ from .telegram_search import ranked_queryset, resolve_name
 from .telegram_queries import QUERY_DEFINITION, SOURCES, tool_query
 from .telegram_wording import page_note
 from .telegram_payments import TOOL_DEFINITIONS as PAYMENT_DEFINITIONS, TOOL_FUNCTIONS as PAYMENT_FUNCTIONS
+from .telegram_business import TOOL_DEFINITIONS as BUSINESS_DEFINITIONS, TOOL_FUNCTIONS as BUSINESS_FUNCTIONS
+from .telegram_workspace import TOOL_DEFINITIONS as WORKSPACE_DEFINITIONS, TOOL_FUNCTIONS as WORKSPACE_FUNCTIONS
 
 
 @dataclass(frozen=True)
@@ -127,11 +129,13 @@ def _page_reply(tool, args, heading, queryset, fields, summary=""):
     lines = [heading, f"{total} {'resultado' if total == 1 else 'resultados'}" + page_note(page, pages)]
     if summary:
         lines.append(summary)
-    for row in queryset.values("pk", *(path for _, path, _ in fields))[offset:offset + bot.LIST_PAGE_SIZE]:
+    shown = list(queryset.values("pk", *(path for _, path, _ in fields))[offset:offset + bot.LIST_PAGE_SIZE])
+    for row in shown:
         lines.append(f"\n• #{row['pk']} " + " · ".join(f"{label}: {_format(row[path], kind)}" for label, path, kind in fields))
     if not total:
         lines.append("No encontré resultados que coincidan con tu búsqueda.")
-    return bot.BotReply("\n".join(lines), tool, pagination={"page": page, "pages": pages, "arguments": bot._json_safe(args)})
+    references = [{"entidad": args["recurso"], "id": row["pk"]} for row in shown] if args.get("recurso") else None
+    return bot.BotReply("\n".join(lines), tool, pagination={"page": page, "pages": pages, "arguments": bot._json_safe(args)}, references=references)
 
 
 def tool_records(profile, arguments):
@@ -565,6 +569,9 @@ def tool_capabilities(profile, arguments):
         "• Ver tu horario con /horario; para consultar o cambiar el de otros se revisan tus permisos.",
         "• Preparar cambios: registrar pagos" + ("; " + "; ".join(writable) if writable else "") + ". Siempre te pido confirmar antes de guardar.",
         "Puedes decir «solo el total», «muéstrame la lista», «solo nombre y precio» o continuar con «¿y ayer?». También puedo combinar hasta cuatro consultas de lectura.",
+        "Puedo encadenar hasta cinco consultas y preparar un cambio final con confirmación, y entender «el segundo de la lista» usando referencias reales.",
+        "Con los permisos correspondientes: investigar reabastecimiento, preparar pedidos En espera y sumar inventario o fijar un conteo con motivo. No recibo ni pago pedidos automáticamente.",
+        "Si lo pides, puedo recordar alias personales y programar informes diarios de balance, diferencias de caja o stock agotado; requieren confirmación y procesador --followups. /alias y /seguimientos los muestran.",
         "Si hay nombres parecidos, te pido elegir. No invento datos ni hago transferencias bancarias.",
         "Para más detalle usa /acciones producto, /pago ID o /historial_pago ID. /pendientes muestra propuestas sin confirmar; /vistas busca las páginas que puedes usar.",
         "Los cierres, la facturación, la eliminación y los cambios de permisos se hacen en la web.",
@@ -572,6 +579,8 @@ def tool_capabilities(profile, arguments):
 
 
 TOOL_FUNCTIONS = {
+    **BUSINESS_FUNCTIONS,
+    **WORKSPACE_FUNCTIONS,
     **PAYMENT_FUNCTIONS,
     "consultar_datos": tool_query,
     **ASSISTANT_FUNCTIONS,
@@ -586,6 +595,8 @@ TOOL_FUNCTIONS = {
 }
 
 TOOL_DEFINITIONS = [
+    *BUSINESS_DEFINITIONS,
+    *WORKSPACE_DEFINITIONS,
     *PAYMENT_DEFINITIONS,
     QUERY_DEFINITION,
     *ASSISTANT_DEFINITIONS,

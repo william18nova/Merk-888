@@ -1618,59 +1618,20 @@ class EditarInventarioView(LoginRequiredMixin, View):
 
             pid = int(productoid)
 
-            # Lock row
-            inv, _created = Inventario.objects.select_for_update().get_or_create(
-                sucursalid=sucursal,
-                productoid_id=pid,
-                defaults={"cantidad": 0},
-            )
-
-            # Para el mensaje del JS
-            producto_nombre = ""
+            from mainApp.services.business_operations import BusinessOperationError, update_inventory_item
             try:
-                producto_nombre = (inv.productoid.nombre or "").strip()
-            except Exception:
-                producto_nombre = ""
-
-            # ✅ MODO: SUMA (añadir)
-            if add_int is not None:
-                # Si actual > 9000 => bloquear surtido
-                if (inv.cantidad or 0) > 9000:
-                    return JsonResponse({
-                        "success": False,
-                        "errors": json.dumps({
-                            "add_cantidad": [{"message": "Este producto nunca se a contado cuentelo antes de surtir"}]
-                        })
-                    }, status=400)
-
-                before = int(inv.cantidad or 0)
-
-                Inventario.objects.filter(pk=inv.pk).update(cantidad=F("cantidad") + add_int)
-                inv.refresh_from_db(fields=["cantidad"])
-
-                # (messages opcional)
-                messages.success(request, f"Producto actualizado en «{sucursal.nombre}».")
-
-                return JsonResponse({
-                    "success": True,
-                    "mode": "add",
-                    "product_name": producto_nombre,
-                    "delta": int(add_int),         # lo que se agregó (puede ser negativo)
-                    "before": before,              # cantidad anterior
-                    "new_cantidad": int(inv.cantidad),
-                })
-
-            # ✅ MODO: SET EXACTO
-            inv.cantidad = int(cantidad_int)  # aquí no es None
-            inv.save(update_fields=["cantidad"])
-
+                result = update_inventory_item(
+                    branch_id=sucursal.pk, product_id=pid,
+                    quantity=add_int if add_int is not None else cantidad_int,
+                    mode="sumar" if add_int is not None else "fijar",
+                )
+            except BusinessOperationError as exc:
+                field = "add_cantidad" if add_int is not None else "cantidad"
+                return JsonResponse({"success": False, "errors": json.dumps({
+                    field: [{"message": str(exc)}],
+                })}, status=400)
             messages.success(request, f"Producto actualizado en «{sucursal.nombre}».")
-            return JsonResponse({
-                "success": True,
-                "mode": "exact",
-                "product_name": producto_nombre,
-                "new_cantidad": int(inv.cantidad),
-            })
+            return JsonResponse({"success": True, **result})
 
         # ───── Submit principal: MERGE (no eliminar faltantes) ─────
         form = EditarInventarioForm(request.POST)
@@ -8721,81 +8682,15 @@ class PedidoProveedorCreateAJAXView(LoginRequiredMixin, View):
         })
 
     def post(self, request):
+        from mainApp.services.business_operations import BusinessOperationError, create_supplier_order
         form = self.form_class(request.POST)
         if not form.is_valid():
-            return JsonResponse({
-                "success": False,
-                "errors": json.dumps(form.errors.get_json_data())
-            })
-        # datos base
-        prov   = form.cleaned_data["proveedor"]
-        suc    = form.cleaned_data["sucursal"]
-        fecha  = form.cleaned_data.get("fechaestimadaentrega")
-        comen  = form.cleaned_data.get("comentario", "")
-        detalles = json.loads(form.cleaned_data["detalles"])
-
-        # 1) al menos uno
-        if not detalles:
-            return JsonResponse({
-                "success": False,
-                "errors": json.dumps({
-                    "detalles":[{"message":"Debe agregar al menos un producto."}]
-                })
-            })
-
-        # 2) validar que el proveedor venda cada producto
-        invalidos = []
-        for d in detalles:
-            pid = d["productoid"]
-            if not PreciosProveedor.objects.filter(
-                productoid_id=pid, proveedorid=prov
-            ).exists():
-                nombre = Producto.objects.filter(pk=pid).first()
-                invalidos.append(nombre.nombre if nombre else f"ID {pid}")
-        if invalidos:
-            return JsonResponse({
-                "success": False,
-                "message": (
-                  "El proveedor NO vende: "
-                  + ", ".join(invalidos)
-                  + ". Revise el pedido."
-                )
-            })
-
-        # 3) calcular total
-        total = Decimal("0.00")
-        for d in detalles:
-            c = Decimal(str(d["cantidad"]))
-            p = Decimal(str(d["precio_unitario"]))
-            total += c * p
-
-        # 4) guardar
+            return JsonResponse({"success": False, "errors": json.dumps(form.errors.get_json_data())})
         try:
-            pedido = PedidoProveedor.objects.create(
-                proveedorid=prov,
-                sucursalid=suc,
-                fechaestimadaentrega=fecha,
-                costototal=total,
-                comentario=comen,
-                estado="En espera"
-            )
-            for d in detalles:
-                DetallePedidoProveedor.objects.create(
-                    pedidoid=pedido,
-                    productoid_id=d["productoid"],
-                    cantidad=d["cantidad"],
-                    preciounitario=d["precio_unitario"]
-                )
-        except Exception as e:
-            return JsonResponse({
-                "success": False,
-                "message": f"Error al guardar: {e}"
-            })
-
-        return JsonResponse({
-            "success": True,
-            "message": self.success_msg
-        })
+            create_supplier_order(request.POST)
+        except BusinessOperationError as exc:
+            return JsonResponse({"success": False, "message": str(exc)})
+        return JsonResponse({"success": True, "message": self.success_msg})
 
 
 class ProductoPedidoAutocomplete(PaginatedAutocompleteMixin):

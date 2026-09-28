@@ -10,58 +10,73 @@
   <link rel="stylesheet"
         href="https://cdn.datatables.net/1.13.8/css/jquery.dataTables.min.css"/>
   <link rel="stylesheet"
-        href="https://code.jquery.com/ui/1.13.3/themes/base/jquery-ui.css"/>
+        href="{% static 'vendor/jquery-ui/jquery-ui-1.13.2.min.css' %}"/>
 
-  <link rel="stylesheet" href="{% static 'css/ventas_producto_rango.css' %}">
+  <link rel="stylesheet" href="{% static 'css/ventas_producto_rango.css' %}?v=2">
 {% endblock %}
 
 {% block content %}
-  <div class="container-inventario">
-    <i class="fas fa-chart-line icon-inventario"></i>
-    <h2>Ventas por producto</h2>
+  <div class="vpr-page">
+    <header class="vpr-page-head">
+      <span class="vpr-heading-icon" aria-hidden="true"><svg class="vpr-icon" viewBox="0 0 24 24"><path d="M4 3v17h17M8 14l4-5 4 3 5-7"/></svg></span>
+      <div>
+        <p class="vpr-eyebrow">REPORTES DEL NEGOCIO</p>
+        <h1>Ventas por producto</h1>
+        <p class="vpr-description">Consulta cuánto se vendió de un producto y revisa su movimiento día a día.</p>
+      </div>
+    </header>
+
+    <section class="vpr-card vpr-filters" aria-labelledby="vpr-filters-title">
+    <div class="vpr-section-head">
+      <h2 id="vpr-filters-title"><svg class="vpr-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h8m4 0h4M4 17h3m4 0h9M12 4v6M7 14v6"/></svg> Configura tu consulta</h2>
+      <span>Elige una sucursal, un producto y las fechas</span>
+    </div>
+    <div id="error-message" class="alert alert-error" role="alert" style="display:none;"></div>
+    <div id="success-message" class="alert alert-success" role="status" style="display:none;"></div>
+    <div class="vpr-filter-grid">
 
     {# ✅ selector de sucursal (sin id en URL) #}
-    <div class="form-group-precio">
+    <div class="form-group-precio vpr-branch">
       <label for="id_sucursal">Sucursal <span class="required">*</span></label>
-      <select id="id_sucursal" class="form-control">
-        <option value="">— Selecciona sucursal —</option>
+      <select id="id_sucursal" class="form-control" aria-describedby="vpr-branch-hint">
+        <option value="">Selecciona una sucursal</option>
         {% for s in sucursales %}
           <option value="{{ s.pk }}">{{ s.nombre }}</option>
         {% endfor %}
       </select>
+      <p class="vpr-field-hint" id="vpr-branch-hint">Seleccionada: <b id="sucursalNombre">—</b></p>
       <div class="field-error" id="error-id_sucursal"></div>
     </div>
 
-    <div class="subtitle">
-      Sucursal seleccionada: <b id="sucursalNombre">—</b>
-    </div>
-
-    <div id="error-message" class="alert alert-error" style="display:none;"></div>
-    <div id="success-message" class="alert alert-success" style="display:none;"></div>
-
     {# ==================== BUSCADOR PRODUCTO ==================== #}
-    <div class="form-group-precio">
-      <label>Buscar producto <span class="required">*</span></label>
+    <div class="form-group-precio vpr-name">
+      <label for="producto_busqueda_nombre">Nombre del producto</label>
 
       <input type="text" id="producto_busqueda_nombre" class="form-control"
-             placeholder="Buscar por nombre…" autocomplete="off">
-
+             placeholder="Ej.: tomate, arroz…" autocomplete="off">
+    </div>
+    <div class="form-group-precio vpr-barcode">
+      <label for="producto_busqueda_barras">Código de barras</label>
       <div class="barcode-row">
         <input type="text" id="producto_busqueda_barras" class="form-control"
-               placeholder="Buscar por código de barras…" autocomplete="off" inputmode="numeric">
+               placeholder="Escribe o escanea…" autocomplete="off" inputmode="numeric">
         <button type="button" id="btnScanBarcode" class="btn-scan" aria-label="Escanear código de barras">
-          <i class="fas fa-camera"></i>
+          <svg class="vpr-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h4l2-3h4l2 3h4v13H4Z"/><circle cx="12" cy="13" r="4"/></svg>
         </button>
       </div>
-
+    </div>
+    <div class="form-group-precio vpr-product-id">
+      <label for="producto_busqueda_id">ID del producto</label>
       <input type="text" id="producto_busqueda_id" class="form-control"
-             placeholder="Buscar por código (ID)…" autocomplete="off" inputmode="numeric">
-
+             placeholder="Ej.: 2978" autocomplete="off" inputmode="numeric">
+    </div>
+    </div>
       <input type="hidden" id="id_productoid">
       <div class="field-error" id="error-id_productoid"></div>
-    </div>
+      <p class="vpr-search-hint">Puedes buscar el mismo producto por nombre, barras o ID. Elige una opción de la lista de sugerencias.</p>
 
     {# ==================== RANGO FECHAS ==================== #}
+    <div class="vpr-period-row">
     <div class="range-grid">
       <div class="form-group-precio">
         <label for="id_desde">Desde <span class="required">*</span></label>
@@ -76,64 +91,72 @@
       </div>
     </div>
 
-    <div class="quick-row">
-      <button type="button" class="quick-btn" data-q="hoy">Hoy</button>
-      <button type="button" class="quick-btn" data-q="7">Últimos 7 días</button>
-      <button type="button" class="quick-btn" data-q="30">Últimos 30 días</button>
+    <div class="vpr-quick-ranges">
+    <span class="vpr-field-label">Rangos rápidos</span>
+    <div class="quick-row" role="group" aria-label="Rangos rápidos de fechas">
+      <button type="button" class="quick-btn" data-q="hoy" aria-pressed="false">Hoy</button>
+      <button type="button" class="quick-btn" data-q="7" aria-pressed="false">Últimos 7 días</button>
+      <button type="button" class="quick-btn" data-q="30" aria-pressed="false">Últimos 30 días</button>
     </div>
-
+    </div>
+    </div>
+    <div class="vpr-filter-actions">
+    <p>El reporte incluye únicamente la sucursal y el período que selecciones.</p>
     <button type="button" id="btnConsultar" class="btn-agregar-precio">
       Consultar ventas
     </button>
+    </div>
+    </section>
+
+    <section id="resultsEmpty" class="vpr-empty" aria-label="Sin consulta realizada">
+      <svg class="vpr-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 3v17h17M8 16v-4m5 4V7m5 9v-6"/></svg>
+      <h2>Las ventas de tu producto, en un solo lugar</h2>
+      <p>Completa los filtros y pulsa «Consultar ventas» para ver los totales y el detalle diario.</p>
+    </section>
 
     {# ==================== RESULTADOS ==================== #}
-    <div id="resultCard" class="result-card" style="display:none;">
+    <section id="resultCard" class="vpr-card result-card" aria-labelledby="r_nombre" style="display:none;">
       <div class="result-head">
-        <div class="rh-title">
-          <i class="fas fa-box"></i>
-          <span id="r_nombre">Producto</span>
-        </div>
+        <div><p class="vpr-eyebrow">RESULTADO DE LA CONSULTA</p><h2 class="rh-title" id="r_nombre">Producto</h2></div>
         <div class="rh-meta">
           <span class="pill">ID: <b id="r_id">-</b></span>
           <span class="pill">Barras: <b id="r_bar">-</b></span>
         </div>
       </div>
-
+      <div class="range-show">Período: <b id="r_desde">-</b><span aria-hidden="true">→</span><b id="r_hasta">-</b></div>
       <div class="kpi-grid">
         <div class="kpi">
-          <div class="kpi-label">Veces vendido</div>
+          <div class="kpi-label">Ventas realizadas</div>
           <div class="kpi-value" id="k_veces">0</div>
-          <div class="kpi-hint">(ventas distintas)</div>
+          <div class="kpi-hint">Ventas distintas que incluyen el producto</div>
         </div>
         <div class="kpi">
-          <div class="kpi-label">Unidades</div>
+          <div class="kpi-label">Cantidad vendida</div>
           <div class="kpi-value" id="k_unidades">0</div>
-          <div class="kpi-hint">(suma cantidades)</div>
+          <div class="kpi-hint">Unidades o gramos, según el producto</div>
         </div>
-        <div class="kpi">
-          <div class="kpi-label">Ingresos</div>
+        <div class="kpi kpi--revenue">
+          <div class="kpi-label">Ingresos estimados</div>
           <div class="kpi-value" id="k_ingresos">0</div>
-          <div class="kpi-hint">(aprox.)</div>
+          <div class="kpi-hint">Valor acumulado en el período</div>
         </div>
       </div>
 
-      <div class="range-show">
-        Rango: <b id="r_desde">-</b> → <b id="r_hasta">-</b>
-      </div>
-
+      <div class="vpr-daily-head"><h3>Detalle por día</h3><p>Pulsa un encabezado para ordenar la tabla.</p></div>
       <div class="table-wrap">
         <table id="ventasDiaTable" class="display">
+          <caption class="vpr-sr-only">Ventas y cantidad del producto por fecha dentro del período consultado</caption>
           <thead>
             <tr>
-              <th>Fecha</th>
-              <th>Veces (ventas)</th>
-              <th>Unidades</th>
+              <th scope="col">Fecha</th>
+              <th scope="col">Ventas</th>
+              <th scope="col">Cantidad</th>
             </tr>
           </thead>
           <tbody id="ventasDiaBody"></tbody>
         </table>
       </div>
-    </div>
+    </section>
   </div>
 
   {# ==================== OVERLAY SCANNER ==================== #}
@@ -160,9 +183,9 @@
   </div>
 
   {# ==================== LIBS ==================== #}
-  <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+  <script src="{% static 'vendor/jquery/jquery-3.6.4.min.js' %}"></script>
   <script src="https://cdn.datatables.net/1.13.8/js/jquery.dataTables.min.js"></script>
-  <script src="https://code.jquery.com/ui/1.13.3/jquery-ui.min.js"></script>
+  <script src="{% static 'vendor/jquery-ui/jquery-ui-1.13.2.min.js' %}"></script>
 
   {# ==================== ENDPOINTS ==================== #}
   <script>
@@ -175,5 +198,5 @@
     const statsUrl = "{% url 'producto_ventas_stats' %}";
   </script>
 
-  <script defer src="{% static 'javascript/ventas_producto_rango.js' %}"></script>
+  <script defer src="{% static 'javascript/ventas_producto_rango.js' %}?v=2"></script>
 {% endblock %}

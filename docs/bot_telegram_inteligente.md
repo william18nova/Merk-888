@@ -1,5 +1,10 @@
 # Bot inteligente de Telegram
 
+> Ampliación actual: [asistente operativo, inventario, pedidos, alias y avisos](telegram_asistente_operativo.md).
+> Requiere la migración **0042** y reiniciar el trabajador. Las notas «sin nuevas
+> migraciones» de secciones históricas de este documento se refieren a esas
+> ampliaciones anteriores, no a esta entrega.
+
 El bot consulta Nova mediante los permisos del usuario vinculado. El texto libre
 usa Gemini y, si no está disponible, Groq, Cerebras y OpenRouter como respaldos
 configurables. Las notas de voz pueden usar Groq, Azure Speech, Deepgram,

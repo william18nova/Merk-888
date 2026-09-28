@@ -11,6 +11,7 @@ class Command(BaseCommand):
     help = "Procesa de forma continua la cola segura del bot inteligente de Telegram."
 
     def add_arguments(self, parser):
+        parser.add_argument("--followups", action="store_true", help="Atiende también los informes diarios solicitados y confirmados por cada usuario.")
         parser.add_argument(
             "--once",
             action="store_true",
@@ -39,6 +40,7 @@ class Command(BaseCommand):
         try:
             recover_stale_updates()
             last_recovery = time.monotonic()
+            last_followups = None
             while True:
                 close_old_connections()
                 if not is_feature_enabled(TELEGRAM_BOT_FEATURE, fresh=True):
@@ -48,6 +50,10 @@ class Command(BaseCommand):
                     time.sleep(max(sleep_seconds, 10.0))
                     continue
                 try:
+                    if options["followups"] and (last_followups is None or time.monotonic() - last_followups >= 60):
+                        from mainApp.services.telegram_followups import process_followups
+                        process_followups()
+                        last_followups = time.monotonic()
                     if time.monotonic() - last_recovery >= 60:
                         recover_stale_updates()
                         last_recovery = time.monotonic()

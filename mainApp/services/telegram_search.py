@@ -3,6 +3,7 @@
 import re
 import unicodedata
 from dataclasses import dataclass
+from contextvars import ContextVar
 from difflib import SequenceMatcher
 
 from django.db.models import Case, IntegerField, When
@@ -10,6 +11,34 @@ from django.db.models import Case, IntegerField, When
 
 MAX_CANDIDATES = 15000
 MAX_RESULTS = 50
+search_profile = ContextVar("telegram_search_profile", default=None)
+search_references = ContextVar("telegram_search_references", default=None)
+
+
+def record_references(entity, ids):
+    collector = search_references.get()
+    if collector is not None:
+        collector.extend({"entidad": entity, "id": pk} for pk in ids)
+
+
+def alias_match(rows, query, fields):
+    """Solo alias propios y registros que siguen dentro del queryset autorizado."""
+    profile = search_profile.get()
+    if profile is None or not getattr(profile, "pk", None) or str(query).strip().isdigit():
+        return None
+    from .telegram_business import ALIASES
+    entity = next((name for name, spec in ALIASES.items() if spec[0].lower() == rows.model._meta.model_name), None)
+    if not entity:
+        return None
+    from mainApp.models import TelegramAlias
+    pk = TelegramAlias.objects.filter(telegram_usuario_id=profile.pk, entidad=entity, clave=name_key(query)).values_list("registro_id", flat=True).first()
+    if pk is None:
+        return None
+    row = rows.filter(pk=pk).values_list("pk", *fields).first()
+    if row is None:
+        from .telegram_bot import TelegramBotError
+        raise TelegramBotError("Tu alias apunta a un registro que ya no está disponible en esta consulta. Dime otro nombre o ID.")
+    return Match(row[0], " ".join(str(value) for value in row[1:] if value), 1.0)
 
 
 def name_key(value):
@@ -76,6 +105,9 @@ def rank_candidates(query, candidates, *, limit=MAX_RESULTS):
 
 
 def rank_queryset(rows, query, fields=("nombre",), *, limit=MAX_RESULTS):
+    alias = alias_match(rows, query, fields)
+    if alias:
+        return [alias]
     # Sin datos privados, objetos completos, SQL del usuario ni caché de resultados.
     candidates = (
         (row[0], " ".join(str(value) for value in row[1:] if value), tuple(str(value) for value in row[1:] if value))

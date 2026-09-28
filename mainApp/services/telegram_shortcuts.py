@@ -29,6 +29,14 @@ def specific_read_request(text):
     normalized = re.sub(r"[, ]+por favor$", "", normalized)
     if len(normalized) > 300:
         return None
+    ordinal = re.fullmatch(r"(?:muestrame|dame|ver|consulta) (?:el|la) (primero|primera|segundo|segunda|tercero|tercera|cuarto|cuarta|quinto|quinta)(?: de la lista)?", normalized)
+    if ordinal:
+        positions = {"primero": 1, "primera": 1, "segundo": 2, "segunda": 2, "tercero": 3, "tercera": 3, "cuarto": 4, "cuarta": 4, "quinto": 5, "quinta": 5}
+        return "consultar_resultado", {"posicion": positions[ordinal[1]]}
+    if normalized in {"mis alias", "muestrame mis alias", "nombres que recuerdas"}:
+        return "consultar_aliases", {}
+    if normalized in {"mis seguimientos", "muestrame mis seguimientos", "mis avisos diarios"}:
+        return "consultar_seguimientos", {}
     prefix = r"(?:(?:me )?(?:puedes|podrias) )?(?:muestrame|muestra|dame|ver|consulta|quiero ver|necesito ver)"
     payment = re.fullmatch(r"(?:" + prefix + r" )?(?:el )?(?P<history>historial (?:del?|de cambios del?) )?(?:pago|egreso) (?:con )?(?:el )?(?:id |numero )?#?(?P<id>[1-9][0-9]{0,17})", normalized)
     if payment:

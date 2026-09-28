@@ -50,6 +50,7 @@ $(function () {
   // ✅ pagos mixto
   const $hidPagos     = $("#pagos");      // hidden input name="pagos"
   const $hidMedioPago = $("#medio_pago"); // compat (efectivo/tarjeta/transferencia/mixto)
+  const $hidEfectivoRecibido = $("#efectivo_recibido");
   const $hidEmpleadoPassword = $("#empleado_password");
   const $hidMerk2888Password = $("#codigo_descuento_merk2888");
   const $hidNequiNotification = $("#nequi_notificacion_id");
@@ -1775,6 +1776,7 @@ $(function () {
     // ✅ limpiar pagos SIEMPRE
     $hidMedioPago.val("");
     $hidPagos.val("");
+    $hidEfectivoRecibido.val("");
     $hidMerk2888Password.val("");
     $("#merk2888-password-input").val("");
     $hidNequiNotification.val("");
@@ -4863,6 +4865,7 @@ $(function () {
     ) {
       $hidPagos.val("[]");
       $hidMedioPago.val("");
+      $hidEfectivoRecibido.val("");
       $hidEmpleadoPassword.val("");
       $hidMerk2888Password.val("");
       $("#venta-form").trigger("submit");
@@ -5122,9 +5125,19 @@ $(function () {
     }
 
     if (e.key === "Enter" && !e.altKey && !e.ctrlKey && !e.metaKey) {
-      if ($(e.target).closest(".nequi-payment-item, #nequi-clear-payment, #nequi-refresh-payments").length) {
-        // Enter activa este botón, nunca el botón de confirmar la venta.
-        return;
+      const $nequiButton = $(e.target).closest(".nequi-payment-item, #nequi-clear-payment, #nequi-refresh-payments");
+      if ($nequiButton.length) {
+        const isSelectedPayment = $nequiButton.is(".nequi-payment-item")
+          && getCheckedMedios().includes("nequi")
+          && selectedNequiPayment
+          && String($nequiButton.attr("data-id")) === String(selectedNequiPayment.id);
+        // Otra tarjeta se selecciona; Quitar y Actualizar mantienen su acción.
+        // Sobre la tarjeta ya seleccionada, un NUEVO Enter confirma el pago.
+        if (!isSelectedPayment) return;
+        if (e.repeat || e.originalEvent?.repeat) {
+          e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
+          return;
+        }
       }
       // ✅ Si un escáner acaba de mandar Enter, NO confirmar
       if (isModalConfirmBlocked()) {
@@ -5303,6 +5316,12 @@ $(function () {
 
     const medioCompat = (pagos.length >= 2) ? "mixto" : (pagos[0]?.medio_pago || "");
     $hidMedioPago.val(medioCompat);
+
+    // El campo visible está fuera del formulario. Enviar el recibido validado
+    // antes de serializar, sin confundirlo con el importe aplicado a la venta.
+    const pagoUnicoEfectivo = !isMixtoUI()
+      && pagos.length === 1 && pagos[0].medio_pago === "efectivo";
+    $hidEfectivoRecibido.val(pagoUnicoEfectivo ? to2(parseAmt($amountIn.val())) : "");
 
     // ✅ Primero dispara el submit para que el POST de venta arranque antes de cualquier trabajo visual.
     $("#venta-form").trigger("submit");

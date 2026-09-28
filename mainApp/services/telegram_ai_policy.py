@@ -120,6 +120,11 @@ def selected_tool_names(text, history, available):
             clarification = next((normalized(item.get("text", "")) for item in reversed(history or []) if item.get("role") == "model"), "")
             query += " " + clarification
     domains = [
+        (r"\b(?:alias|recuerda|llamarle|nombres alternativos)\b", {"preparar_alias", "consultar_aliases", "consultar_registros", "buscar_producto"}),
+        (r"\b(?:avisame|notifica\w*|alerta\w*|seguimiento\w*|todos los dias|cada dia|diariamente)\b", {"preparar_seguimiento", "consultar_seguimientos"}),
+        (r"\b(?:pedido\w*|reabastec\w*|surtir|surtido\w*)\b", {"planificar_reabastecimiento", "preparar_pedido_proveedor", "consultar_registros", "buscar_producto"}),
+        (r"\b(?:inventario\w*|stock|existencia\w*|conteo)\b", {"preparar_movimiento_inventario", "consultar_inventario", "planificar_reabastecimiento"}),
+        (r"\b(?:analiza\w*|por que|explica\w*)\b.*\b(?:balance|ventas|pagos|queda\w*)\b", {"analizar_balance"}),
         (r"\b(?:pago\w*|pague|pagado\w*|pagamos|pagar|paga|pagaron|egreso\w*|gasto\w*)\b", {"consultar_pagos", "consultar_pago", "preparar_edicion_pago", "preparar_registro_pago", "consultar_informe"}),
         (r"\b(?:compra\w*|compre|compramos)\b", {"consultar_pagos", "preparar_registro_pago", "consultar_registros", "consultar_detalle_operativo", "consultar_informe"}),
         (r"\b(?:venta\w*|vendi\w*|vende\w*|vendio|factura\w*)\b", {"consultar_ventas", "consultar_detalle_operativo", "ranking_productos", "consultar_informe", "consultar_registros"}),
@@ -139,12 +144,17 @@ def selected_tool_names(text, history, available):
         result.add("consultar_varias")
     if continuation:
         result.add("continuar_consulta")
+    if re.search(r"\b(?:primero|luego|despues|segundo|tercero|cuarto|quinto|ultimo|prepara|revisa|busca|encuentra)\b", query):
+        result.update({"resolver_tarea", "consultar_resultado"})
+    if re.search(r"\b(?:segundo|tercero|cuarto|quinto|de la lista|de esos)\b", query):
+        # Una referencia no identifica el dominio sin consultar la lista real.
+        return set(available)
     return result & set(available)
 
 
 def compact_history(history, budget=6000):
     result = []
-    for item in reversed((history or [])[-8:]):
+    for item in reversed((history or [])[-24:]):
         text = str(item.get("text") or "").strip()[:1200]
         if not text:
             continue
@@ -165,7 +175,9 @@ def compact_prompt(today, names):
         "Pregunta datos esenciales o identidades ambiguas; no inventes fechas, cantidades, nombres, teléfonos, precios ni códigos. "
         "Resuelve fechas relativas a Colombia. Usa el historial solo de esta conversación, no inventes contexto. "
         "Para campos y capacidades usa consultar_capacidades. Para operaciones no disponibles ofrece buscar_vistas, sin ejecutarlas. "
-        "No ejecutes eliminaciones, facturación, cierres de caja, ajustes manuales de stock, claves o permisos."
+        "No ejecutes eliminaciones, facturación, cierres de caja, claves o permisos. "
+        "Inventario solo mediante preparar_movimiento_inventario: sucursal, cantidad, modo y motivo explícitos, luego botón Confirmar. "
+        "Pedidos solo En espera mediante preparar_pedido_proveedor; no recibir ni pagar automáticamente."
     ]
     if "consultar_pagos" in names:
         rules.append("Pagos: 'cuánto he pagado' => consultar_pagos, detalle=false, desglose_por_medio=false. 'Muéstrame los pagos' => detalle=true. "
@@ -220,4 +232,12 @@ def compact_prompt(today, names):
         rules.append("Varias preguntas independientes => consultar_varias con hasta cuatro herramientas de SOLO LECTURA y argumentos JSON según sus esquemas; jamás escrituras ni consultas anidadas.")
     if "continuar_consulta" in names:
         rules.append("Para 'y ayer', 'y mañana', 'la próxima semana', 'ahora por sucursal' o páginas usa continuar_consulta con SOLO cambios explícitos; periodo interpreta fechas relativas sin perder filtros. El servidor hereda filtros de la misma cuenta/chat. Si hay varias consultas posibles, pregunta cuál.")
+    if "resolver_tarea" in names:
+        rules.append("Tareas dependientes: resolver_tarea encadena hasta 5 herramientas; solo lecturas y UNA preparación al FINAL. Incluye cada paso con argumentos_json válido y referencias explícitas a un único resultado anterior, nunca IDs inventados. No genera SQL. Si faltan cantidades o motivo, pregunta. No repitas ni auto-confirmes propuestas.")
+    if "consultar_resultado" in names:
+        rules.append("'El segundo/tercero de la lista' usa consultar_resultado con posición 2/3, no adivines un ID del historial. Para editarlo, primer paso consultar_resultado y último preparar_cambio_catalogo vinculando registro_id a paso 1. Si los nombres no son únicos, pide elegir.")
+    if "preparar_seguimiento" in names:
+        rules.append("Solo configura avisos si el usuario lo solicita explícitamente, con hora de Colombia y confirmación. No inventar una frecuencia: actualmente solo DIARIA; para otros días explica ese límite y pregunta antes de preparar. No decir que está activo sin confirmación ni sin procesador --followups.")
+    if "preparar_alias" in names:
+        rules.append("Los alias se guardan únicamente si el usuario pide recordarlos, para su cuenta y con confirmación. Pregunta entidad e ID o consulta un resultado único antes; no aprendas nombres automáticamente de errores de audio.")
     return "\n".join([CONVERSATION_STYLE, SMART_QUERY_RULES, *rules])
