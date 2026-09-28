@@ -4,7 +4,7 @@
 {% block title %}Métodos de pago{% endblock %}
 
 {% block extra_head %}
-  <link rel="stylesheet" href="{% static 'css/configuracion_metodos_pago.css' %}?v=2">
+  <link rel="stylesheet" href="{% static 'css/configuracion_metodos_pago.css' %}?v=3">
 {% endblock %}
 
 {% block content %}
@@ -122,6 +122,11 @@
           <small>Los números menores aparecen primero.</small>
         </label>
 
+        <label class="pmc-tax-option">
+          <input type="checkbox" name="expense_tax_enabled" value="1">
+          <span><strong>Sumar 4 × 1.000 a los pagos registrados</strong><small>Solo salidas en Registrar pagos; no aumenta los cobros de ventas.</small></span>
+        </label>
+
         <label class="pmc-field" for="pmc-new-password">
           <span>Contraseña de Web Master</span>
           <span class="pmc-password">
@@ -178,7 +183,7 @@
       <div>
         <p class="pmc-eyebrow">Operación</p>
         <h2 id="pmc-catalog-title">Métodos configurados</h2>
-        <p>Edita el nombre o el orden, o retira temporalmente un método.</p>
+        <p>Edita el nombre, el orden o el 4 × 1.000 de los pagos. El impuesto se suma al valor digitado y no cambia pagos anteriores.</p>
       </div>
       <label class="pmc-search" for="pmc-search">
         <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m16 16 4 4"/></svg>
@@ -224,6 +229,7 @@
           {% csrf_token %}
           <input type="hidden" name="code" value="{{ method.code }}">
           <input type="hidden" name="version" value="{{ method.version|default:0 }}">
+          <input type="hidden" name="tax_setting_present" value="1">
           <input type="hidden" name="active" value="{% if method.active %}0{% else %}1{% endif %}" data-active-target>
           <input type="hidden" name="request_id" value="" data-request-id>
 
@@ -250,6 +256,11 @@
                      required>
             </label>
           </div>
+
+          <label class="pmc-tax-option">
+            <input type="checkbox" name="expense_tax_enabled" value="1" {% if method.expense_tax_enabled %}checked{% endif %}>
+            <span><strong>Sumar 4 × 1.000 a los pagos registrados</strong><small>$100.000 de pago + $400 de impuesto = $100.400. No afecta cobros de ventas ni turnos.</small></span>
+          </label>
 
           <label class="pmc-field" for="pmc-password-{{ method.code|slugify }}">
             <span>Contraseña de Web Master</span>

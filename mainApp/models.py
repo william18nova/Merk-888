@@ -818,6 +818,7 @@ class MetodoPago(models.Model):
     activo = models.BooleanField(default=True, db_index=True)
     es_efectivo = models.BooleanField(default=False)
     es_sistema = models.BooleanField(default=False)
+    aplica_4xmil_egresos = models.BooleanField(default=False)
     orden = models.PositiveSmallIntegerField(default=100)
     version = models.PositiveBigIntegerField(default=1)
     creado_en = models.DateTimeField(auto_now_add=True)
@@ -899,6 +900,10 @@ class Egreso(models.Model):
         related_name="egresos",
     )
     monto = models.DecimalField(max_digits=14, decimal_places=2)
+    # monto es la salida TOTAL; el impuesto se conserva como parte del total,
+    # no como otro egreso, para que las métricas no lo omitan ni lo dupliquen.
+    aplica_4xmil = models.BooleanField(default=False)
+    impuesto_4xmil = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal("0.00"))
     medio_pago = models.CharField(max_length=50, db_column="medio_pago", db_index=True)
     registrado_por = models.ForeignKey(
         Usuario,
@@ -919,7 +924,19 @@ class Egreso(models.Model):
                 condition=Q(monto__gt=0),
                 name="egreso_monto_positivo",
             ),
+            models.CheckConstraint(
+                condition=Q(impuesto_4xmil__gte=0) & Q(impuesto_4xmil__lt=F("monto")),
+                name="egreso_impuesto_4xmil_valido",
+            ),
+            models.CheckConstraint(
+                condition=Q(aplica_4xmil=True) | Q(impuesto_4xmil=0),
+                name="egreso_sin_4xmil_impuesto_cero",
+            ),
         ]
+
+    @property
+    def monto_base(self):
+        return self.monto - self.impuesto_4xmil
 
     def __str__(self):
         return f"{self.concepto} - {self.medio_pago} - {self.monto}"

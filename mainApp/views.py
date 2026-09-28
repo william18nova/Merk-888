@@ -4551,6 +4551,7 @@ class ConfiguracionMetodosPagoView(LoginRequiredMixin, View):
             activo=True,
             es_efectivo=False,
             es_sistema=False,
+            aplica_4xmil_egresos=request.POST.get("expense_tax_enabled") == "1",
             orden=order,
             version=1,
             actualizado_por=request.user,
@@ -4585,15 +4586,19 @@ class ConfiguracionMetodosPagoView(LoginRequiredMixin, View):
         if MetodoPago.objects.exclude(pk=method.pk).filter(nombre__iexact=label).exists():
             raise ValueError("Ya existe otro método con ese nombre.")
 
-        changed = method.nombre != label or method.orden != order
+        tax_enabled = method.aplica_4xmil_egresos
+        if request.POST.get("tax_setting_present") == "1":
+            tax_enabled = request.POST.get("expense_tax_enabled") == "1"
+        changed = method.nombre != label or method.orden != order or method.aplica_4xmil_egresos != tax_enabled
         if changed:
             method.nombre = label
             method.orden = order
+            method.aplica_4xmil_egresos = tax_enabled
             method.version += 1
             method.actualizado_por = request.user
             method.actualizado_por_nombre = self._actor_name(request.user)
             method.save(update_fields=[
-                "nombre", "orden", "version", "actualizado_en",
+                "nombre", "orden", "aplica_4xmil_egresos", "version", "actualizado_en",
                 "actualizado_por", "actualizado_por_nombre",
             ])
         return (
@@ -10460,6 +10465,7 @@ class RegistrarEgresoView(LoginRequiredMixin, View):
 
     def _page_context(self, request, *, form=None):
         from .services.expense_editing import can_edit_expenses
+        from .services.expense_tax import expense_tax_preview
         metodos = payment_method_options(active_only=True)
         ledger_ready = _egreso_ledger_ready()
         if form is None:
@@ -10504,6 +10510,7 @@ class RegistrarEgresoView(LoginRequiredMixin, View):
             "migration_ready": ledger_ready,
             "history": history,
             "today_total": today_total,
+            "expense_tax_rules": expense_tax_preview(metodos),
             "can_edit_expenses": can_edit_expenses(request.user),
         }
 
@@ -10545,6 +10552,7 @@ class RegistrarEgresoView(LoginRequiredMixin, View):
                 concept=concepto_nombre,
                 amount=monto,
                 payment_method=metodo,
+                expected_tax=(form.cleaned_data["impuesto_esperado"] == "1") if form.cleaned_data.get("impuesto_esperado") else None,
             )
         except OperationalExpenseError as exc:
             form.add_error("medio_pago", str(exc))
@@ -10559,7 +10567,8 @@ class RegistrarEgresoView(LoginRequiredMixin, View):
             request,
             (
                 f"Pago #{egreso.pk} registrado: {egreso.concepto.nombre} por "
-                f"${monto:,.2f}."
+                f"${egreso.monto:,.2f} en total"
+                + (f" (pago ${egreso.monto_base:,.2f} + 4 × 1.000 ${egreso.impuesto_4xmil:,.2f})." if egreso.aplica_4xmil else ".")
             ),
         )
         return redirect("registrar_egreso")
@@ -10958,6 +10967,8 @@ class MetricasNegocioDataView(LoginRequiredMixin, View):
                 ),
                 "usuario": expense.registrado_por_nombre,
                 "monto": self._dec(expense.monto),
+                "monto_base": self._dec(expense.monto_base),
+                "impuesto_4xmil": self._dec(expense.impuesto_4xmil),
             })
 
         top_products = [
@@ -11038,6 +11049,7 @@ class MetricasNegocioDataView(LoginRequiredMixin, View):
             "collected_total": self._dec(collected_total),
             "balance_sales_total": self._dec(balance_sales_total),
             "expenses_total": self._dec(expenses_total),
+            "expenses_tax_total": self._dec(egresos_qs.aggregate(total=Sum("impuesto_4xmil"))["total"]),
             "remaining_total": self._dec(remaining_total),
         }
 

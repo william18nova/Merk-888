@@ -14,6 +14,7 @@ from .services.expense_editing import (
     expense_edit_token, expense_editing_ready,
 )
 from .services.operational_expenses import OperationalExpenseError
+from .services.expense_tax import expense_tax_preview
 from .services.payment_methods import payment_method_label, payment_method_label_map, payment_method_options
 
 
@@ -71,7 +72,7 @@ class EditarEgresoView(ExpenseEditAccessMixin, View):
             data, payment_methods=payment_method_options(active_only=True),
             current_method=(expense.medio_pago, payment_method_label(expense.medio_pago)),
             initial={
-                "concepto": expense.concepto.nombre, "monto": expense.monto,
+                "concepto": expense.concepto.nombre, "monto": expense.monto_base,
                 "medio_pago": expense.medio_pago,
                 "fecha_pago": timezone.localtime(expense.creado_en, timezone.get_default_timezone()).date(),
                 "version": expense_edit_token(expense, user) if data is None else "",
@@ -82,6 +83,7 @@ class EditarEgresoView(ExpenseEditAccessMixin, View):
         history = Paginator(expense.cambios.all(), 20).get_page(request.GET.get("historial"))
         return render(request, "editar_egreso.html", {
             "expense": expense, "form": form, "migration_ready": True,
+            "expense_tax_rules": expense_tax_preview(payment_method_options(active_only=True), expense),
             "conceptos": ConceptoEgreso.objects.order_by("nombre"), "history_page": history,
         }, status=status)
 
@@ -101,6 +103,7 @@ class EditarEgresoView(ExpenseEditAccessMixin, View):
                 amount=data["monto"], payment_method=data["medio_pago"],
                 reason=data["motivo"], version=data["version"],
                 payment_date=data.get("fecha_pago"),
+                expected_tax=(data["impuesto_esperado"] == "1") if data.get("impuesto_esperado") else None,
             )
         except OperationalExpenseError as exc:
             form.add_error(None, str(exc))

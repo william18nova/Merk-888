@@ -15,6 +15,7 @@ from mainApp.services.payment_methods import (
     normalize_payment_method_code,
     payment_method_table_ready,
 )
+from .expense_tax import check_expected_tax, expense_amounts
 
 
 class OperationalExpenseError(ValueError):
@@ -49,7 +50,7 @@ def find_similar_expense_concepts(name, *, limit=5):
     return [{"id": pk, "nombre": label} for _, _, label, pk in matches]
 
 
-def register_operational_expense(*, user, concept, amount, payment_method, concept_id=None):
+def register_operational_expense(*, user, concept, amount, payment_method, concept_id=None, expected_tax=None):
     """Única ruta de dominio para registrar pagos desde web o Telegram."""
 
     concept_name = normalizar_nombre_concepto_egreso(concept)
@@ -72,13 +73,16 @@ def register_operational_expense(*, user, concept, amount, payment_method, conce
 
     with transaction.atomic():
         if payment_method_table_ready():
-            method_is_active = (
+            method_row = (
                 MetodoPago.objects
                 .select_for_update()
                 .filter(pk=method, activo=True)
-                .exists()
+                .first()
             )
+            method_is_active = method_row is not None
+            tax_enabled = bool(method_row and method_row.aplica_4xmil_egresos)
         else:
+            tax_enabled = False
             method_is_active = method in {
                 row["code"]
                 for row in DEFAULT_PAYMENT_METHODS
@@ -88,6 +92,9 @@ def register_operational_expense(*, user, concept, amount, payment_method, conce
             raise OperationalExpenseError(
                 "Ese medio de pago está desactivado. Selecciona otro."
             )
+
+        check_expected_tax(expected_tax, tax_enabled)
+        _base, tax, total = expense_amounts(normalized_amount, tax_enabled)
 
         if concept_id is not None:
             expense_concept = (
@@ -106,7 +113,9 @@ def register_operational_expense(*, user, concept, amount, payment_method, conce
             )
         expense = Egreso.objects.create(
             concepto=expense_concept,
-            monto=normalized_amount,
+            monto=total,
+            aplica_4xmil=tax_enabled,
+            impuesto_4xmil=tax,
             medio_pago=method,
             registrado_por=user,
             registrado_por_nombre=(

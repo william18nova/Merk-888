@@ -19,13 +19,20 @@
   --pmc-radius: 20px;
 }
 
+html { min-height: 100%; background-color: var(--pmc-bg); }
 body {
+  margin: 0;
+  height: auto;
   min-height: 100vh;
+  font-family: "Segoe UI", Arial, sans-serif;
+  color: var(--pmc-text);
   background:
     radial-gradient(circle at 9% 4%, rgba(75, 150, 232, 0.24), transparent 34rem),
     radial-gradient(circle at 96% 42%, rgba(30, 104, 181, 0.2), transparent 38rem),
     linear-gradient(135deg, var(--pmc-bg-deep), var(--pmc-bg-soft));
-  background-attachment: fixed;
+  background-attachment: scroll;
+  background-repeat: no-repeat;
+  background-size: cover;
 }
 
 body:has(.pmc-dialog[open]) {
@@ -812,6 +819,10 @@ body:has(.pmc-dialog[open]) {
   .pmc-dialog__actions { flex-direction: column-reverse; }
   .pmc-dialog__actions button { width: 100%; }
 }
+
+.pmc-tax-option { display: flex; align-items: flex-start; gap: 12px; padding: 16px; border: 1px solid rgba(153,205,255,.35); border-radius: 12px; background: rgba(20,80,140,.2); cursor: pointer; }
+.pmc-tax-option input { width: 22px; height: 22px; flex: 0 0 22px; margin: 2px 0 0; accent-color: #62bdff; }
+.pmc-tax-option small { display: block; margin-top: 6px; line-height: 1.5; color: #c4d9ed; }
 
 @media (prefers-reduced-motion: reduce) {
   .pmc-page *,

@@ -53,7 +53,7 @@ class RegistrarEgresoForm(forms.Form):
         max_digits=14,
         decimal_places=2,
         min_value=Decimal("0.01"),
-        label="Valor pagado",
+        label="Valor del pago (sin 4 × 1.000)",
         widget=forms.TextInput(attrs={
             "inputmode": "decimal",
             "placeholder": "0",
@@ -62,6 +62,9 @@ class RegistrarEgresoForm(forms.Form):
         }),
     )
     medio_pago = forms.ChoiceField(label="Medio de pago", choices=())
+    impuesto_esperado = forms.ChoiceField(
+        required=False, choices=(("", ""), ("0", "No"), ("1", "Sí")), widget=forms.HiddenInput,
+    )
 
     def __init__(self, *args, payment_methods=(), **kwargs):
         super().__init__(*args, **kwargs)

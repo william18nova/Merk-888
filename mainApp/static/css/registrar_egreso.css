@@ -285,5 +285,10 @@ body {
 .expense-change-values h3 { margin: 0; font-size: 12px; color: var(--expense-cyan); text-transform: uppercase; letter-spacing: .08em; }
 .expense-change-values strong, .expense-change-values span { display: block; margin-top: 6px; }
 .expense-change-values span { color: var(--expense-muted); }
+.expense-tax-preview { padding: 20px; border: 1px solid var(--expense-border); border-radius: 16px; background: rgba(4,24,55,.25); }
+.expense-tax-preview > div { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px 20px; padding: 6px 0; }
+.expense-tax-preview__total { margin-top: 10px; padding-top: 16px !important; border-top: 1px solid var(--expense-border); font-size: 1.2rem; color: #c7f0ff; }
+.expense-tax-preview p { font-size: .85rem; line-height: 1.5; color: var(--expense-muted); margin: 12px 0 0; }
+.expense-tax-detail { display: block; margin-top: 6px; color: var(--expense-muted); line-height: 1.4; }
 @media (max-width: 1100px) { .expense-filters { grid-template-columns: 1fr 1fr; } }
 @media (max-width: 620px) { .expense-filters, .expense-change-values { grid-template-columns: 1fr; } .expense-actions > * { width: 100%; } }

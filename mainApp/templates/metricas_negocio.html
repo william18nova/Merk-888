@@ -96,7 +96,7 @@
     <article class="metric-card metric-card--expense">
       <span>Total pagado</span>
       <strong data-metric="expenses_total">$ 0</strong>
-      <small>Egresos registrados en el período</small>
+      <small>Incluye <span data-metric="expenses_tax_total">$ 0</span> de 4 × 1.000</small>
     </article>
     <article class="metric-card metric-card--balance">
       <span>Dinero restante</span>
@@ -177,7 +177,7 @@
       <h2>Pagos registrados</h2>
       <div class="table-wrap">
         <table class="metrics-expenses-table">
-          <thead><tr><th>Fecha</th><th>Concepto</th><th>Medio</th><th>Usuario</th><th>Valor</th></tr></thead>
+          <thead><tr><th>Fecha</th><th>Concepto</th><th>Medio</th><th>Usuario</th><th>Pago base</th><th>4 × 1.000</th><th>Total</th></tr></thead>
           <tbody id="table-expenses"></tbody>
         </table>
       </div>
@@ -229,5 +229,5 @@
   window.metricasNegocioDataUrl = "{% url 'metricas_negocio_data' %}";
 </script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-<script defer src="{% static 'javascript/metricas_negocio.js' %}?v=7"></script>
+<script defer src="{% static 'javascript/metricas_negocio.js' %}?v=8"></script>
 {% endblock %}

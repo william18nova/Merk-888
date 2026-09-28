@@ -97,6 +97,7 @@
       cash_total: money(summary.cash_total),
       non_cash_total: money(summary.non_cash_total),
       expenses_total: money(summary.expenses_total),
+      expenses_tax_total: money(summary.expenses_tax_total),
       remaining_total: money(summary.remaining_total),
       negative_stock_count: num(summary.negative_stock_count)
     };
@@ -275,6 +276,8 @@
       { value: (r) => r.concepto },
       { value: (r) => r.medio },
       { value: (r) => r.usuario },
+      { value: (r) => money(r.monto_base ?? r.monto) },
+      { value: (r) => money(r.impuesto_4xmil || 0) },
       { value: (r) => money(r.monto) }
     ], "Sin pagos registrados en este rango.");
 

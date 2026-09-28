@@ -11,6 +11,7 @@ from mainApp.models import CambioEgreso, ConceptoEgreso, Egreso, MetodoPago, nor
 from mainApp.permissions import is_web_master_role, user_has_permission
 from mainApp.services.operational_expenses import OperationalExpenseError
 from mainApp.services.payment_methods import normalize_payment_method_code, payment_method_label
+from .expense_tax import check_expected_tax, expense_amounts
 
 VERSION_SALT = "mainApp.expense-edit.v1"
 
@@ -37,6 +38,9 @@ def expense_values(expense):
         "conceptoid": expense.concepto_id,
         "concepto": expense.concepto.nombre,
         "monto": str(expense.monto.quantize(Decimal("0.01"))),
+        "monto_base": str(expense.monto_base.quantize(Decimal("0.01"))),
+        "impuesto_4xmil": str(expense.impuesto_4xmil.quantize(Decimal("0.01"))),
+        "aplica_4xmil": expense.aplica_4xmil,
         "medio_pago": expense.medio_pago,
         "fecha_pago": local_date.isoformat(),
         "fecha_pago_texto": local_date.strftime("%d/%m/%Y"),
@@ -56,7 +60,7 @@ def expense_edit_token(expense, user):
 
 
 @transaction.atomic
-def edit_operational_expense(*, user, expense_id, concept, amount, payment_method, reason, version, payment_date=None):
+def edit_operational_expense(*, user, expense_id, concept, amount, payment_method, reason, version, payment_date=None, expected_tax=None):
     if not can_edit_expenses(user):
         raise PermissionDenied("No tienes permiso para editar pagos.")
     # La misma fila serializa las ediciones; el historial y el pago se guardan juntos.
@@ -86,8 +90,14 @@ def edit_operational_expense(*, user, expense_id, concept, amount, payment_metho
         raise OperationalExpenseError("Escribe un valor positivo válido, con máximo dos decimales.")
 
     method = expense.medio_pago if payment_method == expense.medio_pago else normalize_payment_method_code(payment_method)
-    if method != expense.medio_pago and not MetodoPago.objects.select_for_update().filter(pk=method, activo=True).exists():
-        raise OperationalExpenseError("Ese medio de pago está desactivado. Selecciona otro.")
+    tax_enabled = expense.aplica_4xmil
+    if method != expense.medio_pago:
+        method_row = MetodoPago.objects.select_for_update().filter(pk=method, activo=True).first()
+        if method_row is None:
+            raise OperationalExpenseError("Ese medio de pago está desactivado. Selecciona otro.")
+        tax_enabled = method_row.aplica_4xmil_egresos
+    check_expected_tax(expected_tax, tax_enabled)
+    _base, tax, total = expense_amounts(amount, tax_enabled)
 
     before = expense_values(expense)
     new_timestamp = expense.creado_en
@@ -107,17 +117,19 @@ def edit_operational_expense(*, user, expense_id, concept, amount, payment_metho
                 new_timestamp.astimezone(datetime_timezone.utc)
         except (TypeError, ValueError, OverflowError):
             raise OperationalExpenseError("Selecciona una fecha de pago válida.") from None
-    if (concept == before["concepto"] and str(amount) == before["monto"]
+    if (concept == before["concepto"] and str(total) == before["monto"]
             and method == before["medio_pago"] and new_timestamp == expense.creado_en):
         return expense, False
     target, _created = ConceptoEgreso.objects.get_or_create(nombre=concept, defaults={"creado_por": user})
     expense.concepto = target
-    expense.monto = amount
+    expense.monto = total
+    expense.aplica_4xmil = tax_enabled
+    expense.impuesto_4xmil = tax
     expense.medio_pago = method
     # Las métricas usan esta fecha. Se conserva la hora local y la autoría;
     # el historial guarda ambas fechas y el momento real de la corrección.
     expense.creado_en = new_timestamp
-    expense.save(update_fields=["concepto", "monto", "medio_pago", "creado_en"])
+    expense.save(update_fields=["concepto", "monto", "aplica_4xmil", "impuesto_4xmil", "medio_pago", "creado_en"])
     after = expense_values(expense)
     for values in (before, after):
         values["medio_nombre"] = payment_method_label(values["medio_pago"])

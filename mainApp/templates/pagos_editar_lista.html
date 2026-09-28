@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% load static l10n %}
 {% block title %}Editar pagos{% endblock %}
-{% block extra_head %}<link rel="stylesheet" href="{% static 'css/registrar_egreso.css' %}?v=2">{% endblock %}
+{% block extra_head %}<link rel="stylesheet" href="{% static 'css/registrar_egreso.css' %}?v=3">{% endblock %}
 {% block content %}
 <main class="expense-page" aria-labelledby="expense-title">
   <header class="expense-hero">
@@ -27,7 +27,7 @@
       <tbody>{% for item in page_obj %}<tr>
         <td><strong>#{{ item.pk }}</strong><br>{{ item.creado_en|date:"d/m/Y H:i" }}</td>
         <td><strong>{{ item.concepto.nombre }}</strong></td><td><span class="expense-method">{{ item.medio_pago_label }}</span></td>
-        <td>{{ item.registrado_por_nombre }}</td><td data-money>{{ item.monto|unlocalize }}</td>
+        <td>{{ item.registrado_por_nombre }}</td><td><strong data-money>{{ item.monto|unlocalize }}</strong>{% if item.aplica_4xmil %}<small class="expense-tax-detail">Incluye <span data-money>{{ item.impuesto_4xmil|unlocalize }}</span> de 4 × 1.000</small>{% endif %}</td>
         <td><a class="expense-link" href="{% url 'editar_egreso' item.pk %}" aria-label="Editar pago {{ item.pk }}">Editar</a></td>
       </tr>{% empty %}<tr><td colspan="6" class="expense-empty">No hay pagos que coincidan con esta búsqueda.</td></tr>{% endfor %}</tbody>
     </table></div>
@@ -39,4 +39,4 @@
   </section>
 </main>
 {% endblock %}
-{% block scripts %}<script defer src="{% static 'javascript/registrar_egreso.js' %}?v=3"></script>{% endblock %}
+{% block scripts %}<script defer src="{% static 'javascript/registrar_egreso.js' %}?v=4"></script>{% endblock %}

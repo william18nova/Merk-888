@@ -999,6 +999,10 @@ def tool_cash_shifts(profile, arguments):
 def _expense_confirmation_reply(pending):
     arguments = pending.argumentos
     summary = f"Registrar {arguments['concepto']} por {_list_money(arguments['monto'])} en {payment_method_label(arguments['medio_pago'])}"
+    if arguments.get("aplica_4xmil"):
+        from .expense_tax import expense_amounts
+        _base, tax, total = expense_amounts(arguments["monto"], True)
+        summary += f"\n4 × 1.000: {_list_money(tax)}. Salida total: {_list_money(total)}."
     return BotReply(
         text=(
             f"¿Confirmas que registre este pago?\n{summary}\n\n"
@@ -1060,7 +1064,10 @@ def tool_prepare_expense(profile, arguments, update=None):
         available = ", ".join(row["label"] for row in options.values())
         raise TelegramBotError(f"Ese medio de pago no está activo. Disponibles: {available}.")
     summary = f"Registrar {concept} por {_list_money(amount)} en {options[method]['label']}"
-    action_arguments = {"concepto": concept, "monto": str(amount), "medio_pago": method}
+    from .expense_tax import expense_amounts
+    tax_enabled = bool(options[method].get("expense_tax_enabled", False))
+    expense_amounts(amount, tax_enabled)
+    action_arguments = {"concepto": concept, "monto": str(amount), "medio_pago": method, "aplica_4xmil": tax_enabled}
     suggestions = find_similar_expense_concepts(concept)
     exact = next((option for option in suggestions if option["nombre"] == concept), None)
     if exact:
@@ -1169,10 +1176,10 @@ GEMINI_TOOLS = [{"functionDeclarations": [
     },
     {
         "name": "preparar_registro_pago",
-        "description": "Prepara un pago operativo; requiere confirmación posterior del usuario.",
+        "description": "Prepara un pago operativo; requiere confirmación posterior del usuario. El servidor agrega el 4 x 1.000 si está activo para el medio: no lo sumes tú.",
         "parameters": {"type": "OBJECT", "properties": {
             "concepto": {"type": "STRING"},
-            "monto": {"type": "NUMBER"},
+            "monto": {"type": "NUMBER", "description": "Valor base pagado, antes del 4 x 1.000. Nunca calcular ni sumar el impuesto aquí."},
             "medio_pago": {"type": "STRING"},
         }, "required": ["concepto", "monto", "medio_pago"]},
     },
@@ -1938,6 +1945,7 @@ def _handle_callback(update, profile, client):
                         concept_id=action.argumentos.get("concepto_id"),
                         amount=action.argumentos.get("monto"),
                         payment_method=action.argumentos.get("medio_pago"),
+                        expected_tax=action.argumentos.get("aplica_4xmil", False),
                     )
                 except OperationalExpenseError as exc:
                     action.estado = "ERROR"
@@ -1951,6 +1959,8 @@ def _handle_callback(update, profile, client):
                     action.save(update_fields=["estado", "resuelto_en"])
                     _audit(profile, "confirmar_registro_pago", action.argumentos, detail=f"Egreso {expense.pk}")
                     message = f"Listo, el pago quedó registrado: {_list_text(expense.concepto.nombre)} por {_list_money(expense.monto)} en {payment_method_label(expense.medio_pago)}."
+                    if expense.aplica_4xmil:
+                        message += f" Incluye {_list_money(expense.impuesto_4xmil)} de 4 × 1.000."
     client.answer_callback(update.callback_query_id, message[:180])
     return reply or BotReply(message, f"callback_{verb}")
 

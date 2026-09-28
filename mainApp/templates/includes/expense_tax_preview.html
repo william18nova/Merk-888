@@ -1,0 +1,10 @@
+{{ expense_tax_rules|json_script:"expense-tax-rules" }}
+{{ form.impuesto_esperado }}
+<section class="expense-tax-preview" aria-label="Total del pago" aria-live="polite" data-expense-tax-preview>
+  <div><span>Valor del pago</span><strong data-expense-base>—</strong></div>
+  <div><span>4 × 1.000 (0,4 %)</span><strong data-expense-tax>—</strong></div>
+  <div class="expense-tax-preview__total"><span>Salida total</span><strong data-expense-total>—</strong></div>
+  <p data-expense-tax-note>El impuesto lo calcula el servidor según la configuración del medio de pago.</p>
+  {% if expense %}<p>Si conservas el medio, se mantiene la regla de impuesto original. Si lo cambias, se usa la configuración del nuevo medio.</p>{% endif %}
+  <noscript>El total con impuesto se calculará al guardar. Activa JavaScript para verlo antes de confirmar.</noscript>
+</section>

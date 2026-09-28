@@ -10,6 +10,7 @@ from mainApp.models import Egreso, TelegramAccionPendiente
 from .expense_editing import edit_operational_expense, expense_edit_token, expense_editing_ready
 from .operational_expenses import OperationalExpenseError, find_similar_expense_concepts
 from .payment_methods import payment_method_label, payment_method_options
+from .expense_tax import expense_amounts, expense_tax_preview
 
 
 def _bot():
@@ -37,6 +38,8 @@ def tool_payment(profile, arguments):
              f"{bot._list_money(expense.monto)} en {payment_method_label(expense.medio_pago)}.",
              f"Fecha del pago: {date}. Lo registró {bot._list_text(expense.registrado_por_nombre)}."]
     pagination = None
+    if expense.aplica_4xmil:
+        lines.append(f"Pago: {bot._list_money(expense.monto_base)} + 4 × 1.000: {bot._list_money(expense.impuesto_4xmil)} (incluido en el total).")
     if history:
         rows = expense.cambios.all()
         count = rows.count()
@@ -46,10 +49,10 @@ def tool_payment(profile, arguments):
         for change in rows[offset:offset + bot.LIST_PAGE_SIZE]:
             before, after = change.anterior, change.nuevo
             lines.append(f"\n{bot._list_text(change.usuario_nombre)} · {timezone.localtime(change.creado_en):%d/%m/%Y %H:%M}")
-            for key, label in (("concepto", "Concepto"), ("monto", "Valor"), ("medio_pago", "Medio"), ("fecha_pago_texto", "Fecha del pago")):
+            for key, label in (("concepto", "Concepto"), ("monto", "Total"), ("impuesto_4xmil", "4 × 1.000 incluido"), ("medio_pago", "Medio"), ("fecha_pago_texto", "Fecha del pago")):
                 if before.get(key) == after.get(key):
                     continue
-                fmt = bot._list_money if key == "monto" else payment_method_label if key == "medio_pago" else bot._list_text
+                fmt = bot._list_money if key in {"monto", "impuesto_4xmil"} else payment_method_label if key == "medio_pago" else bot._list_text
                 lines.append(f"• {label}: {fmt(before.get(key))} → {fmt(after.get(key))}")
             lines.append(f"Motivo: {bot._list_text(change.motivo, 300)}")
         pagination = {"page": page, "pages": pages, "arguments": dict(arguments, pagina=page)}
@@ -67,7 +70,7 @@ def tool_prepare_payment_edit(profile, arguments, update=None):
     methods = payment_method_options(active_only=True)
     data = {
         "concepto": arguments.get("concepto", expense.concepto.nombre),
-        "monto": Decimal(str(arguments["monto"])) if "monto" in arguments else expense.monto,
+        "monto": Decimal(str(arguments["monto"])) if "monto" in arguments else expense.monto_base,
         "medio_pago": bot._resolve_payment_method(arguments["medio_pago"]) if "medio_pago" in arguments else expense.medio_pago,
         "motivo": arguments["motivo"], "version": expense_edit_token(expense, profile.usuario),
     }
@@ -85,7 +88,7 @@ def tool_prepare_payment_edit(profile, arguments, update=None):
             if similar:
                 options = "; ".join(item["nombre"] for item in similar)
                 raise bot.TelegramClarification(f"Ya hay conceptos parecidos: {options}. ¿Cuál quieres usar, o prefieres crear «{clean['concepto']}» como concepto nuevo?")
-    old = {"concepto": expense.concepto.nombre, "monto": expense.monto, "medio_pago": expense.medio_pago}
+    old = {"concepto": expense.concepto.nombre, "monto": expense.monto_base, "medio_pago": expense.medio_pago}
     labels = {"concepto": "Concepto", "monto": "Valor", "medio_pago": "Medio de pago"}
     changes = [key for key in old if old[key] != clean[key]]
     if not changes:
@@ -94,11 +97,14 @@ def tool_prepare_payment_edit(profile, arguments, update=None):
     for key in changes:
         fmt = bot._list_money if key == "monto" else payment_method_label if key == "medio_pago" else bot._list_text
         lines.append(f"• {labels[key]}: {fmt(old[key])} → {fmt(clean[key])}")
+    tax_enabled = expense_tax_preview(methods, expense).get(clean["medio_pago"], False)
+    _base, tax, total = expense_amounts(clean["monto"], tax_enabled)
+    lines.append(f"4 × 1.000: {bot._list_money(tax)}. Salida total: {bot._list_money(total)}.")
     lines += [f"Motivo: {bot._list_text(clean['motivo'], 300)}",
               "La fecha y quien registró el pago se conservan. Todavía no guardé el cambio; confirma antes de 10 minutos."]
     pending = TelegramAccionPendiente.objects.create(
         telegram_usuario=profile, actualizacion=update, accion="editar_pago",
-        argumentos={"pago_id": expense.pk, **{key: str(clean[key]) for key in ("concepto", "monto", "medio_pago", "motivo", "version")}},
+        argumentos={"pago_id": expense.pk, "aplica_4xmil": tax_enabled, **{key: str(clean[key]) for key in ("concepto", "monto", "medio_pago", "motivo", "version")}},
         resumen=f"Corregir pago #{expense.pk}: {clean['concepto']}"[:500],
         vence_en=timezone.now() + timedelta(minutes=bot.ACTION_TTL_MINUTES),
     )
@@ -118,6 +124,7 @@ def confirm_payment_edit(profile, action):
                 user=profile.usuario, expense_id=args["pago_id"], concept=args["concepto"],
                 amount=args["monto"], payment_method=args["medio_pago"],
                 reason=args["motivo"], version=args["version"],
+                expected_tax=args.get("aplica_4xmil", False),
             )
             action.estado = "CONFIRMADA"
             action.resuelto_en = timezone.now()
@@ -138,7 +145,7 @@ TOOL_DEFINITIONS = [
         "pago_id": {"type": "INTEGER"}, "historial": {"type": "BOOLEAN"}, "pagina": {"type": "INTEGER"},
     }, "required": ["pago_id"]}},
     {"name": "preparar_edicion_pago", "description": "Propone corregir un pago existente. Conserva fecha y creador; registra auditoría. Envía solo los campos solicitados y pregunta el motivo si falta. Nunca confunde corregir con registrar otro pago. No guarda hasta pulsar Confirmar corrección.", "parameters": {"type": "OBJECT", "properties": {
-        "pago_id": {"type": "INTEGER"}, "concepto": {"type": "STRING"}, "monto": {"type": "NUMBER"},
+        "pago_id": {"type": "INTEGER"}, "concepto": {"type": "STRING"}, "monto": {"type": "NUMBER", "description": "Nuevo valor base del pago, sin sumar 4 x 1.000; lo calcula el servidor."},
         "medio_pago": {"type": "STRING"}, "motivo": {"type": "STRING", "description": "Motivo dicho por el usuario; no inventarlo."},
         "concepto_nuevo": {"type": "BOOLEAN", "description": "Solo true si el usuario confirmó que quiere un concepto nuevo frente a los parecidos."},
     }, "required": ["pago_id"]}},

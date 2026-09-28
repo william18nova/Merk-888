@@ -32,6 +32,35 @@
   }
 
   const amountInput = document.getElementById("id_monto");
+  const methodInput = document.getElementById("id_medio_pago");
+  const taxExpected = document.getElementById("id_impuesto_esperado");
+  const taxPanel = document.querySelector("[data-expense-tax-preview]");
+  let taxRules = {};
+  try {
+    taxRules = JSON.parse(document.getElementById("expense-tax-rules")?.textContent || "{}");
+  } catch (_error) { /* El servidor siempre valida y calcula el impuesto. */ }
+  function updateExpenseTax() {
+    if (!taxPanel) return;
+    const enabled = taxRules[methodInput?.value] === true;
+    if (taxExpected) taxExpected.value = enabled ? "1" : "0";
+    const note = taxPanel.querySelector("[data-expense-tax-note]");
+    note.textContent = enabled
+      ? "Se suma el 4 × 1.000 al valor digitado. El total incluye este impuesto."
+      : "Este medio no aplica 4 × 1.000 a este pago.";
+    const raw = String(amountInput?.value || "");
+    const valid = /^(?:[0-9]+|[0-9]{1,3}(?:\.[0-9]{3})+)(?:,[0-9]{1,2})?$/.test(raw);
+    let cents = 0n, tax = 0n;
+    if (valid) {
+      const [whole, decimals = ""] = raw.replace(/\./g, "").split(",");
+      cents = BigInt(whole) * 100n + BigInt(decimals.padEnd(2, "0"));
+      // Redondeo decimal exacto, igual que ROUND_HALF_UP en el servidor.
+      tax = enabled ? (cents * 4n + 500n) / 1000n : 0n;
+    }
+    for (const [selector, value] of [["base", cents], ["tax", tax], ["total", cents + tax]]) {
+      taxPanel.querySelector(`[data-expense-${selector}]`).textContent = valid ? money.format(Number(value) / 100) : "—";
+    }
+  }
+  methodInput?.addEventListener("change", updateExpenseTax);
   function updateExpenseAmount() {
     if (!amountInput) return;
     const raw = amountInput.value;
@@ -54,6 +83,7 @@
     amountInput.setSelectionRange(position(start), position(end));
     const valid = /^(?:[0-9]+|[0-9]{1,3}(?:\.[0-9]{3})+)(?:,[0-9]{1,2})?$/.test(newValue);
     amountInput.setCustomValidity(newValue && !valid ? "Escribe un valor como 1.000 o 1.000,50." : "");
+    updateExpenseTax();
   }
 
   if (amountInput) {
@@ -79,6 +109,8 @@
       }
     });
   }
+
+  updateExpenseTax();
 
   const conceptInput = document.getElementById("id_concepto");
   const normalizeConcept = (value, trim) => {

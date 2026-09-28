@@ -91,6 +91,7 @@ SOURCES = {
     }, "ventaid__fecha", "ventaid__sucursalid", "Cantidades en la unidad registrada de cada producto. Los importes son cantidad × precio del renglón, sin descontar descuentos globales ni reintegros; no equivalen al total neto cobrado."),
     "pagos": Source("Egreso", ("registrar_egreso",), {
         "id": Field("pk", "Pago", "id"), "importe": Field("monto", "Total pagado", "money"),
+        "impuesto_4xmil": Field("impuesto_4xmil", "4 × 1.000 incluido", "money"),
         "concepto": Field("concepto", "Concepto", "entity", "ConceptoEgreso"),
         "usuario": Field("registrado_por_nombre", "Registró"), "medio_pago": Field("medio_pago", "Medio", "method"),
         "fecha": Field("creado_en__date", "Fecha", "date"),

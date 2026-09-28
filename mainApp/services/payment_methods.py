@@ -261,6 +261,7 @@ def payment_method_options(*, active_only=True, include_codes=None):
             "active": bool(row.activo),
             "is_cash": bool(row.es_efectivo),
             "is_system": bool(row.es_sistema),
+            "expense_tax_enabled": bool(row.aplica_4xmil_egresos),
             "order": int(row.orden or 0),
             "version": int(row.version or 1),
             "updated_at": row.actualizado_en,
