@@ -2,4 +2,4 @@
 -r requirements-hybrid-client.txt
 pyinstaller==6.22.3
 # Renderiza las plantillas originales durante la construcción, no en el cajero.
-Django==5.1.1
+Django==5.2.17
