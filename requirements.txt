@@ -8,6 +8,7 @@ Flask>=3.0,<4                   # servidor HTTP para utilidades locales
 idna==3.10                      # requests
 psycopg2-binary==2.9.10         # conexión a PostgreSQL
 python-decouple==3.8            # manejo de variables de entorno (.env)
+pytz==2026.2                    # zonas horarias utilizadas en mainApp/views.py
 pywin32>=306; sys_platform == "win32"  # integración nativa solo en Windows
 requests==2.32.5                # llamadas HTTP
 sqlparse==0.5.3                 # requerido por Django

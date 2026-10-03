@@ -1,0 +1,4 @@
+# Install with Python 3.10+ in a private virtual environment, never globally.
+-r requirements.txt
+waitress==3.0.2
+

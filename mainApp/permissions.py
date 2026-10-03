@@ -18,8 +18,13 @@ from .services.feature_flags import (
 WEB_MASTER_ROLE_NAMES = {"web_master", "webmaster"}
 ADMIN_ROLE_NAMES = {"admin", "administrador", "administradora", "supervisor"}
 PUBLIC_URL_NAMES = {"login", "logout", "visor_barcode", "visor_barcode_buscar", "visor_barcode_lookup", "macrodroid_nequi_webhook", "telegram_webhook"}
+# Estas APIs tienen autenticación propia de dispositivos; no usan la sesión web.
+PUBLIC_URL_NAMES.update({"hybrid_enroll", "hybrid_session", "hybrid_catalog", "hybrid_sale", "hybrid_release", "hybrid_recovery_prepare", "hybrid_recovery_finish"})
+PUBLIC_URL_NAMES.update({"hybrid_replica_prepare", "hybrid_replica_page"})
+PUBLIC_URL_NAMES.update({"hybrid_expense", "hybrid_operation", "hybrid_operation_read"})
 ALWAYS_ALLOWED_URL_NAMES = {"home", "registrar_egreso", "mi_horario", "mi_horario_datos", "visor_cajero", "visor_cajero_buscar"}
 WEB_MASTER_ONLY_URL_NAMES = {
+    "equipos_hibridos",
     "ventas_no_realizadas",
     "claves_descuento_merk2888",
     "configuracion_funcionalidades",
@@ -810,6 +815,7 @@ ROUTE_PERMISSIONS = {
     "configuracion_impresion": "configuracion_impresion",
     "configuracion_metodos_pago": "configuracion_metodos_pago",
     "configuracion_telegram_bot": "configuracion_telegram_bot",
+    "equipos_hibridos": "configuracion_funcionalidades",
 }
 
 
@@ -981,6 +987,7 @@ NAV_GROUPS = [
             {"label": "Funcionalidades del sistema", "url_name": "configuracion_funcionalidades"},
             {"label": "Configuración de impresión", "url_name": "configuracion_impresion"},
             {"label": "Métodos de pago", "url_name": "configuracion_metodos_pago"},
+            {"label": "Equipos híbridos (piloto)", "url_name": "equipos_hibridos"},
             {"label": "Bot inteligente de Telegram", "url_name": "configuracion_telegram_bot"},
         ],
     },
@@ -1199,6 +1206,7 @@ def _bump_permission_cache_version() -> None:
 def _user_permission_cache_key(user) -> str:
     return ":".join([
         "mainapp:permission-state",
+        str(getattr(getattr(user, "_state", None), "db", None) or "default"),
         _permission_cache_version(),
         str(getattr(user, "pk", "anon") or "anon"),
         str(getattr(user, "rolid_id", "") or "none"),
@@ -1221,10 +1229,10 @@ def _permission_state_from_cache(cached) -> Optional[Dict[str, Set[str]]]:
     }
 
 
-def _load_permission_state(user) -> Dict[str, Set[str]]:
+def _load_permission_state(user, *, fresh=False) -> Dict[str, Set[str]]:
     cache_name = "_mainapp_permission_state"
     cached = getattr(user, cache_name, None)
-    if cached is not None:
+    if cached is not None and not fresh:
         return cached
 
     state = {"role": set(), "allow": set(), "deny": set()}
@@ -1234,7 +1242,7 @@ def _load_permission_state(user) -> Dict[str, Set[str]]:
 
     cache_key = _user_permission_cache_key(user)
     cached_state = _permission_state_from_cache(cache.get(cache_key))
-    if cached_state is not None:
+    if cached_state is not None and not fresh:
         setattr(user, cache_name, cached_state)
         return cached_state
 
@@ -1242,7 +1250,7 @@ def _load_permission_state(user) -> Dict[str, Set[str]]:
         role_id = getattr(user, "rolid_id", None)
         if role_id:
             role_names = (
-                RolPermiso.objects
+                RolPermiso.objects.using(getattr(user._state, "db", None) or "default")
                 .filter(rol_id=role_id)
                 .select_related("permiso")
                 .values_list("permiso__nombre", flat=True)
@@ -1256,7 +1264,7 @@ def _load_permission_state(user) -> Dict[str, Set[str]]:
         from .models import UsuarioPermiso
 
         direct_rows = (
-            UsuarioPermiso.objects
+            UsuarioPermiso.objects.using(getattr(user._state, "db", None) or "default")
             .filter(usuario_id=getattr(user, "pk", None))
             .select_related("permiso")
             .values_list("permiso__nombre", "permitido")

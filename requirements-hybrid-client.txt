@@ -1,0 +1,2 @@
+# Dependencia exclusiva del cliente local; no hace falta instalarla en Django.
+cryptography==50.0.1

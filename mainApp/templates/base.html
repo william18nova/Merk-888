@@ -11,15 +11,24 @@
   <!-- Estilos globales y del navbar -->
   <link rel="stylesheet" href="{% static 'css/navbar.css' %}?v=3"/>
   <link rel="stylesheet" href="{% static 'css/barcode_camera.css' %}?v=2"/>
+  {% if full_local_development %}<link rel="stylesheet" href="{% static 'local_pos/lab.css' %}">{% endif %}
 
   {% block extra_head %}{% endblock %}
 </head>
-<body>
+<body{% if full_local_development %} class="nova-full-local"{% endif %}>
   {% if request.resolver_match.url_name != "login" %}
     {% include "navbar.html" %}
   {% endif %}
 
   <main class="page-wrap">
+  {% if full_local_development %}
+  <aside class="local-lab-banner" aria-label="Estado de la instalación local">
+    {% if full_local_installed %}INSTALACIÓN CANDIDATA · No habilitada para producción{% else %}PRUEBAS LOCALES · Datos ficticios{% endif %} · {% if full_local_operations %}Ventas, pagos, solicitudes de devolución y cierre{% elif full_local_sales %}Ventas en efectivo de prueba · Otros módulos en consulta{% else %}Solo consultas, sin sincronización general{% endif %}
+    <a href="{% url 'local_runtime_status' %}">Ver alcance</a>
+    {% if user.is_authenticated %}<a href="{% url 'local_sync' %}">Sincronización y pendientes</a>{% endif %}
+  </aside>
+  {% endif %}
+
     {% block content %}{% endblock %}
   </main>
 

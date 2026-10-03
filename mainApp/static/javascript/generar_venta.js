@@ -81,13 +81,16 @@ $(function () {
   /* ================== CSRF / Ajax ================== */
   function getCSRF() {
     const m = document.cookie.match(/csrftoken=([^;]+)/);
-    return m ? m[1] : "";
+    return m ? m[1] : (document.querySelector("input[name='csrfmiddlewaretoken']")?.value || "");
   }
   $.ajaxSetup({
     beforeSend: (xhr, settings) => {
       if (!/^(GET|HEAD|OPTIONS|TRACE)$/i.test(settings.type)) {
         const t = getCSRF();
         if (t) xhr.setRequestHeader("X-CSRFToken", t);
+        if (window.NovaHybridSale && String(settings.url).startsWith("/_sale/")) {
+          xhr.setRequestHeader("X-Local-Token", window.NovaHybridSale.token);
+        }
       }
     },
     cache: true,
@@ -467,6 +470,10 @@ $(function () {
 
   function guardSaleDraftEditing(){
     return true;
+  }
+
+  if (window.NovaHybridSale) {
+    window.addEventListener("nova-hybrid-state", refreshSaleDraftGenerateButton);
   }
 
   function setSaleDraftValidation({ pending = false, error = "" } = {}){
@@ -1063,7 +1070,7 @@ $(function () {
         const response = result.response || {};
         const price = Number(response.precio_unitario);
         const available = Number(response.cantidad_disponible);
-        const insufficient = item.cantidad > 0 && (
+        const insufficient = !window.NovaHybridSale && item.cantidad > 0 && (
           !Number.isFinite(available) || available < item.cantidad
         );
         if (!response.exists || insufficient || !Number.isFinite(price) || price < 0) {
@@ -1161,13 +1168,22 @@ $(function () {
     }
   }
 
-  function loadClosedSaleDraft(draft){
+  async function loadClosedSaleDraft(draft){
     const sourceKey = draft.storage_key;
+    if (window.NovaHybridSale && draft.status === "submission_pending") {
+      // Consultar el diario local antes de copiar un cobro cuya respuesta se perdió.
+      // El UUID es el del borrador, también tras cerrar o recargar la pestaña.
+      if (await window.NovaHybridSale.draftWasRegistered(draft.draft_id)) {
+        removeSaleDraftByKey(sourceKey);
+        alert("Esta venta ya está registrada en el equipo. Puedes verla en Ventas de este equipo; no vuelvas a cobrarla.");
+        return;
+      }
+    }
     // Compatibilidad con respaldos anteriores: aún no tenían señal de vida.
     // Solo el usuario puede confirmar que cerró sus pestañas de la versión vieja.
     if (!draft.presence_version && !confirm("Este respaldo es de una versión anterior. ¿Confirmas que cerraste la pestaña que tenía esta venta? No lo recuperes si sigue abierta.")) return;
     if (
-      draft.status === "submission_pending"
+      !window.NovaHybridSale && draft.status === "submission_pending"
       && !confirm("Esta venta tiene un cobro sin confirmar y pudo haberse registrado. Revisa primero Visualizar ventas. ¿Confirmaste que NO está facturada y quieres copiar sus productos a una venta nueva?")
     ) return;
 
@@ -5593,7 +5609,12 @@ $(function () {
       ? "\nBeneficio merk2888: 100% aplicado. La clave quedó consumida."
       : "";
 
-    return `✅ Venta registrada
+    const registered = response?.hybrid_state === "pending"
+      ? "Venta guardada en este equipo · pendiente de sincronizar"
+      : response?.hybrid_state === "conflict"
+        ? "Venta guardada para revisión · NO repitas el cobro"
+        : "Venta registrada";
+    return `✅ ${registered}
 Total: ${money(total)}${changeMessage}${specialMessage}${nequiMessage}`;
   }
 
@@ -5631,7 +5652,9 @@ Total: ${money(total)}${changeMessage}${specialMessage}${nequiMessage}`;
     const $submitBtn = $(form).find("button[type='submit'], input[type='submit']").first();
     if ($submitBtn.length) $submitBtn.prop("disabled", true);
 
-    fetch(formAction || $(form).attr("action"), {
+    const submission = window.NovaHybridSale
+      ? window.NovaHybridSale.submit(body, saleDraftActiveID, saleTotalForPayment())
+      : fetch(formAction || $(form).attr("action"), {
       method: "POST",
       credentials: "same-origin",
       headers: {
@@ -5640,8 +5663,8 @@ Total: ${money(total)}${changeMessage}${specialMessage}${nequiMessage}`;
         "X-Requested-With": "XMLHttpRequest"
       },
       body
-    })
-    .then(r => r.ok ? r.json() : Promise.reject(new Error("HTTP "+r.status)))
+    }).then(r => r.ok ? r.json() : Promise.reject(new Error("HTTP "+r.status)));
+    submission
     .then(async (r) => {
       if (!r || !r.success) {
         saleSubmitting = false;
@@ -5699,7 +5722,10 @@ Total: ${money(total)}${changeMessage}${specialMessage}${nequiMessage}`;
         && safeNumber(ef.monto) > 0
       );
 
-      if (printOperatingSystem === "linux") {
+      if (r.hybrid_state) {
+        // El motor local ya encoló la impresión con el UUID de la operación.
+        // No enviar una segunda impresión ni abrir otra vez el cajón.
+      } else if (printOperatingSystem === "linux") {
         const printJob = printViaLinuxServer(r.venta_id, printPaperSize, {
           openDrawer: shouldKickCashDrawer && !!r.print_token,
           printToken: r.print_token || ""
@@ -5789,14 +5815,18 @@ Cambio: ${money(cambio)}` : "";
       saleDraftSubmissionPending = true;
       persistSaleDraftNow();
       updateSaleDraftStatus(
-        "Venta sin confirmación de red: revisa Visualizar ventas antes de reintentar.",
+        window.NovaHybridSale
+          ? "No se recibió la confirmación local. Conserva este carrito y reintenta: se usará la misma referencia, sin duplicarlo."
+          : "Venta sin confirmación de red: revisa Visualizar ventas antes de reintentar.",
         "error",
       );
       $hidMerk2888Password.val("");
       $("#merk2888-password-input").val("");
       if ($submitBtn.length) $submitBtn.prop("disabled", false);
       alert(
-        isMerk2888ClientSelected()
+        window.NovaHybridSale
+          ? "No llegó la confirmación del equipo. Puedes reintentar este mismo carrito sin duplicar el cobro. No lo copies a otra venta."
+          : isMerk2888ClientSelected()
           ? "No se recibió la confirmación de la venta. Antes de reintentar, revisa Visualizar ventas: la clave pudo haberse consumido correctamente."
           : "No se recibió la confirmación de la venta. Antes de reintentar, revisa Visualizar ventas para evitar registrarla dos veces."
       );

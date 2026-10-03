@@ -5,13 +5,31 @@
 {% block title %}Generar Venta{% endblock %}
 
 {% block extra_head %}
+  {% if hybrid_local %}
+  {% if hybrid_django_runtime %}
+  <link rel="stylesheet" href="/local/sales/assets/sale-bridge.css">
+  {% else %}
+  <meta name="local-token" content="__LOCAL_NONCE__">
+  <link rel="stylesheet" href="/sale-bridge.css">
+  {% endif %}
+  {% else %}
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"/>
+  {% endif %}
   <link rel="stylesheet" href="{% static 'vendor/jquery-ui/jquery-ui-1.13.2.min.css' %}?v=1"/>
   <link rel="stylesheet" href="{% static 'css/generar_venta.css' %}?v=26">
   <link rel="stylesheet" href="{% static 'css/modal_venta.css' %}?v=19">
 {% endblock %}
 
 {% block content %}
+{% if hybrid_local %}
+<div class="hybrid-sale-status" role="status" aria-live="polite">
+  <span id="hybrid-connection">Comprobando conexión…</span>
+  <button type="button" id="hybrid-history-toggle">Ventas de este equipo</button>
+  <a href="/">Conexión y sesión</a>
+</div>
+<p class="hybrid-sale-scope">Piloto híbrido: ventas en efectivo, sin cliente asociado. Los demás medios, PTM y la auditoría de carritos se integrarán en otra etapa.</p>
+<dialog id="hybrid-history"><h2>Ventas de este equipo</h2><div id="hybrid-history-list"></div><button type="button" id="hybrid-history-close">Cerrar</button></dialog>
+{% endif %}
 <div class="page-grid">
 
   <!-- IZQUIERDA -->
@@ -26,11 +44,11 @@
       </div>
       {{ producto_desde_visor|json_script:"venta-visor-producto" }}
     {% endif %}
-    <div class="venta-mode-notice is-info">
+    {% if not hybrid_local %}<div class="venta-mode-notice is-info">
       <a href="{% url 'operaciones_ptm' %}?tipo=retiro" target="_blank" rel="noopener">PTM RETIROS ↗</a>
       · <a href="{% url 'operaciones_ptm' %}?tipo=recarga" target="_blank" rel="noopener">PTM RECARGA O PAGOS ↗</a>
       <small>Operaciones de efectivo, separadas del carrito.</small>
-    </div>
+    </div>{% endif %}
 
     {% if config_error %}
       <div class="venta-mode-notice is-error" role="alert">
@@ -336,6 +354,15 @@
   if (!/^https?:\/\//.test(window.POS_AGENT_URL)) window.POS_AGENT_URL = "http://127.0.0.1:8787";
 </script>
 
+{% if hybrid_local %}
+{% if hybrid_django_runtime %}
+{{ hybrid_sale_context|json_script:"hybrid-sale-context" }}
+<script src="/local/sales/assets/sale-bridge.js"></script>
+{% else %}
+<script id="hybrid-sale-context" type="application/json">__HYBRID_CONTEXT__</script>
+<script src="/sale-bridge.js"></script>
+{% endif %}
+{% endif %}
 <script src="{% static 'javascript/sale_draft_lifecycle.js' %}?v=1"></script>
 <script src="{% static 'javascript/product_autocomplete.js' %}?v=1"></script>
 <script src="{% static 'javascript/generar_venta.js' %}?v=48"></script>

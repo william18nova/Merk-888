@@ -1,0 +1,23 @@
+/* Solo el indicador y el historial híbridos; no reemplaza el CSS de venta. */
+.hybrid-sale-status {max-width:1400px;margin:0 auto 12px;display:flex;gap:12px;align-items:center;flex-wrap:wrap;font:600 14px system-ui;color:#f8fbff}
+.hybrid-sale-status span {margin-right:auto}
+.hybrid-sale-status button,.hybrid-sale-status a {border:1px solid #ffffff40;border-radius:10px;padding:8px 12px;background:#ffffff12;color:#f8fbff;text-decoration:none;cursor:pointer;font:inherit}
+#hybrid-connection::before {content:'●';color:#ffca72;margin-right:8px}
+#hybrid-connection[data-state="online"]::before {color:#61d7b1}
+#hybrid-connection[data-state="blocked"]::before {color:#ff8596}
+.hybrid-sale-scope {max-width:1400px;margin:0 auto 16px;color:#d8e8ff;font:13px/1.5 system-ui}
+#hybrid-history {margin:auto;width:min(720px,95vw);max-height:85vh;padding:24px;border:1px solid #74b8ef;border-radius:18px;background:#193c69;color:white}
+#hybrid-history::backdrop {background:#050f25b8}
+#hybrid-history details {padding:12px 0;border-bottom:1px solid #ffffff30}
+#hybrid-history pre {white-space:pre-wrap;overflow-wrap:anywhere;font:14px/1.5 ui-monospace,monospace}
+#hybrid-history button {margin-top:18px;padding:12px 24px;border:0;border-radius:10px;background:#4da6ff;color:#071e37;font-weight:bold;cursor:pointer}
+/* Símbolos locales de respaldo: no depender de un CDN para los botones. */
+.fa-camera::before {content:'📷'}.fa-receipt::before {content:'▤'}.fa-bag-shopping::before {content:'▣'}
+.fa-trash-can::before,.fa-trash::before {content:'×'}.fa-clock-rotate-left::before {content:'↶'}
+.fa-xmark::before {content:'×'}.fa-cart-plus::before {content:'+'}.fa-sign-out-alt::before {content:'→'}
+.fa-rotate-left::before,.fa-rotate::before {content:'↶'}.fa-cart-shopping::before {content:'▣'}
+/* El CSS original dibuja la cámara con un glifo de FontAwesome. Sin CDN,
+   usar un símbolo disponible localmente, también en botones solo-icono. */
+body .form-group .row-inline > input[id*="barras"] + button#btn-scan-cam::before {content:'📷';font-family:system-ui}
+.btn-chip-danger.eliminar-producto::before {content:'×';font:700 22px/1 system-ui}
+.btn-chip-danger.eliminar-producto i {display:none}

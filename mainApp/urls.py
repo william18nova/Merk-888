@@ -1,6 +1,7 @@
 from django.urls import path, include
 from . import views
 from . import schedule_views
+from . import hybrid_views
 from .ptm_views import OperacionesPTMView
 from .expense_views import EgresosEditarListView, EditarEgresoView
 from django.contrib.auth import views as auth_views
@@ -63,6 +64,19 @@ from .views import (
 
 
 urlpatterns = [
+    path("api/hybrid/v1/replica/prepare/", hybrid_views.replica_prepare, name="hybrid_replica_prepare"),
+    path("api/hybrid/v1/replica/page/", hybrid_views.replica_page, name="hybrid_replica_page"),
+    path("configuracion/equipos-hibridos/", hybrid_views.devices, name="equipos_hibridos"),
+    path("api/hybrid/v1/enroll/", hybrid_views.enroll, name="hybrid_enroll"),
+    path("api/hybrid/v1/session/", hybrid_views.start_session, name="hybrid_session"),
+    path("api/hybrid/v1/catalog/", hybrid_views.catalog, name="hybrid_catalog"),
+    path("api/hybrid/v1/sale/", hybrid_views.sale, name="hybrid_sale"),
+    path("api/hybrid/v1/expense/", hybrid_views.expense, name="hybrid_expense"),
+    path("api/hybrid/v1/operation/", hybrid_views.operation, name="hybrid_operation"),
+    path("api/hybrid/v1/operation-read/", hybrid_views.operation_read, name="hybrid_operation_read"),
+    path("api/hybrid/v1/release/", hybrid_views.release_session, name="hybrid_release"),
+    path("api/hybrid/v1/recovery/prepare/", hybrid_views.recovery_prepare, name="hybrid_recovery_prepare"),
+    path("api/hybrid/v1/recovery/finish/", hybrid_views.recovery_finish, name="hybrid_recovery_finish"),
     path("", LoginView.as_view(), name="login"),
 
     path('home/', HomePageView.as_view(), name='home'),

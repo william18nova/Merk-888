@@ -1,0 +1,5 @@
+# Solo en la máquina que construye los paquetes; los cajeros no instalan Python.
+-r requirements-hybrid-client.txt
+pyinstaller==6.22.3
+# Renderiza las plantillas originales durante la construcción, no en el cajero.
+Django==5.1.1

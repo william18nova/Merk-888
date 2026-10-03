@@ -1,0 +1,3 @@
+# Herramientas del servidor FICTICIO para probar dos instalaciones.
+-r requirements_full_local.txt
+cryptography==48.0.1

@@ -1,0 +1,11 @@
+{% extends 'base.html' %}
+{% block title %}Operación local en preparación{% endblock %}
+{% block content %}
+<section class="local-lab-panel" role="status">
+  <p class="local-lab-eyebrow">Entorno local de pruebas</p>
+  <h1>Esta función aún está en preparación</h1>
+  <p>{{ local_message }}</p>
+  <p>Primero debemos conectar sus permisos, validaciones y registro de sincronización. El sistema en internet no ha cambiado.</p>
+  <a href="{% url 'local_runtime_status' %}">Ver las consultas disponibles</a>
+</section>
+{% endblock %}

@@ -1,0 +1,31 @@
+{% extends 'base.html' %}{% load static %}
+{% block title %}Movimiento #{{ row.number }} · Sincronización{% endblock %}
+{% block extra_head %}<link rel="stylesheet" href="{% static 'local_pos/sync.css' %}">{% endblock %}
+{% block content %}
+<section class="sync-page sync-detail">
+  <a class="sync-link" href="{% url 'local_sync' %}">← Volver al historial</a>
+  <header class="sync-heading"><div><p class="sync-eyebrow">MOVIMIENTO LOCAL #{{ row.number }}</p><h1>{{ row.kind }}</h1><p>{{ row.created_at|date:'d/m/Y · H:i:s' }} · Registrado por {{ row.actor }}</p></div><span class="sync-state {{ row.state }}">{{ row.state_label }}</span></header>
+  {% include 'local_pos/sync_messages.html' %}
+  <section class="sync-notice {% if row.state == 'accepted' %}good{% endif %}"><h2>{{ row.reason }}</h2><p>{{ row.advice }}</p></section>
+  <div class="sync-detail-grid">
+    <section class="sync-card sync-padding"><h2>Datos del movimiento</h2><dl class="sync-data"><div><dt>Referencia única</dt><dd class="sync-reference">{{ row.id }}</dd></div><div><dt>Importe</dt><dd>{{ row.total }}</dd></div>{% if row.concept %}<div><dt>Concepto</dt><dd>{{ row.concept }}</dd></div>{% endif %}{% if row.cloud_id %}<div><dt>Registro en la nube</dt><dd>#{{ row.cloud_id }}</dd></div>{% endif %}<div><dt>Intentos registrados</dt><dd>{{ row.attempts }}</dd></div><div><dt>Último intento</dt><dd>{{ row.last_attempt|default:'Todavía no disponible' }}</dd></div>{% for line in lines %}<div><dt>{{ line.label }}</dt><dd>{{ line.value }}</dd></div>{% endfor %}</dl><p class="sync-footnote">Las cantidades mantienen la unidad del producto; los productos por peso se registran en gramos. No se modifican sus importes desde aquí.</p></section>
+    <section class="sync-card sync-padding"><h2>Revisión segura</h2>
+      {% if can_retry %}
+      <p>Después de revisar la causa, puedes pedir otra verificación. Se envían exactamente los mismos datos y la misma referencia.</p>
+      <form method="post" action="{% url 'local_sync_retry' row.id %}" data-sync-review>{% csrf_token %}<input type="hidden" name="request_id" value="{{ request_id }}">
+        <label for="sync-note">¿Qué revisaste o corregiste en el servidor?</label><textarea name="note" id="sync-note" minlength="8" maxlength="400" required rows="4" placeholder="Ejemplo: revisé y restablecí el permiso del cajero."></textarea><small>No escribas contraseñas ni claves.</small>
+        <button class="sync-button" type="submit">Verificar de nuevo en la nube</button>
+      </form>
+      {% elif row.state == 'accepted' %}<p>Ya está confirmada. No hay nada que reenviar.</p>
+      {% elif first_other %}<p>Hay otra operación anterior sin confirmar. Debe resolverse primero.</p><a class="sync-link" href="{% url 'local_sync_detail' first_other.pk %}">Ver primera pendiente #{{ first_other.sequence }} →</a>
+      {% elif not is_manager and row.state == 'conflict' %}<p>Solicita la revisión a un Web Master o a un usuario con permiso para editar turnos de caja. Indícale la referencia de este movimiento.</p>
+      {% elif row.state == 'pending' or row.state == 'intent' %}<p>Está en la cola automática. Desde el historial puedes intentar sincronizar los pendientes.</p>
+      {% else %}<p>La operación no corresponde a una sesión que pueda reintentarse aquí. Conserva la referencia y solicita conciliación.</p>{% endif %}
+      <div class="sync-safety"><strong>No se borra ni se marca como pagada manualmente.</strong><p>Solo una confirmación válida de la nube completa la operación. No entregues un reintegro ni des por cerrado un turno que aún esté pendiente.</p></div>
+    </section>
+  </div>
+  <section class="sync-card sync-padding"><h2>Historial de revisión</h2><ol class="sync-timeline">{% for event in row.history %}<li><strong>{{ event.actor }}</strong> solicitó verificar de nuevo.<p>{{ event.note }}</p><small>{{ event.at }}{% if event.outcome %} · Resultado: {% if event.outcome == 'accepted' %}confirmada{% elif event.outcome == 'conflict' %}sigue por revisar{% else %}sin confirmación{% endif %}{% endif %}</small></li>{% empty %}<li>No se han solicitado revisiones manuales.</li>{% endfor %}</ol></section>
+  <dialog id="sync-confirm" aria-labelledby="sync-confirm-title"><form method="dialog" data-no-transition="true"><p class="sync-eyebrow">CONFIRMACIÓN</p><h2 id="sync-confirm-title">¿Verificar este movimiento?</h2><p>No se crea una venta nueva ni se cambian los datos. El servidor volverá a validar la referencia original.</p><div class="sync-actions"><button class="sync-button secondary" value="cancel">Cancelar</button><button class="sync-button" value="confirm">Sí, verificar</button></div></form></dialog>
+</section>
+{% endblock %}
+{% block scripts %}<script defer src="{% static 'local_pos/sync.js' %}"></script>{% endblock %}

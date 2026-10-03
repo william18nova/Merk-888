@@ -1,0 +1,8 @@
+body.nova-full-local{margin:0;min-height:100vh;background:#153060;color:#eef6ff;font-family:system-ui,sans-serif}
+.local-lab-banner{position:relative;z-index:20;padding:10px 18px;background:#f7cf69;color:#202638;font:600 14px/1.5 system-ui,sans-serif;text-align:center;border-bottom:1px solid #bc9737}
+.local-lab-banner a{color:inherit;text-decoration:underline;margin-left:12px}
+.local-lab-panel{box-sizing:border-box;max-width:1100px;margin:28px auto;padding:clamp(20px,4vw,42px);font:16px/1.6 system-ui,sans-serif;background:#193657;color:#eef6ff;border:1px solid #416187;border-radius:20px}
+.local-lab-panel h1{font-size:clamp(24px,4vw,34px);line-height:1.25}.local-lab-panel a{color:#bfddff}.local-lab-eyebrow{text-transform:uppercase;letter-spacing:.08em;color:#f7cf69;font-weight:700;font-size:12px}
+.local-lab-panel button{padding:12px 16px;margin:4px;border:1px solid #85bdec;border-radius:10px;background:#295983;color:#fff;font:600 14px system-ui;cursor:pointer}.local-lab-panel button:disabled{opacity:.6;cursor:wait}
+.local-lab-modules{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px;margin-top:28px}.local-lab-modules a{padding:18px;border:1px solid #527397;border-radius:12px;text-decoration:none;background:#24486e}.local-lab-modules a:hover{background:#2b5785}.local-lab-modules span{display:block;font-size:13px;margin-top:8px}
+@media(max-width:600px){.local-lab-panel{margin:16px 12px}.local-lab-banner a{display:block;margin:0}}

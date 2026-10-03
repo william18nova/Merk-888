@@ -1,0 +1,50 @@
+{% extends 'base.html' %}{% load static %}
+{% block title %}Sincronización y pendientes · Nova{% endblock %}
+{% block extra_head %}<link rel="stylesheet" href="{% static 'local_pos/sync.css' %}">{% endblock %}
+{% block content %}
+<section class="sync-page">
+  <header class="sync-heading">
+    <div><p class="sync-eyebrow">CONTROL LOCAL · ESTE EQUIPO</p><h1>Sincronización</h1><p>Tus movimientos, guardados y en orden.</p></div>
+    <div class="sync-actions"><a class="sync-button secondary" href="{% url 'local_sync' %}?{{ request.GET.urlencode }}">Actualizar vista</a>
+      {% if session %}<form method="post" action="{% url 'local_sync_send' %}" data-sync-form>{% csrf_token %}<button class="sync-button" type="submit">Sincronizar pendientes</button></form>{% endif %}
+    </div>
+  </header>
+  {% include 'local_pos/sync_messages.html' %}
+  <div class="sync-summary" aria-label="Resumen de operaciones visibles">
+    <a href="?state=waiting" class="sync-stat"><span>Por confirmar</span><strong>{{ counts.pending|add:counts.conflicts }}</strong><small>Conservadas en este equipo</small></a>
+    <a href="?state=conflict" class="sync-stat warning"><span>Necesitan revisión</span><strong>{{ counts.conflicts }}</strong><small>No repitas estos movimientos</small></a>
+    <a href="?state=accepted" class="sync-stat success"><span>Confirmadas</span><strong>{{ counts.accepted }}</strong><small>Con respuesta de la nube</small></a>
+    <a href="?" class="sync-stat"><span>Total del historial</span><strong>{{ counts.total }}</strong><small>{% if is_manager %}Todos los autores de este equipo{% else %}Solo tus operaciones{% endif %}</small></a>
+  </div>
+  <section class="sync-connection" aria-label="Comunicación y autorización">
+    <div><span class="sync-dot {% if session.online %}online{% endif %}" aria-hidden="true"></span><strong>{% if not state %}Sin sesión vinculada para este usuario{% elif state.blocked %}Autorización bloqueada{% elif expired %}Autorización vencida{% elif session.online %}Última comunicación correcta{% else %}Sin confirmación reciente{% endif %}</strong>
+      <p>{% if state %}{{ session.data.branch|default:'Sucursal autorizada' }} · {{ session.data.point|default:'Punto autorizado' }}{% else %}Puedes consultar tu historial. La vinculación se prepara desde el instalador.{% endif %}</p></div>
+    {% if state %}<div><span>Última copia completa</span><strong>{{ state.synchronized_at|date:'d/m/Y H:i'|default:'Todavía no disponible' }}</strong></div><div><span>Autorización hasta</span><strong>{{ state.expires_at|date:'d/m/Y H:i'|default:'Pendiente' }}</strong></div>{% endif %}
+  </section>
+  {% if state.blocked or expired %}<p class="sync-notice">Conserva esta instalación y sus pendientes. Un responsable debe revisar la autorización; esta pantalla no la renueva ni salta los controles.</p>{% endif %}
+  {% if session.data.closed %}<p class="sync-notice good">El cierre fue confirmado por la nube.</p>{% elif session.data.closing %}<p class="sync-notice">Cierre declarado, todavía sin confirmar. Primero se enviarán los movimientos anteriores.</p>{% endif %}
+  <section class="sync-card">
+    <div class="sync-section-heading"><h2>Historial de movimientos</h2><span>{{ page.paginator.count }} resultado{{ page.paginator.count|pluralize:'s' }}</span></div>
+    <form method="get" class="sync-filters">
+      <label>Estado{{ filters.state }}</label><label>Movimiento{{ filters.kind }}</label>
+      <label>Referencia o número{{ filters.q }}</label><label>Desde{{ filters.since }}</label><label>Hasta{{ filters.until }}</label>
+      <div class="sync-actions"><button class="sync-button" type="submit">Filtrar</button><a href="{% url 'local_sync' %}" class="sync-link">Limpiar</a></div>
+      {% if filters.errors %}<div class="sync-form-errors" role="alert">{{ filters.errors }}</div>{% endif %}
+    </form>
+    <div class="sync-movements">
+    {% for row in rows %}
+      <article class="sync-movement">
+        <div class="sync-movement-title"><span class="sync-number">#{{ row.number }}</span><div><h3>{{ row.kind }}</h3><p>{{ row.created_at|date:'d/m/Y · H:i:s' }} · {{ row.actor }}</p>{% if row.concept %}<p class="sync-concept">{{ row.concept }}</p>{% endif %}</div></div>
+        <div><span class="sync-state {{ row.state }}">{{ row.state_label }}</span><p class="sync-row-reason">{{ row.reason }}</p></div>
+        <strong class="sync-money">{{ row.total }}</strong>
+        <a class="sync-button secondary" href="{% url 'local_sync_detail' row.id %}" aria-label="Ver {{ row.kind }} número {{ row.number }}">Ver detalle →</a>
+      </article>
+    {% empty %}<div class="sync-empty"><h3>No hay movimientos para mostrar</h3><p>{% if counts.total %}Prueba otros filtros para encontrar la operación.{% else %}Aquí aparecerán las ventas, pagos, devoluciones y cierres que registres en este equipo.{% endif %}</p></div>{% endfor %}
+    </div>
+    {% if page.has_other_pages %}<nav class="sync-pagination" aria-label="Páginas del historial">{% if page.has_previous %}<a class="sync-button secondary" href="?{{ filter_query }}&amp;page={{ page.previous_page_number }}">← Anterior</a>{% endif %}<span>Página {{ page.number }} de {{ page.paginator.num_pages }}</span>{% if page.has_next %}<a class="sync-button secondary" href="?{{ filter_query }}&amp;page={{ page.next_page_number }}">Siguiente →</a>{% endif %}</nav>{% endif %}
+  </section>
+  <p class="sync-footnote">Los estados se actualizan al recargar esta vista. Sincronizar envía hasta 5 movimientos en orden; el POS continúa el resto en segundo plano. Una revisión pendiente detiene la cola: no borres datos ni repitas el cobro.</p>
+  <a class="sync-link" href="{% url 'local_runtime_status' %}">← Estado y módulos del equipo</a>
+</section>
+{% endblock %}
+{% block scripts %}<script defer src="{% static 'local_pos/sync.js' %}"></script>{% endblock %}

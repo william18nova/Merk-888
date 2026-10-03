@@ -9,10 +9,20 @@ from django.db import DatabaseError, transaction
 TURN_REQUIRED_FEATURE = "ventas_exigir_turno_caja"
 NEQUI_API_FEATURE = "nequi_api_recepcion"
 TELEGRAM_BOT_FEATURE = "telegram_bot_inteligente"
+HYBRID_POS_FEATURE = "pos_hibrido_piloto"
 FEATURE_CACHE_SECONDS = 3
 
 
 FEATURE_REGISTRY = {
+    HYBRID_POS_FEATURE: {
+        "key": HYBRID_POS_FEATURE, "category": "Caja y ventas",
+        "label": "Piloto POS híbrido (equipos instalados)",
+        "description": "Habilita equipos vinculados para ventas en efectivo con respaldo local y sincronización.",
+        "enabled_help": "Solo equipos autorizados. Requiere instalación, sincronización inicial y pruebas de aceptación.",
+        "disabled_help": "No admite nuevas sesiones ni operaciones del piloto. Conserva el POS web y las operaciones pendientes.",
+        "impacts": ["No activar en todas las cajas antes de aprobar un piloto.", "Finaliza la sesión híbrida y sincroniza antes de cerrar caja.", "No incluye Nequi, PTM, devoluciones ni descuentos especiales offline."],
+        "default_enabled": False, "critical": True,
+    },
     TURN_REQUIRED_FEATURE: {
         "key": TURN_REQUIRED_FEATURE,
         "category": "Caja y ventas",

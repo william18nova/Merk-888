@@ -1,0 +1,52 @@
+{% extends 'base.html' %}{% load static %}
+{% block title %}{{ title }}{% endblock %}
+{% block extra_head %}<link rel="stylesheet" href="{% static 'local_pos/business.css' %}">{% endblock %}
+{% block content %}
+<section class="local-lab-panel business-page" aria-label="{{ title }}">
+  <p class="local-lab-eyebrow">Operaciones de este equipo · {{ session.data.point }}</p>
+  <h1>{{ title }}</h1>
+  <nav class="business-links"><a href="{% url 'generar_venta' %}">Generar venta</a><a href="{% url 'registrar_egreso' %}">Pagos</a><a href="{% url 'local_return' %}">Devoluciones</a><a href="{% url 'turno_caja' %}">Cierre</a><a href="{% url 'local_runtime_status' %}">Estado</a></nav>
+  {% if error %}<p class="business-warning" role="alert">{{ error }}</p>{% endif %}
+  {% if last_operation %}<p class="business-warning" role="status">{% if last_operation.state == 'accepted' %}Registrado y confirmado en la nube.{% elif last_operation.state == 'conflict' %}Requiere revisión. No repitas la operación.{% else %}Guardado en este equipo, pendiente de sincronizar.{% endif %} {{ last_operation.message }} Referencia {{ last_operation.id }}.</p>{% endif %}
+  {% if mode == 'expense' %}
+  <p>Registra lo que pagaste. Es un control separado: no descuenta dinero de caja. Los totales de abajo corresponden solo a este equipo.</p>
+  <form method="post" data-business-confirm data-confirm="¿Registrar este pago con el importe y medio indicados?" id="local-expense-form">
+    {% csrf_token %}<input type="hidden" name="operation_id" value="{{ operation_id }}"><input type="hidden" name="session_id" value="{{ session.session_id }}">
+    <label>¿Qué se pagó?<input name="concept" maxlength="160" list="local-concepts" required autocomplete="off"></label>
+    <datalist id="local-concepts">{% for concept in concepts %}<option value="{{ concept }}">{% endfor %}</datalist>
+    <div class="business-grid"><label>Valor pagado<input name="amount_display" inputmode="decimal" required placeholder="0" data-money-input><input type="hidden" name="amount_base"></label>
+    <label>Medio de pago<select name="method" required>{% for method in methods %}<option value="{{ method.code }}" data-tax="{{ method.expense_tax_enabled|yesno:'true,false' }}">{{ method.label }}</option>{% endfor %}</select></label></div>
+    <input type="hidden" name="expected_tax" value="false"><p id="local-tax-preview" role="status"></p>
+    <button type="submit">Registrar pago</button>
+  </form>
+  {% elif mode == 'return' %}
+  <p class="business-warning">Sin conexión se guarda una solicitud, no una devolución completada. No entregues dinero hasta ver «Confirmado». Los reintegros bancarios se realizan fuera del POS.</p>
+  <form method="get"><label>ID de venta<input type="number" name="sale_id" min="1" required value="{{ snapshot.sale.sale_id }}"></label><button>Consultar venta</button></form>
+  {% if snapshot %}
+  {{ snapshot|json_script:'local-return-snapshot' }}
+  <form method="post" data-business-confirm data-confirm="¿Solicitar la devolución de los productos y el valor indicados?" id="local-return-form">
+    {% csrf_token %}<input type="hidden" name="operation_id" value="{{ operation_id }}"><input type="hidden" name="session_id" value="{{ session.session_id }}"><input type="hidden" name="sale_id" value="{{ snapshot.sale.sale_id }}"><input type="hidden" name="authorization" value="{{ snapshot.authorization }}"><input type="hidden" name="expected_total" value="0">
+    <h2>Venta #{{ snapshot.sale.sale_id }}</h2>
+    {% for item in snapshot.sale.items %}<label>{{ item.name }} · ID {{ item.product_id }} · Disponible {{ item.quantity }}<input type="number" name="qty_{{ item.detail_id }}" min="0" max="{{ item.quantity }}" step="1" value="0" data-return-quantity="{{ item.detail_id }}"></label>{% endfor %}
+    <label>Medio del reintegro<select name="method">{% for method in methods %}<option value="{{ method.code }}">{{ method.label }}</option>{% endfor %}</select></label>
+    <p id="return-total" role="status">Total a devolver: $ 0</p><button>Solicitar devolución</button>
+  </form>{% endif %}
+  {% elif mode == 'close' %}
+  {% if session.data.closing %}<p class="business-warning">{% if session.data.closed %}El turno está cerrado y confirmado en la nube.{% else %}El cierre está declarado. Espera la conciliación; no registres nuevas operaciones en este turno.{% endif %}</p>
+  {% else %}
+  <p>Paso {{ draft.step }} de 3. Revisa antes de confirmar: no se puede volver atrás ni modificar un paso confirmado.</p>
+  <form method="post" data-business-confirm data-confirm="¿Confirmar estos valores y continuar? No podrás volver atrás.">
+    {% csrf_token %}<input type="hidden" name="step" value="{{ draft.step }}">
+    {% if draft.step == 1 %}<h2>Facturas y compañeros</h2><p>¿Cuánto dinero de la caja pagaste o apartaste para pagar facturas o compañeros? No incluyas Nequi, tarjeta ni retiros PTM.</p><label>Total de esos pagos<input type="number" name="bills_paid" min="0" step="0.01" value="0" required></label>
+    {% elif draft.step == 2 %}<h2>Contar efectivo</h2><p class="business-warning"><strong>No cuentes el dinero que ya pagaste o apartaste para un compañero.</strong> Cuenta solo lo que entregas, incluida la base.</p><div class="business-grid">{% for denomination in denominations %}<label>$ {{ denomination }}<input type="number" name="denom_{{ denomination }}" min="0" max="100000" step="1" value="0" required></label>{% endfor %}</div>
+    {% else %}<h2>Otros medios y PTM</h2><p>Registra ingresos por cada medio. El servidor concilia las devoluciones; no las descuentes otra vez aquí.</p><div class="business-grid">{% for method in methods %}<label>{{ method.label }}<input type="number" name="method_{{ method.code }}" min="0" step="0.01" value="0" required></label>{% endfor %}</div><label>Número de transacciones PTM<input type="number" name="ptm_count" min="0" value="0" step="1" required></label><p>Si no hay conexión, se guardará la declaración y se confirmará el cierre solo cuando toda la cola anterior esté conciliada.</p>{% endif %}
+    <button>{% if draft.step == 3 %}Declarar cierre{% else %}Confirmar y continuar{% endif %}</button>
+  </form>{% endif %}
+  {% endif %}
+  <section class="business-history"><h2>Operaciones de este equipo</h2><p>No representa el total global actualizado del negocio. Recarga para consultar la sincronización.</p>
+  {% for row in history %}<article><strong>{% firstof row.summary row.concept 'Operación' %}</strong><p>{% if row.state == 'accepted' %}Confirmado{% elif row.state == 'conflict' %}Requiere revisión{% else %}Pendiente{% endif %}{% if row.total %} · $ {{ row.total }}{% endif %}{% if row.tax %} · Impuesto $ {{ row.tax }}{% endif %}</p><small>{{ row.id }}</small><p>{{ row.message }} {{ row.error }}</p></article>{% empty %}<p>Todavía no hay operaciones de este tipo.</p>{% endfor %}
+  </section>
+</section>
+<dialog id="business-confirm"><form method="dialog"><h2>Confirmar operación</h2><p id="business-confirm-text"></p><div class="business-grid"><button value="cancel">Revisar</button><button value="confirm">Confirmar</button></div></form></dialog>
+{% endblock %}
+{% block scripts %}<script src="{% static 'local_pos/business.js' %}"></script>{% endblock %}

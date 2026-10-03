@@ -1,0 +1,36 @@
+name: Piloto híbrido - PostgreSQL real (datos ficticios)
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  postgres:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: nova_hybrid_ci
+          POSTGRES_USER: nova_hybrid_ci
+          POSTGRES_PASSWORD: local-test-only
+        ports:
+          - 55432:5432
+        options: >-
+          --health-cmd "pg_isready -U nova_hybrid_ci -d nova_hybrid_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      HYBRID_TEST_POSTGRES: yes-local-disposable
+      HYBRID_TEST_POSTGRES_PORT: '55432'
+      HYBRID_TEST_POSTGRES_PASSWORD: local-test-only
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -r requirements.txt
+      - run: python -m pip install -r requirements-hybrid-client.txt
+      - name: Ventas simultáneas, duplicados y cierre
+        run: python -B manage.py test mainApp.test_hybrid mainApp.test_hybrid_recovery mainApp.test_hybrid_postgres mainApp.test_hybrid_migration mainApp.test_hybrid_acceptance mainApp.test_cash_receipt mainApp.test_ptm --settings=NovaSoft.hybrid_test_postgres_settings --noinput

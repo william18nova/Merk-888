@@ -1,0 +1,69 @@
+{% extends 'base.html' %}
+{% block title %}Pruebas del sistema local{% endblock %}
+{% block content %}
+<section class="local-lab-panel">
+  <p class="local-lab-eyebrow">{% if full_local_installed %}Instalación candidata · pendiente de validación productiva{% else %}Desarrollo · datos ficticios{% endif %}</p>
+  <h1>El mismo sistema, ejecutado en este equipo</h1>
+  <p><a href="{% url 'local_sync' %}">Ver sincronización, pendientes y operaciones por revisar →</a></p>
+  <p>Estas páginas conservan el menú y Generar venta del proyecto. {% if full_local_operations %}Puedes probar ventas con distintos medios o pagos mixtos, egresos, solicitudes de devolución y declaraciones de cierre. Todos utilizan la misma cola de sincronización.{% elif full_local_sales %}Puedes registrar ventas ficticias en efectivo y consultar su sincronización; los otros módulos siguen en consulta.{% else %}En esta fase puedes consultar los datos de prueba, pero no modificarlos.{% endif %}</p>
+  <p><strong>Versión de pruebas: todavía no cubre todas las escrituras del sistema.</strong> No uses esta instalación para registrar operaciones reales.</p>
+  {% if full_local_operations %}<p>Nequi y tarjeta se registran, pero no se verifican con el banco. Sin conexión, una devolución o un cierre quedan pendientes: no entregues el reintegro ni des por cerrado el turno hasta recibir confirmación.</p>{% endif %}
+  {% if local_operation_counts %}
+  <section aria-label="Operaciones guardadas" role="status">
+    <h2>Diario de este equipo</h2>
+    <p><strong>{{ local_operation_counts.pending }}</strong> pendientes · <strong>{{ local_operation_counts.conflicts }}</strong> por revisar · <strong>{{ local_operation_counts.accepted }}</strong> confirmadas.</p>
+    {% if local_sale_session.data.closed %}<p>El turno está cerrado y confirmado. Para iniciar otra sesión, concilia todos los pendientes y usa la renovación explícita del instalador.</p>
+    {% elif local_sale_session.data.closing %}<p>El cierre está declarado. Las operaciones anteriores se enviarán primero; no se admiten movimientos nuevos.</p>
+    {% elif local_sale_session.data.close_draft.step > 1 %}<p>El conteo de cierre está en curso. Continúa el paso pendiente en Cierre de caja.</p>{% endif %}
+  </section>
+  {% endif %}
+  {% if replica_state %}
+  <section aria-label="Estado de la réplica" role="status">
+    <h2>Copia autorizada de referencia</h2>
+    <p><strong>{{ replica_state.status }}</strong></p>
+    <p>Última copia completa: {{ replica_state.synchronized_at|date:"d/m/Y H:i:s"|default:"Todavía no disponible" }}.</p>
+    <p>Autorización hasta: {{ replica_state.expires_at|date:"d/m/Y H:i:s"|default:"Pendiente" }}.</p>
+    <p>Incluye catálogo, inventario de la sucursal, clientes autorizados y métodos de pago; no incluye ventas ni movimientos de caja.</p>
+  </section>
+  {% endif %}
+  {% if full_local_sale_demo and replica_state %}
+  <section aria-label="Prueba de desconexión">
+    <h2>Probar un corte sin apagar tu Wi-Fi</h2>
+    <p>Estos controles afectan solo la comunicación con el servidor ficticio de este laboratorio.</p>
+    <form id="local-sale-demo-controls">
+      {% csrf_token %}
+      <button type="button" data-offline="true">Simular sin conexión</button>
+      <button type="button" data-offline="false">Restablecer y sincronizar</button>
+    </form>
+    <p id="local-sale-demo-result" role="status" aria-live="polite"></p>
+  </section>
+  <script>
+    document.getElementById('local-sale-demo-controls').addEventListener('click', async function (event) {
+      const button = event.target.closest('button[data-offline]');
+      if (!button) return;
+      const output = document.getElementById('local-sale-demo-result');
+      const buttons = [...this.querySelectorAll('button')];
+      buttons.forEach(item => item.disabled = true);
+      output.textContent = 'Aplicando el cambio de prueba…';
+      try {
+        const offline = button.dataset.offline === 'true';
+        const response = await fetch('/local/sales/api/test-network', {
+          method: 'POST', headers: {'Content-Type': 'application/json',
+            'X-CSRFToken': this.querySelector('[name=csrfmiddlewaretoken]').value},
+          body: JSON.stringify({offline}),
+        });
+        if (!response.ok) throw new Error('No se pudo cambiar el estado. Revisa la sesión local.');
+        output.textContent = offline ? 'Corte simulado. Puedes seguir en Generar venta y registrar ventas ficticias.'
+          : 'Comunicación restablecida. Revisa el historial para confirmar que no queden pendientes o conflictos.';
+      } catch (error) { output.textContent = error.message; }
+      finally { buttons.forEach(item => item.disabled = false); }
+    });
+  </script>
+  {% endif %}
+  <div class="local-lab-modules">
+    {% for module in local_modules %}
+    <a href="{% url module.route %}"><strong>{{ module.label }}</strong><span>{{ module.hint }}</span></a>
+    {% endfor %}
+  </div>
+</section>
+{% endblock %}

@@ -9,6 +9,7 @@ from django.forms import ValidationError
 from django.utils import timezone
 from django.db.models import F
 from django.db.models.functions import Lower, Trim
+from .hybrid_models import EquipoHibrido, SesionHibrida, OperacionHibrida, RecuperacionHibrida, ReplicaHibrida
 import unicodedata
 
 
@@ -1346,6 +1347,15 @@ class TurnoCaja(models.Model):
 
     class Meta:
         db_table = "turnos_caja"
+
+    def save(self, *args, **kwargs):
+        if self.pk and self.estado != "ABIERTO":
+            from .services.hybrid import assert_turn_released
+            with transaction.atomic():
+                type(self).objects.select_for_update().filter(pk=self.pk).exists()
+                assert_turn_released(self.pk)
+                return super().save(*args, **kwargs)
+        return super().save(*args, **kwargs)
 
 class OperacionPTM(models.Model):
     """Dinero de terceros: no es una venta ni un movimiento de inventario."""
