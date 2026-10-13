@@ -6,6 +6,7 @@
 {% block extra_head %}
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"/>
   <link rel="stylesheet" href="{% static 'css/turnos_caja_dashboard.css' %}?v=3">
+  <link rel="stylesheet" href="{% static 'css/close_payment_details.css' %}?v=1">
 {% endblock %}
 
 {% block content %}
@@ -137,6 +138,13 @@
         </button>
       </div>
 
+      <section class="cp-details" aria-labelledby="mCashPaymentsTitle">
+        <h3 id="mCashPaymentsTitle">Facturas y pagos a compañeros</h3>
+        <div id="mCashPaymentsTotal" class="cp-total">—</div>
+        <div id="mCashPaymentsDetails"></div>
+        <p>Informativo: este dinero ya está incluido en el cuadre del cierre.</p>
+      </section>
+
       <div class="m-table-wrap">
         <table class="m-table" role="table" aria-label="Desglose por medio de pago">
           <thead>
@@ -161,5 +169,6 @@
   const CAN_EDIT_TURNOS = {{ can_edit_turnos|yesno:"true,false" }};
 </script>
 
-<script defer src="{% static 'javascript/turnos_caja_dashboard.js' %}?v=3"></script>
+<script defer src="{% static 'javascript/close_payment_details.js' %}?v=1"></script>
+<script defer src="{% static 'javascript/turnos_caja_dashboard.js' %}?v=4"></script>
 {% endblock %}

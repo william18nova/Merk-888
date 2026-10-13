@@ -1,5 +1,12 @@
 # Prueba ficticia en dos computadores — NO producción
 
+> Documento histórico del piloto separado. Sus instaladores y paquetes fueron retirados; no usar sus instrucciones de instalación. La guía vigente es [instalación integrada con runserver](instalacion_integrada_runserver.md). Se conserva como evidencia de pruebas anteriores.
+
+> Documento histórico del piloto separado. Sus menús se retiraron del código
+> actual; estas instrucciones solo describen los ZIP antiguos ya entregados.
+> El trabajo vigente es la [integración con runserver](pos_hibrido_runserver.md),
+> todavía en desarrollo. No usar este piloto como instalador definitivo.
+
 Este paquete conserva la interfaz Django de ventas. Cada computador tiene su
 propio PostgreSQL y una identidad distinta; uno de ellos aloja además el servidor
 ficticio compartido. No usa Aiven, PythonAnywhere, Telegram ni notificaciones

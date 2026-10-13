@@ -4,6 +4,20 @@ from django.db import models
 from django.db.models import Q
 
 
+class SolicitudPOS(models.Model):
+    """Confirmación de una venta original, incluso si se perdió la respuesta."""
+    id = models.UUIDField(primary_key=True, editable=False)
+    usuario = models.ForeignKey("Usuario", on_delete=models.PROTECT)
+    accion = models.CharField(max_length=30)
+    huella = models.CharField(max_length=64)
+    venta = models.OneToOneField("Venta", on_delete=models.PROTECT, null=True, blank=True)
+    respuesta = models.JSONField(default=dict)
+    creada_en = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "solicitudes_pos"
+
+
 class EquipoHibrido(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
     nombre = models.CharField(max_length=80)

@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% load static %}
+{% block title %}Copia local · NovaPOS{% endblock %}
+{% block extra_head %}
+<style>
+html,body{margin:0;min-height:100%;background:#193b68;color:#f5f8ff;font-family:system-ui,sans-serif}body{background:radial-gradient(ellipse at top,#29588e,#193b68 75%);background-attachment:fixed}.page-wrap{padding:32px 16px}.ref-copy{max-width:1040px;margin:24px auto;padding:clamp(20px,4vw,40px);border:1px solid #5c7da4;border-radius:22px;background:#244875;box-shadow:0 16px 48px #10274544}.ref-copy h1{margin:8px 0 16px;font-size:clamp(25px,4vw,36px)}.ref-copy p{line-height:1.6;color:#dce9f9}.ref-tag{font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:#aed6ff}.ref-status{padding:16px 20px;background:#163555;border-radius:14px;border-left:4px solid #73bcff;margin:24px 0}.ref-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}.ref-metric{padding:18px;border-radius:12px;border:1px solid #6483a7;background:#ffffff08}.ref-metric strong{display:block;font-size:28px;margin-bottom:5px}.ref-copy form{display:flex;align-items:end;flex-wrap:wrap;gap:16px;margin:28px 0}.ref-copy label{display:grid;gap:8px;flex:1;min-width:200px}.ref-copy select{background:#193b68;color:white;padding:13px;border:1px solid #89a9ce;border-radius:10px;font:inherit}.ref-copy button{border:0;border-radius:11px;background:#51a8ff;color:#09294c;padding:15px 22px;font:inherit;font-weight:700;cursor:pointer}.ref-copy button:disabled{opacity:.55;cursor:wait}.ref-note{padding-top:18px;border-top:1px solid #ffffff30}.ref-copy a{color:#b4dbff}
+</style>
+{% endblock %}
+{% block content %}
+<section class="ref-copy" id="reference-copy" data-status-url="{% url 'integrated_reference' %}?format=json">
+  <span class="ref-tag">Este computador · Copia autorizada</span>
+  <h1>Información local del negocio</h1>
+  <p>Prepara el catálogo de tu sucursal para la integración sin conexión. La descarga no cambia Aiven y puedes seguir trabajando mientras se actualiza.</p>
+  <div class="ref-status" role="status" aria-live="polite"><strong id="reference-title">{% if copy_ready %}Copia disponible{% else %}Copia pendiente de preparación o renovación{% endif %}</strong><p id="reference-message">{{ copy_status.message }}</p>
+    <small id="reference-dates">{% if copy_state.synchronized_at %}Última actualización: {{ copy_state.synchronized_at|date:"d/m/Y H:i" }} · Vigente hasta {{ copy_state.expires_at|date:"d/m/Y H:i" }}{% endif %}</small>
+  </div>
+  {% if copy_own %}<form method="post">{% csrf_token %}<label>Caja de este equipo<select name="point_id" required>
+    <option value="">Selecciona la caja</option>{% for point in points %}<option value="{{ point.pk }}" {% if copy_state.scope.point_id == point.pk %}selected{% endif %}>{{ point.nombre }}</option>{% endfor %}
+  </select></label><button id="reference-submit" type="submit" {% if copy_status.busy %}disabled{% endif %}>{% if copy_state.active_id %}Actualizar copia{% else %}Preparar copia{% endif %}</button></form>{% endif %}
+  <div class="ref-grid">{% for key,label,count in copy_counts %}<div class="ref-metric"><strong data-reference-count="{{ key }}">{{ count }}</strong>{{ label }}</div>{% endfor %}</div>
+  <p>Los permisos se revisan en cada actualización. Se incluyen los clientes autorizados, el inventario de tu sucursal —incluso negativo— y hasta 2.000 ventas propias de los últimos 30 días en esta caja para devoluciones. No es una copia del historial completo del negocio.</p>
+  {% if journal_enabled %}
+  <p class="ref-note"><strong>Trabajo sin conexión en las páginas habituales.</strong> Cada descarga validada autoriza hasta 24 horas. Ventas, pagos, devoluciones de ventas incluidas en la copia y conteos de cierre se guardan con una referencia única. Se envían en orden; el cuadre definitivo se calcula en la nube. PTM, nuevos pagos por Nequi, autorizaciones especiales y devoluciones de ventas no descargadas requieren conexión.</p>
+  <p><a href="{% url 'integrated_sync' %}">Ver pendientes y revisar conflictos</a>. Un conflicto nunca borra un movimiento ni reabre un turno automáticamente.</p>
+  {% else %}
+  <p class="ref-note"><strong>Esta etapa todavía no habilita ventas offline.</strong> Prepara los datos; faltan el diario de operaciones y la conciliación. Si se interrumpe la descarga, la copia anterior se conserva. La renovación automática funciona mientras uses el sistema con sesión iniciada.</p>
+  {% endif %}
+  <a href="{% url 'generar_venta' %}">Volver a generar venta</a>
+</section>
+{% endblock %}
+{% block scripts %}<script defer src="{% static 'javascript/reference_copy.js' %}?v=1"></script>{% endblock %}

@@ -33,6 +33,7 @@ from django.contrib import messages
 from zoneinfo import ZoneInfo
 from django.core.exceptions import FieldDoesNotExist, ValidationError as DjangoValidationError
 from .services.ptm import resumen_ptm, resumen_ptm_json, validar_conteo_ptm
+from .services.pos_request_receipts import protect_sale, protect_business
 from django.core import signing
 from django.core.signing import BadSignature, SignatureExpired
 from django.views.generic import DetailView
@@ -435,6 +436,23 @@ class HomePageView(LoginRequiredMixin, TemplateView):
         today = timezone.localdate()
         user = self.request.user
         empleado = getattr(user, "empleado", None)
+        if getattr(settings, "NOVA_INTEGRATED_POS_ENABLED", False):
+            from local_pos.request_context import offline_request
+            if offline_request():
+                # Preserve the original home UI, never compute cloud-wide KPIs
+                # from a bounded local copy (missing rows are not zero totals).
+                context.update({
+                    "dashboard_today": today,
+                    "dashboard_user_label": str(empleado or user),
+                    "dashboard_turno_label": "Trabajando sin conexión",
+                    "dashboard_turno_detail": "Mismo programa · Copia local autorizada",
+                    "dashboard_turno_status": "attention",
+                    "dashboard_scope_copy": "Puedes seguir navegando. Te avisaremos si una opción necesita internet.",
+                    "dashboard_quick_actions": self._quick_actions(employee_dashboard=(
+                        not is_web_master_role(user) and not is_permission_admin(user))),
+                    "dashboard_offline": True,
+                })
+                return context
         dashboard_permissions = self._dashboard_permissions(user)
         is_employee_dashboard = (
             not is_web_master_role(user)
@@ -2833,7 +2851,7 @@ class UsuarioListView(LoginRequiredMixin, ListView):
     • Se ordena alfabéticamente por nombre de usuario.
     • `context_object_name = "usuarios"` → variable en la plantilla.
     """
-    
+
     model               = Usuario
     template_name       = "visualizar_usuarios.html"
     context_object_name = "usuarios"
@@ -3928,10 +3946,16 @@ class ClavesDescuentoMerk2888View(LoginRequiredMixin, View):
         action = (request.POST.get("action") or "generar").strip().lower()
         try:
             if action == "generar":
-                _autorizacion, codigo = generate_one_time_code(
-                    request.user,
-                    request.POST.get("solicitud_id"),
-                )
+                with transaction.atomic():
+                    _autorizacion, codigo = generate_one_time_code(
+                        request.user, request.POST.get("solicitud_id"))
+                    if request.POST.get("reservar_offline") == "1":
+                        if not getattr(settings, "NOVA_INTEGRATED_JOURNAL_ENABLED", False):
+                            raise SpecialDiscountError("La reserva offline se prepara desde el equipo local autorizado.")
+                        from local_pos.integrated_discounts import reserve
+                        reserve(_autorizacion, request.user)
+                if request.POST.get("reservar_offline") == "1":
+                    messages.info(request, "Clave reservada solo para este equipo. Actualiza la copia local antes de desconectarte. Conserva su vencimiento de 15 minutos.")
                 return self._render(request, nueva_clave=codigo)
 
             if action == "revocar":
@@ -4932,6 +4956,7 @@ class GenerarVentaView(LoginRequiredMixin, View):
         return render(request, self.template_name, ctx)
 
     # ---------- POST ----------
+    @protect_sale
     def post(self, request, *args, **kwargs):
         turno_requerido = is_feature_enabled(
             TURN_REQUIRED_FEATURE,
@@ -5182,6 +5207,8 @@ class GenerarVentaView(LoginRequiredMixin, View):
             method["code"] for method in methods if method["active"]
         }
         return {
+            'integrated_pos_enabled': getattr(settings, 'NOVA_INTEGRATED_POS_ENABLED', False),
+            'integrated_journal_enabled': getattr(settings, 'NOVA_INTEGRATED_JOURNAL_ENABLED', False),
             'form': form,
             'detalles': detalles or [],
             'total': total,
@@ -5438,7 +5465,8 @@ class GenerarVentaView(LoginRequiredMixin, View):
         beneficio_web_master=False, beneficio_merk2888=False,
         autorizacion_descuento_id=None, codigo_descuento_merk2888="",
         subtotal_original=Decimal("0"), turno=None, turno_requerido=True,
-        nequi_notificacion_id=None, occurred_at=None
+        nequi_notificacion_id=None, occurred_at=None, propagate_errors=False,
+        offline_discount_reservation=None
     ):
         """
         ULTRA FAST:
@@ -5618,11 +5646,13 @@ class GenerarVentaView(LoginRequiredMixin, View):
                         raise SpecialDiscountError(
                             "La clave es inválida, venció o ya fue utilizada."
                         )
-                    autorizacion_descuento = lock_one_time_code(
-                        cliente_inst,
-                        codigo_descuento_merk2888,
-                        autorizacion_descuento_id,
-                    )
+                    if offline_discount_reservation is not None:
+                        from local_pos.integrated_discounts import lock_reserved_code
+                        autorizacion_descuento = lock_reserved_code(cliente_inst, autorizacion_descuento_id,
+                            offline_discount_reservation, user, pp_inst, occurred_at)
+                    else:
+                        autorizacion_descuento = lock_one_time_code(
+                            cliente_inst, codigo_descuento_merk2888, autorizacion_descuento_id)
                 elif autorizacion_descuento_id:
                     raise SpecialDiscountError(
                         "La clave no corresponde al cliente seleccionado."
@@ -5713,6 +5743,8 @@ class GenerarVentaView(LoginRequiredMixin, View):
                         subtotal=subtotal_original,
                         descuento=descuento_empleado,
                         turno_requerido=turno_requerido_actual,
+                        offline_reservation=offline_discount_reservation,
+                        occurred_at=occurred_at if offline_discount_reservation else None,
                     )
 
             # CAMBIO: solo pago simple en efectivo
@@ -5821,6 +5853,8 @@ class GenerarVentaView(LoginRequiredMixin, View):
                 "error": "La clave es inválida, venció o ya fue utilizada.",
             })
         except Exception as e:
+            if propagate_errors:
+                raise
             if getattr(settings, "DEBUG", False):
                 return JsonResponse({'success': False, 'error': f'Error al crear la venta: {e!s}'})
             return JsonResponse({'success': False, 'error': 'Error al crear la venta.'})
@@ -7014,6 +7048,9 @@ class ClienteAutocompleteView(PaginatedAutocompleteMixin):
               "employee_is_web_master": GenerarVentaView._empleado_es_web_master(empleado) if empleado else False,
               "is_merk2888": bool(c["is_merk2888"]),
             })
+        if getattr(settings, "NOVA_INTEGRATED_JOURNAL_ENABLED", False):
+            from local_pos.integrated_discounts import client_flags
+            client_flags(results)
         return JsonResponse({"results": results, "has_more": has_more})
 
 
@@ -7054,7 +7091,7 @@ class VerificarProductoView(LoginRequiredMixin, View):
             return JsonResponse({"exists": False})
 
         disponible = int(row["cantidad"] or 0)
-        if disponible < cantidad:
+        if disponible < cantidad and not getattr(settings, "NOVA_INTEGRATED_POS_ENABLED", False):
             return JsonResponse({"exists": True, "cantidad_disponible": disponible})
 
         precio = row["productoid__precio"] or 0
@@ -8297,6 +8334,7 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin, View):
     # -------------------------
     # POST
     # -------------------------
+    @protect_business("refund")
     def post(self, request, venta_id):
         try:
             with transaction.atomic():
@@ -8552,7 +8590,7 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin, View):
             "Revisa tu modelo: debe existir un DecimalField tipo esperado/monto_esperado/monto/etc."
         )
 
-    
+
 
 
 class CambiosListView(LoginRequiredMixin, ListView):
@@ -10424,8 +10462,18 @@ class RegistrarEgresoView(LoginRequiredMixin, View):
         }
 
     def get(self, request, *args, **kwargs):
-        return render(request, self.template_name, self._page_context(request))
+        context = self._page_context(request)
+        if getattr(settings, "NOVA_INTEGRATED_JOURNAL_ENABLED", False):
+            from local_pos.request_context import offline_request
+            if offline_request():
+                from local_pos.models import ReplicaState
+                state = ReplicaState.objects.using("offline").get(node_id=settings.LOCAL_CONFIG["instance_id"])
+                names = set(state.scope.get("offline_business", {}).get("concepts", []))
+                names.update(ConceptoEgreso.objects.values_list("nombre", flat=True))
+                context.update(conceptos=[{"nombre": name} for name in sorted(names)], can_edit_expenses=False)
+        return render(request, self.template_name, context)
 
+    @protect_business("expense")
     def post(self, request, *args, **kwargs):
         metodos = payment_method_options(active_only=True)
         form = RegistrarEgresoForm(
@@ -11678,6 +11726,11 @@ def _manuales_sin_api_por_metodo(turno: TurnoCaja) -> dict[str, dict[str, Decima
 
 
 def _turno_frontend_payload(turno: TurnoCaja, user=None) -> dict:
+    if getattr(settings, "NOVA_INTEGRATED_JOURNAL_ENABLED", False):
+        from local_pos.request_context import offline_request
+        if offline_request():
+            from local_pos.integrated_business import turn_payload
+            return turn_payload(turno, user)
     payload = {
         "success": True,
         "modo": "AUTO_RECUPERADO",
@@ -11901,6 +11954,7 @@ class CajeroAutocomplete(LoginRequiredMixin, View):
 # APIs
 # =========================
 class TurnoCajaIniciarApi(LoginRequiredMixin, View):
+    @protect_business("open")
     @transaction.atomic
     def post(self, request: HttpRequest):
         if not locked_feature_enabled(TURN_REQUIRED_FEATURE):
@@ -11993,6 +12047,7 @@ class TurnoCajaIniciarApi(LoginRequiredMixin, View):
 
 
 class TurnoCajaIniciarCierreApi(LoginRequiredMixin, View):
+    @protect_business("close_begin")
     @transaction.atomic
     def post(self, request: HttpRequest):
         turno_id = request.POST.get("turno_id")
@@ -12078,8 +12133,9 @@ class TurnoCajaIniciarCierreApi(LoginRequiredMixin, View):
 
 
 class TurnoCajaCerrarApi(LoginRequiredMixin, View):
+    @protect_business("close")
     @transaction.atomic
-    def post(self, request: HttpRequest):
+    def post(self, request: HttpRequest, *, _allow_legacy_payment_details=False):
         turno_id = request.POST.get("turno_id")
         if not turno_id:
             return JsonResponse({"success": False, "error": "Falta turno_id."}, status=400)
@@ -12106,6 +12162,14 @@ class TurnoCajaCerrarApi(LoginRequiredMixin, View):
                 status=409
             )
 
+        from .services import close_payments
+        try:
+            facturas_pagadas, pagos_detalle = close_payments.validate(
+                request.POST.get("facturas_pagadas", "0"), request.POST.get("pagos_detalle"),
+                allow_legacy=_allow_legacy_payment_details)
+        except ValueError as exc:
+            return JsonResponse({"success": False, "error": str(exc), "code": "close_payment_details"}, status=400)
+
         try:
             validar_conteo_ptm(turno, request.user, request.POST.get("ptm_transacciones"))
         except DjangoValidationError as exc:
@@ -12114,10 +12178,6 @@ class TurnoCajaCerrarApi(LoginRequiredMixin, View):
         efectivo_entregado = _to_decimal(request.POST.get("efectivo_entregado"), Decimal("0.00"))
         if efectivo_entregado < 0:
             return JsonResponse({"success": False, "error": "Efectivo entregado no puede ser negativo."}, status=400)
-
-        facturas_pagadas = _to_decimal(request.POST.get("facturas_pagadas"), Decimal("0.00"))
-        if facturas_pagadas < 0:
-            return JsonResponse({"success": False, "error": "Facturas pagadas no puede ser negativo."}, status=400)
 
         base = turno.saldo_apertura_efectivo or Decimal("0.00")
         efectivo_contado = (efectivo_entregado - base).quantize(Decimal("0.01"))
@@ -12303,6 +12363,8 @@ class TurnoCajaCerrarApi(LoginRequiredMixin, View):
             "ventas_total", "ventas_efectivo", "ventas_no_efectivo",
             "diferencia_total", "deuda_total",
         ])
+
+        close_payments.save(turno, request.user, facturas_pagadas, pagos_detalle)
 
         faltante_abs = abs(deuda_total)
         msg = "Cierre OK. Sin faltantes." if deuda_total == 0 else f"⚠️ Faltante: {faltante_abs}."
@@ -13046,6 +13108,7 @@ def _resolve_turno_cajero(usuario_id, usuario_nombre):
 
 
 class TurnoCajaRecuperarOIniciarView(LoginRequiredMixin, View):
+    @protect_business("open")
     @transaction.atomic
     def post(self, request: HttpRequest):
         if not locked_feature_enabled(TURN_REQUIRED_FEATURE):
@@ -13258,6 +13321,7 @@ class TurnosCajaDashboardListAPI(View):
 @method_decorator(login_required, name="dispatch")
 class TurnoCajaDashboardDetailAPI(View):
     def get(self, request: HttpRequest, turno_id: int):
+        from .services.close_payments import payload as payment_details_payload
         compute_expected = (request.GET.get("compute_expected") or "0").strip() == "1"
 
         turno = get_object_or_404(TurnoCaja.objects.select_related("puntopago", "cajero"), pk=turno_id)
@@ -13307,6 +13371,7 @@ class TurnoCajaDashboardDetailAPI(View):
 
         out = {
             "success": True,
+            "pagos_cierre": payment_details_payload(turno),
             "turno": {
                 "id": turno.id,
                 "estado": turno.estado,
@@ -13316,6 +13381,8 @@ class TurnoCajaDashboardDetailAPI(View):
                 "cierre_iniciado": _iso_dt(turno.cierre_iniciado),
                 "fin": _iso_dt(turno.fin),
                 "base": float(getattr(turno, "saldo_apertura_efectivo", Decimal("0")) or 0),
+                "facturas_pagadas": str(sum((medio.contado or Decimal("0") for medio in medios_list
+                    if _normalize_metodo(medio.metodo) == FACTURAS_PAGADAS_METODO), Decimal("0.00"))),
                 "esperado_total_bd": float(getattr(turno, "esperado_total", Decimal("0")) or 0),
                 "ventas_total": float(getattr(turno, "ventas_total", Decimal("0")) or 0),
                 "diferencia_total": float(getattr(turno, "diferencia_total", Decimal("0")) or 0),
@@ -13347,6 +13414,7 @@ class TurnosCajaAdminPageView(LoginRequiredMixin, View):
 
 class TurnoCajaAdminDetailAPI(LoginRequiredMixin, View):
     def get(self, request: HttpRequest, turno_id: int):
+        from .services.close_payments import payload as payment_details_payload
         if not _can_edit_turnos(request.user):
             return JsonResponse({"success": False, "error": "No tienes permiso para editar turnos."}, status=403)
         turno = get_object_or_404(TurnoCaja.objects.select_related("puntopago", "cajero"), pk=turno_id)
@@ -13378,6 +13446,7 @@ class TurnoCajaAdminDetailAPI(LoginRequiredMixin, View):
 
         return JsonResponse({
             "success": True,
+            "pagos_cierre": payment_details_payload(turno),
             "turno": {
                 "ptm": resumen_ptm_json(turno),
                 "id": turno.id,

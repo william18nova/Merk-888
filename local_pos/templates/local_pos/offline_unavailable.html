@@ -1,0 +1,14 @@
+{% extends 'base.html' %}
+{% block title %}{{ offline_page_title }} · NovaPOS{% endblock %}
+{% block content %}
+<section class="nova-offline-page" aria-labelledby="offline-title">
+  <span class="nova-offline-label">SIN CONEXIÓN</span>
+  <h1 id="offline-title">{{ offline_page_title }}</h1>
+  <p>{{ offline_message }}</p>
+  <p>No se ejecutó esta acción ni se modificaron tus datos. El menú sigue disponible.</p>
+  <div class="nova-offline-actions">
+    <a href="{% url 'home' %}">Ir al inicio</a>
+    <button type="button" data-offline-retry>Volver a intentar</button>
+  </div>
+</section>
+{% endblock %}

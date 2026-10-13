@@ -8,6 +8,7 @@
   <link rel="stylesheet"
         href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"/>
   <link rel="stylesheet" href="{% static 'css/turno_caja.css' %}?v=18">
+  <link rel="stylesheet" href="{% static 'css/close_payment_details.css' %}?v=1">
 {% endblock %}
 
 {% block content %}
@@ -181,7 +182,7 @@
           </header>
           <p class="tc-step-intro">¿Cuánto dinero de la caja usaste para pagar facturas o compañeros? Si vas a pagarle a un compañero, aparta primero el dinero e inclúyelo en este valor.</p>
           <div id="closePaidInvoices" class="tc-grid tc-grid-compact tc-close-block">
-          <label class="tc-label" for="facturas_pagadas">Facturas y pagos a compañeros</label>
+          <label class="tc-label" for="facturas_pagadas">Total pagado en facturas y compañeros</label>
           <div class="tc-field">
             <i class="fa-solid fa-file-invoice-dollar" aria-hidden="true"></i>
             <input id="facturas_pagadas"
@@ -199,6 +200,16 @@
             Solo efectivo de este turno: lo que ya pagaste y lo que apartaste para pagarle a un compañero. Si no hubo pagos, deja 0. No incluyas pagos por Nequi o tarjeta, ni retiros PTM.
           </p>
           </div>
+          <section class="cp-details" aria-labelledby="closePaymentDetailsTitle">
+            <h4 id="closePaymentDetailsTitle">¿A quién o qué le pagaste?</h4>
+            <p>Especifica cada pago con su nombre y valor. La suma debe coincidir con el total de arriba. Si el total es 0, no agregues pagos.</p>
+            <div id="closePaymentRows" class="cp-rows"></div>
+            <button id="btnAddClosePayment" type="button" class="btn btn-ghost">+ Agregar pago</button>
+            <div id="closePaymentBalance" class="cp-balance" role="status" aria-live="polite">
+              <span>Suma del detalle: <strong id="closePaymentSum">$ 0</strong></span>
+              <span id="closePaymentMatch">Sin pagos de caja.</span>
+            </div>
+          </section>
           <div class="tc-actions tc-close-actions">
             <span class="tc-next-hint">Siguiente: contar billetes y monedas</span>
             <button id="btnPaymentsNext" class="btn btn-primary" type="button">
@@ -377,5 +388,6 @@
     };
   </script>
 
-  <script defer src="{% static 'javascript/turno_caja.js' %}?v=25"></script>
+  <script defer src="{% static 'javascript/close_payment_details.js' %}?v=1"></script>
+  <script defer src="{% static 'javascript/turno_caja.js' %}?v=26"></script>
 {% endblock %}

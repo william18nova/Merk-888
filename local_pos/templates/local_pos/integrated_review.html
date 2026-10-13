@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Sincronización · NovaPOS{% endblock %}
+{% block extra_head %}<style>
+html,body{margin:0;min-height:100%;background:#193b68;color:#f5f8ff}body{background-attachment:fixed}.sync{max-width:1100px;margin:32px auto;padding:clamp(16px,4vw,32px);font-family:system-ui}.sync h1{font-size:clamp(26px,4vw,36px)}.sync p{line-height:1.6}.sync a{color:#b8deff}.sync article{background:#244875;border:1px solid #7296ba;border-radius:16px;padding:22px;margin:16px 0}.sync .meta{display:flex;gap:14px;flex-wrap:wrap;color:#d8eaff}.sync code{overflow-wrap:anywhere}.sync .warning{border-left:4px solid #ffca70;padding:12px 18px;background:#493d29}.sync label{display:block}.sync textarea{box-sizing:border-box;width:100%;padding:12px;margin:8px 0;border-radius:8px;font:inherit}.sync button{background:#8dceff;color:#09294c;border:0;border-radius:9px;padding:12px 18px;font:inherit;font-weight:700}.sync summary{cursor:pointer}.sync nav{display:flex;gap:20px}
+</style>{% endblock %}
+{% block content %}<section class="sync"><h1>Sincronización de este equipo</h1>
+<p>{{ pending }} operaciones pendientes. Los movimientos conservan su referencia, fecha, importe y autor al reenviarse.</p>
+<p class="warning">Un cierre o devolución guardado sin conexión queda pendiente de conciliación. Si el turno cambió, no vuelvas a registrar la operación ni entregues otra vez el dinero. Revisa primero el estado en la nube.</p>
+{% if error %}<p role="alert">{{ error }}</p>{% endif %}
+<nav><a href="{% url 'generar_venta' %}">Generar venta</a><a href="{% url 'integrated_reference' %}">Copia autorizada</a><a href="{% url 'integrated_sync' %}">Actualizar estado</a></nav>
+{% for item in operations %}<article><div class="meta"><strong>#{{ item.sequence }} · {{ item.kind }}</strong><span>{{ item.label }}</span><time>{{ item.date|date:"d/m/Y H:i:s" }}</time>{% if item.total %}<span>${{ item.total }}</span>{% endif %}</div>
+<p>Referencia: <code>{{ item.id }}</code>{% if item.cloud %} · Registro en nube: {{ item.cloud }}{% endif %}</p>
+{% if item.reason %}<p class="warning">{{ item.reason }}</p>{% endif %}
+{% if item.resume %}<p><a href="{{ item.resume }}">Ya revisé este registro: continuar sin repetirlo</a></p>{% endif %}
+{% if item.closed_turn %}<p><a href="{% url 'turno_caja_retiro' item.closed_turn %}">Ver cierre conciliado y tirilla (con conexión)</a></p>{% endif %}
+{% if item.can_retry %}<form method="post">{% csrf_token %}<input type="hidden" name="operation_id" value="{{ item.id }}"><input type="hidden" name="request_id" value="{{ retry_token }}"><label>¿Qué revisaste o corregiste en la nube?<textarea name="note" minlength="8" maxlength="400" required></textarea></label><button type="submit">Volver a validar la misma operación</button><p>No cambia importes, no reabre turnos y no fuerza la aceptación.</p></form>{% endif %}
+{% if item.history %}<details><summary>Historial de revisión</summary>{% for event in item.history %}<p>{{ event.at }} · Usuario #{{ event.actor_id }}: {{ event.note }}</p>{% endfor %}</details>{% endif %}</article>{% empty %}<p>No hay operaciones registradas en este equipo.</p>{% endfor %}
+<nav>{% if page_obj.has_previous %}<a href="?page={{ page_obj.previous_page_number }}">Anteriores</a>{% endif %}<span>Página {{ page_obj.number }} de {{ page_obj.paginator.num_pages }}</span>{% if page_obj.has_next %}<a href="?page={{ page_obj.next_page_number }}">Siguientes</a>{% endif %}</nav></section>{% endblock %}

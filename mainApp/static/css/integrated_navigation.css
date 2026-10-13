@@ -1,0 +1,28 @@
+.nova-offline-dialog {
+  width: min(92vw, 470px); padding: 28px; border: 1px solid #7db6e2;
+  border-radius: 22px; background: #18385c; color: #f2f7ff;
+  box-shadow: 0 24px 80px #03102199; font-family: system-ui, sans-serif;
+}
+.nova-offline-dialog::backdrop { background: #07172bb8; backdrop-filter: blur(4px); }
+.nova-offline-dialog h2 { margin: 12px 0; font-size: 1.5rem; }
+.nova-offline-dialog p, .nova-offline-page p { line-height: 1.65; color: #d1e3f6; }
+.nova-offline-dialog form { display: flex; justify-content: flex-end; margin-top: 24px; }
+.nova-offline-dialog button, .nova-offline-actions a, .nova-offline-actions button {
+  border: 1px solid #91caff; border-radius: 12px; background: #3f98ff;
+  color: #061c35; padding: 12px 20px; font: 700 1rem system-ui, sans-serif;
+  cursor: pointer; text-decoration: none;
+}
+.nova-offline-dialog button:focus-visible, .nova-offline-actions :focus-visible {
+  outline: 3px solid #fff; outline-offset: 4px;
+}
+.nova-offline-page {
+  width: min(92%, 850px); margin: 36px auto; padding: clamp(22px, 5vw, 48px);
+  border: 1px solid #6386b1; border-radius: 24px; background: #18385c;
+  color: #f2f7ff; font-family: system-ui, sans-serif; box-shadow: 0 16px 48px #0a1c3833;
+}
+body:has(.nova-offline-page) { min-height: 100vh; background: #19365c; }
+.nova-offline-label { color: #ffc878; font: 800 .8rem system-ui, sans-serif; letter-spacing: .12em; }
+.nova-offline-actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 24px; }
+@media (max-width: 480px) {
+  .nova-offline-actions > * { text-align: center; flex: 1 1 100%; }
+}

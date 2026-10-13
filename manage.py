@@ -6,6 +6,13 @@ import sys
 
 def main():
     """Run administrative tasks."""
+    from pathlib import Path
+    from local_pos.integrated_bootstrap import runserver_context
+    with runserver_context(sys.argv, Path(__file__).resolve().parent):
+        execute()
+
+
+def execute():
     os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'NovaSoft.settings')
     try:
         from django.core.management import execute_from_command_line

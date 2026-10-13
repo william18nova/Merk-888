@@ -23,3 +23,4 @@ DATABASES = {
     }
 }
 CACHES = {"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache", "LOCATION": "hybrid-tests"}}
+TEST_RUNNER = "mainApp.test_postgres_runner.DisposablePostgresRunner"

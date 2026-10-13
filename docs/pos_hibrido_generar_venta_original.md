@@ -1,5 +1,7 @@
 # Generar Venta original con transporte híbrido — 0.6.0-pilot
 
+> Documento histórico del piloto separado. Sus instaladores y paquetes fueron retirados; no usar sus instrucciones de instalación. La guía vigente es [instalación integrada con runserver](instalacion_integrada_runserver.md). Se conserva como evidencia de pruebas anteriores.
+
 ## Qué se hizo
 
 La ruta local `/generar_venta/` usa las plantillas originales `generar_venta.html`,

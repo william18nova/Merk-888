@@ -1,5 +1,7 @@
 # Actualización segura del POS local — candidato de pruebas
 
+> Documento histórico del piloto separado. Sus instaladores y paquetes fueron retirados; no usar sus instrucciones de instalación. La guía vigente es [instalación integrada con runserver](instalacion_integrada_runserver.md). Se conserva como evidencia de pruebas anteriores.
+
 No desplegado al negocio. Solo paquetes revisados y distribuidos por el responsable
 del proyecto: el manifiesto SHA-256 detecta archivos mezclados, **no es una firma
 digital ni demuestra el origen del código**. No actualizar PostgreSQL con este

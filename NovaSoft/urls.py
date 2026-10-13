@@ -16,8 +16,16 @@ Including another URLconf
 """
 from django.contrib import admin
 from django.urls import path, include
+from django.conf import settings
 
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('', include('mainApp.urls'))
 ]
+if getattr(settings, "NOVA_REFERENCE_ENABLED", False):
+    urlpatterns += [path('', include('local_pos.reference_views'))]
+if getattr(settings, "NOVA_INTEGRATED_POS_ENABLED", False):
+    urlpatterns += [path('', include('local_pos.integrated_navigation'))]
+if getattr(settings, "NOVA_INTEGRATED_JOURNAL_ENABLED", False):
+    urlpatterns += [path('', include('local_pos.journal_views'))]
+    urlpatterns += [path('', include('local_pos.integrated_review'))]

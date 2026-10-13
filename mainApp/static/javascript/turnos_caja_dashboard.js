@@ -244,6 +244,8 @@
     mReal.textContent = money2(t.ventas_total || 0);
     mDiff.textContent = money2(t.diferencia_total || 0);
     mDeuda.textContent = money2(t.deuda_total || 0);
+    $("#mCashPaymentsTotal").textContent = money2(t.facturas_pagadas || 0);
+    window.NovaClosePayments.renderSummary($("#mCashPaymentsDetails"), data.pagos_cierre);
 
     mDiff.className = "val " + numClass(t.diferencia_total || 0);
     mDeuda.className = "val " + numClass(t.deuda_total || 0);
@@ -278,6 +280,8 @@
       mSub.textContent = `Turno #${turnoId}`;
       for (const node of [mEsperadoBD,mEsperadoCalc,mReal,mDiff,mDeuda]) node.textContent = "—";
       mBodyMedios.innerHTML = "";
+      $("#mCashPaymentsTotal").textContent = "—";
+      $("#mCashPaymentsDetails").replaceChildren();
       btnCalcExpected.style.display = "none";
       openModal();
     }

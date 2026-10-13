@@ -1,5 +1,7 @@
 # Aceptación del piloto híbrido 0.4.1 — sin impresión
 
+> Documento histórico del piloto separado. Sus instaladores y paquetes fueron retirados; no usar sus instrucciones de instalación. La guía vigente es [instalación integrada con runserver](instalacion_integrada_runserver.md). Se conserva como evidencia de pruebas anteriores.
+
 ## Alcance
 
 Datos completamente ficticios, HTTPS de prueba y PostgreSQL 16 desechable en loopback. No se utilizan Aiven, PythonAnywhere, cuentas del negocio, impresoras ni sus agentes. El certificado de prueba solo se confía dentro de los procesos de este ensayo, no en Windows ni en la configuración global del equipo.

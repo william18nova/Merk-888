@@ -1531,6 +1531,9 @@ class ProductPriceScheduleTests(SimpleTestCase):
 
 class SpecialMerk2888DiscountSecurityTests(SimpleTestCase):
     def setUp(self):
+        reservation = patch("mainApp.services.special_discount.get_offline_reservation", return_value={})
+        reservation.start()
+        self.addCleanup(reservation.stop)
         self.factory = RequestFactory()
         self.fixed_now = datetime(
             2026,
@@ -2881,6 +2884,11 @@ class SaleWithoutCashTurnTests(SimpleTestCase):
 
 
 class RefundAndSpecialDiscountWithoutTurnTests(SimpleTestCase):
+    def setUp(self):
+        reservation = patch("mainApp.services.special_discount.get_offline_reservation", return_value={})
+        reservation.start()
+        self.addCleanup(reservation.stop)
+
     def test_reintegro_turn_is_nullable_and_migration_0024_is_scoped(self):
         field = ReintegroVenta._meta.get_field("turno")
 

@@ -228,6 +228,10 @@
   async function postForm(url, dataObj, { signal } = {}) {
     const fd = new FormData();
     Object.entries(dataObj || {}).forEach(([k, v]) => fd.append(k, v == null ? "" : v));
+    if (window.NovaBusiness && (url === API_RECUPERAR || url === API_INI_CIERRE || url === API_CERRAR)) {
+      try { return await window.NovaBusiness.submit(url, fd, `${url}:${dataObj.turno_id || "open"}`, getCSRF(), signal); }
+      catch (error) { return {success: false, error: error.message}; }
+    }
 
     let resp;
     try {
@@ -452,6 +456,8 @@
 
   const efectivoEntregadoInp = $("#efectivo_entregado");
   const facturasPagadasInp = $("#facturas_pagadas");
+  const paymentRows = $("#closePaymentRows");
+  const addPaymentButton = $("#btnAddClosePayment");
   const mediosBody = $("#mediosBody");
   const mVentas = $("#mVentas");
   const closePaymentsStep = $("#closePaymentsStep");
@@ -485,6 +491,62 @@
   let closePageLeaving = false;
   let closeDraftCounts = {};
   let closeDraftPTM = "0";
+  let closeDraftPayments = [];
+
+  function readPaymentDetails() {
+    if (closeProgress.step !== "payments") return closeProgress.payment_details || [];
+    if (!paymentRows) return closeDraftPayments;
+    return Array.from(paymentRows.querySelectorAll(".cp-row")).map(row => ({
+      nombre: row.querySelector("[data-payment-name]").value,
+      monto: row.querySelector("[data-payment-amount]").value,
+    }));
+  }
+
+  function renderPaymentRows(rows) {
+    closeDraftPayments = rows.map(row => ({nombre: String(row.nombre ?? ""), monto: String(row.monto ?? "")}));
+    if (!paymentRows) return;
+    paymentRows.innerHTML = closeDraftPayments.map((row, index) => `<div class="cp-row">
+      <label>Nombre del pago ${index + 1}<input data-payment-name type="text" maxlength="160" value="${escapeHtml(row.nombre)}" placeholder="Ej.: proveedor, factura o compañero" autocomplete="off"></label>
+      <label>Valor pagado<input data-payment-amount type="number" min="0.01" max="9999999999.99" step="0.01" inputmode="decimal" value="${escapeHtml(row.monto)}" placeholder="0.00"></label>
+      <button type="button" class="cp-remove" data-remove-payment="${index}" aria-label="Quitar pago ${index + 1}">Quitar</button>
+    </div>`).join("");
+    updatePaymentBalance();
+  }
+
+  function updatePaymentBalance() {
+    const balance = $("#closePaymentBalance");
+    if (!balance) return;
+    const rows = readPaymentDetails();
+    let sum = 0;
+    for (const row of rows) { try { sum += window.NovaClosePayments.cents(row.monto); } catch {} }
+    $("#closePaymentSum").textContent = money2(sum / 100);
+    try {
+      const valid = window.NovaClosePayments.validate(facturasPagadasInp?.value, rows);
+      balance.dataset.valid = "true";
+      $("#closePaymentMatch").textContent = valid.total ? "La suma coincide con el total." : "Sin pagos de caja.";
+    } catch (error) {
+      balance.dataset.valid = "false";
+      $("#closePaymentMatch").textContent = error.message;
+    }
+  }
+
+  addPaymentButton?.addEventListener("click", () => {
+    if (closeProgress.step !== "payments" || closeStepAdvancing) return;
+    const rows = readPaymentDetails();
+    if (rows.length >= 100) { err("Puedes registrar hasta 100 pagos por cierre."); return; }
+    renderPaymentRows([...rows, {nombre:"", monto:""}]);
+    paymentRows.lastElementChild?.querySelector("input")?.focus();
+    persistContados();
+  });
+  paymentRows?.addEventListener("input", () => { updatePaymentBalance(); persistContados(); });
+  paymentRows?.addEventListener("click", event => {
+    const button = event.target.closest("[data-remove-payment]");
+    if (!button || closeProgress.step !== "payments" || closeStepAdvancing) return;
+    const rows = readPaymentDetails();
+    rows.splice(Number(button.dataset.removePayment), 1);
+    renderPaymentRows(rows);
+    persistContados();
+  });
 
   function navigateClosePage(which) {
     if (!TURNO_ID || !closePages[which] || closePages.page === which) return false;
@@ -591,7 +653,6 @@
   function validatePaidInvoices() {
     if (closeProgress.step !== "payments") {
       if (facturasPagadasInp) facturasPagadasInp.value = String(closeProgress.invoices);
-      return true;
     }
     const raw = (facturasPagadasInp?.value || "").trim();
     const value = raw ? Number(raw) : 0;
@@ -601,6 +662,13 @@
       return false;
     }
     if (facturasPagadasInp && !raw) facturasPagadasInp.value = "0";
+    try {
+      window.NovaClosePayments.validate(raw, readPaymentDetails());
+    } catch (error) {
+      err(error.message);
+      updatePaymentBalance();
+      return false;
+    }
     return true;
   }
 
@@ -608,7 +676,10 @@
     if (!value || !["cash", "media"].includes(value.step)) return null;
     const invoices = Number(value.invoices);
     if (value.invoices === null || value.invoices === "" || !Number.isFinite(invoices) || invoices < 0) return null;
-    const progress = {step: value.step, invoices, denominations: null};
+    let details;
+    try { details = window.NovaClosePayments.validate(invoices, value.payment_details || []).items; }
+    catch { return null; }
+    const progress = {step: value.step, invoices, denominations: null, payment_details: details};
     if (value.step === "media") {
       if (!value.denominations || typeof value.denominations !== "object") return null;
       progress.denominations = {};
@@ -649,6 +720,7 @@
       if (invalid) { err("Revisa el conteo: usa cantidades enteras de billetes y monedas, sin valores negativos."); invalid.focus(); return; }
     }
     const invoices = from === "payments" ? num(facturasPagadasInp?.value) : closeProgress.invoices;
+    const paymentDetails = window.NovaClosePayments.validate(invoices, readPaymentDetails()).items;
     const denominations = from === "cash" ? readCloseDenomCounts() : null;
     closeStepAdvancing = true;
     try {
@@ -657,7 +729,8 @@
         msg: from === "payments"
           ? "Verifica el dinero pagado o apartado para facturas y compañeros."
           : "Verifica el efectivo que entregarás en caja, incluida la base.",
-        details: [[from === "payments" ? "Pagos de caja" : "Efectivo contado", money2(from === "payments" ? invoices : closeCashTotalValue(denominations))]],
+        details: [[from === "payments" ? "Pagos de caja" : "Efectivo contado", money2(from === "payments" ? invoices : closeCashTotalValue(denominations))],
+          ...(from === "payments" ? paymentDetails.map(row => [row.nombre, money2(row.monto)]) : [])],
         note: "Después de confirmar no podrás volver atrás ni cambiar estos valores.",
         okText: "Confirmar y continuar",
       });
@@ -669,7 +742,7 @@
           return;
         }
         const previous = closeProgress;
-        closeProgress = {step: to, invoices, denominations};
+        closeProgress = {step: to, invoices, denominations, payment_details: paymentDetails};
         if (facturasPagadasInp) facturasPagadasInp.value = String(invoices);
         if (!persistContados()) {
           closeProgress = previous;
@@ -705,6 +778,7 @@
       const payload = {
         efectivo_entregado: efectivoEntregadoInp?.value || "",
         facturas_pagadas: facturasPagadasInp?.value || "",
+        pagos_detalle: readPaymentDetails(),
         ptm_transacciones: document.getElementById("ptm_transacciones")?.value.trim() || closeDraftPTM,
         denominaciones: readCloseDenomCounts(),
         contados: { ...CONTADOS },
@@ -735,6 +809,7 @@
       if (facturasPagadasInp && payload.facturas_pagadas) {
         facturasPagadasInp.value = payload.facturas_pagadas;
       }
+      renderPaymentRows(Array.isArray(payload.pagos_detalle) ? payload.pagos_detalle : []);
       if (document.getElementById("ptm_transacciones")) {
         document.getElementById("ptm_transacciones").value = String(payload.ptm_transacciones ?? "").trim() || "0";
       }
@@ -880,7 +955,7 @@
 
   function buildTable() {
     if (facturasPagadasInp && facturasPagadasInp.type !== "hidden") {
-      facturasPagadasInp.oninput = () => { scheduleRecalc(); };
+      facturasPagadasInp.oninput = () => { updatePaymentBalance(); scheduleRecalc(); };
       facturasPagadasInp.onblur = () => {
         if (facturasPagadasInp.value !== "" && facturasPagadasInp.validity.valid) {
           facturasPagadasInp.value = num(facturasPagadasInp.value).toFixed(2);
@@ -978,6 +1053,7 @@
     closeProgress = { step: "payments", invoices: null, denominations: null };
     closeDraftCounts = {};
     closeDraftPTM = "0";
+    renderPaymentRows([]);
     const ptmCount = document.getElementById("ptm_transacciones");
     if (ptmCount) { ptmCount.value = "0"; ptmCount.oninput = persistContados; }
     TURNO_ID = data.turno_id || data.turno?.id || null;
@@ -1104,6 +1180,8 @@
 
       if (!data.success) { err(data.error || "Error al iniciar/recuperar el turno."); return; }
 
+      if (window.NovaBusiness) window.NovaBusiness.acknowledgeReturn(window.NovaBusiness.reference(`${API_RECUPERAR}:open`));
+
       ok(data.msg || "Turno iniciado/recuperado.");
       hydrateTurno(data);
 
@@ -1199,11 +1277,21 @@
         turno_id: TURNO_ID,
         efectivo_entregado: String(efectivoEntregado),
         facturas_pagadas: String(facturasPagadas),
+        pagos_detalle: JSON.stringify(readPaymentDetails()),
         ptm_transacciones: ptmTransacciones,
         medios_json: JSON.stringify(mediosOut),
       });
 
       if (!data.success) { err(data.error || "Error al cerrar el turno."); return; }
+
+      if (data.offline_saved) {
+        persistRetiroDenoms(data.turno_id || TURNO_ID);
+        const title = document.getElementById("tc-summary-title");
+        if (title) title.textContent = "Conteo guardado · Pendiente de sincronizar";
+        summaryModal("<p>El turno quedó cerrado en este equipo. Puedes abrir el siguiente desde Turno de caja. El cuadre y la tirilla definitivos estarán disponibles después de sincronizar. No cierres este turno otra vez en la nube.</p>",
+          () => window.location.assign("/turno_caja/"));
+        return;
+      }
 
       if (data.retiro_url) {
         const oldId = data.turno_id || TURNO_ID;

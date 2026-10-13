@@ -1,5 +1,7 @@
 # Réplica autorizada de referencia — etapa de laboratorio
 
+> Documento histórico del piloto separado. Sus instaladores y paquetes fueron retirados; no usar sus instrucciones de instalación. La guía vigente es [instalación integrada con runserver](instalacion_integrada_runserver.md). Se conserva como evidencia de pruebas anteriores.
+
 Estado: 1 de octubre de 2026. Conserva los modelos, las páginas y el menú original
 de Django. **No habilita todavía las escrituras offline del sistema completo.**
 No se desplegó a PythonAnywhere ni se descargaron datos reales de Aiven.

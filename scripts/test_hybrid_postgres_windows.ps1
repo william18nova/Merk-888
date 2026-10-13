@@ -1,7 +1,9 @@
 param(
     [string]$PostgresRoot = (Join-Path $env:LOCALAPPDATA 'NovaPOS-TestTools/pgsql'),
     [string]$Python = 'python',
-    [int]$Port = 55432
+    [int]$Port = 55432,
+    [switch]$Integrated,
+    [string[]]$TestLabels = @('mainApp.test_hybrid', 'mainApp.test_hybrid_recovery', 'mainApp.test_hybrid_postgres', 'mainApp.test_hybrid_migration', 'mainApp.test_hybrid_acceptance', 'mainApp.test_cash_receipt', 'mainApp.test_ptm')
 )
 $ErrorActionPreference = 'Stop'
 if ($Port -lt 1024 -or $Port -gt 65535) { throw 'Puerto de prueba inválido.' }
@@ -38,7 +40,9 @@ try {
     $env:HYBRID_TEST_POSTGRES = 'yes-local-disposable'
     $env:HYBRID_TEST_POSTGRES_PORT = [string]$Port
     $env:HYBRID_TEST_POSTGRES_PASSWORD = $password
-    & $Python -B manage.py test mainApp.test_hybrid mainApp.test_hybrid_recovery mainApp.test_hybrid_postgres mainApp.test_hybrid_migration mainApp.test_hybrid_acceptance mainApp.test_cash_receipt mainApp.test_ptm --settings=NovaSoft.hybrid_test_postgres_settings --noinput
+    $settings = 'NovaSoft.hybrid_test_postgres_settings'
+    if ($Integrated) { $settings = 'NovaSoft.integrated_test_postgres_settings' }
+    & $Python -B manage.py test @TestLabels "--settings=$settings" --noinput
     $exitCode = $LASTEXITCODE
 }
 finally {

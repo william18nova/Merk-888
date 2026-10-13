@@ -129,7 +129,7 @@ def package_manifest(root=ROOT):
     root = Path(root)
     path = root / "full-local-package.json"
     if not path.is_file() or path.is_symlink():
-        raise RuntimeError("Usa la distribución verificada creada por build_full_local.py, no el repositorio cambiante.")
+        raise RuntimeError("Esta función requiere una distribución del laboratorio histórico. No es el instalador integrado; consulta docs/instalacion_integrada_runserver.md.")
     data = json.loads(path.read_text(encoding="utf-8"))
     if data.get("format") != PACKAGE_FORMAT or not isinstance(data.get("files"), dict):
         raise RuntimeError("Manifiesto de distribución inválido.")

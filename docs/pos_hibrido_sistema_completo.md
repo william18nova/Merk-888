@@ -1,5 +1,7 @@
 # Sistema completo híbrido: base de desarrollo
 
+> Documento histórico del piloto separado. Sus instaladores y paquetes fueron retirados; no usar sus instrucciones de instalación. La guía vigente es [instalación integrada con runserver](instalacion_integrada_runserver.md). Se conserva como evidencia de pruebas anteriores.
+
 **Avance posterior:** consulta [Operaciones e instalación](pos_hibrido_operaciones_instalacion.md)
 para los adaptadores de venta, egresos, devolución, cierre y el runtime persistente.
 El texto siguiente conserva el alcance de la primera etapa de solo consulta.

@@ -26,7 +26,7 @@
   </div>
   {% endif %}
 
-  <form method="post" id="venta-form">
+  <form method="post" id="venta-form" {% if nova_journal_enabled %}data-nova-business-form{% endif %}>
     {% csrf_token %}
 
     {{ dev_formset.management_form }}

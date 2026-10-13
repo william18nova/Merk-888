@@ -8,6 +8,16 @@ class LocalNode(models.Model):
     sequence = models.PositiveBigIntegerField(default=0)
 
 
+class IntegratedIdentity(models.Model):
+    """Same cloud user ID; bounded permission to authenticate on this PC."""
+    user = models.OneToOneField(settings.AUTH_USER_MODEL, primary_key=True, on_delete=models.PROTECT)
+    node = models.ForeignKey(LocalNode, on_delete=models.PROTECT)
+    cloud_fingerprint = models.CharField(max_length=64)
+    refreshed_at = models.DateTimeField()
+    expires_at = models.DateTimeField()
+    allowed_routes = models.JSONField(default=list)
+
+
 class LocalCommand(models.Model):
     operation_id = models.UUIDField(primary_key=True)
     node = models.ForeignKey(LocalNode, on_delete=models.PROTECT)

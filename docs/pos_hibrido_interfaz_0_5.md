@@ -1,5 +1,7 @@
 # Interfaz del cliente híbrido 0.5.0
 
+> Documento histórico del piloto separado. Sus instaladores y paquetes fueron retirados; no usar sus instrucciones de instalación. La guía vigente es [instalación integrada con runserver](instalacion_integrada_runserver.md). Se conserva como evidencia de pruebas anteriores.
+
 ## Implementado
 
 - Diseño azul de Nova Advance, dos paneles de «Generar venta» y fondo continuo.

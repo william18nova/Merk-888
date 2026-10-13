@@ -136,6 +136,10 @@
         {% csrf_token %}
         <input type="hidden" name="action" value="generar">
         <input type="hidden" name="solicitud_id" value="{{ solicitud_id }}">
+        {% if nova_journal_enabled %}
+        <label><input type="checkbox" name="reservar_offline" value="1"> Reservar esta clave para usar sin internet en este equipo.</label>
+        <p>Actualiza la copia local antes de desconectarte. La clave sigue venciendo en 15 minutos y no se podrá usar desde otro equipo.</p>
+        {% endif %}
 
         <label for="merk-web-master-password">
           <span>Tu contraseña de Web Master</span>

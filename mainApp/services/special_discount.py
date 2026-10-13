@@ -74,8 +74,11 @@ def _validate_code_format(code):
     )
 
 
-def _ensure_available(authorization, now=None):
+def _ensure_available(authorization, now=None, *, offline_reservation=None):
     now = now or timezone.now()
+    reservation = get_offline_reservation(authorization)
+    if reservation and reservation != offline_reservation:
+        raise SpecialDiscountError("Esta clave está reservada para un equipo offline.", code="offline_reserved")
     if authorization.usada_en or authorization.venta_id:
         raise SpecialDiscountError(
             "Este código ya fue utilizado.",
@@ -101,6 +104,17 @@ def _ensure_available(authorization, now=None):
             "Este código ya expiró.",
             code="expired",
         )
+
+
+def reservation_id(authorization):
+    from uuid import uuid5, NAMESPACE_URL
+    return uuid5(NAMESPACE_URL, "nova:discount-reserve:" + str(authorization.pk))
+
+
+def get_offline_reservation(authorization):
+    from mainApp.models import SolicitudPOS
+    record = SolicitudPOS.objects.filter(pk=reservation_id(authorization), accion="discount_reserve").first()
+    return record.respuesta if record else {}
 
 
 def get_special_client_profile(cliente=None, for_update=False):
@@ -358,6 +372,8 @@ def consume_one_time_code(
     subtotal,
     descuento,
     turno_requerido=True,
+    offline_reservation=None,
+    occurred_at=None,
 ):
     _require_atomic()
     if not getattr(autorizacion, "pk", None):
@@ -377,7 +393,7 @@ def consume_one_time_code(
         .select_for_update()
         .get(pk=autorizacion.pk)
     )
-    _ensure_available(authorization)
+    _ensure_available(authorization, now=occurred_at, offline_reservation=offline_reservation)
 
     if venta.clienteid_id != authorization.cliente_especial.cliente_id:
         raise SpecialDiscountError(
@@ -430,7 +446,7 @@ def consume_one_time_code(
             code="invalid_discount",
         )
 
-    now = timezone.now()
+    now = occurred_at or timezone.now()
     authorization.usada_en = now
     authorization.usada_por = usada_por
     authorization.usada_por_nombre = _user_name(usada_por)

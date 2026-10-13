@@ -31,7 +31,12 @@
     </div>
   </section>
 
-  {% if dashboard_cards %}
+  {% if dashboard_offline %}
+    <section class="permission-panel" aria-label="Sin conexión">
+      <strong>Tu espacio de trabajo sigue disponible</strong>
+      <span>Los indicadores generales necesitan internet. No mostramos totales incompletos de la copia local.</span>
+    </section>
+  {% elif dashboard_cards %}
     <section class="metric-grid" aria-label="Indicadores">
       {% for card in dashboard_cards %}
         <article class="metric-card metric-card--{{ card.tone }}">

@@ -1070,7 +1070,7 @@ $(function () {
         const response = result.response || {};
         const price = Number(response.precio_unitario);
         const available = Number(response.cantidad_disponible);
-        const insufficient = !window.NovaHybridSale && item.cantidad > 0 && (
+        const insufficient = !window.NovaHybridSale && !window.novaIntegratedPosEnabled && item.cantidad > 0 && (
           !Number.isFinite(available) || available < item.cantidad
         );
         if (!response.exists || insufficient || !Number.isFinite(price) || price < 0) {
@@ -5654,6 +5654,11 @@ Total: ${money(total)}${changeMessage}${specialMessage}${nequiMessage}`;
 
     const submission = window.NovaHybridSale
       ? window.NovaHybridSale.submit(body, saleDraftActiveID, saleTotalForPayment())
+      : window.novaIntegratedPosEnabled
+      ? (window.NovaIntegratedSale
+          ? window.NovaIntegratedSale.submit(body, saleDraftActiveID, saleTotalForPayment(),
+              formAction || $(form).attr("action"), getCSRF())
+          : Promise.reject(new Error("Falta actualizar los archivos de esta página. Conserva el carrito y recarga antes de cobrar.")))
       : fetch(formAction || $(form).attr("action"), {
       method: "POST",
       credentials: "same-origin",
@@ -5725,6 +5730,10 @@ Total: ${money(total)}${changeMessage}${specialMessage}${nequiMessage}`;
       if (r.hybrid_state) {
         // El motor local ya encoló la impresión con el UUID de la operación.
         // No enviar una segunda impresión ni abrir otra vez el cajón.
+      } else if (r.offline_saved && printOperatingSystem === "linux") {
+        // An offline UUID is not a cloud integer sale ID. Never print another
+        // sale accidentally through the legacy Linux endpoint.
+        showFastSaleToast("Venta guardada en este equipo. La impresión Linux de este comprobante local está pendiente de integración.", 6000);
       } else if (printOperatingSystem === "linux") {
         const printJob = printViaLinuxServer(r.venta_id, printPaperSize, {
           openDrawer: shouldKickCashDrawer && !!r.print_token,
@@ -5776,7 +5785,9 @@ Total: ${money(total)}${changeMessage}${specialMessage}${nequiMessage}`;
 
       const msgCambio = (totalNum > 0 && ef && !esMixto) ? `
 Cambio: ${money(cambio)}` : "";
-      const okMsg = buildSaleSuccessMessage(r, totalNum, msgCambio);
+      const okMsg = r.offline_saved
+        ? `Venta guardada en este equipo. Se enviará automáticamente al volver la conexión.${msgCambio}`
+        : buildSaleSuccessMessage(r, totalNum, msgCambio);
 
       const finishSaleUi = () => {
         // ✅ SIN RECARGAR: limpiar TODO para la siguiente venta.

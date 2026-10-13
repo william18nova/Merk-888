@@ -1,5 +1,7 @@
 # Sincronización y revisión de operaciones locales
 
+> Documento histórico del piloto separado. Sus instaladores y paquetes fueron retirados; no usar sus instrucciones de instalación. La guía vigente es [instalación integrada con runserver](instalacion_integrada_runserver.md). Se conserva como evidencia de pruebas anteriores.
+
 Pantalla del runtime instalado: `/local/sincronizacion/`. Se abre desde
 **Sincronización y pendientes**, en la franja de modo local, o desde Estado.
 No añade una ruta a la instalación de PythonAnywhere ni publica cambios allí.

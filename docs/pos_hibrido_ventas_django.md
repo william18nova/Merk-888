@@ -1,5 +1,7 @@
 # Ventas en el Django local completo
 
+> Documento histórico del piloto separado. Sus instaladores y paquetes fueron retirados; no usar sus instrucciones de instalación. La guía vigente es [instalación integrada con runserver](instalacion_integrada_runserver.md). Se conserva como evidencia de pruebas anteriores.
+
 **Actualización:** esta página documenta la etapa anterior de efectivo. El
 alcance vigente de medios mixtos, egresos, devoluciones, cierre e instalación
 persistente está en [Operaciones e instalación](pos_hibrido_operaciones_instalacion.md).

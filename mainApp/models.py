@@ -9,7 +9,7 @@ from django.forms import ValidationError
 from django.utils import timezone
 from django.db.models import F
 from django.db.models.functions import Lower, Trim
-from .hybrid_models import EquipoHibrido, SesionHibrida, OperacionHibrida, RecuperacionHibrida, ReplicaHibrida
+from .hybrid_models import EquipoHibrido, SesionHibrida, OperacionHibrida, RecuperacionHibrida, ReplicaHibrida, SolicitudPOS
 import unicodedata
 
 
@@ -1356,6 +1356,19 @@ class TurnoCaja(models.Model):
                 assert_turn_released(self.pk)
                 return super().save(*args, **kwargs)
         return super().save(*args, **kwargs)
+
+class DesglosePagosCierre(models.Model):
+    """Detalle declarado del efectivo pagado; no crea un segundo egreso."""
+    turno = models.OneToOneField(TurnoCaja, primary_key=True, on_delete=models.CASCADE,
+                                related_name="desglose_pagos_cierre")
+    total = models.DecimalField(max_digits=12, decimal_places=2)
+    pagos = models.JSONField(default=list)
+    registrado_por = models.ForeignKey("Usuario", on_delete=models.PROTECT)
+    registrado_en = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "desglose_pagos_cierre"
+
 
 class OperacionPTM(models.Model):
     """Dinero de terceros: no es una venta ni un movimiento de inventario."""

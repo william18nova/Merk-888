@@ -78,5 +78,9 @@ def permissions_nav(request):
             getattr(request, "path", ""),
         ),
         "system_features": system_features,
+        "nova_reference_enabled": getattr(settings, "NOVA_REFERENCE_ENABLED", False),
+        "nova_integrated_enabled": getattr(settings, "NOVA_INTEGRATED_POS_ENABLED", False),
+        "nova_journal_enabled": getattr(settings, "NOVA_INTEGRATED_JOURNAL_ENABLED", False),
+        "nova_offline": getattr(request, "nova_mode", "online") in {"offline", "synchronizing"},
         **_session_user_payload(user),
     }

@@ -14,13 +14,28 @@
   {% if full_local_development %}<link rel="stylesheet" href="{% static 'local_pos/lab.css' %}">{% endif %}
 
   {% block extra_head %}{% endblock %}
+  {% if nova_integrated_enabled %}
+  <link rel="stylesheet" href="{% static 'css/integrated_navigation.css' %}?v=1">
+  {% url 'integrated_navigation' as nova_navigation_url %}
+  <script defer src="{% static 'javascript/integrated_navigation.js' %}?v=1" data-status-url="{{ nova_navigation_url }}"></script>
+  {% endif %}
+  {% if nova_journal_enabled %}<script defer src="{% static 'javascript/integrated_business_transport.js' %}?v=1" data-user="{{ request.user.pk }}"></script>{% endif %}
 </head>
 <body{% if full_local_development %} class="nova-full-local"{% endif %}>
+  {% if nova_integrated_enabled %}
+  <dialog id="nova-offline-dialog" class="nova-offline-dialog" aria-labelledby="nova-offline-title" aria-describedby="nova-offline-message">
+    <span class="nova-offline-label">NOVA POS</span>
+    <h2 id="nova-offline-title">Esta opción no está disponible</h2>
+    <p id="nova-offline-message"></p>
+    <form method="dialog" data-no-transition="1"><button autofocus>Entendido</button></form>
+  </dialog>
+  {% endif %}
   {% if request.resolver_match.url_name != "login" %}
     {% include "navbar.html" %}
   {% endif %}
 
   <main class="page-wrap">
+    {% if nova_journal_enabled and nova_offline %}<aside role="status" style="padding:14px 20px;background:#153654;color:#fff;border-bottom:1px solid #6ba8d6;line-height:1.5">Trabajando con la copia local. Los historiales pueden estar incompletos; los movimientos nuevos quedan pendientes de envío. PTM y nuevos pagos por Nequi requieren conexión. <a style="color:#bce0ff" href="{% url 'integrated_sync' %}">Ver sincronización</a></aside>{% endif %}
   {% if full_local_development %}
   <aside class="local-lab-banner" aria-label="Estado de la instalación local">
     {% if full_local_installed %}INSTALACIÓN CANDIDATA · No habilitada para producción{% else %}PRUEBAS LOCALES · Datos ficticios{% endif %} · {% if full_local_operations %}Ventas, pagos, solicitudes de devolución y cierre{% elif full_local_sales %}Ventas en efectivo de prueba · Otros módulos en consulta{% else %}Solo consultas, sin sincronización general{% endif %}

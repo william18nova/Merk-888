@@ -44,4 +44,6 @@ export HYBRID_TEST_POSTGRES_PORT="$PORT"
 cd "$ROOT"
 tests=(mainApp.test_hybrid mainApp.test_hybrid_recovery mainApp.test_hybrid_postgres mainApp.test_hybrid_migration mainApp.test_hybrid_acceptance mainApp.test_cash_receipt mainApp.test_ptm)
 if (( $# )); then tests=("$@"); fi
-"$PYTHON" -B manage.py test "${tests[@]}" --settings=NovaSoft.hybrid_test_postgres_settings --noinput
+settings=NovaSoft.hybrid_test_postgres_settings
+if [ "${HYBRID_TEST_INTEGRATED:-0}" = 1 ]; then settings=NovaSoft.integrated_test_postgres_settings; fi
+"$PYTHON" -B manage.py test "${tests[@]}" --settings="$settings" --noinput

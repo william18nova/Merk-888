@@ -1,5 +1,7 @@
 # Resultado del piloto de dos instalaciones — 3 de octubre de 2026
 
+> Documento histórico del piloto separado. Sus instaladores y paquetes fueron retirados; no usar sus instrucciones de instalación. La guía vigente es [instalación integrada con runserver](instalacion_integrada_runserver.md). Se conserva como evidencia de pruebas anteriores.
+
 Paquete final: `722dcc743f166e5931dcac2332b5539e2f15c721ceac3cd4e9b842fe4d423179`.
 Esquema local: 2. Archivos entregados: 520. Sin firma de código ni certificación
 para producción. Solo datos ficticios; no se accedió a Aiven/PythonAnywhere.

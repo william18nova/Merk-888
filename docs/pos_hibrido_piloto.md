@@ -1,5 +1,7 @@
 # POS híbrido · piloto 0.6.0 en efectivo
 
+> Documento histórico del piloto separado. Sus instaladores y paquetes fueron retirados; no usar sus instrucciones de instalación. La guía vigente es [instalación integrada con runserver](instalacion_integrada_runserver.md). Se conserva como evidencia de pruebas anteriores.
+
 ## Generar Venta original (0.6.0)
 
 La integración actual reutiliza las plantillas, CSS, carrito, autocomplete y modal

@@ -274,6 +274,7 @@
     $("#turnoStatus").dataset.state = TURNO.estado;
     // Dato informativo: el contado de Efectivo ya incluye estas facturas.
     mFacturasPagadas.textContent = money2(TURNO.facturas_pagadas ?? 0);
+    window.NovaClosePayments.renderSummary($("#adminCashPaymentDetails"), data.pagos_cierre);
     const ptm = TURNO.ptm || {};
     $("#ptmCantidad").textContent = ptm.cantidad || 0;
     $("#ptmDeclarado").textContent = ptm.declarado ?? "—";

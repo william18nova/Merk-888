@@ -1,5 +1,7 @@
 # POS híbrido: pagos, devoluciones, cierre e instalación persistente
 
+> Documento histórico del piloto separado. Sus instaladores y paquetes fueron retirados; no usar sus instrucciones de instalación. La guía vigente es [instalación integrada con runserver](instalacion_integrada_runserver.md). Se conserva como evidencia de pruebas anteriores.
+
 Estado: candidato de pruebas con relevo de cajeros y validación nativa Windows,
 3 de octubre de 2026. No desplegado a producción.
 No se modificaron Aiven ni PythonAnywhere y no se hicieron pruebas de impresión.

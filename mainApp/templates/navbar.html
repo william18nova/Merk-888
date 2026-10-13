@@ -36,6 +36,10 @@
         </li>
       {% endif %}
     {% endfor %}
+    {% if nova_reference_enabled and user.is_authenticated %}
+      <li><a href="{% url 'integrated_reference' %}">Copia local</a></li>
+      {% if nova_journal_enabled %}<li><a href="{% url 'integrated_sync' %}">Sincronización</a></li>{% endif %}
+    {% endif %}
   </ul>
 
   {% if user.is_authenticated %}
