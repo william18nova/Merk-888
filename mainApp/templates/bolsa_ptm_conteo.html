@@ -1,9 +1,0 @@
-{% extends "base.html" %}{% load static %}
-{% block title %}Conteo de bolsa PTM{% endblock %}
-{% block extra_head %}<link rel="stylesheet" href="{% static 'css/bolsa_ptm.css' %}">{% endblock %}
-{% block content %}<main class="bp-page"><header><p>EFECTIVO COMPARTIDO · {{ turno.puntopago.sucursalid.nombre }}</p><h1>{% if entrega %}Entregar{% else %}Recibir{% endif %} la bolsa PTM</h1><p>Turno #{{ turno.pk }} · {{ turno.cajero.nombreusuario }}</p></header>
-<section class="bp-panel"><h2>Cuenta toda la bolsa, no solo lo que tú manejaste</h2><p class="bp-warning">Detengan las operaciones PTM mientras cuentan y confirman. Este dinero está separado de los billetes de la caja normal.</p>
-<p>{% if entrega %}El corte termina tu participación. Un faltante del período queda como una sola incidencia compartida entre quienes participaron.{% else %}Tu participación empieza después de este conteo. No heredas diferencias de períodos anteriores.{% endif %}</p>
-<form method="post">{% csrf_token %}{{ form.as_p }}<button type="submit">Confirmar {% if entrega %}entrega{% else %}recepción{% endif %}</button></form>
-<p class="bp-note">No se muestra el saldo esperado antes de contar. Los faltantes son provisionales hasta revisar el reporte; no son descuentos automáticos.</p>
-<a href="{% url 'bolsa_ptm_turno' turno.pk %}">Empezar un conteo nuevo si cambió la bolsa o venció el formulario</a></section></main>{% endblock %}

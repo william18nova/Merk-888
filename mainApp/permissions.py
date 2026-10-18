@@ -22,10 +22,8 @@ PUBLIC_URL_NAMES = {"login", "logout", "visor_barcode", "visor_barcode_buscar", 
 PUBLIC_URL_NAMES.update({"hybrid_enroll", "hybrid_session", "hybrid_catalog", "hybrid_sale", "hybrid_release", "hybrid_recovery_prepare", "hybrid_recovery_finish"})
 PUBLIC_URL_NAMES.update({"hybrid_replica_prepare", "hybrid_replica_page"})
 PUBLIC_URL_NAMES.update({"hybrid_expense", "hybrid_operation", "hybrid_operation_read"})
-PUBLIC_URL_NAMES.add("ptm_reader_receive")  # Autenticación propia: token revocable sin permisos de caja.
-ALWAYS_ALLOWED_URL_NAMES = {"home", "registrar_egreso", "mi_horario", "mi_horario_datos", "visor_cajero", "visor_cajero_buscar", "database_connection_status"}
+ALWAYS_ALLOWED_URL_NAMES = {"home", "registrar_egreso", "mi_horario", "mi_horario_datos", "visor_cajero", "visor_cajero_buscar"}
 WEB_MASTER_ONLY_URL_NAMES = {
-    "bolsa_ptm_admin",
     "equipos_hibridos",
     "ventas_no_realizadas",
     "claves_descuento_merk2888",
@@ -41,14 +39,6 @@ PERMISSION_CACHE_VERSION_KEY = "mainapp:permissions:version"
 
 
 PERMISSION_DEFINITIONS = [
-    {
-        "code": "bolsa_ptm_configurar",
-        "label": "Configurar bolsas de efectivo PTM",
-        "assignable": False,
-        "system_only": True,
-        "description": "Establecer bases, registrar ajustes y revisar cortes PTM. Exclusivo Web Master.",
-        "aliases": ["bolsa_ptm_configurar"],
-    },
     {
         "code": "pagos_editar",
         "label": "Editar pagos registrados",
@@ -796,9 +786,6 @@ ROUTE_PERMISSIONS = {
     "turno_caja_cierre_efectivo": "caja_turno",
     "turno_caja_cierre_medios": "caja_turno",
     "operaciones_ptm": "caja_turno",
-    "conciliacion_ptm": "caja_turnos_editar",
-    "bolsa_ptm_admin": "bolsa_ptm_configurar",
-    "bolsa_ptm_turno": "caja_turno",
     "turno_recuperar_o_iniciar": "caja_turno",
     "turno_caja_puntopago_ac": "caja_turno",
     "turno_caja_cajero_ac": "caja_turno",
@@ -980,8 +967,6 @@ NAV_GROUPS = [
         "children": [
             {"label": "Turno de caja", "url_name": "turno_caja"},
             {"label": "Operaciones PTM", "url_name": "operaciones_ptm"},
-            {"label": "Conciliación PTM", "url_name": "conciliacion_ptm"},
-            {"label": "Bolsas de efectivo PTM", "url_name": "bolsa_ptm_admin"},
             {"label": "Registrar pago", "url_name": "registrar_egreso"},
             {"label": "Editar pagos", "url_name": "pagos_editar_lista"},
             {"label": "Retiro base de caja", "url_name": "turno_caja_retiro_actual"},

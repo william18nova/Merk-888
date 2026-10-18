@@ -9,14 +9,12 @@
         href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"/>
   <link rel="stylesheet" href="{% static 'css/turno_caja.css' %}?v=18">
   <link rel="stylesheet" href="{% static 'css/close_payment_details.css' %}?v=1">
-  <link rel="stylesheet" href="{% static 'css/bolsa_ptm.css' %}?v=1">
 {% endblock %}
 
 {% block content %}
   <div class="tc-wrap{% if close_page %} tc-wrap--closing{% endif %}">
     <div class="tc-card">
       <h2><i class="fa-solid fa-cash-register"></i> Turno de caja</h2>
-      <div id="tcPTMBag" data-user-id="{{ request.user.pk }}">{% include 'includes/bolsa_ptm_resumen.html' %}</div>
 
       <!-- Toast container (no bloquea UI) -->
       <div id="tc-toasts" class="tc-toasts" aria-live="polite" aria-atomic="true"></div>
@@ -235,7 +233,6 @@
             <div>
               <strong id="closeCashWarningTitle" tabindex="-1">No cuentes el dinero que ya pagaste o que vas a pagarle a un compañero.</strong>
               <p>Déjalo registrado en el paso 1 y separado del conteo. Cuenta solo los billetes y monedas que quedan para entregar en caja, incluida la base.</p>
-              {% if bolsa_ptm.activa %}<p><strong>Tampoco incluyas el efectivo de la bolsa PTM: ya se contó por separado.</strong></p>{% endif %}
             </div>
           </div>
           <div class="tc-close-subtitle">
@@ -281,7 +278,7 @@
                    type="number" min="0" max="99999999" step="1" inputmode="numeric" value="0" placeholder="0"
                    aria-describedby="ptm_conteo_help">
           </div>
-          <p class="tc-invoice-help" id="ptm_conteo_help">Si dejas el campo vacío, se toma como 0. Cuenta los comprobantes de retiros y recargas/pagos registrados a tu nombre en este turno, no todos los de la sucursal. El número debe coincidir con el registro. {% if bolsa_ptm.activa %}La bolsa PTM se cuenta por separado: no incluyas ese efectivo entre los billetes de caja ni en facturas pagadas.{% else %}PTM ya se suma o resta del efectivo esperado; no lo agregues otra vez a facturas pagadas.{% endif %}</p>
+          <p class="tc-invoice-help" id="ptm_conteo_help">Si dejas el campo vacío, se toma como 0. Cuenta los comprobantes de retiros y recargas/pagos de este turno. El número debe coincidir con el registro. PTM ya se suma o resta del efectivo esperado; no lo agregues otra vez a facturas pagadas.</p>
         </div>
 
         <form id="formClose" class="tc-grid tc-grid-compact tc-close-block" autocomplete="off" novalidate>
@@ -392,6 +389,5 @@
   </script>
 
   <script defer src="{% static 'javascript/close_payment_details.js' %}?v=1"></script>
-  <script defer src="{% static 'javascript/ptm_cash_pool_summary.js' %}?v=1"></script>
-  <script defer src="{% static 'javascript/turno_caja.js' %}?v=27"></script>
+  <script defer src="{% static 'javascript/turno_caja.js' %}?v=26"></script>
 {% endblock %}

@@ -1,21 +1,16 @@
-import os
-import sys
 import time
 
 from django.core.management.base import BaseCommand
-from django.conf import settings
 from django.db import DatabaseError, close_old_connections
 
 from mainApp.services.feature_flags import TELEGRAM_BOT_FEATURE, is_feature_enabled
 from mainApp.services.telegram_bot import process_next_update, recover_stale_updates
-from mainApp.services.telegram_runtime import SourceWatcher
 
 
 class Command(BaseCommand):
     help = "Procesa de forma continua la cola segura del bot inteligente de Telegram."
 
     def add_arguments(self, parser):
-        parser.add_argument("--reload", action="store_true", help="Recarga el mismo trabajador entre mensajes cuando se actualiza el código; nunca interrumpe una confirmación en curso.")
         parser.add_argument("--followups", action="store_true", help="Atiende también los informes diarios solicitados y confirmados por cada usuario.")
         parser.add_argument(
             "--once",
@@ -41,7 +36,6 @@ class Command(BaseCommand):
         sleep_seconds = min(max(float(options["sleep"]), 0.2), 60.0)
         maximum = max(int(options["max_messages"]), 0)
         processed = 0
-        watcher = SourceWatcher(settings.BASE_DIR) if options["reload"] and not once else None
         self.stdout.write("Procesador del bot de Telegram iniciado.")
         try:
             recover_stale_updates()
@@ -49,17 +43,6 @@ class Command(BaseCommand):
             last_followups = None
             while True:
                 close_old_connections()
-                if watcher is not None:
-                    state = watcher.poll()
-                    if state == "reload":
-                        self.stdout.write("Código actualizado: recargando el mismo trabajador entre mensajes. No se reenvían solicitudes terminadas.")
-                        self.stdout.flush()
-                        close_old_connections()
-                        os.execv(sys.executable, [sys.executable, "-u", *sys.argv])
-                        return  # execv no retorna; permite probar sin lanzar procesos.
-                    if state == "waiting":
-                        time.sleep(sleep_seconds)
-                        continue
                 if not is_feature_enabled(TELEGRAM_BOT_FEATURE, fresh=True):
                     if once:
                         self.stdout.write("El bot está desactivado; no se procesó ningún mensaje.")

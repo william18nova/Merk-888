@@ -22,9 +22,6 @@ def unavailable(request, message, code="offline_unavailable"):
         from django.utils.html import format_html
         response = HttpResponse(format_html('<main lang="es"><h1>Conexión del POS</h1><p>{}</p><p>Conserva la pestaña y el carrito. No se repitió ninguna operación.</p><p>Si tu autorización venció, vuelve a <a href="{}">iniciar sesión cuando haya conexión</a> para revisar los pendientes.</p></main>', message, reverse("login")), status=503)
     response["Cache-Control"] = "no-store"
-    # A failed request is not evidence that the fallback is usable. This also
-    # lets an already open navbar reflect expiry/conflicts without a reload.
-    response["X-Nova-Mode"] = "blocked" if getattr(request, "nova_mode", "") == "blocked" else "unavailable"
     return response
 
 

@@ -18,14 +18,13 @@ def rows(query):
 
 
 def capture(identity, scope):
-    from mainApp.models import ConceptoEgreso, Venta, DetalleVenta, PagoVenta, TurnoCaja, OperacionPTM, BolsaEfectivoPTM
+    from mainApp.models import ConceptoEgreso, Venta, DetalleVenta, PagoVenta, TurnoCaja, OperacionPTM
     from mainApp.permissions import user_can_access_url_name, user_can_change_sale
     actor = identity["actor"]
     granted = [route for route in ROUTES if user_can_access_url_name(actor, route)]
     for routes in (scope["routes"], identity["routes"]):
         routes.extend(route for route in granted if route not in routes)
     data = {"version": 1, "concepts": [], "sales": [], "details": [], "payments": [], "turn": None}
-    data["has_ptm_bag"] = BolsaEfectivoPTM.objects.filter(sucursal_id=scope["branch_id"]).exists()
     if "registrar_egreso" in granted:
         data["concepts"] = list(ConceptoEgreso.objects.order_by("nombre").values_list("nombre", flat=True)[:5000])
     if user_can_change_sale(actor):

@@ -16,7 +16,7 @@ from uuid import UUID
 import requests
 from django.conf import settings
 from django.core.exceptions import PermissionDenied
-from django.db import DatabaseError, DataError, IntegrityError, ProgrammingError, close_old_connections, transaction
+from django.db import DatabaseError, close_old_connections, transaction
 from django.db.models import Case, Count, Exists, IntegerField, OuterRef, Q, Sum, When
 from django.utils import timezone
 from django.utils.dateparse import parse_date
@@ -170,21 +170,6 @@ def _ai_failure_message(error):
     return message + " También puedes usar /ayuda para ver otras formas de consultar."
 
 
-def _database_failure_kind(error):
-    """Use structured driver diagnostics, never SQL or user values in replies."""
-    cause = getattr(error, "__cause__", None)
-    code = getattr(cause, "pgcode", None) or getattr(cause, "sqlstate", None)
-    diag = getattr(cause, "diag", None)
-    if (code == "23502" and getattr(diag, "table_name", None) == "egresos"
-            and getattr(diag, "column_name", None) in {"aplica_4xmil", "impuesto_4xmil"}):
-        return "stale_worker"
-    if isinstance(error, ProgrammingError) or code in {"42703", "42P01"}:
-        return "schema"
-    if isinstance(error, (IntegrityError, DataError)):
-        return "invalid_data"
-    return "temporary"
-
-
 def _user_error_message(error, update):
     """El diagnóstico se conserva en la auditoría, no se reenvía al cliente."""
     if isinstance(error, PermissionDenied):
@@ -202,15 +187,6 @@ def _user_error_message(error, update):
     if isinstance(error, TelegramBotError):
         message = str(error).strip()
         return message if message.endswith((".", "?", "!")) else message + "."
-    if isinstance(error, DatabaseError):
-        kind = _database_failure_kind(error)
-        if kind == "stale_worker":
-            return "El bot necesita actualizarse para registrar pagos con la configuración actual. El administrador debe actualizar y reiniciar su tarea. Revisa tus pagos antes de volver a solicitarlo."
-        if kind == "schema":
-            return "El bot y la base de datos no tienen la misma actualización. El administrador debe revisar las migraciones y reiniciar la tarea del bot. Revisa si tu cambio quedó registrado antes de repetirlo."
-        if kind == "invalid_data":
-            return "La base de datos rechazó los datos de esta solicitud. El administrador puede revisar el motivo. Revisa si quedó registrado antes de repetirlo."
-        return "No pude comunicarme correctamente con la base de datos. Inténtalo más tarde; si era un cambio, revisa si quedó registrado antes de repetirlo."
     return "Algo falló y no pude terminar. El administrador puede revisar lo ocurrido. Si estabas guardando un cambio, revisa si quedó registrado antes de repetirlo."
 
 
@@ -1090,10 +1066,7 @@ def tool_prepare_expense(profile, arguments, update=None):
     summary = f"Registrar {concept} por {_list_money(amount)} en {options[method]['label']}"
     from .expense_tax import expense_amounts
     tax_enabled = bool(options[method].get("expense_tax_enabled", False))
-    try:
-        expense_amounts(amount, tax_enabled)
-    except OperationalExpenseError as exc:
-        raise TelegramBotError(str(exc)) from None
+    expense_amounts(amount, tax_enabled)
     action_arguments = {"concepto": concept, "monto": str(amount), "medio_pago": method, "aplica_4xmil": tax_enabled}
     suggestions = find_similar_expense_concepts(concept)
     exact = next((option for option in suggestions if option["nombre"] == concept), None)
@@ -2294,7 +2267,7 @@ def process_next_update():
         logger.exception("Falló el procesamiento de Telegram update %s", update.pk)
         retryable = (
             bool(getattr(exc, "retryable", False))
-            or (isinstance(exc, DatabaseError) and _database_failure_kind(exc) == "temporary")
+            or isinstance(exc, DatabaseError)
         ) and update.intentos < 3
         update.estado = "PENDIENTE" if retryable else "ERROR"
         update.error = str(exc)[:8000]

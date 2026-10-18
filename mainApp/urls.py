@@ -2,10 +2,7 @@ from django.urls import path, include
 from . import views
 from . import schedule_views
 from . import hybrid_views
-from .connection_status import database_status
 from .ptm_views import OperacionesPTMView
-from .ptm_reader_views import ConciliacionPTMView, receive_ptm
-from .ptm_cash_pool_views import BolsaPTMAdminView, BolsaPTMTurnoView
 from .expense_views import EgresosEditarListView, EditarEgresoView
 from django.contrib.auth import views as auth_views
 from .views import (
@@ -67,11 +64,6 @@ from .views import (
 
 
 urlpatterns = [
-    path("ptm/conciliacion/", ConciliacionPTMView.as_view(), name="conciliacion_ptm"),
-    path("ptm/bolsas/", BolsaPTMAdminView.as_view(), name="bolsa_ptm_admin"),
-    path("ptm/bolsa/turno/<int:turno_id>/", BolsaPTMTurnoView.as_view(), name="bolsa_ptm_turno"),
-    path("api/ptm/lector/", receive_ptm, name="ptm_reader_receive"),
-    path("api/estado-conexion/", database_status, name="database_connection_status"),
     path("api/hybrid/v1/replica/prepare/", hybrid_views.replica_prepare, name="hybrid_replica_prepare"),
     path("api/hybrid/v1/replica/page/", hybrid_views.replica_page, name="hybrid_replica_page"),
     path("configuracion/equipos-hibridos/", hybrid_views.devices, name="equipos_hibridos"),

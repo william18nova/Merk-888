@@ -59,24 +59,6 @@ html, body {
 
 .nv__left { display: flex; align-items: center; gap: 10px; flex: 0 0 auto; }
 
-/* Database state stays visible even when the mobile menu is closed. */
-.nv__brand-group { display:flex; align-items:center; gap:12px; min-width:0; }
-.nv__connection {
-  --connection-color:#b9c7dc;
-  display:inline-flex; align-items:center; gap:5px;
-  flex:0 0 auto; padding:4px 7px; border-radius:999px;
-  color:var(--connection-color); background:rgba(255,255,255,.045);
-  border:1px solid rgba(255,255,255,.09);
-  white-space:nowrap;
-  font:600 10px/1.2 "Inter", system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
-}
-.nv__connection-dot { width:6px; height:6px; border-radius:50%; background:currentColor; flex:0 0 6px; }
-.nv__connection[data-mode="online"] { --connection-color:#a3e8c3; }
-.nv__connection[data-mode="offline"] { --connection-color:#f6cf89; }
-.nv__connection[data-mode="synchronizing"] { --connection-color:#a9d7ff; }
-.nv__connection[data-mode="blocked"],
-.nv__connection[data-mode="unavailable"] { --connection-color:#ffbdbd; }
-
 /* ── Burger (solo móvil) ── */
 .nv__burger {
   display: none;
@@ -397,11 +379,6 @@ body.is-page-leaving .page-wrap{
     gap:8px;
     overflow:hidden;
   }
-
-  .nv__brand-group { flex:1 1 auto; max-width:calc(100% - 54px); gap:8px; }
-  .nv__brand-group .nv__brand { flex:0 1 auto; max-width:100%; }
-  .nv__brand-group .nv__title { min-width:0; }
-  .nv__connection { font-size:9px; padding:4px 5px; }
 
   .nv__title{
     display:inline-block;

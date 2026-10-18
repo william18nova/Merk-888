@@ -133,7 +133,7 @@ def build(request, action, state, kwargs):
         raise SaleError("Selecciona un turno válido.") from None
     if not data.get("turn") or turn_id != data["turn"]["id"]:
         raise SaleError("Ese turno no está autorizado en este equipo.")
-    if data.get("has_ptm") or data.get("has_ptm_bag"):
+    if data.get("has_ptm"):
         raise SaleError("Este turno contiene PTM: debe cerrarse con conexión para conciliar sus transacciones.")
     turn = TurnoCaja.objects.select_for_update().get(pk=turn_id, cajero_id=request.user.pk)
     if turn.estado not in ({"ABIERTO", "CIERRE"} if action == "close_begin" else {"CIERRE"}):
@@ -464,8 +464,7 @@ def execute_event(command):
         return {"success": True, "sale_id": sale.pk, "total": values["total"]}
     if not turn or turn.estado not in {"ABIERTO", "CIERRE"} or occurred < turn.inicio:
         raise SaleError("El turno ya fue cerrado o cambió; revisa el cierre pendiente.")
-    from mainApp.services.ptm_cash_pool import bag_for_turn
-    if turn.operaciones_ptm.exists() or bag_for_turn(turn):
+    if turn.operaciones_ptm.exists():
         raise SaleError("El turno contiene PTM. Requiere conciliación con conexión.")
     from mainApp.views import TurnoCajaIniciarCierreApi, TurnoCajaCerrarApi
     if action == "close_begin":

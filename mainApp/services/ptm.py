@@ -23,9 +23,6 @@ def resumen_ptm(turno):
         result[key + "_cantidad"] = row["cantidad"]
         result["cantidad"] += row["cantidad"]
     result["neto"] = result["recargas"] - result["retiros"]
-    result["neto_caja"] = Decimal("0.00")
-    for row in OperacionPTM.objects.filter(turno=turno, bolsa__isnull=True).values("tipo").annotate(monto=Sum("monto")):
-        result["neto_caja"] += -row["monto"] if row["tipo"] == "retiro" else row["monto"]
     return result
 
 
@@ -83,14 +80,6 @@ def registrar_operacion_ptm(*, actor, turno_id, tipo, monto, referencia, solicit
         raise ValidationError("Esta solicitud ya se utilizó con otros datos. Recarga la página.")
     if turn.estado != "ABIERTO":
         raise ValidationError("PTM requiere un turno ABIERTO. No puedes registrar durante o después del cierre.")
-    from . import ptm_cash_pool as pool
-    from mainApp.models import ParticipacionBolsaPTM
-    bag = pool.bag_for_turn(turn)
-    if bag:
-        pool.online_only()
-        bag = pool.lock_bag(bag)
-        if not ParticipacionBolsaPTM.objects.filter(bolsa=bag, turno=turn, salida__isnull=True).exists():
-            raise ValidationError("Primero cuenta y recibe la bolsa PTM desde Turno de caja.")
     product = Producto.objects.filter(tipo_ptm=tipo).first()
     if not product:
         raise ValidationError("Faltan los productos PTM. Aplica la migración 0040.")
@@ -99,13 +88,11 @@ def registrar_operacion_ptm(*, actor, turno_id, tipo, monto, referencia, solicit
             operation = OperacionPTM.objects.create(
                 turno=turn, usuario=actor, producto=product, tipo=tipo, monto=amount,
                 referencia=reference, solicitud_id=request_id,
-                bolsa=bag,
             )
     except IntegrityError:
         raise ValidationError("La referencia PTM ya está registrada. Comprueba el historial antes de repetirla.")
     # Mantener también el saldo global que usa el resto de operaciones de caja.
     # El cuadre calcula su propio esperado desde el ledger, sin sumar este saldo.
     delta = -amount if tipo == "retiro" else amount
-    if not bag:
-        PuntosPago.objects.filter(pk=turn.puntopago_id).update(dinerocaja=F("dinerocaja") + delta)
+    PuntosPago.objects.filter(pk=turn.puntopago_id).update(dinerocaja=F("dinerocaja") + delta)
     return operation, True

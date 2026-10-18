@@ -275,7 +275,6 @@
     // Dato informativo: el contado de Efectivo ya incluye estas facturas.
     mFacturasPagadas.textContent = money2(TURNO.facturas_pagadas ?? 0);
     window.NovaClosePayments.renderSummary($("#adminCashPaymentDetails"), data.pagos_cierre);
-    window.NovaPTMBag.render($("#adminPTMBag"), data.bolsa_ptm);
     const ptm = TURNO.ptm || {};
     $("#ptmCantidad").textContent = ptm.cantidad || 0;
     $("#ptmDeclarado").textContent = ptm.declarado ?? "—";
@@ -286,7 +285,7 @@
     document.getElementById("mPTMHistorial").search = `?turno=${TURNO.id}`;
 
     buildMediosTable();
-    protectedPTM = Number(ptm.cantidad || 0) > 0 || !!data.bolsa_ptm?.participa;
+    protectedPTM = Number(ptm.cantidad || 0) > 0;
     document.getElementById("mVentasLabel").textContent = protectedPTM ? "Neto reconocido (incluye PTM)" : "Total reportado";
     document.getElementById("mEfectivoLabel").textContent = protectedPTM ? "Efectivo neto (incluye PTM)" : "Efectivo reportado";
     $("#ptmProtection").hidden = !protectedPTM;
