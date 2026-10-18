@@ -2,6 +2,7 @@
 from django.conf import settings
 from django.core.cache import cache
 from .permissions import build_nav_menu
+from .connection_status import status_for_mode
 from .services.feature_flags import FEATURE_REGISTRY, is_feature_enabled
 
 SESSION_USER_CACHE_SECONDS = 300
@@ -82,5 +83,6 @@ def permissions_nav(request):
         "nova_integrated_enabled": getattr(settings, "NOVA_INTEGRATED_POS_ENABLED", False),
         "nova_journal_enabled": getattr(settings, "NOVA_INTEGRATED_JOURNAL_ENABLED", False),
         "nova_offline": getattr(request, "nova_mode", "online") in {"offline", "synchronizing"},
+        "nav_connection": status_for_mode(getattr(request, "nova_mode", "checking")),
         **_session_user_payload(user),
     }

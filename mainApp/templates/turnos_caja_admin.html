@@ -7,6 +7,7 @@
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"/>
   <link rel="stylesheet" href="{% static 'css/turnos_caja_admin.css' %}?v=2">
   <link rel="stylesheet" href="{% static 'css/close_payment_details.css' %}?v=1">
+  <link rel="stylesheet" href="{% static 'css/bolsa_ptm.css' %}?v=1">
 {% endblock %}
 
 {% block content %}
@@ -83,6 +84,7 @@
         <h2 id="facturasTitle">Facturas pagadas de caja</h2>
         <div id="mFacturasPagadas" class="v">—</div>
         <div id="adminCashPaymentDetails"></div>
+        <div id="adminPTMBag"></div>
         <p>Ya están incluidas en el cuadre de efectivo.</p>
       </section>
       <section class="tca-card tca-section tca-ptm" aria-labelledby="ptmTitle">
@@ -118,5 +120,6 @@
   const API_DELETE = (id) => "{% url 'api_admin_turno_delete' 999999 %}".replace("999999", String(id));
 </script>
 <script defer src="{% static 'javascript/close_payment_details.js' %}?v=1"></script>
-<script defer src="{% static 'javascript/turnos_caja_admin.js' %}?v=8"></script>
+<script defer src="{% static 'javascript/ptm_cash_pool_summary.js' %}?v=1"></script>
+<script defer src="{% static 'javascript/turnos_caja_admin.js' %}?v=9"></script>
 {% endblock %}

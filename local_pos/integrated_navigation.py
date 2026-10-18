@@ -12,7 +12,7 @@ from .request_context import offline_request
 
 # These read-only UI endpoints do not need additional catalog rows. Business
 # routes still require BOTH the identity grant and the snapshot scope.
-UI_READ_ROUTES = {"home", "integrated_navigation", "integrated_reference"}
+UI_READ_ROUTES = {"home", "integrated_navigation", "integrated_reference", "database_connection_status"}
 CATALOG_VIEW_ROUTES = {"visor_cajero", "visor_cajero_buscar", "visor_barcode",
     "visor_barcode_buscar", "visor_barcode_lookup"}
 OFFLINE_MESSAGE = "Estamos offline. Esta opción necesita conexión a internet. Puedes seguir trabajando en las funciones disponibles."

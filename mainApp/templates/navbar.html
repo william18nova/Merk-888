@@ -7,10 +7,21 @@
       <span></span><span></span><span></span>
     </button>
 
-    <a href="{% url 'home' %}" class="nv__brand">
-      <img src="{% static 'images/logoNovaAdvance.png' %}" alt="Nova" class="nv__logo">
-      <span class="nv__title">Nova Advance</span>
-    </a>
+    <div class="nv__brand-group">
+      <a href="{% url 'home' %}" class="nv__brand">
+        <img src="{% static 'images/logoNovaAdvance.png' %}" alt="Nova" class="nv__logo">
+        <span class="nv__title">Nova Advance</span>
+      </a>
+      {% if user.is_authenticated %}
+        <span id="nvConnection" class="nv__connection" role="status" aria-live="polite" aria-atomic="true"
+              data-mode="{{ nav_connection.mode|default:'checking' }}"
+              data-status-url="{% url 'database_connection_status' %}"
+              title="{{ nav_connection.description|default:'Comprobando la conexión con la base de datos.' }}">
+          <span class="nv__connection-dot" aria-hidden="true"></span>
+          <span data-connection-label>{{ nav_connection.label|default:'Comprobando' }}</span>
+        </span>
+      {% endif %}
+    </div>
   </div>
 
   <ul class="nv__links" id="nvLinks">

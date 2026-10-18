@@ -7,6 +7,7 @@
   <link rel="stylesheet"
         href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"/>
   <link rel="stylesheet" href="{% static 'css/turno_caja_retiro.css' %}?v=5">
+  <link rel="stylesheet" href="{% static 'css/bolsa_ptm.css' %}?v=1">
 {% endblock %}
 
 {% block content %}
@@ -29,6 +30,7 @@
         <div><span>Inicio</span><b>{{ retiro_data.inicio }}</b></div>
         <div><span>Fin</span><b>{{ retiro_data.fin }}</b></div>
       </div>
+      {% include 'includes/bolsa_ptm_resumen.html' %}
 
       <div id="printStatus" class="cr-print-status" role="status" aria-live="polite" data-state="pending">
         Preparando la tirilla para imprimir automáticamente…
@@ -116,5 +118,5 @@
     window.TURNO_CAJA_URL = "{% url 'turno_caja' %}";
     if (!/^https?:\/\//.test(window.POS_AGENT_URL)) window.POS_AGENT_URL = "http://127.0.0.1:8787";
   </script>
-  <script defer src="{% static 'javascript/turno_caja_retiro.js' %}?v=11"></script>
+  <script defer src="{% static 'javascript/turno_caja_retiro.js' %}?v=12"></script>
 {% endblock %}

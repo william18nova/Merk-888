@@ -33,7 +33,7 @@ def backup_environment(config):
 
 
 def backup_local(config, pg_bin):
-    """Logical backup with native client tools; no native PostgreSQL server DLL.
+    """Logical backup with matching tools (Linux-only when using WSL).
 
 The protected config accompanies the archive for recovery. Verification decodes
 the entire archive without executing its SQL; it is not a restore rehearsal.
@@ -42,12 +42,18 @@ the entire archive without executing its SQL; it is not a restore rehearsal.
     env = backup_environment(config)
     tools = {name: Path(pg_bin) / (name + (".exe" if os.name == "nt" else ""))
              for name in ("pg_dump", "pg_restore")}
+    wsl = None
+    if config.get('backend', {}).get('kind') == 'wsl':
+        from .wsl_backup import WslBackup
+        wsl = WslBackup(config)
     versions = {}
     for name, path in tools.items():
-        if not path.is_absolute() or not path.is_file():
+        if wsl is None and (not path.is_absolute() or not path.is_file()):
             raise ActivationError("No se encontró el cliente PostgreSQL para el respaldo.")
-        result = subprocess.run([str(path), "--version"], capture_output=True, text=True, timeout=15)
-        match = re.search(r"PostgreSQL\) (\d+)", result.stdout)
+        result = (wsl.run(name + '_version', timeout=30) if wsl else
+                  subprocess.run([str(path), "--version"], capture_output=True, text=True, timeout=15))
+        output = result.stdout.decode('utf-8', errors='replace') if wsl else result.stdout
+        match = re.search(r"PostgreSQL\) (\d+)", output)
         if result.returncode or not match:
             raise ActivationError("No se pudo verificar el cliente de respaldo.")
         versions[name] = int(match[1])
@@ -75,15 +81,15 @@ the entire archive without executing its SQL; it is not a restore rehearsal.
     partial = root / "database.dump.partial"
     try:
         with (root / "pg_dump.log").open("xb") as log:
-            result = subprocess.run([str(tools["pg_dump"]), "--format=custom", "--no-password",
+            result = wsl.run('dump', partial, stderr=log, timeout=300) if wsl else subprocess.run([str(tools["pg_dump"]), "--format=custom", "--no-password",
                 "--lock-wait-timeout=5s", "--file", str(partial)], env=env,
                 stdout=subprocess.DEVNULL, stderr=log, timeout=300)
         if result.returncode:
             raise ActivationError("El respaldo local falló; la activación permanece sin cambios.")
-        listing = subprocess.run([str(tools["pg_restore"]), "--list", str(partial)], capture_output=True, timeout=30)
+        listing = wsl.run('list', partial, timeout=30) if wsl else subprocess.run([str(tools["pg_restore"]), "--list", str(partial)], capture_output=True, timeout=30)
         if listing.returncode or b"TABLE DATA" not in listing.stdout or b"local_pos_localnode" not in listing.stdout:
             raise ActivationError("El respaldo no contiene la identidad local esperada.")
-        checked = subprocess.run([str(tools["pg_restore"]), "--file", os.devnull, str(partial)],
+        checked = wsl.run('decode', partial, timeout=120) if wsl else subprocess.run([str(tools["pg_restore"]), "--file", os.devnull, str(partial)],
             stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=120)
         if checked.returncode:
             raise ActivationError("El respaldo no superó la lectura completa.")

@@ -25,8 +25,8 @@ test("cierre en páginas distintas, solo hacia adelante y con valores conservado
       if (conditional) {
         const condition = conditional[1];
         const match = condition.match(/^close_page == "(payments|cash|media)"$/);
-        assert.ok(match || ["close_page", "not close_page"].includes(condition), `Condición inesperada: ${condition}`);
-        const truth = match ? page === match[1] : condition === "close_page" ? !!page : !page;
+        assert.ok(match || ["close_page", "not close_page", "bolsa_ptm.activa"].includes(condition), `Condición inesperada: ${condition}`);
+        const truth = condition === "bolsa_ptm.activa" ? false : match ? page === match[1] : condition === "close_page" ? !!page : !page;
         stack.push({parent: visible, truth}); visible = visible && truth;
       } else if (part.match(/^{%\s*else\s*%}$/)) {
         visible = stack.at(-1).parent && !stack.at(-1).truth;
@@ -102,7 +102,10 @@ test("cierre en páginas distintas, solo hacia adelante y con valores conservado
       });
       return;
     }
-    const assets = {"/static/css/turno_caja.css": "text/css", "/static/javascript/turno_caja.js": "application/javascript"};
+    const assets = Object.fromEntries([
+      "css/turno_caja.css", "css/bolsa_ptm.css", "css/close_payment_details.css",
+      "javascript/turno_caja.js", "javascript/close_payment_details.js", "javascript/ptm_cash_pool_summary.js"
+    ].map(file => [`/static/${file}`, file.endsWith(".css") ? "text/css" : "application/javascript"]));
     if (assets[url.pathname]) {
       res.setHeader("Content-Type", assets[url.pathname]);
       res.end(fs.readFileSync(path.join(__dirname, url.pathname.slice(1)))); return;
@@ -140,6 +143,9 @@ test("cierre en páginas distintas, solo hacia adelante y con valores conservado
     await page.locator("#btnPaymentsNext").click();
     assert.equal(await page.locator("#closeCashStep").isVisible(), false);
     await page.locator("#facturas_pagadas").fill("2000");
+    await page.locator("#btnAddClosePayment").click();
+    await page.locator("[data-payment-name]").fill("Factura de prueba");
+    await page.locator("[data-payment-amount]").fill("2000");
     await page.locator("#btnPaymentsNext").click();
     await assertCenteredModal(page);
     assert.match(await page.locator("#tc-confirm-details").innerText(), /2\.000/);

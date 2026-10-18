@@ -1,0 +1,5 @@
+{% if bolsa_ptm.activa %}<section class="bp-summary" aria-label="Bolsa PTM de la sucursal">
+<h3>Bolsa PTM · independiente de caja</h3><p>{{ bolsa_ptm.mensaje }}</p>
+{% if not bolsa_ptm.participa %}{% if turno_activo_inicial.estado == 'ABIERTO' %}<a href="{{ bolsa_ptm.conteo_url }}">Contar y recibir la bolsa PTM</a>{% endif %}{% elif not bolsa_ptm.entregada %}<p>Al iniciar el cierre deberás contar y entregar la bolsa completa.</p>{% endif %}
+{% for incidencia in bolsa_ptm.incidencias %}<div class="bp-warning"><strong>Faltante PTM #{{ incidencia.id }}: ${{ incidencia.faltante }}</strong><br>Estado: {{ incidencia.estado }}. Participaron: {% for p in incidencia.participantes %}{{ p.nombre }} (turno #{{ p.turno }}){% if not forloop.last %}, {% endif %}{% endfor %}.<br>Una sola incidencia compartida; no se cobra este importe a cada empleado ni se suma a la deuda normal de caja.</div>{% endfor %}
+</section>{% endif %}

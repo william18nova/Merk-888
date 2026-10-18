@@ -7,6 +7,8 @@ from .integrated_offline_sales import SaleError
 def build_open(request, state):
     from .integrated_business import money
     scope = state.scope
+    if scope.get("offline_business", {}).get("has_ptm_bag"):
+        raise SaleError("Estamos offline. Esta sucursal comparte una bolsa PTM: necesitas conexión para recibirla y abrir turno.")
     if not scope.get("offline_sale", {}).get("required_turn"):
         raise SaleError("El inicio manual de turnos está desactivado.")
     actor = request.POST.get("usuario_id") or request.POST.get("cajero_id")
@@ -51,6 +53,9 @@ def upload_open(command, actor, occurred):
         raise SaleError("Cambió la configuración de turnos; revisa la apertura pendiente.")
     # Lock in the same point-first order as the existing online opening.
     point = PuntosPago.objects.select_for_update().get(pk=payload["point_id"], sucursalid_id=payload["branch_id"])
+    from mainApp.models import BolsaEfectivoPTM
+    if BolsaEfectivoPTM.objects.filter(sucursal_id=payload["branch_id"], inicio__lte=occurred).exists():
+        raise SaleError("La sucursal tiene una bolsa PTM compartida. Revisa esta apertura offline; no se descartó.")
     Usuario.objects.select_for_update().get(pk=actor.pk)
     if TurnoCaja.objects.filter(Q(puntopago=point) | Q(cajero=actor)).filter(
             Q(estado__in=["ABIERTO", "CIERRE"]) | Q(fin__gt=occurred) | Q(inicio__gte=occurred)).exists():

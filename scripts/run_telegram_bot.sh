@@ -48,7 +48,9 @@ cd "$PROJECT_DIR" || exit 2
 "$PYTHON_BIN" manage.py comprobar_ia_telegram --status || exit 2
 # Solo envía informes creados y confirmados por el usuario; no crea reglas.
 # TELEGRAM_FOLLOWUPS_ENABLED=0 permite desactivar el módulo sin detener el chat.
-worker_args=()
+# Se reemplaza el mismo proceso ENTRE mensajes al detectar un despliegue.
+# No crea otro trabajador ni vuelve a ejecutar pagos ya atendidos.
+worker_args=(--reload)
 if [[ "${TELEGRAM_FOLLOWUPS_ENABLED:-1}" == "1" ]]; then
     worker_args+=(--followups)
 fi

@@ -1,0 +1,18 @@
+.ptm-reconcile { max-width: 1550px; margin: auto; }
+.ptm-reader { display: flex; justify-content: space-between; gap: 18px; padding: 16px 0; border-bottom: 1px solid #ffffff26; }
+.ptm-summary { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+.ptm-summary span { padding: 18px; background: #ffffff12; border-radius: 12px; }
+.ptm-summary b { display: block; font-size: 1.7rem; }
+.ptm-reconcile input, .ptm-reconcile select { max-width: 100%; padding: 10px; border-radius: 8px; border: 1px solid #7893b4; color: #eff7ff; background: #183454; }
+.ptm-reconcile label, .ptm-link-form { display: grid; gap: 7px; }
+.ptm-token { width: 100%; font-family: monospace; }
+.ptm-link-form { min-width: 210px; }
+.ptm-config-form p { display: grid; gap: 8px; }
+.ptm-badge { display: inline-block; border-radius: 20px; padding: 6px 12px; background: #314e71; }
+.ptm-badge.vinculado { background: #155c43; }
+.ptm-badge.diferencia, .ptm-alert { color: #ffbcad; }
+.ptm-badge.revisar, .ptm-badge.sin_vincular { color: #ffdf8b; }
+.ptm-reconcile details { margin-top: 16px; }
+.ptm-reconcile summary { cursor: pointer; padding: 10px 0; }
+.ptm-reconcile td { vertical-align: top; }
+@media(max-width: 700px) { .ptm-summary { grid-template-columns: 1fr 1fr; } .ptm-reader { flex-direction: column; } }
