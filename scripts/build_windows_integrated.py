@@ -181,7 +181,7 @@ def build(args):
     (payload / 'python/python313._pth').write_text('python313.zip\n.\nLib/site-packages\n../app\nimport site\n', encoding='ascii')
     compile_launcher(payload / 'NovaPOS.exe')
     shutil.copyfile(ROOT / 'docs/instalador_windows.md', payload / 'LEEME.md')
-    shutil.copyfile(ROOT / 'docs/instalador_windows_pruebas_2026-10-13.md', payload / 'PRUEBAS-Y-LIMITACIONES.md')
+    shutil.copyfile(ROOT / 'docs/instalador_windows_respaldo_wsl2.md', payload / 'PRUEBAS-Y-LIMITACIONES.md')
     # Manifest hashes include every component and resolved distribution/version, no secret input.
     dependencies = []
     for metadata in packages.glob('*.dist-info/METADATA'):

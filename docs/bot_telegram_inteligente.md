@@ -15,6 +15,43 @@ pulsar **Confirmar** en Telegram.
 Los cambios de catálogo siguen el mismo esquema: propuesta, revisión y botón
 de confirmación. Un «sí» escrito o hablado no guarda el cambio.
 
+## Actualización del trabajador y fallo de pagos del 14 de octubre de 2026
+
+Se diagnosticó un trabajador Always-on iniciado el 28 de septiembre que seguía
+usando el modelo anterior a los campos del 4 × 1.000. La base ya exigía
+`egresos.aplica_4xmil` e `impuesto_4xmil`, pero ese proceso omitía ambos al
+insertar. El resultado era una violación NOT NULL, no un fallo de interpretación
+de IA ni un problema de permisos. Recargar solamente la Web no actualiza la tarea.
+
+Se reinició la **misma** tarea y se comprobó el nuevo proceso. El usuario confirmó
+que el pago volvió a funcionar. No se reenviaron confirmaciones fallidas ni se
+registraron pagos de prueba en producción.
+
+La protección adicional del repositorio se activa con `procesar_telegram_bot
+--reload`; `scripts/run_telegram_bot.sh` ya añade ese argumento. Revisa cambios
+en los archivos Python cada cinco segundos, espera que dejen de cambiar y
+reemplaza el mismo proceso **entre mensajes**, sin interrumpir una confirmación
+en curso, iniciar un segundo trabajador ni cambiar solicitudes terminadas.
+`--once` nunca reinicia el proceso. No instala dependencias ni aplica migraciones.
+
+Para habilitar esta protección hay que desplegar juntos el comando actualizado,
+`mainApp/services/telegram_runtime.py`, `telegram_bot.py` y el script, y reiniciar
+una vez la tarea existente. Los cambios de configuración privada o dependencias
+siguen requiriendo el procedimiento de despliegue correspondiente. No sustituye
+un despliegue coordinado con migraciones; no se debe actualizar una parte del
+código mientras se realizan cambios incompatibles en la base.
+
+Los errores permanentes de estructura, restricciones o valores ya no se
+reintentan automáticamente tres veces. La respuesta al usuario explica la
+categoría del problema sin mostrar SQL, claves ni datos internos. Los fallos
+temporales conservan sus reintentos limitados. También se comunica como validación
+un importe cuyo total con impuesto exceda el máximo, sin crear una propuesta.
+
+Validación local: 506 pruebas aprobadas de Telegram, impuestos y registro/edición
+de pagos, usando SQLite en memoria y proveedores simulados. Las protecciones
+adicionales requieren desplegar estos archivos; el reinicio correctivo sí se
+realizó en PythonAnywhere.
+
 ## Respuestas naturales y al grano
 
 ### Ampliación de consultas y correcciones de pagos

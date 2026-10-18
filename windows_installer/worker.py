@@ -54,11 +54,15 @@ def activate(values):
     from local_pos.integrated_config import config_path, load_config, register_location
     from local_pos.integrated_prepare import prepare
     from local_pos.runtime import save_json
+    from windows_installer.engines import choose
     connection, expected = check_connection(values)
     if any(expected[key] != values.get('confirmed', {}).get(key) for key in ('user_id', 'point_id', 'turn_id')):
         raise RuntimeError('El usuario, caja o turno cambió. Comprueba de nuevo antes de vincular.')
     path = config_path(ROOT)
     pg_bin = ROOT.parent / 'postgresql' / 'bin'
+    selected = choose(ROOT, path, pg_bin, report)
+    if selected is None:
+        return
     configuration.save(ROOT, connection)
     if path.exists():
         current = load_config(path, ROOT)
@@ -66,7 +70,7 @@ def activate(values):
             raise RuntimeError('Esta instalación ya está activada. Abre NovaPOS; no se sustituirá su copia.')
     else:
         report('Preparando una base privada NUEVA. No se usa ni modifica el servicio PostgreSQL del equipo.')
-        prepare(ROOT, path, pg_bin)
+        prepare(ROOT, path, **selected)
         current = json.loads(path.read_text(encoding='utf-8'))
         current['activation'] = 'database_only'
         save_json(path, current)
@@ -137,8 +141,12 @@ def serve():
 
 
 def main():
+    # Embedded Python ignores PYTHONUTF8/PYTHONIOENCODING environment flags.
+    # Match the WinForms pipe decoder explicitly, including accented messages.
+    sys.stdout.reconfigure(encoding='utf-8')
+    sys.stderr.reconfigure(encoding='utf-8')
     parser = argparse.ArgumentParser()
-    parser.add_argument('action', choices=('check', 'activate', 'serve'))
+    parser.add_argument('action', choices=('check', 'activate', 'serve', 'engine', 'wsl_prepare'))
     args = parser.parse_args()
     try:
         platform_check()
@@ -153,7 +161,19 @@ def main():
                 _, expected = check_connection(values)
                 report('Conexión verificada. Confirma usuario, caja y turno.', confirmed=expected)
             else:
-                activate(values)
+                from local_pos.runtime import installation_lock, private_dir
+                from local_pos.integrated_config import config_path
+                from windows_installer.engines import choose, prepare_wsl, state_root
+                # A separate setup lock does not populate the future business
+                # directory and serializes multiple launcher windows/processes.
+                with installation_lock(private_dir(state_root(ROOT))):
+                    if args.action == 'engine':
+                        if choose(ROOT, config_path(ROOT), ROOT.parent / 'postgresql/bin', report) is not None:
+                            report('Motor seleccionado y comprobado. No se cambió ninguna base existente.', engine_ready=True)
+                    elif args.action == 'wsl_prepare':
+                        prepare_wsl(ROOT, config_path(ROOT), values, report)
+                    else:
+                        activate(values)
     except KeyboardInterrupt:
         report('NovaPOS detenido. Los datos locales se conservaron.')
     except Exception as exc:

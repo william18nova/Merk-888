@@ -16,8 +16,11 @@ Windows 11 compatible y actualizado.
 1. Copia `NovaPOS-Instalar-Windows-x64.exe` al computador de destino y comprueba
    el SHA-256 publicado junto al archivo. Un hash no sustituye la firma de código.
 2. Ejecuta el instalador desde la cuenta Windows que usará la caja. Instala en
-   `%LOCALAPPDATA%\Programs\NovaPOS`; no necesita permisos de administrador,
-   cambiar PATH, desactivar antivirus ni instalar un servicio global PostgreSQL.
+   `%LOCALAPPDATA%\Programs\NovaPOS`; extraer la aplicación no necesita permisos
+   de administrador, cambiar PATH ni instalar un servicio global PostgreSQL.
+   **Comprobar motor local** prueba primero PostgreSQL nativo en un clúster temporal,
+   con PL/pgSQL, lectura/escritura y respaldo verificado, antes de crear la copia
+   del negocio.
 3. El asistente abre **Configurar NovaPOS**. Un administrador debe introducir
    servidor, puerto, base, usuario SQL de aplicación, contraseña y certificado CA
    del proveedor. TLS verifica la identidad del servidor (`verify-full`).
@@ -30,7 +33,9 @@ Windows 11 compatible y actualizado.
 6. Pulsa **Abrir NovaPOS**. Conserva abierta la ventana del lanzador. Al terminar,
    pulsa **Detener** o cierra el lanzador y espera a que PostgreSQL se detenga.
 
-Los componentes vienen en el paquete. La primera vinculación sí necesita internet.
+Los componentes nativos vienen en el paquete. La primera vinculación necesita internet.
+El respaldo WSL2 descarga Ubuntu y PostgreSQL adicionalmente; no es una instalación
+inicial sin conexión. Después del aprovisionamiento, el motor WSL funciona sin internet.
 El instalador no copia claves, bases, sesiones ni la identidad del computador del
 desarrollador. La conexión SQL se cifra con DPAPI para la cuenta Windows actual;
 los archivos locales mantienen permisos privados. Un administrador del equipo o
@@ -56,10 +61,27 @@ cifrado del disco, la seguridad de Windows ni un rol SQL de mínimos privilegios
 
 - No usa el PostgreSQL de 5432 ni sus bases; si 55460 o 8000 están ocupados, avisa
   y no se conecta al servicio equivocado.
-- No instala WSL automáticamente. Si Smart App Control o Code Integrity impide
-  cargar PostgreSQL/PL/pgSQL, la preparación falla y conserva el diagnóstico local.
-  Usa binarios de proveedor compatibles y firmados, o evalúa explícitamente un
-  servidor local de sucursal. No uses exclusiones ni desactives SAC/Defender.
+- Solo si la prueba nativa devuelve el bloqueo específico **4551**, se habilita
+  **Preparar respaldo WSL2**. Otros errores (puerto, permisos, dependencias, SQL)
+  se informan sin cambiar de motor. El diagnóstico original se conserva.
+- Preparar WSL2 pide confirmación. Importa un Ubuntu 24.04 exclusivo con nombre
+  `NovaPOS-<identificador>` y SHA-256 fijado a la imagen oficial de Canonical;
+  instala PostgreSQL 16 desde los repositorios autenticados de Ubuntu. No toca
+  otras distribuciones, sus bases, el servicio de 5432 ni la configuración global WSL.
+- Si WSL falta/no está listo, **Instalar WSL (administrador)** pide otra confirmación
+  y UAC para `wsl --install --no-distribution`. Nunca reinicia automáticamente.
+  Después de reiniciar, vuelve a abrir NovaPOS y pulsa **Comprobar motor local** y
+  **Preparar respaldo WSL2** para continuar. Se verifica el estado, no se asume éxito.
+- El respaldo requiere Windows 10 compilación 19041 o posterior, virtualización,
+  internet para preparar y al menos 5 GB libres. Se valida PL/pgSQL y lectura/escritura
+  desde Windows antes de seleccionarlo. El cajero conserva la misma interfaz.
+- La elección se guarda por instalación. Los siguientes arranques usan el mismo motor.
+  Si existe una copia, aun incompleta, **no se cambia a una base vacía** ni se migra
+  automáticamente a WSL. Se necesita recuperación/migración supervisada.
+- No uses exclusiones ni desactives SAC/Defender. WSL evita la DLL del servidor
+  PostgreSQL nativo. En modo WSL, los respaldos y su verificación también usan
+  `pg_dump`/`pg_restore` de Linux. Python y el lanzador Windows todavía deben ser
+  admitidos por las políticas del equipo.
 - Si hay una instalación en el destino, se rechaza sobrescribirla. No borres esa
   carpeta: una actualización requiere respaldo, revisión de pendientes y migración
   controlada. Este primer instalador es **solo de instalación nueva**.

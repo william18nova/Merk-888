@@ -35,6 +35,7 @@
     </form>
   </section>
   <section class="expense-history ptm-entry">
+    {% if can_review %}<a class="ptm-link" href="{% url 'conciliacion_ptm' %}">Revisar movimientos del lector PTM →</a>{% endif %}
     <h2>{% if can_review %}Historial PTM{% else %}Mis operaciones PTM{% endif %}</h2>
     <form method="get" class="ptm-filters">
       <label>Turno # <input name="turno" inputmode="numeric" value="{{ turno_filtro }}" placeholder="Todos"></label>

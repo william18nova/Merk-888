@@ -1,7 +1,9 @@
-"""Upgrade ONLY the private WSL copy for the new closing-payment detail table.
+"""Upgrade ONLY the private WSL copy for a selected additive schema change.
 
 Never imports cloud settings, resets a database or applies historical migrations.
 Default is inspection; --apply requires a verified full backup before any DDL.
+--upgrade ptm-reader handles the four PTM reader tables, not closing-payment detail.
+--upgrade ptm-pool adds the separate cash ledger and nullable link on PTM operations.
 """
 import argparse
 import hashlib
@@ -16,14 +18,26 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 
-def previous_signature(project):
+def previous_signature(project, upgrade='close-payments'):
+    markers = {
+        'close-payments': (b'class DesglosePagosCierre(', b'class OperacionPTM('),
+        'ptm-reader': (b'class CuentaLecturaPTM(', b'class ConteoCierrePTM('),
+        'ptm-pool': (b'class LecturaDiariaPTM(', b'class ConteoCierrePTM('),
+    }
+    if upgrade not in markers:
+        raise RuntimeError('Actualización local no reconocida.')
     digest = hashlib.sha256()
     for name in ('mainApp/models.py', 'mainApp/hybrid_models.py', 'local_pos/models.py'):
         data = (project / name).read_bytes().replace(b'\r\n', b'\n')
         if name == 'mainApp/models.py':
-            start = data.index(b'class DesglosePagosCierre(')
-            end = data.index(b'class OperacionPTM(', start)
+            start = data.index(markers[upgrade][0])
+            end = data.index(markers[upgrade][1], start)
             data = data[:start] + data[end:]
+            if upgrade == 'ptm-pool':
+                field = b'    bolsa = models.ForeignKey("BolsaEfectivoPTM", on_delete=models.PROTECT, null=True, blank=True)\n'
+                if data.count(field) != 1:
+                    raise RuntimeError('Cambió el enlace PTM revisado; no se actualizará la firma.')
+                data = data.replace(field, b'')
         digest.update(name.encode())
         digest.update(data)
     return digest.hexdigest()
@@ -63,24 +77,46 @@ def table_counts(connection):
     return result
 
 
-def apply_table(connection):
-    from mainApp.models import DesglosePagosCierre
+def apply_table(connection, upgrade='close-payments'):
+    from mainApp.models import (DesglosePagosCierre, CuentaLecturaPTM, LectorPTM,
+                                MovimientoLeidoPTM, AuditoriaLecturaPTM, LecturaDiariaPTM,
+                                BolsaEfectivoPTM, AjusteBolsaPTM, CorteBolsaPTM,
+                                AuditoriaBolsaPTM, ParticipacionBolsaPTM, OperacionPTM)
+    upgrades = {
+        'close-payments': [DesglosePagosCierre],
+        'ptm-reader': [CuentaLecturaPTM, LectorPTM, MovimientoLeidoPTM, AuditoriaLecturaPTM],
+        'ptm-pool': [LecturaDiariaPTM, BolsaEfectivoPTM, AjusteBolsaPTM, CorteBolsaPTM,
+                     AuditoriaBolsaPTM, ParticipacionBolsaPTM],
+    }
+    if upgrade not in upgrades:
+        raise RuntimeError('Actualización local no reconocida.')
     before = table_counts(connection)
-    table = DesglosePagosCierre._meta.db_table
     with connection.schema_editor() as editor:
-        if table not in before:
-            editor.create_model(DesglosePagosCierre)
-        with connection.cursor() as cursor:
-            columns = connection.introspection.get_table_description(cursor, table)
-        if {col.name for col in columns} != {field.column for field in DesglosePagosCierre._meta.fields}:
-            raise RuntimeError('La tabla del desglose no coincide; se conserva el bloqueo.')
+        for model in upgrades[upgrade]:
+            table = model._meta.db_table
+            if table not in before:
+                editor.create_model(model)
+            with connection.cursor() as cursor:
+                columns = connection.introspection.get_table_description(cursor, table)
+            if {col.name for col in columns} != {field.column for field in model._meta.fields}:
+                raise RuntimeError('La tabla local no coincide; se conserva el bloqueo.')
+        if upgrade == 'ptm-pool':
+            field = OperacionPTM._meta.get_field('bolsa')
+            with connection.cursor() as cursor:
+                columns = connection.introspection.get_table_description(cursor, OperacionPTM._meta.db_table)
+            if field.column not in {col.name for col in columns}:
+                editor.add_field(OperacionPTM, field)
+            with connection.cursor() as cursor:
+                columns = connection.introspection.get_table_description(cursor, OperacionPTM._meta.db_table)
+            if {col.name for col in columns} != {f.column for f in OperacionPTM._meta.fields}:
+                raise RuntimeError('La tabla PTM no coincide; no se cambia la firma local.')
         after = table_counts(connection)
         if any(after.get(name) != count for name, count in before.items()):
             raise RuntimeError('Cambió el conteo de filas existentes; no se actualizará la configuración.')
     return len(before), sum(before.values())
 
 
-def run(apply=False):
+def run(apply=False, upgrade='close-payments'):
     from local_pos.integrated_config import config_path, load_config, schema_signature, local_database
     from local_pos.runtime import installation_lock, private_dir, read_json, save_json
     from local_pos.wsl_postgres import WslPostgres
@@ -91,11 +127,13 @@ def run(apply=False):
         load_config(path, ROOT)
         print('La copia local ya tiene la firma actual. No se modificó nada.')
         return
-    expected = previous_signature(ROOT)
+    expected = previous_signature(ROOT, upgrade)
     config = load_config(path, ROOT, expected_schema=expected)
     if config.get('backend', {}).get('kind') != 'wsl':
         raise RuntimeError('Este actualizador solo admite la instalación WSL revisada.')
-    print('Cambio comprobado: únicamente la tabla DesglosePagosCierre.')
+    labels = {'ptm-reader': 'cuatro tablas del lector PTM.', 'ptm-pool': 'seis tablas de bolsa PTM y un enlace opcional, sin mover dinero.',
+              'close-payments': 'únicamente la tabla DesglosePagosCierre.'}
+    print('Cambio comprobado: ' + labels[upgrade])
     if not apply:
         print('Solo revisión. Usa --apply para respaldar y actualizar la copia local.')
         return
@@ -107,7 +145,7 @@ def run(apply=False):
         try:
             postgres.start()
             started = True
-            backup_id = 'close-payments-' + uuid4().hex
+            backup_id = upgrade + '-' + uuid4().hex
             private = private_dir(path.parent / 'backups' / backup_id)
             save_json(private / 'config-before.json', config)
             result = subprocess.run([*postgres.prefix, 'python3', '-c', BACKUP_CODE],
@@ -130,7 +168,7 @@ def run(apply=False):
             import django
             django.setup()
             from django.db import connection
-            tables, rows = apply_table(connection)
+            tables, rows = apply_table(connection, upgrade)
             if schema_signature(ROOT) != current:
                 raise RuntimeError('El código cambió durante la actualización; no se publicará la nueva firma.')
             config['schema_signature'] = current
@@ -150,8 +188,10 @@ def run(apply=False):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--apply', action='store_true')
+    parser.add_argument('--upgrade', choices=('close-payments', 'ptm-reader', 'ptm-pool'), default='close-payments')
     try:
-        run(parser.parse_args().apply)
+        args = parser.parse_args()
+        run(args.apply, args.upgrade)
     except Exception as error:
         print(str(error) if isinstance(error, RuntimeError) else
               f'Actualización no confirmada ({type(error).__name__}). No borres la copia ni sus respaldos.', file=sys.stderr)

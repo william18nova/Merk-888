@@ -246,6 +246,7 @@
     mDeuda.textContent = money2(t.deuda_total || 0);
     $("#mCashPaymentsTotal").textContent = money2(t.facturas_pagadas || 0);
     window.NovaClosePayments.renderSummary($("#mCashPaymentsDetails"), data.pagos_cierre);
+    window.NovaPTMBag.render($("#mPTMBag"), data.bolsa_ptm);
 
     mDiff.className = "val " + numClass(t.diferencia_total || 0);
     mDeuda.className = "val " + numClass(t.deuda_total || 0);
@@ -282,6 +283,7 @@
       mBodyMedios.innerHTML = "";
       $("#mCashPaymentsTotal").textContent = "—";
       $("#mCashPaymentsDetails").replaceChildren();
+      $("#mPTMBag").replaceChildren();
       btnCalcExpected.style.display = "none";
       openModal();
     }

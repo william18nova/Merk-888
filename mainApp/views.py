@@ -33,6 +33,7 @@ from django.contrib import messages
 from zoneinfo import ZoneInfo
 from django.core.exceptions import FieldDoesNotExist, ValidationError as DjangoValidationError
 from .services.ptm import resumen_ptm, resumen_ptm_json, validar_conteo_ptm
+from .services import ptm_cash_pool
 from .services.pos_request_receipts import protect_sale, protect_business
 from django.core import signing
 from django.core.signing import BadSignature, SignatureExpired
@@ -11733,6 +11734,7 @@ def _turno_frontend_payload(turno: TurnoCaja, user=None) -> dict:
             return turn_payload(turno, user)
     payload = {
         "success": True,
+        "bolsa_ptm": ptm_cash_pool.payload(turno),
         "modo": "AUTO_RECUPERADO",
         "turno_id": turno.pk,
         "estado": turno.estado,
@@ -11813,7 +11815,7 @@ def _expected_por_metodo(turno: TurnoCaja) -> tuple[dict[str, Decimal], Decimal,
 
     # PTM mueve efectivo de terceros, pero no crea ventas ni pagos de mercancía.
     expected[CASH_PAYMENT_CODE] = (
-        expected.get(CASH_PAYMENT_CODE, Decimal("0.00")) + resumen_ptm(turno)["neto"]
+        expected.get(CASH_PAYMENT_CODE, Decimal("0.00")) + resumen_ptm(turno)["neto_caja"]
     )
 
     # Los activos aparecen aunque no tengan movimientos. Los inactivos solo
@@ -11880,6 +11882,7 @@ class TurnoCajaPageView(LoginRequiredMixin, TemplateView):
             _turno_frontend_payload(turno_activo, self.request.user)
             if turno_activo else None
         )
+        ctx["bolsa_ptm"] = (ctx["turno_activo_inicial"] or {}).get("bolsa_ptm", {})
         return ctx
 
 
@@ -11900,6 +11903,11 @@ class TurnoCajaCierrePageView(TurnoCajaPageView):
     def get(self, request, *args, **kwargs):
         if self.get_turno_activo().estado != "CIERRE":
             return redirect("turno_caja")
+        from local_pos.request_context import offline_request
+        if not offline_request():
+            data = ptm_cash_pool.payload(self.get_turno_activo())
+            if data.get("participa") and not data.get("entregada"):
+                return redirect("bolsa_ptm_turno", turno_id=self.get_turno_activo().pk)
         response = super().get(request, *args, **kwargs)
         response["Cache-Control"] = "no-store, private"
         return response
@@ -12037,6 +12045,7 @@ class TurnoCajaIniciarApi(LoginRequiredMixin, View):
             "turno_id": turno.id,
             "estado": turno.estado,
             "inicio": _iso_co(timezone.localtime(turno.inicio, CO_TZ)),
+            "bolsa_ptm": ptm_cash_pool.payload(turno),
             "base": float(turno.saldo_apertura_efectivo),
             "puntopago": {"id": pp.pk, "nombre": getattr(pp, "nombre", str(pp.pk))},
             "cajero": {"id": cajero.pk, "nombreusuario": getattr(cajero, "nombreusuario", str(cajero.pk))},
@@ -12079,6 +12088,10 @@ class TurnoCajaIniciarCierreApi(LoginRequiredMixin, View):
 
         reset_contados = False
         if turno.estado == "ABIERTO":
+            try:
+                ptm_cash_pool.assert_received(turno)
+            except DjangoValidationError as exc:
+                return JsonResponse({"success": False, "error": " ".join(exc.messages)}, status=409)
             turno.cierre_iniciado = _now_co()
             turno.estado = "CIERRE"
             turno.save(update_fields=["cierre_iniciado", "estado"])
@@ -12110,6 +12123,7 @@ class TurnoCajaIniciarCierreApi(LoginRequiredMixin, View):
             "turno_id": turno.id,
             "estado": turno.estado,
             "cierre_iniciado": _iso_co(timezone.localtime(turno.cierre_iniciado, CO_TZ)),
+            "bolsa_ptm": ptm_cash_pool.payload(turno),
             "base": float(turno.saldo_apertura_efectivo),
             "esperado_total": float(esperado_total),
             "esperado_efectivo": float(esperado_efectivo),
@@ -12163,6 +12177,11 @@ class TurnoCajaCerrarApi(LoginRequiredMixin, View):
             )
 
         from .services import close_payments
+        try:
+            ptm_cash_pool.assert_delivered(turno)
+        except DjangoValidationError as exc:
+            return JsonResponse({"success": False, "error": " ".join(exc.messages),
+                "bolsa_ptm": ptm_cash_pool.payload(turno)}, status=409)
         try:
             facturas_pagadas, pagos_detalle = close_payments.validate(
                 request.POST.get("facturas_pagadas", "0"), request.POST.get("pagos_detalle"),
@@ -12371,6 +12390,7 @@ class TurnoCajaCerrarApi(LoginRequiredMixin, View):
 
         return JsonResponse({
             "success": True,
+            "bolsa_ptm": ptm_cash_pool.payload(turno),
             "turno_id": turno.id,
             "estado": turno.estado,
             "ventas_total": float(turno.ventas_total),
@@ -12457,6 +12477,7 @@ class TurnoCajaRetiroView(LoginRequiredMixin, View):
 
         retiro_data = {
             "ptm": resumen_ptm_json(turno),
+            "bolsa_ptm": ptm_cash_pool.payload(turno),
             "turno_id": turno.id,
             "puntopago": getattr(turno.puntopago, "nombre", str(turno.puntopago_id)),
             "cajero": _turno_label_usuario(turno.cajero),
@@ -12476,6 +12497,7 @@ class TurnoCajaRetiroView(LoginRequiredMixin, View):
         return render(request, self.template_name, {
             "turno": turno,
             "retiro_data": retiro_data,
+            "bolsa_ptm": retiro_data["bolsa_ptm"],
         })
 
 
@@ -12565,7 +12587,7 @@ def _calcular_esperados_por_metodo(pp_id, start_dt, end_dt, turno=None):
             _sum_reintegros_por_metodo(turno),
         )
         esperado_por[CASH_PAYMENT_CODE] = (
-            esperado_por.get(CASH_PAYMENT_CODE, Decimal("0.00")) + resumen_ptm(turno)["neto"]
+            esperado_por.get(CASH_PAYMENT_CODE, Decimal("0.00")) + resumen_ptm(turno)["neto_caja"]
         )
 
     esperado_normalizado = {}
@@ -12820,6 +12842,13 @@ class TurnoCajaIniciarCierreAPI(View):
     @transaction.atomic
     def post(self, request: HttpRequest, turno_id: int):
         turno = get_object_or_404(TurnoCaja.objects.select_for_update(), pk=turno_id)
+        if not _can_operate_turno(request.user, turno):
+            return JsonResponse({"success": False, "error": "No puedes operar un turno de otro cajero."}, status=403)
+        if turno.estado == "ABIERTO":
+            try:
+                ptm_cash_pool.assert_received(turno)
+            except DjangoValidationError as exc:
+                return JsonResponse({"success": False, "error": " ".join(exc.messages)}, status=409)
 
         from .services.hybrid import assert_turn_released
         try:
@@ -12855,6 +12884,7 @@ class TurnoCajaIniciarCierreAPI(View):
 
         return JsonResponse({
             "success": True,
+            "bolsa_ptm": ptm_cash_pool.payload(turno),
             "turno": {
                 "id": turno.id,
                 "estado": turno.estado,
@@ -12936,6 +12966,13 @@ class TurnoCajaCerrarAPI(View):
     @transaction.atomic
     def post(self, request: HttpRequest, turno_id: int):
         turno = get_object_or_404(TurnoCaja.objects.select_for_update(), pk=turno_id)
+
+        if not _can_operate_turno(request.user, turno):
+            return JsonResponse({"success": False, "error": "No puedes cerrar otro turno."}, status=403)
+        try:
+            ptm_cash_pool.assert_delivered(turno)
+        except DjangoValidationError as exc:
+            return JsonResponse({"success": False, "error": " ".join(exc.messages)}, status=409)
 
         from .services.hybrid import assert_turn_released
         try:
@@ -13076,6 +13113,7 @@ class TurnoCajaCerrarAPI(View):
             "esperado_total": float(turno.esperado_total or 0),
             "diferencia_total": float(turno.diferencia_total or 0),
             "deuda_total": float(turno.deuda_total or 0),  # negativo o 0
+            "bolsa_ptm": ptm_cash_pool.payload(turno),
             "hide_bd_cols": _hide_bd_cols_for_user(request.user),
         })
 
@@ -13197,6 +13235,7 @@ class TurnoCajaRecuperarOIniciarView(LoginRequiredMixin, View):
                     "success": True,
                     "msg": "Turno retomado.",
                     "modo": "RETOMADO",
+                    "bolsa_ptm": ptm_cash_pool.payload(turno),
                     "turno_id": turno.pk,
                     "estado": turno.estado,
                     "inicio": _iso_dt(turno.inicio),
@@ -13222,6 +13261,7 @@ class TurnoCajaRecuperarOIniciarView(LoginRequiredMixin, View):
                 "success": True,
                 "msg": "Turno retomado.",
                 "modo": "RETOMADO",
+                "bolsa_ptm": ptm_cash_pool.payload(turno),
                 "turno_id": turno.pk,
                 "estado": turno.estado,
                 "inicio": _iso_dt(turno.inicio),
@@ -13243,6 +13283,7 @@ class TurnoCajaRecuperarOIniciarView(LoginRequiredMixin, View):
             "success": True,
             "msg": "Turno creado.",
             "modo": "CREADO",
+            "bolsa_ptm": ptm_cash_pool.payload(turno),
             "turno_id": turno.pk,
             "estado": turno.estado,
             "inicio": _iso_dt(turno.inicio),
@@ -13371,6 +13412,7 @@ class TurnoCajaDashboardDetailAPI(View):
 
         out = {
             "success": True,
+            "bolsa_ptm": ptm_cash_pool.payload(turno, admin=_can_edit_turnos(request.user)),
             "pagos_cierre": payment_details_payload(turno),
             "turno": {
                 "id": turno.id,
@@ -13446,6 +13488,7 @@ class TurnoCajaAdminDetailAPI(LoginRequiredMixin, View):
 
         return JsonResponse({
             "success": True,
+            "bolsa_ptm": ptm_cash_pool.payload(turno, admin=True),
             "pagos_cierre": payment_details_payload(turno),
             "turno": {
                 "ptm": resumen_ptm_json(turno),
@@ -13537,7 +13580,7 @@ class TurnoCajaAdminUpdateAPI(LoginRequiredMixin, View):
         except DjangoValidationError as exc:
             return JsonResponse({"success": False, "error": " ".join(exc.messages)}, status=409)
 
-        if turno.operaciones_ptm.exists():
+        if turno.operaciones_ptm.exists() or hasattr(turno, "participacion_bolsa_ptm"):
             return JsonResponse({
                 "success": False,
                 "error": "Este turno tiene operaciones PTM auditables: no se permite alterar sus fechas, estado o valores manualmente. Usa el cierre normal.",

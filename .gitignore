@@ -1,4 +1,5 @@
 .claude/
+/.zip
 
 # Python caches
 __pycache__/
@@ -54,6 +55,8 @@ debug_*.png
 .DS_Store
 Thumbs.db
 build/hybrid/
+.novapos-ptm-lab
+build/ptm_lab/
 build/NovaPOS.spec
 dist/hybrid/
 hybrid_client/assets/original_sale/

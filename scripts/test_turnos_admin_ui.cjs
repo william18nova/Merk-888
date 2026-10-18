@@ -46,6 +46,7 @@ async function fixture({width=1440,initial='1674',canDelete=true,data=sample()}=
       if(!file.startsWith(path.join(root,'mainApp','static')+path.sep)||!fs.existsSync(file))return route.fulfill({status:404,body:''});
       return route.fulfill({path:file});
     }
+    if(url.pathname==='/api/estado-conexion/')return route.fulfill({json:{mode:'online'}});
     requests.push({url:url.pathname,method:route.request().method(),body:route.request().postDataJSON()});
     const match=url.pathname.match(/^\/api\/admin\/turnos_caja\/(\d+)\/(update\/|delete\/)?$/);
     if(!match)return route.fulfill({status:404,body:'Unexpected test route'});

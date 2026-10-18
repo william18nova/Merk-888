@@ -50,7 +50,10 @@ def run(args):
             ("NovaSoft.hybrid_test_postgres_settings", ["mainApp.test_hybrid_backup", "mainApp.test_hybrid_activation_checks", "mainApp.test_pos_request_receipts", "mainApp.test_pos_receipt_migration",
                 "mainApp.test_cash_receipt", "mainApp.test_hybrid", "mainApp.test_hybrid_postgres", "mainApp.test_nequi_selection", "mainApp.test_close_payments"]),
         ]
-        if args.production_only:
+        if args.ptm_only:
+            suites = [("NovaSoft.hybrid_test_postgres_settings", ["mainApp.test_ptm_cash_pool", "mainApp.test_ptm", "mainApp.test_ptm_reader", "mainApp.test_close_payments"]),
+                ("NovaSoft.integrated_test_postgres_settings", ["local_pos.test_integrated_business.IntegratedBusinessTests"])]
+        elif args.production_only:
             suites = [("NovaSoft.hybrid_test_postgres_settings", ["mainApp.test_production_compatibility", "mainApp.test_pos_receipt_migration", "mainApp.test_pos_request_receipts", "mainApp.test_close_payments"])]
         elif args.business_only:
             suites = [("NovaSoft.integrated_test_postgres_settings", ["local_pos.test_integrated_business.IntegratedBusinessTests", "local_pos.test_integrated_navigation.IntegratedNavigationTests"])]
@@ -93,5 +96,6 @@ if __name__ == "__main__":
     parser.add_argument("--activation-only", action="store_true")
     parser.add_argument("--business-only", action="store_true")
     parser.add_argument("--production-only", action="store_true")
+    parser.add_argument("--ptm-only", action="store_true", help="Cash-pool, reader, closing and offline regressions on a new disposable cluster")
     parser.add_argument("--linux-python", help="Existing WSL Python environment for the production-only suite")
     run(parser.parse_args())

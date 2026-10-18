@@ -1086,6 +1086,14 @@
     if (infoCierre) infoCierre.textContent = cierreRaw ? fmtDateTime(cierreRaw) : "—";
 
     const estado = data.estado || data.turno?.estado || "ABIERTO";
+    const bag = data.bolsa_ptm;
+    const bagPanel = document.getElementById("tcPTMBag");
+    window.NovaPTMBag?.render(bagPanel, bag);
+    if (bag?.activa && String(cajObj?.id) === bagPanel?.dataset.userId &&
+        ((estado === "ABIERTO" && !bag.participa) || (estado === "CIERRE" && bag.participa && !bag.entregada))) {
+      window.location.assign(bag.conteo_url);
+      return;
+    }
 
     if (estado === "ABIERTO") {
       setBadge(estadoBadge, "ABIERTO");
@@ -1302,6 +1310,9 @@
           `<div class="sum-row"><span>Deuda del turno</span><b>${money2(deuda)}</b></div>`,
           () => window.location.assign(data.retiro_url)
         );
+        const bagSummary = document.createElement("div");
+        document.getElementById("tc-summary-body")?.append(bagSummary);
+        window.NovaPTMBag?.render(bagSummary, data.bolsa_ptm);
         return;
       }
 

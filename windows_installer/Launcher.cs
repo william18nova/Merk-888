@@ -12,7 +12,7 @@ using System.Threading.Tasks;
 using System.Web.Script.Serialization;
 using System.Windows.Forms;
 
-// No elevated privileges, PowerShell bypasses, services, firewall or Defender changes.
+// Only explicit WSL installation may request UAC. Never change security policies.
 class NovaWindow : Form {
     [DllImport("kernel32.dll")] static extern void GetNativeSystemInfo(out SYSTEM_INFO info);
     [StructLayout(LayoutKind.Sequential)] struct SYSTEM_INFO {
@@ -30,8 +30,12 @@ class NovaWindow : Form {
     readonly Button activate = new Button { Text="2. Vincular equipo", AutoSize=true, Enabled=false };
     readonly Button open = new Button { Text="Abrir NovaPOS", AutoSize=true };
     readonly Button stop = new Button { Text="Detener", AutoSize=true, Enabled=false };
+    readonly Button engine = new Button { Text="Comprobar motor local", AutoSize=true };
+    readonly Button wsl = new Button { Text="Preparar respaldo WSL2", AutoSize=true, Enabled=false };
+    readonly Button installWsl = new Button { Text="Instalar WSL (administrador)", AutoSize=true, Visible=false };
     Process child;
     bool busy, closeWhenStopped;
+    bool needsWsl, needsWslInstall;
     Dictionary<string, object> confirmed;
     Dictionary<string, object> checkedValues;
 
@@ -65,7 +69,7 @@ class NovaWindow : Form {
         layout.Controls.Add(new Label {Text="NovaPOS · Tu aplicación online y offline", AutoSize=true, Font=new Font("Segoe UI",18,FontStyle.Bold), Margin=new Padding(0,0,0,16)});
         Controls.Add(layout);
 #if PACKAGE
-        var info = new Label { AutoSize=true, MaximumSize=new Size(720,0), Text="Instala la aplicación completa, Python y un PostgreSQL privado. No necesitas instalarlos por separado.\r\n\r\nDespués debes vincular este computador con su propio usuario, caja y turno. No se copian credenciales ni ventas de otro equipo.\r\n\r\nNo se reemplazan instalaciones ni bases existentes. Si Windows bloquea un componente, conserva sus protecciones y solicita un paquete firmado compatible.\r\n\r\nDestino: " + InstallRoot() };
+        var info = new Label { AutoSize=true, MaximumSize=new Size(720,0), Text="Instala la aplicación completa, Python y un PostgreSQL privado. Primero prueba el motor nativo; si Windows lo bloquea con el error 4551, ofrece preparar WSL2 con tu autorización.\r\n\r\nWSL2 requiere virtualización, descargas adicionales y puede pedir permisos de administrador y reiniciar. No se reinicia automáticamente.\r\n\r\nDespués debes vincular este computador con su propio usuario, caja y turno. No se copian credenciales ni ventas de otro equipo. No se reemplazan bases existentes ni se desactivan protecciones.\r\n\r\nDestino: " + InstallRoot() };
         layout.Controls.Add(info);
         var install = new Button { Text="Instalar NovaPOS", AutoSize=true, Margin=new Padding(0,20,0,20) };
         layout.Controls.Add(install); layout.Controls.Add(status);
@@ -95,9 +99,15 @@ class NovaWindow : Form {
         AddField(form,"Caja (nombre)","point","");
         foreach(var field in fields.Values) field.TextChanged += delegate {confirmed=null; checkedValues=null; activate.Enabled=false;};
         layout.Controls.Add(form);
-        actions.Controls.AddRange(new Control[]{check,activate,open,stop}); layout.Controls.Add(actions); layout.Controls.Add(status);
+        actions.Controls.AddRange(new Control[]{engine,wsl,installWsl,check,activate,open,stop}); layout.Controls.Add(actions); layout.Controls.Add(status);
         Log("Solo llena los datos para la PRIMERA vinculación. Si ya está activado, pulsa Abrir NovaPOS.\r\nEl usuario debe tener un turno abierto online en esa caja. Las contraseñas se guardan cifradas para este usuario Windows.\r\nSe necesita internet para vincular. Después se usa la misma interfaz y el cambio offline es automático para las operaciones admitidas.");
         check.Click += delegate { StartWorker("check",Values()); };
+        engine.Click += delegate { StartWorker("engine",new Dictionary<string,object>()); };
+        wsl.Click += delegate {
+            if(MessageBox.Show("Windows bloqueó el PostgreSQL nativo. ¿Preparar el respaldo WSL2?\r\n\r\nSe creará un Ubuntu exclusivo de NovaPOS, sin tocar tus otras distribuciones ni bases. Necesita internet, al menos 5 GB libres y virtualización. No se desactivará ninguna protección. Si falta WSL, habrá otra confirmación para instalarlo.","Autorizar respaldo WSL2",MessageBoxButtons.YesNo,MessageBoxIcon.Question)!=DialogResult.Yes)return;
+            StartWorker("wsl_prepare",new Dictionary<string,object>{{"wsl_consent",true}});
+        };
+        installWsl.Click += async delegate { await InstallWsl(); };
         activate.Click += delegate {
             if(confirmed==null || checkedValues==null) return;
             var message="Vincular exclusivamente a:\r\n" + confirmed["user_name"] + " · " + confirmed["point_name"] + "\r\nTurno " + confirmed["turn_id"] + "\r\n\r\nSe descargará una copia autorizada; no se modificarán datos de la nube. ¿Continuar?";
@@ -120,10 +130,29 @@ class NovaWindow : Form {
     Dictionary<string,object> Values() {var result=new Dictionary<string,object>(); foreach(var pair in fields)result[pair.Key]=pair.Value.Text; return result;}
     void Log(string text) { if(IsDisposed) return; if(InvokeRequired) {BeginInvoke(new Action<string>(Log),text); return;} status.AppendText(text+Environment.NewLine+Environment.NewLine); }
     void OpenBrowser() {Process.Start(new ProcessStartInfo("http://127.0.0.1:8000/") {UseShellExecute=true});}
+    void SetAvailable(bool available) {
+        check.Enabled=available; open.Enabled=available; engine.Enabled=available;
+        wsl.Enabled=available && needsWsl; installWsl.Enabled=available && needsWslInstall;
+        installWsl.Visible=needsWslInstall; activate.Enabled=available && confirmed!=null;
+        foreach(var field in fields.Values)field.Enabled=available;
+    }
+    async Task InstallWsl() {
+        if(busy)return;
+        if(MessageBox.Show("¿Autorizar la instalación oficial de WSL? Windows puede pedir permisos de administrador y un reinicio.\r\n\r\nGuarda tu trabajo. NovaPOS no reiniciará el equipo, no cambiará el firewall ni desactivará protecciones. Después vuelve a abrir NovaPOS y pulsa Preparar respaldo WSL2.","Instalar WSL",MessageBoxButtons.YesNo,MessageBoxIcon.Question)!=DialogResult.Yes)return;
+        busy=true; SetAvailable(false);
+        try {
+            var start=new ProcessStartInfo(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System),"wsl.exe"),"--install --no-distribution") {UseShellExecute=true,Verb="runas",WindowStyle=ProcessWindowStyle.Hidden};
+            using(var process=Process.Start(start)) {
+                Log("Se solicitó instalar WSL a Windows. Acepta el permiso solo si deseas continuar. Puede tardar varios minutos…");
+                await Task.Run(()=>process.WaitForExit());
+                Log("El instalador de WSL terminó con código "+process.ExitCode+". Si Windows requiere reiniciar, hazlo antes de continuar. Después pulsa Preparar respaldo WSL2; se verificará el estado real.");
+            }
+        } catch {Log("No se completó la instalación de WSL o cancelaste el permiso. No se creó una base ni se modificaron protecciones. Revisa virtualización y requisitos de Windows.");}
+        finally {busy=false;SetAvailable(true);}
+    }
     void StartWorker(string action, Dictionary<string,object> values) {
         if(busy || (child!=null && !child.HasExited))return;
-        busy=true; check.Enabled=false; activate.Enabled=false; open.Enabled=false;
-        foreach(var field in fields.Values)field.Enabled=false;
+        busy=true; SetAvailable(false);
         var start=new ProcessStartInfo(Path.Combine(root,"python","python.exe"),"-B \""+Path.Combine(root,"app","windows_installer","worker.py")+"\" "+action) {
             UseShellExecute=false, CreateNoWindow=true, WindowStyle=ProcessWindowStyle.Hidden, WorkingDirectory=Path.Combine(root,"app"),
             RedirectStandardInput=true, RedirectStandardOutput=true, RedirectStandardError=true, StandardOutputEncoding=Encoding.UTF8, StandardErrorEncoding=Encoding.UTF8
@@ -140,23 +169,30 @@ class NovaWindow : Form {
                     BeginInvoke(new Action(delegate {
                         if(data.ContainsKey("confirmed")) {confirmed=(Dictionary<string,object>)data["confirmed"]; checkedValues=values; Log("Usuario: "+confirmed["user_name"]+" · Caja: "+confirmed["point_name"]+" · Turno: "+confirmed["turn_id"]);}
                         if(data.ContainsKey("ready"))OpenBrowser();
+                        if(data.ContainsKey("wsl_required")) {needsWsl=true;Log("Pulsa Preparar respaldo WSL2 para autorizarlo. Puedes cerrar y continuar después.");}
+                        if(data.ContainsKey("wsl_install_required")) {needsWsl=true;needsWslInstall=true;installWsl.Visible=true;}
+                        if(data.ContainsKey("engine_ready")) {needsWsl=false;needsWslInstall=false;installWsl.Visible=false;}
                     }));
                 } catch { /* Only the structured status protocol is shown, never SQL/tracebacks. */ }
             };
             child.ErrorDataReceived += delegate { /* Deliberately do not persist raw credential-bearing exceptions. */ };
             child.Exited += delegate {
-                BeginInvoke(new Action(delegate {
-                    busy=false; stop.Enabled=false; check.Enabled=true; open.Enabled=true;
-                    foreach(var field in fields.Values)field.Enabled=true;
-                    activate.Enabled=confirmed!=null;
-                    if(child.ExitCode!=0)Log("El proceso no terminó correctamente. Conserva los datos. No desactives Smart App Control ni Defender.");
-                    if(closeWhenStopped)Close();
-                }));
+                var finished=child;
+                Task.Run(delegate {
+                    // Drain final structured output before enabling follow-up
+                    // buttons; Exited can otherwise race OutputDataReceived.
+                    finished.WaitForExit();
+                    BeginInvoke(new Action(delegate {
+                        busy=false; stop.Enabled=false; SetAvailable(true);
+                        if(finished.ExitCode!=0)Log("El proceso no terminó correctamente. Conserva los datos. No desactives Smart App Control ni Defender.");
+                        if(closeWhenStopped)Close();
+                    }));
+                });
             };
             child.Start(); child.BeginOutputReadLine(); child.BeginErrorReadLine();
             if(values!=null) {child.StandardInput.WriteLine(json.Serialize(values));child.StandardInput.Close();}
             stop.Enabled=action=="serve";
-        } catch {busy=false;check.Enabled=true;open.Enabled=true; foreach(var field in fields.Values)field.Enabled=true; Log("Windows no pudo iniciar Python. Revisa el bloqueo o las dependencias; no desactives las protecciones.");}
+        } catch {child=null;busy=false;SetAvailable(true);Log("Windows no pudo iniciar Python. Revisa el bloqueo o las dependencias; no desactives las protecciones.");}
     }
     void StopWorker() {
         if(child==null || child.HasExited)return;

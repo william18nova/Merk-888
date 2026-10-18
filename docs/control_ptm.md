@@ -76,7 +76,11 @@ diariamente con una fuente independiente: reporte/exportación oficial de PTM,
 comparando **referencia, tipo, monto y estado**, además del número de operaciones.
 El registro manual no puede saber si ocurrió algo que nunca le informaron.
 
-Siguientes controles recomendados: importación del reporte oficial; comprobantes
+Existe ahora una implementación piloto de lector de consulta y conciliación,
+separada del dinero de caja. Ver [lector_ptm.md](lector_ptm.md) para alcance,
+instalación y limitaciones; no queda activada automáticamente al actualizar código.
+
+Siguientes controles recomendados: comprobantes
 adjuntos; correcciones con contramovimiento, motivo y aprobación de otro usuario;
 conciliación independiente del saldo PTM y comisiones; y alertas por diferencias.
 No se ha conectado una API externa ni se ejecutan retiros/transferencias desde aquí.

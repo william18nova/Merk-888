@@ -13,6 +13,21 @@ Además, pasaron **71 pruebas automatizadas** de empaquetado, seguridad, arranqu
 integrado y adaptador WSL (incluyen casos base heredados). El EXE pudo ejecutar
 su comprobación de plataforma en este Windows con salida 0.
 
+### Verificación final del candidato C
+
+- Se ejecutó la extracción real del EXE a una carpeta nueva de prueba: salida 0.
+  No se crearon accesos directos, credenciales ni bases durante esa comprobación.
+- Desde los archivos extraídos pasaron otra vez las importaciones, DPAPI,
+  integridad del paquete, `django check`, las 85 plantillas y los recursos offline.
+- El paquete incluye una advertencia específica para el error 4551 y conserva el
+  error original de `initdb` en el directorio privado de la instalación.
+- Artefacto: `build/windows-integrated-candidate-20261013-c/NovaPOS-Instalar-Windows-x64.exe`.
+- Tamaño: 92.655.616 bytes.
+- SHA-256: `e8e24a359b6956145c9f68f4cc62729907beb963ae5a36b3cecd77078fe0fa9d`.
+
+Esta verificación NO resuelve el bloqueo de PostgreSQL descrito a continuación,
+ni sustituye una prueba de instalación completa en Windows 10 y 11 limpios.
+
 ## Bloqueo encontrado en este computador
 
 La prueba de una base NUEVA, aislada en `build/windows-integrated-smoke-b2`, puerto

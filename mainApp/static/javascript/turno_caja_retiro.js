@@ -360,8 +360,8 @@
     out.push(line(`Inicio: ${DATA.inicio || ""}`));
     out.push(line(`Fin: ${DATA.fin || ""}`));
     out.push("-".repeat(48));
-    out.push(lr(DATA.ptm?.cantidad ? "Neto reconocido (con PTM):" : "Ventas totales:", plainMoney(DATA.ventas_total_vendido || DATA.ventas_total || 0)));
-    out.push(line(DATA.ptm?.cantidad ? "Reconocido por medio:" : "Vendido por medio:"));
+    out.push(lr(Number(DATA.ptm?.neto_caja) ? "Neto reconocido (con PTM):" : "Ventas totales:", plainMoney(DATA.ventas_total_vendido || DATA.ventas_total || 0)));
+    out.push(line(Number(DATA.ptm?.neto_caja) ? "Reconocido por medio:" : "Vendido por medio:"));
     out.push(...medioLines());
     out.push(lr("Facturas pagadas:", plainMoney(DATA.facturas_pagadas || 0)));
     if (DATA.ptm?.cantidad) {
@@ -369,7 +369,17 @@
       out.push(lr("PTM declaradas:", String(DATA.ptm.declarado ?? "-")));
       out.push(lr("PTM entradas:", plainMoney(DATA.ptm.recargas)));
       out.push(lr("PTM retiros:", plainMoney(DATA.ptm.retiros)));
-      out.push(lr("PTM neto efectivo:", plainMoney(DATA.ptm.neto)));
+      out.push(lr("PTM aplicado a esta caja:", plainMoney(DATA.ptm.neto_caja ?? DATA.ptm.neto)));
+    }
+    if (DATA.bolsa_ptm?.activa) {
+      out.push(line("BOLSA PTM SEPARADA DE CAJA"));
+      for (const item of DATA.bolsa_ptm.incidencias || []) {
+        out.push(lr(`Faltante PTM #${item.id}:`, plainMoney(item.faltante)));
+        out.push(line(`Estado: ${item.estado}`));
+        for (const p of item.participantes || []) out.push(line(`Turno #${p.turno}: ${p.nombre}`));
+      }
+      out.push(line("Incidencia compartida, no duplicada."));
+      out.push(line("No incluida en deuda normal de caja."));
     }
     out.push(lr("Efectivo fisico:", plainMoney(DATA.efectivo_real || 0)));
     out.push("-".repeat(48));

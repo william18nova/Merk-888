@@ -72,6 +72,7 @@ class PermissionCatalogAuditTests(SimpleTestCase):
         from .permissions import PERMISSION_BY_CODE
 
         expected_codes = {
+            "bolsa_ptm_configurar",
             "ventas_no_realizadas",
             "descuentos_especiales_generar",
             "configuracion_funcionalidades",
