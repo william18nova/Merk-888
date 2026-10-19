@@ -38,6 +38,9 @@ El programa no entrega credenciales de producción ni configura impresoras o bot
 - Las 61 pruebas PTM aprobadas también con PostgreSQL nativo desechable.
 - 45 pruebas de ventas offline, operaciones de caja y sincronización aprobadas
   con dos bases PostgreSQL locales ficticias.
+  La limpieza posterior agotó el tiempo al borrar la base de prueba: el proceso
+  completo salió con error aunque las 45 pruebas terminaron OK. El servidor
+  ficticio se detuvo correctamente y sus archivos se conservaron para diagnóstico.
 - EXE extraído correctamente a una carpeta nueva.
 - 9.666 archivos del paquete verificados contra su manifiesto.
 - Dependencias, DPAPI, comprobaciones Django y 89 plantillas/recursos locales correctos.
