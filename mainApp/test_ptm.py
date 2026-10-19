@@ -16,12 +16,17 @@ from django.utils import timezone
 
 from .models import (Categoria, ConteoCierrePTM, DetalleVenta, Inventario, OperacionPTM,
                      Producto, PuntosPago, Sucursal, TurnoCaja, Usuario, Venta)
-from .ptm_views import OperacionesPTMView
+from .ptm_views import OperacionesPTMView, OperacionPTMForm
 from .services.ptm import registrar_operacion_ptm, resumen_ptm
 from .views import GenerarVentaView, TurnoCajaCerrarApi, TurnoCajaAdminUpdateAPI, _expected_por_metodo
 
 
 class PTMTests(TestCase):
+    def test_turn_option_identifies_normal_cash_source(self):
+        html = str(OperacionPTMForm(actor=self.actor)["turno"])
+        self.assertIn('data-ptm-source="caja"', html)
+        self.assertIn('data-ptm-name="Caja PTM"', html)
+
     def setUp(self):
         self.actor = Usuario.objects.create_user("Cajero PTM")
         self.other = Usuario.objects.create_user("Otro cajero PTM")

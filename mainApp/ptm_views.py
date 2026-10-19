@@ -12,9 +12,21 @@ from django.http import HttpResponseForbidden
 from django.shortcuts import redirect, render
 from django.views import View
 
-from .models import OperacionPTM, TurnoCaja
+from .models import BolsaEfectivoPTM, OperacionPTM, TurnoCaja
 from .permissions import user_can_access_url_name
 from .services.ptm import registrar_operacion_ptm, resumen_ptm
+
+
+class PTMTurnoSelect(forms.Select):
+    def create_option(self, name, value, label, selected, index, subindex=None, attrs=None):
+        option = super().create_option(name, value, label, selected, index, subindex, attrs)
+        if hasattr(value, "instance"):
+            turn = value.instance
+            branch_id = turn.puntopago.sucursalid_id
+            branch = self.bag_branches.get(branch_id)
+            option["attrs"]["data-ptm-source"] = "bolsa" if branch is not None else "caja"
+            option["attrs"]["data-ptm-name"] = branch if branch is not None else turn.puntopago.nombre
+        return option
 
 
 class OperacionPTMForm(forms.Form):
@@ -34,6 +46,12 @@ class OperacionPTMForm(forms.Form):
         self.fields["turno"].label_from_instance = lambda t: f"#{t.pk} · {t.puntopago.nombre} · {t.estado}"
         if not self.is_bound:
             self.fields["turno"].queryset = self.fields["turno"].queryset.filter(estado="ABIERTO")
+        widget = PTMTurnoSelect()
+        widget.bag_branches = dict(BolsaEfectivoPTM.objects.filter(
+            sucursal_id__in=self.fields["turno"].queryset.values_list("puntopago__sucursalid_id", flat=True)
+        ).values_list("sucursal_id", "sucursal__nombre"))
+        widget.choices = self.fields["turno"].choices
+        self.fields["turno"].widget = widget
         for field in ("monto", "referencia"):
             self.fields[field].widget.attrs.update({"autocomplete": "off"})
 

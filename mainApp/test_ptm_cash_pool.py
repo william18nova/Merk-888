@@ -26,6 +26,13 @@ from .ptm_cash_pool_views import BolsaPTMTurnoView, BolsaPTMAdminView
 
 
 class PTMCashPoolTests(TestCase):
+    def test_turn_option_identifies_separate_pool_without_exposing_balance(self):
+        from .ptm_views import OperacionPTMForm
+        html = str(OperacionPTMForm(actor=self.a.cajero)["turno"])
+        self.assertIn('data-ptm-source="bolsa"', html)
+        self.assertIn('data-ptm-name="Yerbabuena ficticia"', html)
+        self.assertNotIn('100000', html)
+
     def setUp(self):
         self.admin = Usuario.objects.create_user("Administrador PTM", is_superuser=True,
             rolid=Rol.objects.create(nombre="Web Master"))

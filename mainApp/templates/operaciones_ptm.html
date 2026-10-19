@@ -29,8 +29,9 @@
         </div>
       {% endfor %}
       </div>
-      <p id="ptm-direction" aria-live="polite"></p>
-      <p class="ptm-muted">No agregues estos valores a “Facturas pagadas”: ya ajustan el cierre. No hay descuentos ni movimiento de inventario.</p>
+      <p id="ptm-direction" aria-live="polite">Selecciona tu turno para consultar de dónde sale o a dónde entra el efectivo.</p>
+      <p id="ptm-source-help" class="ptm-muted" aria-live="polite"></p>
+      <p class="ptm-muted">No agregues estos valores a “Facturas pagadas”. No hay descuentos ni movimiento de inventario.</p>
       <button class="ptm-submit" type="submit" {% if not has_open_turn %}disabled{% endif %}>Guardar operación confirmada</button>
     </form>
   </section>
@@ -64,4 +65,4 @@
   </section>
 </div>
 {% endblock %}
-{% block scripts %}<script defer src="{% static 'javascript/operaciones_ptm.js' %}?v=1"></script>{% endblock %}
+{% block scripts %}<script defer src="{% static 'javascript/operaciones_ptm.js' %}?v=2"></script>{% endblock %}
