@@ -76,8 +76,10 @@
   <dialog id="rotation-dialog" class="schedule-dialog sch-rotation-dialog" aria-labelledby="rotation-title">
     <form id="rotation-form">
       <div class="sch-dialog-heading"><div><p class="schedule-eyebrow">PLANTILLA REPETITIVA</p><h2 id="rotation-title">Rotación de cuatro semanas</h2></div><button class="sch-btn sch-btn-icon" id="rotation-close" type="button" aria-label="Cerrar rotación">×</button></div>
-      <p class="schedule-subtitle">1 → 2 → 3 → 4 → 1. Mañana 07:00–14:00 · Tarde 14:00–21:00 · Claudia 20:00–01:00 · Duvan viernes 15:00–00:00. Se incluyen los descansos indicados; “x2” no añade descansos.</p>
+      <p class="schedule-subtitle">Desde el 26 de octubre de 2026: 1 → 2 → 3 → 4 → 1. Mañana 07:00–14:00 · Tarde 14:00–21:00 · Fabián martes a sábado 07:00–12:00 y 15:00–19:00 · Claudia 20:00–01:00 · Duvan viernes 15:00–00:00. Descanso significa que no comienza una jornada ese día; la salida de la noche anterior se conserva.</p>
       <div class="sch-form-grid"><label>Nombre<input id="rotation-name" maxlength="120" required></label><label>Lunes inicial de la semana 1<input type="date" id="rotation-start" required min="2000-01-01" max="2100-12-31"></label><label>Sucursal<select id="rotation-branch" required></select></label></div>
+      <label>Rotación anterior que reemplaza<select id="rotation-replace"><option value="">Crear sin reemplazar otra rotación</option></select></label>
+      <p class="sch-form-help">Al reemplazar, la anterior deja de generar jornadas desde el lunes seleccionado. Sus fechas anteriores y su historial no se borran. Las jornadas manuales no se modifican; cualquier cruce bloquea el cambio completo.</p>
       <h3>Relacionar con empleados reales</h3><p class="sch-form-help">Revisa las coincidencias sugeridas. Cada persona debe corresponder a una ficha distinta; no se crean empleados nuevos.</p>
       <div id="rotation-mapping" class="sch-form-grid"></div>
       <details class="sch-template-details"><summary>Revisar las cuatro tablas completas</summary><div id="rotation-preview"></div></details>
@@ -91,4 +93,4 @@
 </section>
 {{ calendar_config|json_script:"schedule-config" }}
 {% endblock %}
-{% block scripts %}<script defer src="{% static 'javascript/calendario_empleados.js' %}?v=3"></script>{% endblock %}
+{% block scripts %}<script defer src="{% static 'javascript/calendario_empleados.js' %}?v=4"></script>{% endblock %}

@@ -966,6 +966,90 @@ body:has(.page-grid):not(.modal-open):not(.nv-menu-open) .table-wrap{
     grid-template-columns:1fr;
   }
 }
+/* Accesos PTM: independientes del carrito y sin dependencias de iconos externas. */
+.venta-ptm{
+  margin:0 0 20px;
+  padding:14px;
+  border:1px solid rgba(159,196,242,.22);
+  border-radius:16px;
+  background:rgba(10,30,61,.30);
+}
+.venta-ptm-heading{
+  display:flex;
+  align-items:center;
+  gap:9px;
+  margin-bottom:12px;
+  color:#e4efff;
+  font-size:13px;
+  font-weight:600;
+}
+.venta-ptm-badge{
+  padding:4px 8px;
+  border:1px solid rgba(177,210,255,.28);
+  border-radius:7px;
+  background:rgba(153,196,255,.10);
+  color:#fff;
+  font-size:11px;
+  font-weight:800;
+  letter-spacing:.08em;
+}
+.venta-ptm-actions{
+  display:grid;
+  grid-template-columns:repeat(auto-fit,minmax(min(100%,190px),1fr));
+  gap:10px;
+}
+.venta-ptm-action{
+  --ptm-accent:#ffd397;
+  --ptm-tint:rgba(255,188,100,.10);
+  --ptm-border:rgba(255,196,118,.34);
+  display:flex;
+  align-items:center;
+  gap:10px;
+  min-height:76px;
+  padding:13px 12px;
+  border:1px solid var(--ptm-border);
+  border-radius:12px;
+  background:var(--ptm-tint);
+  color:#fff;
+  text-decoration:none;
+  transition:transform .18s ease,box-shadow .18s ease,border-color .18s ease;
+}
+.venta-ptm-action--recarga{
+  --ptm-accent:#9bf0d6;
+  --ptm-tint:rgba(64,210,165,.10);
+  --ptm-border:rgba(109,228,190,.34);
+}
+.venta-ptm-action:visited{ color:#fff; }
+.venta-ptm-action:hover{
+  color:#fff;
+  text-decoration:none;
+  border-color:var(--ptm-accent);
+  transform:translateY(-2px);
+  box-shadow:0 6px 16px rgba(0,0,0,.16);
+}
+.venta-ptm-action:active{ transform:translateY(0); }
+.venta-ptm-action:focus-visible{ outline:3px solid var(--ptm-accent); outline-offset:3px; }
+.venta-ptm-icon{
+  display:grid;
+  place-items:center;
+  flex:0 0 36px;
+  width:36px;
+  height:36px;
+  border-radius:10px;
+  color:var(--ptm-accent);
+  background:var(--ptm-tint);
+}
+.venta-ptm-icon svg{ width:23px; height:23px; }
+.venta-ptm-copy{ flex:1; display:grid; gap:4px; text-align:left; }
+.venta-ptm-copy strong{ font-size:14px; font-weight:700; line-height:1.25; }
+.venta-ptm-copy small{ color:#d5e4f7; font-size:11px; line-height:1.4; }
+.venta-ptm-open{ flex:0 0 16px; width:16px; height:16px; color:var(--ptm-accent); }
+#venta-ptm-help{ margin:10px 0 0; color:#bed3ed; font-size:11px; line-height:1.5; }
+@media (prefers-reduced-motion:reduce){
+  .venta-ptm-action{ transition:none; }
+  .venta-ptm-action:hover{ transform:none; }
+}
+@media print{ .venta-ptm{ display:none; } }
 .venta-mode-notice{
   margin:0 0 12px;
   padding:11px 13px;

@@ -81,7 +81,7 @@
       events = data.eventos;
       rotations = data.rotaciones || [];
       const rotationInfo = $("rotation-status");
-      rotationInfo.textContent = rotations.length ? rotations.map(item => `${item.nombre} · ${item.semana_actual ? "Semana actual " + item.semana_actual + "/" + item.semanas : "Comienza " + item.inicio} · inicio ${niceDate(item.inicio)}`).join(" | ") : events.some(item => item.rotacion_id) ? "Tu horario incluye jornadas de una rotación repetitiva. Los descansos no suman horas de trabajo." : "";
+      rotationInfo.textContent = rotations.length ? rotations.map(item => `${item.nombre} · ${item.fin_exclusivo ? "Reemplazada desde " + niceDate(item.fin_exclusivo) : item.semana_actual ? "Semana actual " + item.semana_actual + "/" + item.semanas : "Comienza " + item.inicio} · inicio ${niceDate(item.inicio)}`).join(" | ") : events.some(item => item.rotacion_id) ? "Tu horario incluye jornadas de una rotación repetitiva. Los descansos no suman horas de trabajo." : "";
       rotationInfo.hidden = !rotationInfo.textContent;
       render();
       status(events.length ? "" : "No hay jornadas programadas para este intervalo y los filtros seleccionados.");
@@ -356,14 +356,30 @@
       table.append(head);
       week.forEach((groups, day) => {
         const row = node("tr"); row.append(node("th", "", preset.dias[day]));
-        groups.forEach((names, shift) => row.append(node("td", "", (names.join(", ") || "—") + (shift === 2 ? day === 4 ? " · 15:00–00:00" : " · 20:00–01:00" : ""))));
+        groups.forEach((names, shift) => {
+          const values = names.map(name => {
+            if (shift !== 2 || !preset.especiales?.[name]) return name;
+            const clock = minute => `${String(Math.floor((minute % 1440) / 60)).padStart(2, "0")}:${String(minute % 60).padStart(2, "0")}`;
+            return `${name} · ${preset.especiales[name].map(([start, duration]) => `${clock(start)}–${clock(start + duration)}`).join(" y ")}`;
+          });
+          row.append(node("td", "", values.join("; ") || "—"));
+        });
         table.append(row);
       });
       scroll.append(table); $("rotation-preview").append(scroll);
     });
+    function refreshReplacementOptions() {
+      const select = $("rotation-replace");
+      select.replaceChildren();
+      option(select, "", "Crear sin reemplazar otra rotación");
+      rotations.filter(item => !item.fin_exclusivo && item.sucursal_ids?.length === 1 && item.sucursal_ids[0] === Number($("rotation-branch").value))
+        .forEach(item => option(select, item.id, `${item.nombre} · #${item.id} · versión ${item.version}`));
+    }
+    $("rotation-branch").addEventListener("change", refreshReplacementOptions);
     $("rotation-open").addEventListener("click", () => {
       $("rotation-error").textContent = "";
-      $("rotation-existing").textContent = rotations.length ? "Rotaciones ya guardadas: " + rotations.map(item => item.nombre).join(", ") + ". Para ajustarlas, cierra este panel y selecciona sus jornadas; no vuelvas a importarlas." : "Revisa las fechas, sucursal y nombres antes de activar. No modifica ni reemplaza jornadas anteriores.";
+      refreshReplacementOptions();
+      $("rotation-existing").textContent = "Revisa los nombres, las cuatro semanas y la fecha. Si este horario sustituye al anterior, selecciónalo arriba; no se reemplaza automáticamente.";
       rotationDialog.showModal();
     });
     ["rotation-close", "rotation-dismiss"].forEach(id => $(id).addEventListener("click", () => { if (!rotationBusy) rotationDialog.close(); }));
@@ -373,6 +389,12 @@
       if (rotationBusy || !$("rotation-form").reportValidity()) return;
       const payload = {nombre: $("rotation-name").value, inicio: $("rotation-start").value, sucursal_id: Number($("rotation-branch").value), empleados: {}};
       preset.personas.forEach((name, index) => payload.empleados[name] = Number($(`rotation-person-${index}`).value));
+      if ($("rotation-replace").value) {
+        const previous = rotations.find(item => item.id === Number($("rotation-replace").value));
+        if (!previous) return;
+        payload.reemplazar_id = previous.id;
+        payload.reemplazar_version = previous.version;
+      }
       const signature = JSON.stringify(payload);
       if (!rotationRequest || rotationRequest.signature !== signature) rotationRequest = {signature, id: uuid()};
       payload.solicitud_id = rotationRequest.id;

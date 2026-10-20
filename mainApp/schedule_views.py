@@ -59,7 +59,7 @@ def calendar_data(request, personal=False):
             return JsonResponse({"error": "Hay demasiados turnos; filtra por empleado o consulta un intervalo menor."}, status=400)
         result = {"eventos": events}
         if not personal:
-            result["rotaciones"] = [rotation.metadata(item) for item in rotation.RotacionEmpleado.objects.all()]
+            result["rotaciones"] = [rotation.metadata(item) for item in rotation.RotacionEmpleado.objects.prefetch_related("miembros", "cambios")]
         return JsonResponse(result)
     except schedule.ScheduleError as exc:
         return JsonResponse({"error": str(exc)}, status=exc.status)

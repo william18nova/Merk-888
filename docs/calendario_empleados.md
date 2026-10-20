@@ -16,7 +16,51 @@ Cancelar un turno lo retira del horario, pero conserva el registro y su historia
 
 ## Rotación de cuatro semanas de Yerbabuena
 
-La plantilla aprobada está en `mainApp/data/employee_rotation_four_weeks.json`. Comienza el **lunes 7 de septiembre de 2026**: semana 1 el 7, semana 2 el 14, semana 3 el 21, semana 4 el 28, y vuelve a la semana 1 el 5 de octubre. Se repite cada 28 días sin una tarea programada ni una fecha final.
+### Nueva plantilla desde el 26 de octubre de 2026
+
+La plantilla actual está en `mainApp/data/employee_rotation_2026_10_26.json`.
+Las semanas empiezan el **26 de octubre, 2, 9 y 16 de noviembre**; el **23 de
+noviembre** vuelve a la semana 1, repitiéndose cada 28 días.
+
+- Diez personas: Jackeline, Cristian, Bibiana, Camila, Cristina, Claudia, Fabián,
+  Lina, Duvan y Alejandra. No se renombra a Santiago ni se reutiliza su ficha.
+- Mañana **07:00–14:00**, tarde **14:00–21:00**.
+- Fabián de martes a sábado: dos bloques, **07:00–12:00 y 15:00–19:00**. Los
+  domingos de las semanas 1–3 va de **14:00–21:00**; el de la semana 4 descansa.
+- Claudia **20:00–01:00 del día siguiente**, excepto viernes. Duvan los viernes
+  **15:00–00:00 del día siguiente**.
+- Los 28 días incluyen los descansos de todas las personas sin jornada nueva.
+  El descanso del viernes de Claudia no elimina el final de la noche del jueves.
+- Cada ciclo contiene **204 bloques de trabajo, 96 descansos y 1.288 horas
+  planificadas** entre todo el equipo. No son asistencia ni cálculo de nómina.
+
+**Cambiar el archivo no activa ni reemplaza registros en la base automáticamente.**
+Después de publicar este código y reiniciar los procesos web y Telegram:
+
+1. En **Horarios → Calendario de empleados → Rotación de 4 semanas**, elige
+   Yerbabuena y el inicio `2026-10-26`.
+2. Selecciona explícitamente la rotación anterior en **Rotación anterior que
+   reemplaza**. No se elige automáticamente.
+3. Revisa las diez fichas y las cuatro tablas. Los nombres ambiguos requieren
+   selección manual; no se crean empleados.
+4. Pulsa **Activar rotación**. La operación es atómica: si cambió la versión o hay
+   un turno manual incompatible, no se guarda nada.
+
+El reemplazo conserva la plantilla y las excepciones anteriores, su historial,
+y la salida de la última jornada nocturna. Desde el lunes elegido la rotación
+anterior deja de generar jornadas, incluso si tenía excepciones futuras; esas
+excepciones se conservan para auditoría, no se transfieren al nuevo horario.
+Las jornadas manuales y las otras sucursales no se modifican. La finalización
+queda auditada como `finalizar` en la tabla existente de cambios, sin migración
+de esquema. **Todos los lectores del calendario deben usar el código nuevo antes
+de activar**, incluido el trabajador de Telegram; el código anterior desconoce
+esta fecha final.
+
+### Plantilla histórica de septiembre
+
+La plantilla anterior se conserva en `mainApp/data/employee_rotation_four_weeks.json`.
+Comenzaba el **lunes 7 de septiembre de 2026**. Las rotaciones ya guardadas
+conservan su propio patrón en la base, sin reinterpretarlo con el JSON nuevo.
 
 - Mañana: **07:00–14:00**. Tarde: **14:00–21:00**.
 - Claudia: **20:00–01:00 del día siguiente**, excepto los viernes.
@@ -24,7 +68,7 @@ La plantilla aprobada está en `mainApp/data/employee_rotation_four_weeks.json`.
 - Los descansos son de día completo y no suman horas trabajadas. Se ignora la marca «x2» indicada en las tablas.
 - Cada ciclo contiene **180 jornadas y 20 descansos**, para las nueve personas indicadas. No se cambian los sábados ni se agregan dobles jornadas implícitas.
 
-En el calendario, **Rotación de 4 semanas** permite revisar las cuatro tablas, escoger el lunes inicial y la sucursal, y relacionar cada nombre con su empleado real. Las sugerencias solo se eligen automáticamente cuando el nombre identifica a una persona única. Importar no reemplaza jornadas existentes: ante una superposición, se rechaza toda la importación sin guardar cambios parciales. No vuelvas a importar para editar una rotación ya activa; abre su tarjeta en el calendario.
+En el calendario, **Rotación de 4 semanas** permite revisar las cuatro tablas, escoger el lunes inicial y la sucursal, y relacionar cada nombre con su empleado real. Las sugerencias solo se eligen automáticamente cuando el nombre identifica a una persona única. Crear sin seleccionar un reemplazo no modifica jornadas existentes: ante una superposición se rechaza toda la importación. Para ajustes puntuales, abre la tarjeta; para sustituir todo el ciclo, selecciona expresamente la rotación anterior.
 
 Al editar, mover o cancelar una tarjeta de la rotación es obligatorio escoger:
 
@@ -76,7 +120,7 @@ Si la rotación todavía no está cargada, simula primero y revisa las asignacio
 python manage.py cargar_rotacion_yerbabuena --usuario "William Nova"
 ```
 
-El valor por defecto es Yerbabuena, con inicio `2026-09-07`. La simulación revierte la transacción completa. Cuando sea correcta:
+El valor por defecto es Yerbabuena, con inicio `2026-10-26`. La simulación revierte la transacción completa. Cuando sea correcta:
 
 ```bash
 python manage.py cargar_rotacion_yerbabuena --usuario "William Nova" --apply
@@ -84,10 +128,21 @@ python manage.py cargar_rotacion_yerbabuena --usuario "William Nova" --apply
 
 El usuario debe existir y tener permiso para gestionar horarios. Los nombres ambiguos detienen la carga; en ese caso selecciónalos desde la página. Repetir exactamente la misma carga por consola reconoce su identificador estable y no duplica la rotación. Si ya se importó desde la interfaz, no ejecutes una segunda importación: revisa la rotación existente.
 
+Para reemplazar una rotación existente, utiliza su **ID y versión revisados**.
+Ejemplo (sustituye `ID_REAL` y `VERSION_REAL`, no son valores literales):
+
+```bash
+python manage.py cargar_rotacion_yerbabuena --usuario "William Nova" --inicio 2026-10-26 --reemplazar ID_REAL --version-anterior VERSION_REAL
+```
+
+Revisa la simulación y repite el mismo comando añadiendo `--apply`. La consola
+solo sugiere empleados de la sucursal seleccionada; no adivina el ID anterior.
+
 ## Verificación aislada
 
 ```bash
-python manage.py test mainApp.test_employee_schedule mainApp.test_employee_rotation mainApp.test_permission_audit --settings=NovaSoft.test_settings
+python -m django test mainApp.test_employee_schedule mainApp.test_employee_rotation mainApp.test_employee_rotation_october mainApp.test_permission_audit --settings=NovaSoft.test_settings
+node --test scripts/test_rotation_october_ui.cjs
 ```
 
 Las pruebas usan SQLite temporal, no la base real. Incluyen las dos migraciones, las cuatro tablas exactas, repetición, descansos, excepciones, cambios futuros, conflictos lejanos, importación sin duplicados, privacidad, CSRF, permisos, jornadas nocturnas, versión, reintentos y confirmaciones del bot. El bloqueo concurrente de filas usa `select_for_update` en PostgreSQL; SQLite no reproduce ese bloqueo de producción. El flujo de interfaz se revisa con datos ficticios.

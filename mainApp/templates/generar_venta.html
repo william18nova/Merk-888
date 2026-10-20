@@ -16,7 +16,7 @@
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"/>
   {% endif %}
   <link rel="stylesheet" href="{% static 'vendor/jquery-ui/jquery-ui-1.13.2.min.css' %}?v=1"/>
-  <link rel="stylesheet" href="{% static 'css/generar_venta.css' %}?v=26">
+  <link rel="stylesheet" href="{% static 'css/generar_venta.css' %}?v=27">
   <link rel="stylesheet" href="{% static 'css/modal_venta.css' %}?v=19">
 {% endblock %}
 
@@ -50,10 +50,21 @@
       </div>
       {{ producto_desde_visor|json_script:"venta-visor-producto" }}
     {% endif %}
-    {% if not hybrid_local %}<div class="venta-mode-notice is-info">
-      <a href="{% url 'operaciones_ptm' %}?tipo=retiro" target="_blank" rel="noopener">PTM RETIROS ↗</a>
-      · <a href="{% url 'operaciones_ptm' %}?tipo=recarga" target="_blank" rel="noopener">PTM RECARGA O PAGOS ↗</a>
-      <small>Operaciones de efectivo, separadas del carrito.</small>
+    {% if not hybrid_local %}<div class="venta-ptm" role="group" aria-labelledby="venta-ptm-title" aria-describedby="venta-ptm-help">
+      <div class="venta-ptm-heading"><span class="venta-ptm-badge">PTM</span><span id="venta-ptm-title">Servicios en efectivo</span></div>
+      <div class="venta-ptm-actions">
+        <a class="venta-ptm-action venta-ptm-action--retiro" href="{% url 'operaciones_ptm' %}?tipo=retiro" target="_blank" rel="noopener" aria-label="PTM: registrar retiro (abre otra pestaña)">
+          <span class="venta-ptm-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 14V3m-4 4 4-4 4 4M5 12H3v8h18v-8h-2M8 17h8"/></svg></span>
+          <span class="venta-ptm-copy"><strong>Retiro</strong><small>Entregar efectivo</small></span>
+          <svg class="venta-ptm-open" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17 17 7M7 7h10v10"/></svg>
+        </a>
+        <a class="venta-ptm-action venta-ptm-action--recarga" href="{% url 'operaciones_ptm' %}?tipo=recarga" target="_blank" rel="noopener" aria-label="PTM: registrar recarga o pago (abre otra pestaña)">
+          <span class="venta-ptm-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v11m-4-4 4 4 4-4M5 12H3v8h18v-8h-2M8 17h8"/></svg></span>
+          <span class="venta-ptm-copy"><strong>Recarga o pago</strong><small>Recibir efectivo</small></span>
+          <svg class="venta-ptm-open" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17 17 7M7 7h10v10"/></svg>
+        </a>
+      </div>
+      <p id="venta-ptm-help">Separado del carrito · Abre en otra pestaña</p>
     </div>{% endif %}
 
     {% if config_error %}

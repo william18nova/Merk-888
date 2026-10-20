@@ -1,0 +1,52 @@
+{
+  "nombre": "Yerbabuena · rotación desde 26 octubre 2026",
+  "inicio_sugerido": "2026-10-26",
+  "sucursal_sugerida": "Yerbabuena",
+  "personas": ["Jackeline", "Cristian", "Bibiana", "Camila", "Cristina", "Claudia", "Fabián", "Lina", "Duvan", "Alejandra"],
+  "dias": ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"],
+  "columnas": ["Mañana · 07:00–14:00", "Tarde · 14:00–21:00", "Especial / Noche", "Descansan"],
+  "especiales": {
+    "Fabián": [[420, 300], [900, 240]],
+    "Claudia": [[1200, 300]],
+    "Duvan": [[900, 540]]
+  },
+  "descanso_por_jornada": true,
+  "semanas": [
+    [
+      [["Jackeline", "Cristian", "Bibiana"], ["Camila", "Lina"], ["Claudia"], ["Cristina", "Fabián", "Duvan", "Alejandra"]],
+      [["Jackeline", "Cristian", "Cristina"], ["Bibiana", "Camila"], ["Fabián", "Claudia"], ["Lina", "Duvan", "Alejandra"]],
+      [["Jackeline", "Cristian", "Bibiana"], ["Camila", "Cristina"], ["Fabián", "Claudia"], ["Lina", "Duvan", "Alejandra"]],
+      [["Jackeline", "Cristian", "Camila"], ["Bibiana", "Cristina"], ["Fabián", "Claudia"], ["Lina", "Duvan", "Alejandra"]],
+      [["Jackeline", "Cristian", "Cristina"], ["Bibiana", "Lina"], ["Fabián", "Duvan"], ["Camila", "Claudia", "Alejandra"]],
+      [["Jackeline", "Bibiana", "Cristina"], ["Cristian", "Camila"], ["Fabián", "Claudia"], ["Lina", "Duvan", "Alejandra"]],
+      [["Alejandra", "Cristina"], ["Fabián", "Lina"], ["Claudia"], ["Jackeline", "Cristian", "Bibiana", "Camila", "Duvan"]]
+    ],
+    [
+      [["Jackeline", "Cristian", "Camila"], ["Lina", "Cristina"], ["Claudia"], ["Bibiana", "Fabián", "Duvan", "Alejandra"]],
+      [["Jackeline", "Cristian", "Cristina"], ["Camila", "Bibiana"], ["Fabián", "Claudia"], ["Lina", "Duvan", "Alejandra"]],
+      [["Jackeline", "Cristian", "Camila"], ["Bibiana", "Cristina"], ["Fabián", "Claudia"], ["Lina", "Duvan", "Alejandra"]],
+      [["Jackeline", "Cristian", "Cristina"], ["Bibiana", "Camila"], ["Fabián", "Claudia"], ["Lina", "Duvan", "Alejandra"]],
+      [["Jackeline", "Cristian", "Bibiana"], ["Cristina", "Lina"], ["Fabián", "Duvan"], ["Camila", "Claudia", "Alejandra"]],
+      [["Jackeline", "Bibiana", "Camila"], ["Cristian", "Cristina"], ["Fabián", "Claudia"], ["Lina", "Duvan", "Alejandra"]],
+      [["Alejandra", "Camila"], ["Lina", "Fabián"], ["Claudia"], ["Jackeline", "Cristian", "Bibiana", "Cristina", "Duvan"]]
+    ],
+    [
+      [["Jackeline", "Cristian", "Cristina"], ["Bibiana", "Lina"], ["Claudia"], ["Camila", "Fabián", "Duvan", "Alejandra"]],
+      [["Jackeline", "Cristian", "Cristina"], ["Bibiana", "Camila"], ["Fabián", "Claudia"], ["Lina", "Duvan", "Alejandra"]],
+      [["Jackeline", "Cristian", "Bibiana"], ["Camila", "Cristina"], ["Fabián", "Claudia"], ["Lina", "Duvan", "Alejandra"]],
+      [["Jackeline", "Cristian", "Camila"], ["Bibiana", "Cristina"], ["Fabián", "Claudia"], ["Lina", "Duvan", "Alejandra"]],
+      [["Jackeline", "Cristian", "Camila"], ["Bibiana", "Lina"], ["Fabián", "Duvan"], ["Cristina", "Claudia", "Alejandra"]],
+      [["Jackeline", "Cristian", "Cristina"], ["Bibiana", "Camila"], ["Fabián", "Claudia"], ["Lina", "Duvan", "Alejandra"]],
+      [["Alejandra", "Cristina"], ["Lina", "Fabián"], ["Claudia"], ["Jackeline", "Cristian", "Bibiana", "Camila", "Duvan"]]
+    ],
+    [
+      [["Jackeline", "Cristian", "Bibiana"], ["Lina", "Cristina"], ["Claudia"], ["Camila", "Fabián", "Duvan", "Alejandra"]],
+      [["Jackeline", "Cristian", "Cristina"], ["Camila", "Bibiana"], ["Fabián", "Claudia"], ["Lina", "Duvan", "Alejandra"]],
+      [["Jackeline", "Cristian", "Bibiana"], ["Camila", "Cristina"], ["Fabián", "Claudia"], ["Lina", "Duvan", "Alejandra"]],
+      [["Jackeline", "Cristian", "Camila"], ["Bibiana", "Cristina"], ["Fabián", "Claudia"], ["Lina", "Duvan", "Alejandra"]],
+      [["Jackeline", "Cristian", "Cristina"], ["Camila", "Lina"], ["Fabián", "Duvan"], ["Bibiana", "Claudia", "Alejandra"]],
+      [["Jackeline", "Cristian", "Bibiana"], ["Camila", "Cristina"], ["Fabián", "Claudia"], ["Lina", "Duvan", "Alejandra"]],
+      [["Alejandra", "Camila"], ["Bibiana", "Lina"], ["Claudia"], ["Jackeline", "Cristian", "Cristina", "Fabián", "Duvan"]]
+    ]
+  ]
+}

@@ -2,6 +2,7 @@ import importlib
 import json
 from datetime import date, timedelta
 from io import StringIO
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
@@ -28,6 +29,12 @@ from mainApp.services import telegram_bot as bot
 class RotationTests(TestCase):
     def setUp(self):
         cache.clear()
+        # Keep the original September regression suite pinned to its approved
+        # historical fixture when the current import template changes.
+        legacy = json.loads((Path(__file__).parent / "data" / "employee_rotation_four_weeks.json").read_text(encoding="utf-8"))
+        template = patch.object(rotation, "preset", return_value=legacy)
+        template.start()
+        self.addCleanup(template.stop)
         self.today = patch("mainApp.services.employee_rotation.timezone.localdate", return_value=date(2026, 9, 7))
         self.today.start()
         self.addCleanup(self.today.stop)
