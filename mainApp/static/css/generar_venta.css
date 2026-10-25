@@ -968,23 +968,25 @@ body:has(.page-grid):not(.modal-open):not(.nv-menu-open) .table-wrap{
 }
 /* Accesos PTM: independientes del carrito y sin dependencias de iconos externas. */
 .venta-ptm{
-  margin:0 0 20px;
-  padding:14px;
+  width:100%;
+  max-width:460px;
+  margin:0 0 14px;
+  padding:10px;
   border:1px solid rgba(159,196,242,.22);
-  border-radius:16px;
+  border-radius:12px;
   background:rgba(10,30,61,.30);
 }
 .venta-ptm-heading{
   display:flex;
   align-items:center;
-  gap:9px;
-  margin-bottom:12px;
+  gap:7px;
+  margin-bottom:8px;
   color:#e4efff;
-  font-size:13px;
+  font-size:12px;
   font-weight:600;
 }
 .venta-ptm-badge{
-  padding:4px 8px;
+  padding:3px 6px;
   border:1px solid rgba(177,210,255,.28);
   border-radius:7px;
   background:rgba(153,196,255,.10);
@@ -995,8 +997,8 @@ body:has(.page-grid):not(.modal-open):not(.nv-menu-open) .table-wrap{
 }
 .venta-ptm-actions{
   display:grid;
-  grid-template-columns:repeat(auto-fit,minmax(min(100%,190px),1fr));
-  gap:10px;
+  grid-template-columns:repeat(auto-fit,minmax(min(100%,180px),1fr));
+  gap:8px;
 }
 .venta-ptm-action{
   --ptm-accent:#ffd397;
@@ -1004,11 +1006,11 @@ body:has(.page-grid):not(.modal-open):not(.nv-menu-open) .table-wrap{
   --ptm-border:rgba(255,196,118,.34);
   display:flex;
   align-items:center;
-  gap:10px;
-  min-height:76px;
-  padding:13px 12px;
+  gap:8px;
+  min-height:54px;
+  padding:8px 10px;
   border:1px solid var(--ptm-border);
-  border-radius:12px;
+  border-radius:10px;
   background:var(--ptm-tint);
   color:#fff;
   text-decoration:none;
@@ -1032,19 +1034,19 @@ body:has(.page-grid):not(.modal-open):not(.nv-menu-open) .table-wrap{
 .venta-ptm-icon{
   display:grid;
   place-items:center;
-  flex:0 0 36px;
-  width:36px;
-  height:36px;
-  border-radius:10px;
+  flex:0 0 28px;
+  width:28px;
+  height:28px;
+  border-radius:8px;
   color:var(--ptm-accent);
   background:var(--ptm-tint);
 }
-.venta-ptm-icon svg{ width:23px; height:23px; }
-.venta-ptm-copy{ flex:1; display:grid; gap:4px; text-align:left; }
-.venta-ptm-copy strong{ font-size:14px; font-weight:700; line-height:1.25; }
+.venta-ptm-icon svg{ width:19px; height:19px; }
+.venta-ptm-copy{ flex:1; display:grid; gap:2px; text-align:left; }
+.venta-ptm-copy strong{ font-size:13px; font-weight:700; line-height:1.25; }
 .venta-ptm-copy small{ color:#d5e4f7; font-size:11px; line-height:1.4; }
-.venta-ptm-open{ flex:0 0 16px; width:16px; height:16px; color:var(--ptm-accent); }
-#venta-ptm-help{ margin:10px 0 0; color:#bed3ed; font-size:11px; line-height:1.5; }
+.venta-ptm-open{ flex:0 0 14px; width:14px; height:14px; color:var(--ptm-accent); }
+#venta-ptm-help{ margin:7px 0 0; color:#bed3ed; font-size:11px; line-height:1.5; }
 @media (prefers-reduced-motion:reduce){
   .venta-ptm-action{ transition:none; }
   .venta-ptm-action:hover{ transform:none; }

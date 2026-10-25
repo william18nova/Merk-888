@@ -30,7 +30,7 @@ print(json.dumps({str(local): render_to_string('generar_venta.html', dict(contex
 });
 after(async () => { await browser?.close(); });
 
-for (const width of [360, 768, 1440]) {
+for (const width of [320, 360, 768, 1440]) {
   test(`PTM shortcuts: responsive layout and keyboard access at ${width}px`, async () => {
     const page = await browser.newPage({viewport: {width, height: 1000}});
     await page.route('**/*', async route => {
@@ -50,13 +50,16 @@ for (const width of [360, 768, 1440]) {
     await page.goto('http://127.0.0.1/generar_venta/');
     const buttons = page.locator('.venta-ptm-action');
     assert.equal(await buttons.count(), 2);
+    const groupBox = await page.locator('.venta-ptm').boundingBox();
+    assert.ok(groupBox.width <= 460, 'PTM stays compact instead of filling a wide panel');
     for (const [index, type] of ['retiro', 'recarga'].entries()) {
       const button = buttons.nth(index);
       assert.equal(await button.getAttribute('href'), `/ptm/?tipo=${type}`);
       assert.equal(await button.getAttribute('target'), '_blank');
       assert.equal(await button.getAttribute('rel'), 'noopener');
       const box = await button.boundingBox();
-      assert.ok(box.height >= 44 && box.x >= 0 && box.x + box.width <= width);
+      assert.ok(box.height >= 44 && box.height <= 60, 'Compact buttons retain a comfortable touch target');
+      assert.ok(box.x >= 0 && box.x + box.width <= width);
       assert.equal(await button.evaluate(el => el.scrollWidth <= el.clientWidth), true);
     }
     await buttons.first().focus();
