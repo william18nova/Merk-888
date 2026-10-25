@@ -58,7 +58,7 @@ for (const width of [320, 360, 768, 1440]) {
       assert.equal(await button.getAttribute('target'), '_blank');
       assert.equal(await button.getAttribute('rel'), 'noopener');
       const box = await button.boundingBox();
-      assert.ok(box.height >= 44 && box.height <= 60, 'Compact buttons retain a comfortable touch target');
+      assert.ok(box.height >= 44 && box.height <= 50, 'Subtle buttons retain a comfortable touch target');
       assert.ok(box.x >= 0 && box.x + box.width <= width);
       assert.equal(await button.evaluate(el => el.scrollWidth <= el.clientWidth), true);
     }
