@@ -3,6 +3,7 @@ from . import views
 from . import schedule_views
 from . import hybrid_views
 from .connection_status import database_status
+from .services.close_progress import checkpoint as close_checkpoint
 from .ptm_views import OperacionesPTMView
 from .ptm_reader_views import ConciliacionPTMView, receive_ptm
 from .ptm_cash_pool_views import BolsaPTMAdminView, BolsaPTMTurnoView
@@ -344,6 +345,7 @@ urlpatterns = [
 
      path("ptm/", OperacionesPTMView.as_view(), name="operaciones_ptm"),
      path("turno_caja/", views.TurnoCajaPageView.as_view(), name="turno_caja"),
+     path("turno_caja/cierre/<int:turno_id>/respaldo/", close_checkpoint, name="turno_caja_cierre_respaldo"),
      path("turno_caja/cierre/<int:turno_id>/pagos/",
           views.TurnoCajaCierrePageView.as_view(close_page="payments"), name="turno_caja_cierre_pagos"),
      path("turno_caja/cierre/<int:turno_id>/efectivo/",

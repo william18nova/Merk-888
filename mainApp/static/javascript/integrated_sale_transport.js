@@ -2,7 +2,7 @@
 (function (root) {
   "use strict";
 
-  function createTransport({storage, randomUUID, fetchRequest, userId, confirmationUrl = null,
+  function createTransport({storage, randomUUID, fetchRequest, userId, confirmationUrl = null, referenceStore = null,
     wait = ms => new Promise(resolve => setTimeout(resolve, ms))}) {
     async function recover(id) {
       if (!confirmationUrl) return null;
@@ -30,10 +30,10 @@
       }
       return null;
     }
-    function reference(draftId) {
+    async function reference(draftId) {
       if (!draftId || !userId) throw new Error("No se pudo identificar este carrito. Consérvalo y vuelve a iniciar sesión.");
       const key = `nova:integrated-request:${userId}:${draftId}`;
-      let id = storage.getItem(key);
+      let id = referenceStore ? await referenceStore(key, randomUUID) : storage.getItem(key);
       if (!id) {
         id = randomUUID();
         storage.setItem(key, id);
@@ -48,7 +48,7 @@
 
     return {
       async submit(body, draftId, total, url, csrf) {
-        const id = reference(draftId);
+        const id = await reference(draftId);
         let response;
         try {
           response = await fetchRequest(url, {
@@ -89,8 +89,9 @@
     // Access can throw when storage is disabled. Defer it until submit so the
     // transport remains installed and never falls back to an unprotected POST.
     storage: {getItem: key => root.localStorage.getItem(key),
-      setItem: (key, value) => root.localStorage.setItem(key, value)},
+      setItem: (key, value) => root.NovaStorage ? root.NovaStorage.safeSet(key, value) : root.localStorage.setItem(key, value)},
     randomUUID: () => root.crypto.randomUUID(),
+    referenceStore: root.NovaStorage?.reference,
     fetchRequest: (...args) => root.fetch(...args), userId: String(root.ventaUsuarioId || ""),
     confirmationUrl: root.novaJournalEnabled ? id => `/local/ventas/confirmacion/${id}/` : null,
   });

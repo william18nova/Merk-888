@@ -98,7 +98,7 @@ def load_config(path, project, *, expected_schema=None):
     if data.get("activation", "integrated_preview") not in {"database_only", "integrated_preview", "journal_preview"}:
         raise RuntimeError("Modo de activación local desconocido.")
     if data["schema_signature"] != (expected_schema or schema_signature(project)):
-        raise RuntimeError("El esquema del proyecto cambió. Se necesita actualizar la copia con respaldo; no se modificó la base. Para el desglose de pagos ejecuta: python scripts/update_integrated_close_payments.py --apply")
+        raise RuntimeError("El esquema del proyecto cambió. Se necesita actualizar la copia con respaldo; no se modificó la base. Para el respaldo de cierres ejecuta: python scripts/update_integrated_close_payments.py --upgrade close-progress --apply")
     if "backend" not in data and not (path.parent / "postgres/PG_VERSION").is_file():
         raise RuntimeError("Falta el PostgreSQL preparado. No se creará otro encima.")
     return data

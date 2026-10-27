@@ -382,6 +382,7 @@
     const API_RECUPERAR  = "{% url 'turno_recuperar_o_iniciar' %}";
     const API_INI_CIERRE = "{% url 'turno_caja_iniciar_cierre' %}";
     const API_CERRAR     = "{% url 'turno_caja_cerrar' %}";
+    window.TURNO_CIERRE_RESPALDO = "{% url 'turno_caja_cierre_respaldo' turno_id=0 %}";
     window.TURNO_CIERRE_PAGINAS = {
       page: "{{ close_page|default:''|escapejs }}",
       home: "{% url 'turno_caja' %}",
@@ -393,5 +394,7 @@
 
   <script defer src="{% static 'javascript/close_payment_details.js' %}?v=1"></script>
   <script defer src="{% static 'javascript/ptm_cash_pool_summary.js' %}?v=1"></script>
-  <script defer src="{% static 'javascript/turno_caja.js' %}?v=27"></script>
+  <script defer src="{% static 'javascript/nova_storage.js' %}?v=1"></script>
+  <script defer src="{% static 'javascript/cash_close_storage.js' %}?v=1"></script>
+  <script defer src="{% static 'javascript/turno_caja.js' %}?v=28"></script>
 {% endblock %}

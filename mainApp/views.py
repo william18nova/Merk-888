@@ -12198,6 +12198,12 @@ class TurnoCajaCerrarApi(LoginRequiredMixin, View):
         if efectivo_entregado < 0:
             return JsonResponse({"success": False, "error": "Efectivo entregado no puede ser negativo."}, status=400)
 
+        from .services.close_progress import validate_final
+        try:
+            validate_final(turno, facturas_pagadas, pagos_detalle, efectivo_entregado)
+        except ValueError as exc:
+            return JsonResponse({"success": False, "error": str(exc)}, status=409)
+
         base = turno.saldo_apertura_efectivo or Decimal("0.00")
         efectivo_contado = (efectivo_entregado - base).quantize(Decimal("0.01"))
         efectivo_para_cuadre = (efectivo_contado + facturas_pagadas).quantize(Decimal("0.01"))

@@ -136,14 +136,16 @@ class OfflineAuthorizationMiddleware:
         price_post = (getattr(settings, "NOVA_INTEGRATED_JOURNAL_ENABLED", False)
             and name == "verificar_producto" and request.method == "POST")
         business_post = (getattr(settings, "NOVA_INTEGRATED_JOURNAL_ENABLED", False)
-            and name in {"registrar_egreso", "ver_venta", "turno_caja_iniciar", "turno_recuperar_o_iniciar", "turno_caja_iniciar_cierre", "turno_caja_cerrar"}
+            and name in {"registrar_egreso", "ver_venta", "turno_caja_iniciar", "turno_recuperar_o_iniciar", "turno_caja_iniciar_cierre", "turno_caja_cerrar", "turno_caja_cierre_respaldo"}
             and request.method == "POST")
         from .integrated_navigation import read_available, blocked_response
         if not state or state.local_user_id != request.user.pk:
             return unavailable(request, "Este equipo está vinculado a otro usuario. No se modificó su copia local.")
         read_request = request.method in {"GET", "HEAD"}
-        route_ready = (read_available(name, grant, state) if read_request else
-            name in grant.allowed_routes and name in state.scope.get("routes", []))
+        # A checkpoint has exactly the existing close-page scope, no new money operation.
+        scope_name = "turno_caja_cierre_pagos" if name == "turno_caja_cierre_respaldo" else name
+        route_ready = (read_available(scope_name, grant, state) if read_request else
+            scope_name in grant.allowed_routes and scope_name in state.scope.get("routes", []))
         if ((not read_request and not sale_post and not price_post and not business_post and not review_post)
                 or (not confirmation and not review_post and not route_ready)):
             return blocked_response(request)

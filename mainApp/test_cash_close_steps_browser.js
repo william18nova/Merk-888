@@ -42,6 +42,7 @@ test("cierre en páginas distintas, solo hacia adelante y con valores conservado
     .replace('{{ close_page|default:\'\'|escapejs }}', page)
     .replace(/{% static '([^']+)' %}/g, "/static/$1")
     .replace(/{% url 'turno_caja_cierre_(pagos|efectivo|medios)' turno_id=0 %}/g, "/turno_caja/cierre/0/$1/")
+    .replace(/{% url 'turno_caja_cierre_respaldo' turno_id=0 %}/g, "/turno_caja/cierre/0/respaldo/")
     .replace(/{% url '([^']+)' %}/g, "/fixture/$1")
     .replace(/{% csrf_token %}/g, '<input type="hidden" name="csrfmiddlewaretoken" value="test-only">')
     .replace(/{%[\s\S]*?%}/g, "").replace(/{{[\s\S]*?}}/g, "");
@@ -73,8 +74,19 @@ test("cierre en páginas distintas, solo hacia adelante y con valores conservado
   const posts = [];
   let starts = 0;
   let completeClose = false;
+  let checkpoint = null;
   const server = http.createServer((req, res) => {
     const url = new URL(req.url, "http://localhost");
+    if (url.pathname.endsWith('/respaldo/')) {
+      let body = '';
+      req.on('data', chunk => { body += chunk; });
+      req.on('end', () => {
+        if (req.method === 'POST') checkpoint = JSON.parse(body);
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({success: true, progress: checkpoint}));
+      });
+      return;
+    }
     if (url.pathname === "/fixture/retiro") {
       res.setHeader("Content-Type", "text/html");
       res.end("<h1>Retiro de prueba sin operaciones reales</h1>");
@@ -95,6 +107,7 @@ test("cierre en páginas distintas, solo hacia adelante y con valores conservado
         posts.push(String(req.headers["content-type"]).includes("multipart/form-data")
           ? Object.fromEntries([...body.matchAll(/name="([^"]+)"\r\n\r\n([\s\S]*?)\r\n--/g)].map(match => [match[1], match[2]]))
           : Object.fromEntries(new URLSearchParams(body)));
+        if (completeClose) checkpoint = null;
         res.setHeader("Content-Type", "application/json");
         res.end(JSON.stringify(completeClose
           ? {success: true, turno_id: 8080, deuda_total: 500, retiro_url: "/fixture/retiro"}
@@ -104,7 +117,8 @@ test("cierre en páginas distintas, solo hacia adelante y con valores conservado
     }
     const assets = Object.fromEntries([
       "css/turno_caja.css", "css/bolsa_ptm.css", "css/close_payment_details.css",
-      "javascript/turno_caja.js", "javascript/close_payment_details.js", "javascript/ptm_cash_pool_summary.js"
+      "javascript/turno_caja.js", "javascript/close_payment_details.js", "javascript/ptm_cash_pool_summary.js",
+      "javascript/nova_storage.js", "javascript/cash_close_storage.js"
     ].map(file => [`/static/${file}`, file.endsWith(".css") ? "text/css" : "application/javascript"]));
     if (assets[url.pathname]) {
       res.setHeader("Content-Type", assets[url.pathname]);
@@ -264,9 +278,10 @@ test("cierre en páginas distintas, solo hacia adelante y con valores conservado
     });
     await fresh.locator("#btnCashNext").click();
     await fresh.locator("#tc-confirm-ok").click();
-    await fresh.waitForFunction(() => document.getElementById("tc-toasts").textContent.includes("No se pudo guardar el avance"));
-    assert.equal(await fresh.locator("#closeCashStep").isVisible(), true);
-    assert.equal(await fresh.locator("#closeMediaStep").isVisible(), false);
+    await fresh.locator("#closeMediaStep").waitFor({state: "visible"});
+    await fresh.reload();
+    await fresh.locator("#closeMediaStep").waitFor({state: "visible"});
+    assert.equal(await fresh.locator("#facturas_pagadas").inputValue(), "0");
     assert.deepEqual(errors, []);
   } finally {
     if (browser) await browser.close();

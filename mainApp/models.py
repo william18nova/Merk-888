@@ -1370,6 +1370,17 @@ class DesglosePagosCierre(models.Model):
         db_table = "desglose_pagos_cierre"
 
 
+class AvanceCierreCaja(models.Model):
+    """Confirmed closing steps; not an expense or a second cash close."""
+    turno = models.OneToOneField(TurnoCaja, primary_key=True, on_delete=models.CASCADE)
+    progreso = models.JSONField(default=dict)
+    registrado_por = models.ForeignKey("Usuario", on_delete=models.PROTECT)
+    actualizado_en = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "avance_cierre_caja"
+
+
 class OperacionPTM(models.Model):
     """Dinero de terceros: no es una venta ni un movimiento de inventario."""
 

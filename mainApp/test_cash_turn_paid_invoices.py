@@ -60,7 +60,7 @@ class PaidInvoicesMarkupTests(SimpleTestCase):
         )
         self.assertIn("Facturas pagadas de caja", template)
         self.assertIn('<div id="mFacturasPagadas" class="v">', template)
-        self.assertIn("turnos_caja_admin.js' %}?v=7", template)
+        self.assertRegex(template, r"turnos_caja_admin\.js' %}\?v=\d+")
 
     def test_single_invoice_input_is_only_in_the_initial_payments_step(self):
         markup = _ClosureMarkup()
@@ -223,6 +223,8 @@ class PaidInvoicesClosureTests(TestCase):
         }
         if paid_invoices is not None:
             payload["facturas_pagadas"] = paid_invoices
+            if Decimal(paid_invoices) > 0:
+                payload["pagos_detalle"] = json.dumps([{"nombre": "Proveedor ficticio", "monto": paid_invoices}])
         request = RequestFactory().post(reverse("turno_caja_cerrar"), payload)
         request.user = self.cashier
         with (

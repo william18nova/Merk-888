@@ -419,7 +419,8 @@
   }
   function savePrintState(state) {
     try {
-      localStorage.setItem(printKey(), JSON.stringify({state, ts: Date.now()}));
+      if (window.NovaStorage) window.NovaStorage.safeSet(printKey(), JSON.stringify({state, ts: Date.now()}));
+      else localStorage.setItem(printKey(), JSON.stringify({state, ts: Date.now()}));
       return true;
     } catch { return false; }
   }

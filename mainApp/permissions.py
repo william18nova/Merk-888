@@ -793,6 +793,7 @@ ROUTE_PERMISSIONS = {
     "puntopago_con_pedidos_pagados_autocomplete": "reportes_pedidos_pagados",
     "turno_caja": "caja_turno",
     "turno_caja_cierre_pagos": "caja_turno",
+    "turno_caja_cierre_respaldo": "caja_turno",
     "turno_caja_cierre_efectivo": "caja_turno",
     "turno_caja_cierre_medios": "caja_turno",
     "operaciones_ptm": "caja_turno",

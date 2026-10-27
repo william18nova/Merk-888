@@ -67,6 +67,23 @@ class IntegratedNavigationTests(TransactionTestCase):
         self.assertNotIn(buyer.password.encode(), response.content)
         self.assertNotIn(b"buyer-password", response.content)
 
+    def test_offline_close_checkpoint_uses_only_local_database(self):
+        import json
+        from uuid import uuid4
+        from django.urls import reverse
+        from mainApp.models import AvanceCierreCaja
+        self.assertEqual(self.client.post(reverse('turno_caja_iniciar_cierre'), {'turno_id': self.turn.pk},
+            HTTP_X_NOVA_OPERATION_ID=str(uuid4())).status_code, 200)
+        url = reverse('turno_caja_cierre_respaldo', args=[self.turn.pk])
+        with CaptureQueriesContext(connections['default']) as cloud:
+            response = self.client.post(url, json.dumps({'step': 'cash', 'invoices': '0',
+                'payment_details': [], 'denominations': None}), content_type='application/json')
+            self.assertEqual(response.status_code, 200, response.content)
+            self.assertEqual(self.client.get(url).json()['progress']['step'], 'cash')
+            self.assertEqual(len(cloud), 0)
+        self.assertTrue(AvanceCierreCaja.objects.using('offline').filter(turno_id=self.turn.pk).exists())
+        self.assertFalse(AvanceCierreCaja.objects.using('default').exists())
+
     def test_new_tab_opens_original_home_and_sale_without_cloud_or_page_cache(self):
         tab = Client()
         tab.cookies = self.client.cookies.copy()

@@ -20,7 +20,8 @@ sys.path.insert(0, str(ROOT))
 
 def previous_signature(project, upgrade='close-payments'):
     markers = {
-        'close-payments': (b'class DesglosePagosCierre(', b'class OperacionPTM('),
+        'close-progress': (b'class AvanceCierreCaja(', b'class OperacionPTM('),
+        'close-payments': (b'class DesglosePagosCierre(', b'class AvanceCierreCaja('),
         'ptm-reader': (b'class CuentaLecturaPTM(', b'class ConteoCierrePTM('),
         'ptm-pool': (b'class LecturaDiariaPTM(', b'class ConteoCierrePTM('),
     }
@@ -78,11 +79,12 @@ def table_counts(connection):
 
 
 def apply_table(connection, upgrade='close-payments'):
-    from mainApp.models import (DesglosePagosCierre, CuentaLecturaPTM, LectorPTM,
+    from mainApp.models import (AvanceCierreCaja, DesglosePagosCierre, CuentaLecturaPTM, LectorPTM,
                                 MovimientoLeidoPTM, AuditoriaLecturaPTM, LecturaDiariaPTM,
                                 BolsaEfectivoPTM, AjusteBolsaPTM, CorteBolsaPTM,
                                 AuditoriaBolsaPTM, ParticipacionBolsaPTM, OperacionPTM)
     upgrades = {
+        'close-progress': [AvanceCierreCaja],
         'close-payments': [DesglosePagosCierre],
         'ptm-reader': [CuentaLecturaPTM, LectorPTM, MovimientoLeidoPTM, AuditoriaLecturaPTM],
         'ptm-pool': [LecturaDiariaPTM, BolsaEfectivoPTM, AjusteBolsaPTM, CorteBolsaPTM,
@@ -131,7 +133,8 @@ def run(apply=False, upgrade='close-payments'):
     config = load_config(path, ROOT, expected_schema=expected)
     if config.get('backend', {}).get('kind') != 'wsl':
         raise RuntimeError('Este actualizador solo admite la instalación WSL revisada.')
-    labels = {'ptm-reader': 'cuatro tablas del lector PTM.', 'ptm-pool': 'seis tablas de bolsa PTM y un enlace opcional, sin mover dinero.',
+    labels = {'close-progress': 'únicamente la tabla de respaldo del cierre, sin mover dinero.',
+              'ptm-reader': 'cuatro tablas del lector PTM.', 'ptm-pool': 'seis tablas de bolsa PTM y un enlace opcional, sin mover dinero.',
               'close-payments': 'únicamente la tabla DesglosePagosCierre.'}
     print('Cambio comprobado: ' + labels[upgrade])
     if not apply:
@@ -188,7 +191,7 @@ def run(apply=False, upgrade='close-payments'):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--apply', action='store_true')
-    parser.add_argument('--upgrade', choices=('close-payments', 'ptm-reader', 'ptm-pool'), default='close-payments')
+    parser.add_argument('--upgrade', choices=('close-payments', 'ptm-reader', 'ptm-pool', 'close-progress'), default='close-payments')
     try:
         args = parser.parse_args()
         run(args.apply, args.upgrade)

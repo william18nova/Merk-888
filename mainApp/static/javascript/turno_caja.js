@@ -2,7 +2,7 @@
 // ✅ Refactor v9: AbortController, CSRF desde form, doble-submit guard real,
 // keyboard nav en AC, persistencia localStorage del contado, toast no bloqueante,
 // modal de confirmación, reloj de duración del turno, manejo 401/403.
-(function () {
+(async function () {
   "use strict";
 
   /* ============================================================
@@ -695,7 +695,7 @@
   function adoptStoredCloseProgress() {
     if (!TURNO_ID) return false;
     try {
-      const saved = normalizedCloseProgress(JSON.parse(localStorage.getItem(lsKey(TURNO_ID)) || "null")?.progress);
+      const saved = normalizedCloseProgress(window.NovaCloseStorage.read(TURNO_ID)?.progress);
       if (saved && CLOSE_STEPS.indexOf(saved.step) >= CLOSE_STEPS.indexOf(closeProgress.step)) {
         if (JSON.stringify(saved) === JSON.stringify(closeProgress)) return false;
         closeProgress = saved;
@@ -735,7 +735,7 @@
         okText: "Confirmar y continuar",
       });
       if (!confirmed) return;
-      const commit = () => {
+      const commit = async () => {
         adoptStoredCloseProgress();
         if (closeProgress.step !== from) {
           if (!navigateClosePage(closeProgress.step)) showCloseSubstep(closeProgress.step, true);
@@ -744,9 +744,12 @@
         const previous = closeProgress;
         closeProgress = {step: to, invoices, denominations, payment_details: paymentDetails};
         if (facturasPagadasInp) facturasPagadasInp.value = String(invoices);
-        if (!persistContados()) {
+        try {
+          await window.NovaCloseStorage.commit(TURNO_ID, closePayload());
+        } catch (error) {
           closeProgress = previous;
-          err("No se pudo guardar el avance en este navegador. No se avanzó; revisa el almacenamiento antes de continuar.");
+          err(error.message);
+          offerCloseBackup();
           return;
         }
         if (navigateClosePage(to)) return;
@@ -755,7 +758,7 @@
         recalc();
       };
       if (navigator.locks?.request) await navigator.locks.request(`nova:turno-close:${TURNO_ID}`, commit);
-      else commit();
+      else await commit();
     } finally { closeStepAdvancing = false; }
   }
 
@@ -771,11 +774,8 @@
     } catch {}
   }
 
-  function persistContados() {
-    if (!TURNO_ID || closePageLeaving) return false;
-    try {
-      if (adoptStoredCloseProgress()) showCloseSubstep(closeProgress.step);
-      const payload = {
+  function closePayload() {
+      return {
         efectivo_entregado: efectivoEntregadoInp?.value || "",
         facturas_pagadas: facturasPagadasInp?.value || "",
         pagos_detalle: readPaymentDetails(),
@@ -785,24 +785,38 @@
         progress: closeProgress,
         ts: Date.now(),
       };
-      localStorage.setItem(lsKey(TURNO_ID), JSON.stringify(payload));
-      return true;
-    } catch { return false; }
+  }
+
+  function offerCloseBackup() {
+    if (document.getElementById('tc-download-backup')) return;
+    const button = document.createElement('button');
+    button.id = 'tc-download-backup'; button.type = 'button'; button.className = 'btn btn-ghost';
+    button.textContent = 'Descargar respaldo del cierre';
+    button.addEventListener('click', () => window.NovaCloseStorage.download(TURNO_ID, closePayload()));
+    stepClose?.append(button);
+  }
+
+  function persistContados() {
+    if (!TURNO_ID || closePageLeaving) return false;
+    try {
+      if (adoptStoredCloseProgress()) showCloseSubstep(closeProgress.step);
+      const saved = window.NovaCloseStorage.put(TURNO_ID, closePayload());
+      saved.durable.then(ok => {
+        if (!ok && !saved.stored && !closePageLeaving) {
+          warn('El navegador no pudo guardar el borrador. Conserva esta pestaña; al confirmar se intentará guardar en la base.');
+          offerCloseBackup();
+        }
+      });
+      return saved.stored;
+    } catch { offerCloseBackup(); return false; }
   }
 
   function restoreContados() {
     if (!TURNO_ID) return;
     try {
-      const raw = localStorage.getItem(lsKey(TURNO_ID));
-      if (!raw) return;
-      const payload = JSON.parse(raw);
+      const payload = window.NovaCloseStorage.read(TURNO_ID);
       if (!payload || typeof payload !== "object") return;
-      // descartar caches de más de 24h
       const savedProgress = normalizedCloseProgress(payload.progress);
-      if (!savedProgress && Date.now() - (payload.ts || 0) > 24 * 3600 * 1000) {
-        localStorage.removeItem(lsKey(TURNO_ID));
-        return;
-      }
       if (efectivoEntregadoInp && payload.efectivo_entregado) {
         efectivoEntregadoInp.value = payload.efectivo_entregado;
       }
@@ -833,7 +847,7 @@
   }
 
   function clearContados(turnoId) {
-    try { localStorage.removeItem(lsKey(turnoId)); } catch {}
+    window.NovaCloseStorage.forget(turnoId);
   }
 
   /* ============================================================
@@ -1049,7 +1063,7 @@
   /* ============================================================
      Hidratar UI desde respuesta backend
      ============================================================ */
-  function hydrateTurno(data) {
+  async function hydrateTurno(data) {
     closeProgress = { step: "payments", invoices: null, denominations: null };
     closeDraftCounts = {};
     closeDraftPTM = "0";
@@ -1104,6 +1118,8 @@
     }
 
     if (estado === "CIERRE") {
+      try { await window.NovaCloseStorage.load(TURNO_ID); }
+      catch (error) { err(error.message); showSection('close'); offerCloseBackup(); return; }
       setBadge(estadoBadge2, "CIERRE");
       stopDurationClock();
 
@@ -1191,7 +1207,7 @@
       if (window.NovaBusiness) window.NovaBusiness.acknowledgeReturn(window.NovaBusiness.reference(`${API_RECUPERAR}:open`));
 
       ok(data.msg || "Turno iniciado/recuperado.");
-      hydrateTurno(data);
+      await hydrateTurno(data);
 
       // limpiar password por seguridad
       if (passInp) passInp.value = "";
@@ -1222,7 +1238,7 @@
       if (!data.success) { err(data.error || "Error al iniciar el cierre."); return; }
 
       ok("Cierre iniciado.");
-      hydrateTurno({
+      await hydrateTurno({
         ...data,
         turno_id: data.turno_id || TURNO_ID,
         estado: data.estado || "CIERRE",
@@ -1294,6 +1310,7 @@
 
       if (data.offline_saved) {
         persistRetiroDenoms(data.turno_id || TURNO_ID);
+        clearContados(data.turno_id || TURNO_ID);
         const title = document.getElementById("tc-summary-title");
         if (title) title.textContent = "Conteo guardado · Pendiente de sincronizar";
         summaryModal("<p>El turno quedó cerrado en este equipo. Puedes abrir el siguiente desde Turno de caja. El cuadre y la tirilla definitivos estarán disponibles después de sincronizar. No cierres este turno otra vez en la nube.</p>",
@@ -1394,6 +1411,7 @@
       if (!navigateClosePage(closeProgress.step)) showCloseSubstep(closeProgress.step);
     }
   });
+  window.addEventListener('nova:close-local-only', () => warn('Avance guardado en este equipo. La base no confirmó el respaldo; conserva este navegador hasta completar el cierre.'));
   window.addEventListener("pageshow", event => {
     if (event.persisted && TURNO_ID) {
       closePageLeaving = false;
@@ -1427,7 +1445,7 @@
 
   const initialTurno = readInitialTurno();
   if (initialTurno) {
-    hydrateTurno(initialTurno);
+    await hydrateTurno(initialTurno);
     if (!closePages.page) ok(initialTurno.estado === "CIERRE" ? "Cierre pendiente recuperado." : "Turno abierto recuperado.");
   } else {
     showSection("start");
@@ -1435,16 +1453,5 @@
     setTimeout(() => ppInp?.focus(), 50);
   }
 
-  // limpia contados huérfanos en localStorage (>24h) — pequeño housekeeping
-  try {
-    const now = Date.now();
-    for (let i = localStorage.length - 1; i >= 0; i--) {
-      const k = localStorage.key(i);
-      if (!k || !k.startsWith("tc_contados_")) continue;
-      try {
-        const p = JSON.parse(localStorage.getItem(k) || "{}");
-        if (!normalizedCloseProgress(p?.progress) && (!p?.ts || now - p.ts > 24 * 3600 * 1000)) localStorage.removeItem(k);
-      } catch { localStorage.removeItem(k); }
-    }
-  } catch {}
+  // Never expire financial drafts by age. Delete only after an acknowledged close.
 })();

@@ -338,7 +338,7 @@ $(function () {
         && Array.isArray(raw.items)
         && raw.items.length
         && Number.isFinite(updatedAt)
-        && Date.now() - updatedAt <= SALE_DRAFT_TTL_MS
+        && (raw.status === "submission_pending" || Date.now() - updatedAt <= SALE_DRAFT_TTL_MS)
       );
     } catch (_) {
       return false;
@@ -533,6 +533,7 @@ $(function () {
       for (const key of keys) {
         let raw = null;
         try { raw = JSON.parse(localStorage.getItem(key) || "null"); } catch (_) {}
+        if (raw?.status === "submission_pending") continue;
         const updatedAt = Number(raw?.updated_at);
         if (
           !raw
@@ -582,7 +583,7 @@ $(function () {
       || String(raw.turno_id || "") !== scope.turnoId
       || !Number.isFinite(updatedAt)
       || updatedAt <= 0
-      || Date.now() - updatedAt > SALE_DRAFT_TTL_MS
+      || (raw.status !== "submission_pending" && Date.now() - updatedAt > SALE_DRAFT_TTL_MS)
       || updatedAt - Date.now() > 5 * 60 * 1000
     ) {
       removeSaleDraftByKey(key);
@@ -760,7 +761,8 @@ $(function () {
     };
 
     try {
-      localStorage.setItem(key, JSON.stringify(payload));
+      if (window.NovaStorage) window.NovaStorage.safeSet(key, JSON.stringify(payload));
+      else localStorage.setItem(key, JSON.stringify(payload));
       saleDraftOwnershipLost = false;
       saleDraftLastStorageKey = key;
       const stamp = new Date(payload.updated_at).toLocaleTimeString("es-CO", {
@@ -2090,13 +2092,13 @@ $(function () {
     preIndex.set(sid, window.NovaProductAutocomplete.createIndex(items));
   }
 
-  function loadCatalogFromLocalStorage(sid) {
+  async function loadCatalogFromLocalStorage(sid) {
     try {
-      const raw = localStorage.getItem(`catalog_${sid}`);
-      const ts  = Number(localStorage.getItem(`catalog_${sid}_ts`)||0);
-      if (!raw) return false;
+      const saved = await window.NovaStorage?.catalogGet(sid);
+      const ts = Number(saved?.ts || 0);
+      if (!saved) return false;
       if (now()-ts > CATALOG_TTL_MS) return false;
-      const arr = JSON.parse(raw);
+      const arr = saved.items;
       if (!Array.isArray(arr)) return false;
       catalogBySucursal.set(sid, arr);
       hydrateFromCatalog(arr);
@@ -2112,10 +2114,7 @@ $(function () {
     const d = await r.json();
     const items = Array.isArray(d.results) ? d.results : [];
     catalogBySucursal.set(sid, items);
-    try {
-      localStorage.setItem(`catalog_${sid}`, JSON.stringify(items));
-      localStorage.setItem(`catalog_${sid}_ts`, String(now()));
-    } catch {}
+    void window.NovaStorage?.catalogSet(sid, items);
     hydrateFromCatalog(items);
     buildPreIndexFor(sid, items);
     return items;
@@ -2124,7 +2123,7 @@ $(function () {
   async function ensureCatalog(sid, {force=false}={}) {
     if (!sid) return [];
     if (!force && catalogBySucursal.has(sid)) return catalogBySucursal.get(sid) || [];
-    if (!force && loadCatalogFromLocalStorage(sid)) return catalogBySucursal.get(sid) || [];
+    if (!force && await loadCatalogFromLocalStorage(sid)) return catalogBySucursal.get(sid) || [];
     try { return await fetchCatalogSnapshot(sid); }
     catch { return catalogBySucursal.get(sid) || []; }
   }
@@ -3458,10 +3457,7 @@ $(function () {
     hydrateFromCatalog(items);
     buildPreIndexFor(sid, items);
 
-    try {
-      localStorage.setItem(`catalog_${sid}`, JSON.stringify(items));
-      localStorage.setItem(`catalog_${sid}_ts`, String(now()));
-    } catch {}
+    void window.NovaStorage?.catalogSet(sid, items);
 
     try { termCacheName.map.clear(); } catch {}
     try { termCacheCode.map.clear(); } catch {}

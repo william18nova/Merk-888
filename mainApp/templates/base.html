@@ -13,6 +13,7 @@
   <link rel="stylesheet" href="{% static 'css/barcode_camera.css' %}?v=2"/>
   {% if full_local_development %}<link rel="stylesheet" href="{% static 'local_pos/lab.css' %}">{% endif %}
 
+  <script src="{% static 'javascript/nova_storage.js' %}?v=1"></script>
   {% block extra_head %}{% endblock %}
   {% if nova_integrated_enabled %}
   <link rel="stylesheet" href="{% static 'css/integrated_navigation.css' %}?v=1">

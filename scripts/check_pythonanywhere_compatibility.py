@@ -51,10 +51,10 @@ def main():
         loader = MigrationLoader(None)
         assert not loader.detect_conflicts(), loader.detect_conflicts()
         changes = MigrationAutodetector(loader.project_state(), ProjectState.from_apps(apps)).changes(graph=loader.graph)
-        assert ("mainApp", "0050_desglosepagoscierre") in loader.graph.leaf_nodes()
-        assert not any(getattr(operation, "model_name", getattr(operation, "name", "")).lower() in {"solicitudpos", "desglosepagoscierre"}
+        assert ("mainApp", "0053_avance_cierre_caja") in loader.graph.leaf_nodes()
+        assert not any(getattr(operation, "model_name", getattr(operation, "name", "")).lower() in {"solicitudpos", "desglosepagoscierre", "avancecierrecaja"}
             for migrations in changes.values() for migration in migrations for operation in migration.operations)
-        print("PASS: migration graph, migrations 0049/0050 match the new models")
+        print("PASS: migration graph, receipts, closing details and checkpoints match models")
         if changes:
             # This repository predates several manually created production
             # columns/tables. Report drift rather than blindly creating a new
@@ -77,6 +77,7 @@ def main():
                 assets = (
                     "css/navbar.css", "images/logoNovaAdvance.png",
                     "javascript/generar_venta.js", "javascript/turno_caja.js",
+                    "javascript/nova_storage.js", "javascript/cash_close_storage.js",
                     "javascript/integrated_business_transport.js",
                     "javascript/close_payment_details.js", "css/close_payment_details.css",
                 )

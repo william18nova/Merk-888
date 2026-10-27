@@ -412,7 +412,7 @@
     return createAC(options);
   }
   function createCatalog({url, storageKey, storage = null, fetcher = root.fetch.bind(root),
-    now = Date.now, ttl = 5 * 60 * 1000, getBoost = () => ({})}) {
+    now = Date.now, ttl = 5 * 60 * 1000, getBoost = () => ({}), cache = root.NovaStorage?.cache}) {
     let items = [], index = null, updated = 0, pending = null, byId = new Map();
     const search = createSearch({getBoost});
     function install(rows, timestamp) {
@@ -423,9 +423,10 @@
       updated = timestamp;
     }
     try {
-      const saved = JSON.parse(storage?.getItem(storageKey) || "null");
+      const saved = cache ? null : JSON.parse(storage?.getItem(storageKey) || "null");
       if (saved && now() >= saved.at && now() - saved.at < ttl) install(saved.items, saved.at);
     } catch (_) {}
+    let hydrated = false;
     function ensure(force = false) {
       if (pending) return pending;
       if (!force && index && now() - updated < ttl) return Promise.resolve(items);
@@ -433,11 +434,19 @@
       const timer = setTimeout(() => controller.abort(), 10000);
       pending = (async () => {
         try {
+          if (cache && !hydrated) {
+            const saved = await cache.get(storageKey);
+            hydrated = true;
+            if (!force && saved && now() >= saved.at && now() - saved.at < ttl) {
+              install(saved.items, saved.at); return items;
+            }
+          }
           const response = await fetcher(url, {cache: "no-store", signal: controller.signal});
           if (!response.ok) throw new Error("No pudimos actualizar los productos. Revisa tu conexión o sesión.");
           const data = await response.json();
           install(data.results, now());
-          try { storage?.setItem(storageKey, JSON.stringify({at: updated, items})); } catch (_) {}
+          if (cache) void cache.set(storageKey, {at: updated, items});
+          else { try { storage?.setItem(storageKey, JSON.stringify({at: updated, items})); } catch (_) {} }
           return items;
         } finally { clearTimeout(timer); pending = null; }
       })();

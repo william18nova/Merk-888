@@ -160,8 +160,10 @@ def build(request, action, state, kwargs):
         seen.add(code)
         normalized.append({"metodo": code, "contado": str(amount)})
     from mainApp.services.close_payments import validate as validate_close_payments
+    from mainApp.services.close_progress import validate_final
     try:
         bills, details = validate_close_payments(request.POST.get("facturas_pagadas", "0"), request.POST.get("pagos_detalle"))
+        validate_final(turn, bills, details, money(request.POST.get("efectivo_entregado", 0)))
     except ValueError as exc:
         raise SaleError(str(exc)) from None
     return {"turn_id": turn.pk, "cash": str(money(request.POST.get("efectivo_entregado", 0))),
