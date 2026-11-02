@@ -4,7 +4,7 @@ from unittest.mock import patch
 from types import SimpleNamespace
 from django.test import SimpleTestCase, RequestFactory
 from django.core.exceptions import PermissionDenied
-from mainApp.services.expense_reconciliation import reconcile, similarity
+from mainApp.services.expense_reconciliation import reconcile, similarity, registered_payments
 from mainApp.expense_reconciliation_views import PagosCierresRevisionView
 
 
@@ -69,6 +69,41 @@ class ReconciliationTests(SimpleTestCase):
         previous=dict(self.expense(),date=date(2026,10,31))
         row=reconcile([self.declaration()],[previous],{(1,0):{10}})[0]
         self.assertEqual(row['candidates'],[])
+
+    def test_registered_ledger_includes_unrelated_payments(self):
+        e=self.expense('PROVEEDOR SIN DECLARACION',method='tarjeta')
+        result=registered_payments([e],[],date(2026,11,1),date(2026,11,1))
+        self.assertEqual(result['registered_count'],1)
+        self.assertEqual(result['registered_payments'][0]['references'],[])
+        self.assertEqual(result['registered_payments'][0]['method'],'tarjeta')
+
+    def test_registered_ledger_keeps_base_and_tax_separate(self):
+        e=dict(self.expense(method='nequi'),total=Decimal('70280'),tax=Decimal('280'))
+        result=registered_payments([e],[],date(2026,11,1),date(2026,11,1))
+        self.assertEqual(result['registered_base_total'],Decimal('70000'))
+        self.assertEqual(result['registered_total'],Decimal('70280'))
+        self.assertEqual(result['registered_payments'][0]['tax'],Decimal('280'))
+
+    def test_registered_ledger_hides_out_of_range_comparison_candidates(self):
+        old=dict(self.expense(),date=date(2026,10,31))
+        current=self.expense()
+        tomorrow=dict(self.expense(day=2),id=11)
+        result=registered_payments([old,current,tomorrow],[],date(2026,10,1),date(2026,11,1))
+        self.assertEqual([e['date'] for e in result['registered_payments']],[date(2026,11,1)])
+
+    def test_registered_ledger_shows_audited_and_possible_relationships(self):
+        e=self.expense()
+        audited=reconcile([self.declaration()],[e],{(1,0):{10}})
+        result=registered_payments([e],audited,date(2026,11,1),date(2026,11,1))
+        self.assertEqual(result['registered_payments'][0]['relation'],'Vinculado por auditoría')
+        possible=reconcile([self.declaration()],[e],{})
+        result=registered_payments([e],possible,date(2026,11,1),date(2026,11,1))
+        self.assertIn('Posible coincidencia',result['registered_payments'][0]['relation'])
+
+    def test_registered_ledger_empty_totals(self):
+        result=registered_payments([],[],date(2026,11,1),date(2026,11,1))
+        self.assertEqual(result['registered_count'],0)
+        self.assertEqual(result['registered_total'],Decimal(0))
 
 
 class ReconciliationViewTests(SimpleTestCase):
@@ -137,6 +172,18 @@ class ReconciliationViewTests(SimpleTestCase):
     def test_activation_is_not_moving_today(self,report,*_):
         PagosCierresRevisionView.as_view()(self.request())
         report.assert_called_once_with(date(2026,11,1),date(2026,11,3))
+
+    @patch('mainApp.expense_reconciliation_views.render')
+    @patch('local_pos.request_context.offline_request',return_value=False)
+    @patch('mainApp.expense_reconciliation_views.can_edit_expenses',return_value=True)
+    @patch('mainApp.expense_reconciliation_views.closing_report')
+    def test_declaration_status_filter_does_not_hide_registered_payments(self,report,permission,offline,render):
+        ledger=[{'id':1},{'id':2}]
+        report.return_value={'rows':[{'status':'linked'},{'status':'missing'}],'registered_payments':ledger}
+        PagosCierresRevisionView.as_view()(self.request({'desde':'2026-11-01','hasta':'2026-11-01','estado':'missing'}))
+        context=render.call_args.args[2]
+        self.assertEqual(context['rows'],[{'status':'missing'}])
+        self.assertEqual(context['registered_payments'],ledger)
 
     @patch('mainApp.expense_reconciliation_views.render')
     @patch('local_pos.request_context.offline_request',return_value=False)

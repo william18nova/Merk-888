@@ -3,7 +3,7 @@
 {% block title %}Revisar pagos de cierres{% endblock %}
 {% block extra_head %}
 <link rel="stylesheet" href="{% static 'css/registrar_egreso.css' %}?v=4">
-<link rel="stylesheet" href="{% static 'css/pagos_cierres_revision.css' %}?v=1">
+<link rel="stylesheet" href="{% static 'css/pagos_cierres_revision.css' %}?v=2">
 {% endblock %}
 {% block content %}
 <main class="expense-page reconciliation-page">
@@ -26,7 +26,12 @@
     {% for item in summary %}<article class="reconciliation-stat reconciliation-status--{{ item.code }}"><span>{{ item.label }}</span><strong>{{ item.count }}</strong><small>$ {{ item.total|floatformat:2 }}</small></article>{% endfor %}
   </section>
   <p>{{ source_count }} cierres de tarde con detalle · Consultado: {{ checked_at|date:'d/m/Y H:i' }}. Los totales de «Sin coincidencia» no son autorización para registrar pagos.</p>
-  <section class="reconciliation-list" aria-label="Detalle de declaraciones">
+  <nav class="reconciliation-jumps" aria-label="Secciones de comparación"><a class="expense-link" href="#closing-declarations">Ver declaraciones</a><a class="expense-link" href="#registered-payments">Ver pagos registrados ({{ registered_count }})</a></nav>
+  <div class="reconciliation-comparison">
+  <section id="closing-declarations" class="reconciliation-column" aria-labelledby="closing-declarations-title">
+  <h2 id="closing-declarations-title">Declarado por los cajeros</h2>
+  <p>El filtro de estado se aplica únicamente a estas declaraciones.</p>
+  <div class="reconciliation-scroll reconciliation-list">
     {% for row in rows %}
     <article class="reconciliation-item">
       <header><div><small>{{ row.date|date:'d/m/Y' }} · Turno #{{ row.turn }}</small><h2>{{ row.name }}</h2><p>{{ row.cashier }} · {{ row.register }} · {{ row.branch }}</p></div><strong>$ {{ row.amount|floatformat:2 }}</strong></header>
@@ -39,7 +44,28 @@
       {% endif %}
     </article>
     {% empty %}<p class="expense-empty">No hay declaraciones para el rango y estado seleccionados.</p>{% endfor %}
+  </div>
   </section>
+  <section id="registered-payments" class="reconciliation-column" aria-labelledby="registered-payments-title">
+    <header class="reconciliation-ledger-head"><div><p class="expense-eyebrow">Registro real de Pagos</p><h2 id="registered-payments-title">Pagos ya agregados</h2></div><span>{{ registered_count }} registros</span></header>
+    <p>Todos los medios de pago y usuarios dentro de las fechas elegidas, desde el 01/11/2026. No se ocultan al filtrar el estado de las declaraciones. Los pagos no identifican sucursal.</p>
+    <div class="reconciliation-ledger-totals"><span>Valor pagado sin impuesto<strong>$ {{ registered_base_total|floatformat:2 }}</strong></span><span>Total con 4 × 1.000<strong>$ {{ registered_total|floatformat:2 }}</strong></span></div>
+    <label class="reconciliation-search">Buscar entre estos pagos<input type="search" placeholder="Concepto, número, usuario o valor…" data-ledger-search aria-controls="registered-payments-list" autocomplete="off"></label>
+    <p class="reconciliation-search-result" data-ledger-results role="status" aria-live="polite"></p>
+    <div id="registered-payments-list" class="reconciliation-scroll reconciliation-list">
+      {% for payment in registered_payments %}
+      <article class="reconciliation-ledger-item" data-ledger-item>
+        <header><div><small>Pago #{{ payment.id }} · {{ payment.date|date:'d/m/Y' }}</small><h3>{{ payment.name }}</h3></div><strong>$ {{ payment.amount|floatformat:2 }}</strong></header>
+        <p>{{ payment.method }} · Registrado por {{ payment.registered_by|default:'No especificado' }}</p>
+        {% if payment.tax %}<p class="reconciliation-tax">4 × 1.000: $ {{ payment.tax|floatformat:2 }} · Total: $ {{ payment.total|floatformat:2 }}</p>{% endif %}
+        <p class="reconciliation-ledger-relation">{{ payment.relation }}{% for ref in payment.references %} · Turno #{{ ref.turn }}{% endfor %}</p>
+        <a class="expense-link" href="{% url 'editar_egreso' payment.id %}" target="_blank" rel="noopener">Abrir pago #{{ payment.id }} ↗</a>
+      </article>
+      {% empty %}<p class="expense-empty">No hay pagos registrados en este rango de fechas.</p>{% endfor %}
+    </div>
+  </section>
+  </div>
   {% endif %}
 </main>
 {% endblock %}
+{% block scripts %}<script defer src="{% static 'javascript/pagos_cierres_revision.js' %}?v=1"></script>{% endblock %}

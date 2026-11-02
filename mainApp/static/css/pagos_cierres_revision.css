@@ -23,5 +23,27 @@
 .reconciliation-candidates span {color:#d6e5f5;font-size:.95rem}
 .reconciliation-note {padding:16px;border-left:3px solid #6cbaff;background:#143252}
 .reconciliation-page a:focus-visible,.reconciliation-page input:focus-visible,.reconciliation-page button:focus-visible {outline:3px solid #9be2ff;outline-offset:4px}
+.reconciliation-jumps {display:flex;gap:24px;flex-wrap:wrap;margin:22px 0}
+.reconciliation-comparison {display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:24px;align-items:start}
+.reconciliation-column {min-width:0;scroll-margin-top:155px}
+.reconciliation-column>h2,.reconciliation-ledger-head h2 {font-size:1.35rem;margin:0 0 10px}
+.reconciliation-scroll {max-height:75vh;overflow:auto;overscroll-behavior:contain;padding:3px 7px 12px 3px;scrollbar-color:#6a99c6 #112d4c;scrollbar-width:thin}
+.reconciliation-ledger-head {display:flex;align-items:center;justify-content:space-between;gap:14px}
+.reconciliation-ledger-head>span {white-space:nowrap;color:#bfd3eb}
+.reconciliation-ledger-totals {display:flex;gap:20px;flex-wrap:wrap;padding:16px;background:#102d4d;border-radius:14px;margin:16px 0}
+.reconciliation-ledger-totals span {display:grid;gap:8px;color:#bfd3eb;font-size:.9rem}
+.reconciliation-ledger-totals strong {color:#fff;font-size:1.1rem}
+.reconciliation-search {display:grid;gap:8px;margin-top:16px;font-weight:600}
+.reconciliation-search input {width:100%;min-width:0;padding:12px;color:white;background:#102d4d;border:1px solid #718fb5;border-radius:12px;font:inherit}
+.reconciliation-search-result {min-height:1.6em;margin:8px 0}
+.reconciliation-ledger-item {padding:18px;border:1px solid #607e9f;background:#153659;border-radius:16px;overflow-wrap:anywhere}
+.reconciliation-ledger-item header {display:flex;justify-content:space-between;gap:16px}
+.reconciliation-ledger-item header>strong {white-space:nowrap}
+.reconciliation-ledger-item h3 {font-size:1.1rem;margin:10px 0}
+.reconciliation-ledger-item small {color:#bfd3eb}
+.reconciliation-ledger-item p {margin:10px 0}
+.reconciliation-ledger-relation {padding:10px;background:#102d4d;border-radius:8px;font-size:.9rem}
+.reconciliation-ledger-item[hidden] {display:none}
+@media(max-width:1100px){.reconciliation-comparison{grid-template-columns:minmax(0,1fr)}.reconciliation-scroll{max-height:65vh}.reconciliation-column{margin-bottom:20px}}
 @media(max-width:850px){.reconciliation-summary{grid-template-columns:repeat(2,minmax(0,1fr))}}
-@media(max-width:520px){.reconciliation-item header{flex-direction:column;gap:0}.reconciliation-filters button{width:100%}.reconciliation-stat{padding:14px}.reconciliation-item{padding:16px}}
+@media(max-width:520px){.reconciliation-item header,.reconciliation-ledger-item header{flex-direction:column;gap:0}.reconciliation-filters button{width:100%}.reconciliation-stat{padding:14px}.reconciliation-item{padding:16px}}

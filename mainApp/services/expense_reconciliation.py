@@ -85,6 +85,32 @@ def reconcile(declarations, expenses, links):
     return rows
 
 
+def registered_payments(expenses, rows, start, end):
+    """Show the actual ledger for the selected dates, independently of row filters."""
+    references = {}
+    for row in rows:
+        for candidate in row['candidates']:
+            references.setdefault(candidate['id'], []).append({
+                'turn': row['turn'], 'name': row['name'], 'status': row['status'],
+            })
+    ledger = []
+    for expense in expenses:
+        if not max(start, RECONCILIATION_START) <= expense['date'] <= end:
+            continue
+        item = dict(expense, references=references.get(expense['id'], []))
+        item['total'] = expense.get('total', expense['amount'])
+        item['tax'] = expense.get('tax', Decimal(0))
+        item['relation'] = ('Vinculado por auditoría' if item['references'] and
+            all(r['status'] == 'linked' for r in item['references']) else
+            'Posible coincidencia; verificar' if item['references'] else
+            'Sin vínculo identificado con los cierres mostrados')
+        ledger.append(item)
+    ledger.sort(key=lambda e: (e['date'], e['id']), reverse=True)
+    return dict(registered_payments=ledger, registered_count=len(ledger),
+        registered_base_total=sum((e['amount'] for e in ledger), Decimal(0)),
+        registered_total=sum((e['total'] for e in ledger), Decimal(0)))
+
+
 def closing_report(start, end):
     from django.utils import timezone
     from mainApp.models import CambioEgreso, DesglosePagosCierre, Egreso
@@ -102,7 +128,9 @@ def closing_report(start, end):
             cashier=t.cajero.nombreusuario, register=t.puntopago.nombre,
             branch=str(t.puntopago.sucursalid), payments=s.pagos or [], total=s.total))
     expenses=[dict(id=e.pk, date=timezone.localtime(e.creado_en, CO).date(),
-        name=e.concepto.nombre, amount=e.monto_base, method=e.medio_pago)
+        paid_at=timezone.localtime(e.creado_en, CO), registered_by=e.registrado_por_nombre,
+        name=e.concepto.nombre, amount=e.monto_base, total=e.monto,
+        tax=e.impuesto_4xmil, method=e.medio_pago)
         for e in Egreso.objects.select_related('concepto').filter(creado_en__gte=max(cutoff,lo-timedelta(days=1)), creado_en__lt=hi+timedelta(days=1))]
     links={}
     for audit in CambioEgreso.objects.filter(egreso_id__in=[e['id'] for e in expenses], motivo__startswith='CONCILIACION').values('egreso_id','motivo'):
@@ -118,4 +146,5 @@ def closing_report(start, end):
         r['label']=labels[r['status']]
     summary=[dict(code=code,label=label,count=sum(r['status']==code for r in rows),
         total=sum((r['amount'] for r in rows if r['status']==code),Decimal(0))) for code,label in labels.items()]
-    return dict(rows=rows, summary=summary, source_count=sum(d['afternoon'] and bool(d['payments']) for d in declarations))
+    return dict(rows=rows, summary=summary, source_count=sum(d['afternoon'] and bool(d['payments']) for d in declarations),
+        **registered_payments(expenses, rows, start, end))

@@ -5,6 +5,12 @@ Web Master o permiso `pagos_editar`, también verificado en la vista del servido
 Ruta: `/caja/pagos/revisar-cierres/`.
 
 - Solo lectura: no tiene POST ni crea, edita o elimina pagos.
+- En la misma página se muestran **todos los pagos ya registrados** dentro del
+  rango elegido (todos los medios y usuarios), aunque no tengan coincidencia con
+  una declaración. Concepto, fecha, usuario, medio, importe base y total/impuesto.
+  El filtro de estado afecta solo a las declaraciones, no al registro de pagos.
+  Incluye búsqueda local por concepto, ID, usuario o valor y acceso al pago en
+  otra pestaña. La relación con un cierre es informativa, nunca un vínculo nuevo.
 - Inicio fijo de esta revisión: **01/11/2026**, solicitado por el propietario.
   No se muestran declaraciones ni coincidencias anteriores a esa fecha. Se
   conservan todos los registros históricos, sin modificarlos ni eliminarlos.
