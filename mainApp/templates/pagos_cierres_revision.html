@@ -1,0 +1,45 @@
+{% extends 'base.html' %}
+{% load static %}
+{% block title %}Revisar pagos de cierres{% endblock %}
+{% block extra_head %}
+<link rel="stylesheet" href="{% static 'css/registrar_egreso.css' %}?v=4">
+<link rel="stylesheet" href="{% static 'css/pagos_cierres_revision.css' %}?v=1">
+{% endblock %}
+{% block content %}
+<main class="expense-page reconciliation-page">
+  <header class="expense-hero">
+    <div><p class="expense-eyebrow">Control de pagos · Solo consulta</p>
+      <h1>Pagos declarados en cierres de tarde</h1>
+      <p>Compara lo que declararon los cajeros con los pagos registrados. No crea pagos ni modifica los cierres.</p>
+      <a class="expense-link" href="{% url 'registrar_egreso' %}">← Volver a Registrar pago</a>
+    </div>
+  </header>
+  <form method="get" class="reconciliation-filters">
+    <label>Desde<input type="date" name="desde" value="{{ start }}" required></label>
+    <label>Hasta<input type="date" name="hasta" value="{{ end }}" required></label>
+    <label>Mostrar<select name="estado"><option value="">Todos los estados</option><option value="missing" {% if selected_status == 'missing' %}selected{% endif %}>Sin coincidencia</option><option value="possible" {% if selected_status == 'possible' %}selected{% endif %}>Puede estar registrado</option><option value="review" {% if selected_status == 'review' %}selected{% endif %}>Revisar</option><option value="linked" {% if selected_status == 'linked' %}selected{% endif %}>Conciliado con auditoría</option></select></label>
+    <button class="expense-submit" type="submit">Revisar cierres</button>
+  </form>
+  <p class="reconciliation-note">Se consideran de tarde los turnos iniciados entre las 12:00 y las 19:59, hora de Colombia. Se compara el importe sin 4 × 1.000 y nombres similares en la misma fecha o ±1 día. Una coincidencia sugerida no confirma que sea el mismo pago. Como Pagos no identifica sucursal, verifica también ese dato.</p>
+  {% if error %}<p class="expense-warning" role="alert">{{ error }}</p>{% else %}
+  <section class="reconciliation-summary" aria-label="Resumen">
+    {% for item in summary %}<article class="reconciliation-stat reconciliation-status--{{ item.code }}"><span>{{ item.label }}</span><strong>{{ item.count }}</strong><small>$ {{ item.total|floatformat:2 }}</small></article>{% endfor %}
+  </section>
+  <p>{{ source_count }} cierres de tarde con detalle · Consultado: {{ checked_at|date:'d/m/Y H:i' }}. Los totales de «Sin coincidencia» no son autorización para registrar pagos.</p>
+  <section class="reconciliation-list" aria-label="Detalle de declaraciones">
+    {% for row in rows %}
+    <article class="reconciliation-item">
+      <header><div><small>{{ row.date|date:'d/m/Y' }} · Turno #{{ row.turn }}</small><h2>{{ row.name }}</h2><p>{{ row.cashier }} · {{ row.register }} · {{ row.branch }}</p></div><strong>$ {{ row.amount|floatformat:2 }}</strong></header>
+      <span class="reconciliation-badge reconciliation-status--{{ row.status }}">{{ row.label }}</span>
+      <p>{{ row.explanation }}</p>
+      {% if row.candidates %}
+      <ul class="reconciliation-candidates">
+        {% for candidate in row.candidates %}<li><a class="expense-link" href="{% url 'editar_egreso' candidate.id %}">Pago #{{ candidate.id }} · {{ candidate.name }}</a><span>{{ candidate.date|date:'d/m/Y' }} · {{ candidate.method }} · $ {{ candidate.amount|floatformat:2 }}</span></li>{% endfor %}
+      </ul>
+      {% endif %}
+    </article>
+    {% empty %}<p class="expense-empty">No hay declaraciones para el rango y estado seleccionados.</p>{% endfor %}
+  </section>
+  {% endif %}
+</main>
+{% endblock %}

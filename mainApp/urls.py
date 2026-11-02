@@ -8,6 +8,7 @@ from .ptm_views import OperacionesPTMView
 from .ptm_reader_views import ConciliacionPTMView, receive_ptm
 from .ptm_cash_pool_views import BolsaPTMAdminView, BolsaPTMTurnoView
 from .expense_views import EgresosEditarListView, EditarEgresoView
+from .expense_reconciliation_views import PagosCierresRevisionView
 from django.contrib.auth import views as auth_views
 from .views import (
                     LoginView,
@@ -316,6 +317,7 @@ urlpatterns = [
      path("reportes/metricas/", views.MetricasNegocioView.as_view(), name="metricas_negocio"),
      path("reportes/metricas/data/", views.MetricasNegocioDataView.as_view(), name="metricas_negocio_data"),
     path("caja/registrar-pago/", views.RegistrarEgresoView.as_view(), name="registrar_egreso"),
+    path("caja/pagos/revisar-cierres/", PagosCierresRevisionView.as_view(), name="pagos_revisar_cierres"),
     path("caja/pagos/", EgresosEditarListView.as_view(), name="pagos_editar_lista"),
     path("caja/pagos/<int:egreso_id>/editar/", EditarEgresoView.as_view(), name="editar_egreso"),
      path("nequi/notificaciones/", views.NequiNotificacionesView.as_view(), name="nequi_notificaciones"),

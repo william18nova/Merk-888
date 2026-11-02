@@ -647,6 +647,7 @@ PERMISSION_IMPLICATIONS = {
 
 
 ROUTE_PERMISSIONS = {
+    "pagos_revisar_cierres": "pagos_editar",
     "editar_egreso": "pagos_editar",
     "pagos_editar_lista": "pagos_editar",
     "agregar_sucursal": "sucursales_crear",

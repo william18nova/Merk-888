@@ -4,7 +4,7 @@
 {% block title %}Registrar pago{% endblock %}
 
 {% block extra_head %}
-  <link rel="stylesheet" href="{% static 'css/registrar_egreso.css' %}?v=3">
+  <link rel="stylesheet" href="{% static 'css/registrar_egreso.css' %}?v=4">
 {% endblock %}
 
 {% block content %}
@@ -29,6 +29,10 @@
       </div>
     </aside>
   </header>
+
+  {% if can_edit_expenses %}
+  <p><a class="expense-review-button" href="{% url 'pagos_revisar_cierres' %}"><span aria-hidden="true">✓</span> Revisar pagos de cierres de tarde <span aria-hidden="true">→</span></a></p>
+  {% endif %}
 
   {% if messages %}
     <section class="expense-messages" aria-live="polite">

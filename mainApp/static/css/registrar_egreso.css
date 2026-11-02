@@ -13,6 +13,10 @@
   --expense-shadow: 0 22px 54px rgba(2, 16, 37, .3);
 }
 
+.expense-review-button {display:inline-flex;align-items:center;gap:12px;padding:14px 20px;border:1px solid #79b7ed;border-radius:14px;background:#173c65;color:#e3f3ff;text-decoration:none;font-weight:650;line-height:1.4;box-shadow:0 6px 20px #071a3026}
+.expense-review-button:hover {background:#23558a;color:white;text-decoration:none}
+.expense-review-button:focus-visible {outline:3px solid #9be2ff;outline-offset:4px}
+
 html { min-height: 100%; background-color: #173c6b; }
 body {
   margin: 0;

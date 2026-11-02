@@ -1,0 +1,27 @@
+.reconciliation-page {padding-inline:clamp(12px,3vw,36px)}
+.reconciliation-page .expense-hero {padding:clamp(18px,3vw,32px)}
+.reconciliation-page h1 {font-size:clamp(1.6rem,3vw,2.4rem);margin:8px 0 16px}
+.reconciliation-page p {line-height:1.6;color:#d6e5f5}
+.reconciliation-filters {display:flex;gap:18px;align-items:end;flex-wrap:wrap;margin:24px 0}
+.reconciliation-filters label {display:grid;gap:8px;flex:1;min-width:170px}
+.reconciliation-filters input,.reconciliation-filters select {padding:12px;border:1px solid #718fb5;border-radius:12px;color:#fff;background:#17365b;color-scheme:dark;font:inherit;width:100%}
+.reconciliation-filters button {width:auto;min-height:46px;margin:0}
+.reconciliation-summary {display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;margin:24px 0}
+.reconciliation-stat {display:grid;gap:10px;padding:20px;border:1px solid #607e9f;border-radius:16px;background:#153659}
+.reconciliation-stat strong {font-size:2rem}.reconciliation-stat small {font-size:1rem}
+.reconciliation-list {display:grid;gap:16px}
+.reconciliation-item {border:1px solid #607e9f;border-radius:18px;background:#153659;padding:22px;overflow-wrap:anywhere}
+.reconciliation-item header {display:flex;justify-content:space-between;gap:20px;align-items:start}
+.reconciliation-item header>strong {white-space:nowrap;font-size:1.25rem}
+.reconciliation-item h2 {font-size:1.15rem;margin:10px 0}
+.reconciliation-item small {color:#c3d7f0}
+.reconciliation-badge {display:inline-block;padding:7px 12px;border:1px solid currentColor;border-radius:20px;font-weight:600}
+.reconciliation-status--linked {color:#9bedcb}.reconciliation-status--possible {color:#ffe099}
+.reconciliation-status--missing {color:#ffb1ba}.reconciliation-status--review {color:#e2c5ff}
+.reconciliation-candidates {list-style:none;padding:0;display:grid;gap:12px}
+.reconciliation-candidates li {display:grid;gap:8px;padding:12px;background:#0e2949;border-radius:10px}
+.reconciliation-candidates span {color:#d6e5f5;font-size:.95rem}
+.reconciliation-note {padding:16px;border-left:3px solid #6cbaff;background:#143252}
+.reconciliation-page a:focus-visible,.reconciliation-page input:focus-visible,.reconciliation-page button:focus-visible {outline:3px solid #9be2ff;outline-offset:4px}
+@media(max-width:850px){.reconciliation-summary{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:520px){.reconciliation-item header{flex-direction:column;gap:0}.reconciliation-filters button{width:100%}.reconciliation-stat{padding:14px}.reconciliation-item{padding:16px}}
