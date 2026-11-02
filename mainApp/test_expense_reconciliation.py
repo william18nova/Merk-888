@@ -55,6 +55,21 @@ class ReconciliationTests(SimpleTestCase):
         row=reconcile([self.declaration()],[self.expense(day=2,method='nequi')],{})[0]
         self.assertEqual(row['status'],'possible')
 
+    def test_declarations_before_activation_are_hidden(self):
+        previous=dict(self.declaration(),date=date(2026,10,31))
+        self.assertEqual(reconcile([previous],[self.expense()],{}),[])
+
+    def test_old_candidate_is_hidden_even_when_within_one_day(self):
+        previous=dict(self.expense(),date=date(2026,10,31))
+        row=reconcile([self.declaration()],[previous],{})[0]
+        self.assertEqual(row['status'],'missing')
+        self.assertEqual(row['candidates'],[])
+
+    def test_old_audited_candidate_is_also_hidden(self):
+        previous=dict(self.expense(),date=date(2026,10,31))
+        row=reconcile([self.declaration()],[previous],{(1,0):{10}})[0]
+        self.assertEqual(row['candidates'],[])
+
 
 class ReconciliationViewTests(SimpleTestCase):
     def request(self,query=None):
@@ -95,6 +110,33 @@ class ReconciliationViewTests(SimpleTestCase):
     def test_long_range_rejected(self,report,*_):
         PagosCierresRevisionView.as_view()(self.request({'desde':'2025-01-01','hasta':'2026-11-01'}))
         report.assert_not_called()
+
+    @patch('mainApp.expense_reconciliation_views.render')
+    @patch('local_pos.request_context.offline_request',return_value=False)
+    @patch('mainApp.expense_reconciliation_views.can_edit_expenses',return_value=True)
+    @patch('mainApp.expense_reconciliation_views.closing_report')
+    def test_old_range_rejected_by_server(self,report,permission,offline,render):
+        PagosCierresRevisionView.as_view()(self.request({'desde':'2026-10-31','hasta':'2026-11-01'}))
+        report.assert_not_called()
+        self.assertEqual(render.call_args.kwargs['status'],400)
+
+    @patch('mainApp.expense_reconciliation_views.render')
+    @patch('local_pos.request_context.offline_request',return_value=False)
+    @patch('mainApp.expense_reconciliation_views.can_edit_expenses',return_value=True)
+    @patch('mainApp.expense_reconciliation_views.timezone.localdate',return_value=date(2026,11,1))
+    @patch('mainApp.expense_reconciliation_views.closing_report',return_value={})
+    def test_default_starts_at_activation(self,report,*_):
+        PagosCierresRevisionView.as_view()(self.request())
+        report.assert_called_once_with(date(2026,11,1),date(2026,11,1))
+
+    @patch('mainApp.expense_reconciliation_views.render')
+    @patch('local_pos.request_context.offline_request',return_value=False)
+    @patch('mainApp.expense_reconciliation_views.can_edit_expenses',return_value=True)
+    @patch('mainApp.expense_reconciliation_views.timezone.localdate',return_value=date(2026,11,3))
+    @patch('mainApp.expense_reconciliation_views.closing_report',return_value={})
+    def test_activation_is_not_moving_today(self,report,*_):
+        PagosCierresRevisionView.as_view()(self.request())
+        report.assert_called_once_with(date(2026,11,1),date(2026,11,3))
 
     @patch('mainApp.expense_reconciliation_views.render')
     @patch('local_pos.request_context.offline_request',return_value=False)

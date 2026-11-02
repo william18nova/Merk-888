@@ -5,7 +5,11 @@ Web Master o permiso `pagos_editar`, también verificado en la vista del servido
 Ruta: `/caja/pagos/revisar-cierres/`.
 
 - Solo lectura: no tiene POST ni crea, edita o elimina pagos.
-- Rango predeterminado: últimos 31 días, máximo 93 por consulta.
+- Inicio fijo de esta revisión: **01/11/2026**, solicitado por el propietario.
+  No se muestran declaraciones ni coincidencias anteriores a esa fecha. Se
+  conservan todos los registros históricos, sin modificarlos ni eliminarlos.
+- Rango predeterminado: últimos 31 días sin retroceder antes del inicio fijo,
+  máximo 93 por consulta. El servidor rechaza filtros anteriores al 01/11/2026.
 - Tarde: inicio del turno entre 12:00 y 19:59, hora de Colombia, cerrado.
 - Compara nombre normalizado e importe base antes del 4 × 1.000, fecha ±1 día.
 - La equivalencia Diego/Fabián fue aclarada expresamente por el propietario.

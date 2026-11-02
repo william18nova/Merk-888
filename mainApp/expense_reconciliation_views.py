@@ -6,7 +6,7 @@ from django.shortcuts import render
 from django.utils import timezone
 from django.views import View
 from .services.expense_editing import can_edit_expenses
-from .services.expense_reconciliation import closing_report
+from .services.expense_reconciliation import closing_report, RECONCILIATION_START
 
 
 class PagosCierresRevisionView(LoginRequiredMixin, View):
@@ -15,8 +15,10 @@ class PagosCierresRevisionView(LoginRequiredMixin, View):
     def get(self, request):
         if not can_edit_expenses(request.user):
             raise PermissionDenied('No tienes permiso para revisar los pagos del negocio.')
-        context={'start':request.GET.get('desde', (timezone.localdate()-timedelta(days=30)).isoformat()),
-                 'end':request.GET.get('hasta',timezone.localdate().isoformat())}
+        default_start=max(RECONCILIATION_START, timezone.localdate()-timedelta(days=30))
+        context={'start':request.GET.get('desde', default_start.isoformat()),
+                 'end':request.GET.get('hasta',timezone.localdate().isoformat()),
+                 'report_start':RECONCILIATION_START.isoformat()}
         from local_pos.request_context import offline_request
         if offline_request():
             context['error']='Estamos offline. Esta revisión requiere los pagos y cierres actualizados de la base online.'
@@ -27,6 +29,9 @@ class PagosCierresRevisionView(LoginRequiredMixin, View):
                 raise ValueError
         except ValueError:
             context['error']='Selecciona un rango válido de hasta 93 días.'
+            return render(request,'pagos_cierres_revision.html',context,status=400)
+        if start < RECONCILIATION_START:
+            context['error']='Esta revisión comienza el 01/11/2026. No se muestran declaraciones ni pagos anteriores a esa fecha.'
             return render(request,'pagos_cierres_revision.html',context,status=400)
         try:
             context.update(closing_report(start,end), checked_at=timezone.now())

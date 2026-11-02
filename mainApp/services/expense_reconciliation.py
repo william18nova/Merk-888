@@ -6,12 +6,14 @@ never authority to create a payment or reuse one expense for several closes.
 import re
 import unicodedata
 from collections import Counter
-from datetime import datetime, time, timedelta
+from datetime import date, datetime, time, timedelta
 from decimal import Decimal, InvalidOperation
 from difflib import SequenceMatcher
 from zoneinfo import ZoneInfo
 
 CO = ZoneInfo('America/Bogota')
+# Fixed activation date requested by the owner, not a moving "today" filter.
+RECONCILIATION_START = date(2026, 11, 1)
 STOP = {'PAGO', 'PAGAR', 'TURNO', 'SRA', 'SENORA', 'SENOR', 'FACTURA',
         'COMPLEMENTO', 'COMPLETO', 'SALDO', 'DE', 'LA', 'EL', 'A', 'LE',
         'ENTREGUE', 'TERMINAR', 'SE', 'DINERO', 'Y', 'DON'}
@@ -40,6 +42,8 @@ def similarity(a, b):
 
 def reconcile(declarations, expenses, links):
     """Pure matcher. links maps (turn, row) to explicitly audited expense IDs."""
+    declarations = [d for d in declarations if d['date'] >= RECONCILIATION_START]
+    expenses = [e for e in expenses if e['date'] >= RECONCILIATION_START]
     by_id = {e['id']: e for e in expenses}
     reserved = {i for ids in links.values() for i in ids}
     rows = []
@@ -84,7 +88,9 @@ def reconcile(declarations, expenses, links):
 def closing_report(start, end):
     from django.utils import timezone
     from mainApp.models import CambioEgreso, DesglosePagosCierre, Egreso
+    start = max(start, RECONCILIATION_START)
     lo = timezone.make_aware(datetime.combine(start, time.min), CO)
+    cutoff = timezone.make_aware(datetime.combine(RECONCILIATION_START, time.min), CO)
     hi = timezone.make_aware(datetime.combine(end + timedelta(days=1), time.min), CO)
     sources = list(DesglosePagosCierre.objects.select_related('turno__cajero', 'turno__puntopago__sucursalid').filter(
         turno__estado='CERRADO', turno__inicio__gte=lo, turno__inicio__lt=hi).order_by('turno__inicio', 'turno_id'))
@@ -97,7 +103,7 @@ def closing_report(start, end):
             branch=str(t.puntopago.sucursalid), payments=s.pagos or [], total=s.total))
     expenses=[dict(id=e.pk, date=timezone.localtime(e.creado_en, CO).date(),
         name=e.concepto.nombre, amount=e.monto_base, method=e.medio_pago)
-        for e in Egreso.objects.select_related('concepto').filter(creado_en__gte=lo-timedelta(days=1), creado_en__lt=hi+timedelta(days=1))]
+        for e in Egreso.objects.select_related('concepto').filter(creado_en__gte=max(cutoff,lo-timedelta(days=1)), creado_en__lt=hi+timedelta(days=1))]
     links={}
     for audit in CambioEgreso.objects.filter(egreso_id__in=[e['id'] for e in expenses], motivo__startswith='CONCILIACION').values('egreso_id','motivo'):
         match=re.search(r'CIERRE (\d+)(?:/(\d+))?',audit['motivo'])

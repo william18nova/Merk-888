@@ -15,12 +15,12 @@
     </div>
   </header>
   <form method="get" class="reconciliation-filters">
-    <label>Desde<input type="date" name="desde" value="{{ start }}" required></label>
-    <label>Hasta<input type="date" name="hasta" value="{{ end }}" required></label>
+    <label>Desde<input type="date" name="desde" value="{{ start }}" min="{{ report_start }}" required></label>
+    <label>Hasta<input type="date" name="hasta" value="{{ end }}" min="{{ report_start }}" required></label>
     <label>Mostrar<select name="estado"><option value="">Todos los estados</option><option value="missing" {% if selected_status == 'missing' %}selected{% endif %}>Sin coincidencia</option><option value="possible" {% if selected_status == 'possible' %}selected{% endif %}>Puede estar registrado</option><option value="review" {% if selected_status == 'review' %}selected{% endif %}>Revisar</option><option value="linked" {% if selected_status == 'linked' %}selected{% endif %}>Conciliado con auditoría</option></select></label>
     <button class="expense-submit" type="submit">Revisar cierres</button>
   </form>
-  <p class="reconciliation-note">Se consideran de tarde los turnos iniciados entre las 12:00 y las 19:59, hora de Colombia. Se compara el importe sin 4 × 1.000 y nombres similares en la misma fecha o ±1 día. Una coincidencia sugerida no confirma que sea el mismo pago. Como Pagos no identifica sucursal, verifica también ese dato.</p>
+  <p class="reconciliation-note"><strong>La revisión comienza el 1 de noviembre de 2026. No se muestran declaraciones ni coincidencias anteriores.</strong> Se consideran de tarde los turnos iniciados entre las 12:00 y las 19:59, hora de Colombia. Se compara el importe sin 4 × 1.000 y nombres similares en la misma fecha o ±1 día, sin retroceder antes del inicio de la revisión. Una coincidencia sugerida no confirma que sea el mismo pago. Como Pagos no identifica sucursal, verifica también ese dato.</p>
   {% if error %}<p class="expense-warning" role="alert">{{ error }}</p>{% else %}
   <section class="reconciliation-summary" aria-label="Resumen">
     {% for item in summary %}<article class="reconciliation-stat reconciliation-status--{{ item.code }}"><span>{{ item.label }}</span><strong>{{ item.count }}</strong><small>$ {{ item.total|floatformat:2 }}</small></article>{% endfor %}
