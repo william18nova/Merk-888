@@ -105,10 +105,12 @@ def confirm_code(profile, action):
     _bot()._audit(profile, "confirmar_clave_merk2", {"accion_id": str(action.pk)}, detail=f"Referencia {reference}")
     deadline = timezone.localtime(authorization.expira_en).strftime("%d/%m/%Y %H:%M")
     return _bot().BotReply(
-        f"Clave especial Merk2 (merk2888): {code}\nReferencia: {reference}\n"
+        f"Clave especial Merk2 (merk2888) generada.\nReferencia: {reference}\n"
         f"Un solo uso. Vence el {deadline} (Colombia).\n"
-        "No la compartas fuera del proceso autorizado. Solo se muestra una vez; "
+        "La clave va sola en el siguiente mensaje para copiarla fácilmente. "
+        "No la compartas fuera del proceso autorizado. Solo se envía una vez; "
         "si no recibiste la clave, revisa/revócala en la web antes de solicitar otra.",
         "clave_merk2_generada",
         history_text=f"Se generó una clave especial Merk2. Referencia: {reference}. La clave se omitió del historial.",
+        copyable_code=code,
     )

@@ -19,6 +19,31 @@ from .services.telegram_expense_shortcuts import direct_expense_request
 
 
 class AudioShortcutTests(SimpleTestCase):
+    def test_copyable_code_is_not_in_reply_repr(self):
+        reply = bot.BotReply('Referencia: MERK-TEST', 'clave_merk2_generada',
+                             history_text='Clave generada; omitida del historial.', copyable_code='00001234')
+        self.assertNotIn('00001234', repr(reply))
+        self.assertNotIn('00001234', str(reply))
+
+    def test_separate_code_message_rejects_invalid_or_untrusted_envelopes_before_sending(self):
+        defaults = dict(intent='clave_merk2_generada', history_text='Clave generada.', copyable_code='12345678')
+        changes = [{'copyable_code': value} for value in (None, '', '1234', '123456789', 'ABCD5678', 12345678, '١٢٣٤٥٦٧٨')]
+        changes += [{'intent': 'respuesta_ia'}, {'history_text': None}, {'history_text': ''}, {'proposal_id': 'test-only'}]
+        for change in changes:
+            with self.subTest(change=change):
+                client = SimpleNamespace(send_message=MagicMock())
+                reply = bot.BotReply('Información sin clave.', **dict(defaults, **change))
+                with self.assertRaises(bot.TelegramBotError):
+                    bot._send_bot_reply(client, 1, reply)
+                client.send_message.assert_not_called()
+
+    def test_non_secret_replies_still_use_one_message_and_keep_required_buttons(self):
+        client = SimpleNamespace(send_message=MagicMock())
+        markup = {'inline_keyboard': [[{'text': 'Confirmar', 'callback_data': 'confirm:test'}]]}
+        reply = bot.BotReply('Propuesta de prueba', 'preparar_registro_pago', proposal_id='test', reply_markup=markup)
+        bot._send_bot_reply(client, 1, reply)
+        client.send_message.assert_called_once_with(1, reply.text, reply_markup=markup, require_buttons=True)
+
     def test_transport_does_not_log_token_or_message_when_network_fails(self):
         with patch.object(bot, "_configured", return_value="TEST_PRIVATE_TOKEN"):
             client = bot.TelegramApiClient()
@@ -206,7 +231,8 @@ class TelegramSpecialCodeTests(TestCase):
         self.assertTrue(check_password("12345678", authorization.secreto_hash))
         self.assertEqual(authorization.solicitud_id, action.argumentos["solicitud_id"])
         self.assertEqual(authorization.expira_en - authorization.generada_en, timedelta(minutes=15))
-        self.assertIn("12345678", reply.text)
+        self.assertEqual(reply.copyable_code, "12345678")
+        self.assertNotIn("12345678", reply.text)
         self.assertNotIn("12345678", reply.history_text)
         self.assertNotIn("12345678", str(list(TelegramAuditoria.objects.values("argumentos", "detalle"))))
         self.assertNotIn("12345678", str(TelegramAccionPendiente.objects.get(pk=action.pk).argumentos))
@@ -214,6 +240,7 @@ class TelegramSpecialCodeTests(TestCase):
         again = bot._handle_callback(self.callback(action), self.profile, self.client)
         self.assertEqual(AutorizacionDescuentoEspecial.objects.count(), 1)
         self.assertNotIn("12345678", again.text)
+        self.assertIsNone(again.copyable_code)
 
     def test_cancel_expiry_and_foreign_owner_cannot_generate(self):
         for scenario in ("cancel", "expired", "foreign"):
@@ -262,20 +289,70 @@ class TelegramSpecialCodeTests(TestCase):
         self.client.answer_callback.side_effect = bot.TelegramBotError("callback expired")
         with patch("mainApp.services.special_discount.secrets.randbelow", return_value=12345678):
             reply = bot._handle_callback(self.callback(action), self.profile, self.client)
-        self.assertIn("12345678", reply.text)
+        self.assertEqual(reply.copyable_code, "12345678")
+        self.assertNotIn("12345678", reply.text)
         self.assertEqual(AutorizacionDescuentoEspecial.objects.count(), 1)
 
     def test_worker_sends_code_but_saves_only_safe_summary(self):
         update = TelegramActualizacion.objects.create(update_id=1234, telegram_user_id=92001, telegram_chat_id=92001,
                                                       chat_type="private", tipo="TEXTO", texto="test-only")
-        reply = bot.BotReply("Clave: 12345678", "clave_merk2_generada", history_text="Clave generada. Referencia: MERK-TEST.")
+        reply = bot.BotReply("Referencia: MERK-TEST. Un solo uso.", "clave_merk2_generada",
+                             history_text="Clave generada. Referencia: MERK-TEST.", copyable_code="12345678")
         with patch.object(bot, "is_feature_enabled", return_value=True), patch.object(bot, "TelegramApiClient", return_value=self.client), \
                 patch.object(bot, "build_reply", return_value=reply):
             bot.process_next_update()
         update.refresh_from_db()
         self.assertEqual(update.respuesta, reply.history_text)
         self.assertNotIn("12345678", update.respuesta)
-        self.assertEqual(self.client.send_message.call_args.args[1], reply.text)
+        calls = self.client.send_message.call_args_list
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[0].args[1], reply.text)
+        self.assertEqual(calls[1].args[1], '12345678')
+        self.assertEqual(calls[1].kwargs, {})
+
+    def test_confirmed_key_delivers_two_bubbles_and_preserves_leading_zeros(self):
+        action, _ = self.prepare()
+        update = TelegramActualizacion.objects.create(update_id=1236, telegram_user_id=92001, telegram_chat_id=92001,
+            chat_type='private', tipo='CALLBACK', texto=f'confirm:{action.pk}', callback_query_id='test-only')
+        with patch.object(bot, 'is_feature_enabled', return_value=True), patch.object(bot, 'TelegramApiClient', return_value=self.client), \
+                patch('mainApp.services.special_discount.secrets.randbelow', return_value=1234):
+            self.assertTrue(bot.process_next_update())
+        update.refresh_from_db()
+        action.refresh_from_db()
+        self.assertEqual((update.estado, action.estado), ('PROCESADO', 'CONFIRMADA'))
+        self.assertEqual(AutorizacionDescuentoEspecial.objects.count(), 1)
+        calls = self.client.send_message.call_args_list
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[0].args[0], calls[1].args[0])
+        self.assertIn('Referencia:', calls[0].args[1])
+        self.assertIn('Vence el', calls[0].args[1])
+        self.assertNotIn('00001234', calls[0].args[1])
+        self.assertEqual(calls[1].args[1], '00001234')
+        self.assertNotIn('00001234', update.respuesta + update.error)
+        self.assertNotIn('00001234', str(list(TelegramAuditoria.objects.values('argumentos', 'detalle'))))
+
+    def test_uncertain_second_bubble_does_not_regenerate_retry_or_log_secret(self):
+        action, _ = self.prepare()
+        update = TelegramActualizacion.objects.create(update_id=1237, telegram_user_id=92001, telegram_chat_id=92001,
+            chat_type='private', tipo='CALLBACK', texto=f'confirm:{action.pk}', callback_query_id='test-only')
+        self.client.send_message.side_effect = [None, bot.TelegramExternalError('PRIVATE 12345678'), None]
+        with patch.object(bot, 'is_feature_enabled', return_value=True), patch.object(bot, 'TelegramApiClient', return_value=self.client), \
+                patch('mainApp.services.special_discount.secrets.randbelow', return_value=12345678), \
+                self.assertLogs(bot.logger, level='ERROR') as logged:
+            self.assertTrue(bot.process_next_update())
+            self.assertFalse(bot.process_next_update())
+        update.refresh_from_db()
+        action.refresh_from_db()
+        self.assertEqual((update.estado, action.estado), ('ERROR', 'CONFIRMADA'))
+        self.assertEqual(AutorizacionDescuentoEspecial.objects.count(), 1)
+        calls = self.client.send_message.call_args_list
+        self.assertEqual(len(calls), 3)
+        self.assertEqual(calls[1].args[1], '12345678')
+        self.assertIn('La clave se generó', calls[2].args[1])
+        self.assertIn('revoca', calls[2].args[1])
+        self.assertNotIn('12345678', update.respuesta + update.error + calls[0].args[1] + calls[2].args[1])
+        self.assertNotIn('12345678', str(logged.output))
+        self.assertNotIn('PRIVATE', str(logged.output))
 
     def test_uncertain_send_never_generates_another_code_or_saves_plaintext(self):
         action, _ = self.prepare()
@@ -289,7 +366,7 @@ class TelegramSpecialCodeTests(TestCase):
         update.refresh_from_db()
         self.assertEqual(update.estado, "PROCESADO")
         self.assertEqual(AutorizacionDescuentoEspecial.objects.count(), 1)
-        self.assertIn("12345678", self.client.send_message.call_args_list[0].args[1])
+        self.assertNotIn("12345678", self.client.send_message.call_args_list[0].args[1])
         self.assertNotIn("12345678", self.client.send_message.call_args_list[1].args[1])
         self.assertNotIn("12345678", update.respuesta + update.error)
 

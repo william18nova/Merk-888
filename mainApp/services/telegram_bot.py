@@ -8,7 +8,7 @@ import re
 import secrets
 import time
 import unicodedata
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import timedelta
 from decimal import Decimal, InvalidOperation
 from uuid import UUID
@@ -229,6 +229,8 @@ class BotReply:
     references: list | None = None
     # Resumen seguro para BD/IA cuando la respuesta contiene un código de un uso.
     history_text: str | None = None
+    # Solo en memoria: una burbuja con los 8 dígitos, nunca en repr/BD/IA.
+    copyable_code: str | None = field(default=None, repr=False)
 
 
 def _configured(name):
@@ -2260,6 +2262,29 @@ def recover_stale_updates():
     ).update(estado="PENDIENTE", iniciado_en=None)
 
 
+def _send_bot_reply(client, chat_id, reply):
+    code = reply.copyable_code
+    if code is not None or reply.intent == "clave_merk2_generada":
+        if (reply.intent != "clave_merk2_generada" or reply.proposal_id
+                or not isinstance(code, str) or re.fullmatch(r"[0-9]{8}", code) is None
+                or not isinstance(reply.history_text, str) or not reply.history_text.strip()):
+            raise TelegramBotError("No pude preparar el mensaje separado de la clave. Revisa su estado en la web antes de solicitar otra.")
+    client.send_message(chat_id, reply.text, reply_markup=reply.reply_markup,
+                        require_buttons=bool(reply.proposal_id))
+    if code is not None:
+        try:
+            # Texto plano exacto: sin título, prefijo, Markdown ni otros datos.
+            client.send_message(chat_id, code)
+        except TelegramBotError:
+            # La autorización ya está confirmada y la entrega puede ser incierta.
+            # No regenerar ni guardar la clave para reintentar otro envío después.
+            raise TelegramBotError(
+                "La clave se generó, pero no pude confirmar el envío del mensaje separado. "
+                "Revisa si te llegó la burbuja con los 8 dígitos. Si no la recibiste, "
+                "revoca la clave en la web antes de solicitar otra. No se generó otra clave."
+            ) from None
+
+
 def process_next_update():
     from mainApp.models import TelegramActualizacion
 
@@ -2327,8 +2352,7 @@ def process_next_update():
                 reply = reuse_update_proposal(update) or build_reply(update, client)
             reply = ensure_proposal_buttons(update, reply)
             with measured("enviar_respuesta", update_id=update.pk):
-                client.send_message(update.telegram_chat_id, reply.text, reply_markup=reply.reply_markup,
-                                    require_buttons=bool(reply.proposal_id))
+                _send_bot_reply(client, update.telegram_chat_id, reply)
             update.estado = "PROCESADO"
             update.intencion = reply.intent[:80]
             update.respuesta = (reply.history_text if reply.history_text is not None else reply.text)[:8000]

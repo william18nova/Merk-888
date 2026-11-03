@@ -234,10 +234,15 @@ dos claves» como una solicitud directa ni se puede confirmar con un audio.
 
 Los permisos se vuelven a comprobar al confirmar. Una clave vigente no se
 reemplaza ni revoca automáticamente. Una confirmación repetida no crea otra.
-La clave se envía una vez por Telegram; **el mensaje permanece en ese chat**.
+La respuesta llega en **dos burbujas**: primero la referencia y el vencimiento,
+y después únicamente los **8 dígitos de la clave**, en texto plano y conservando
+los ceros iniciales, para copiarla con facilidad. La clave se envía una vez por
+Telegram; **ambos mensajes permanecen en ese chat**.
 En NovaPOS solo queda el hash y la referencia: propuestas, auditorías e historial
 que se envía a la IA no conservan la clave en claro. Si la entrega resulta
 incierta, revisar/revocar desde la web antes de pedir otra; el bot no la recupera.
+Si falla el envío de la segunda burbuja, se avisa de la entrega incierta sin
+regenerar la clave ni almacenarla para reenviarla después.
 
 No requiere migraciones nuevas. Para activarlo en producción hay que desplegar
 los archivos actualizados y reiniciar el trabajador existente (no lanzar uno
