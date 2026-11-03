@@ -14,6 +14,7 @@ ACTION_UI = {
     "turno_empleado": ("preparar_turno_empleado", "Confirmar horario"),
     "cambio_catalogo": ("preparar_cambio_catalogo", "Confirmar cambio"),
     "operacion_negocio": ("preparar_operacion_negocio", "Confirmar"),
+    "generar_clave_merk2": ("preparar_clave_merk2", "Generar clave"),
 }
 PROPOSAL_INTENTS = {value[0] for value in ACTION_UI.values()} | {"seleccionar_concepto_pago"}
 
@@ -102,6 +103,9 @@ def _require_action_access(profile, action):
     elif action.accion == "operacion_negocio":
         from .telegram_business import require_business_access
         require_business_access(profile, action.argumentos.get("tipo"), action.argumentos.get("datos", {}))
+    elif action.accion == "generar_clave_merk2":
+        from .telegram_special_codes import require_access
+        require_access(profile)
     else:
         raise bot.TelegramBotError("Esta propuesta ya no se puede recuperar. Solicita el cambio nuevamente.")
 

@@ -35,6 +35,12 @@ class ReconciliationTests(SimpleTestCase):
     def test_changed_audit_name_requires_review(self):
         self.assertEqual(reconcile([self.declaration()],[self.expense(name='BIBIANA')],{(1,0):{10}})[0]['status'],'review')
 
+    def test_explicit_audit_accepts_equal_generic_name_without_guessing_other_matches(self):
+        declaration = self.declaration(name='DINERO')
+        expense = self.expense(name='DINERO')
+        self.assertEqual(reconcile([declaration],[expense],{(1,0):{10}})[0]['status'],'linked')
+        self.assertEqual(reconcile([declaration],[expense],{})[0]['status'],'missing')
+
     def test_different_suppliers_not_matched(self):
         self.assertLess(similarity('AREPAS ALBERTO','AREPAS NACH'),.72)
 
@@ -133,10 +139,11 @@ class ReconciliationViewTests(SimpleTestCase):
         PagosCierresRevisionView.as_view()(self.request())
         report.assert_not_called()
 
-    def test_post_not_supported(self):
+    def test_post_rechecks_permission_before_accepting_data(self):
         r=RequestFactory().post('/caja/pagos/revisar-cierres/')
         r.user=SimpleNamespace(is_authenticated=True)
-        self.assertEqual(PagosCierresRevisionView.as_view()(r).status_code,405)
+        with self.assertRaises(PermissionDenied):
+            PagosCierresRevisionView.as_view()(r)
 
     @patch('mainApp.expense_reconciliation_views.render')
     @patch('local_pos.request_context.offline_request',return_value=False)

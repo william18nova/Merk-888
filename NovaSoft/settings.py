@@ -132,7 +132,10 @@ LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
     "handlers": {"console": {"class": "logging.StreamHandler"}},
-    "loggers": {"django": {"handlers": ["console"], "level": "INFO", "propagate": True}},
+    "loggers": {
+        "django": {"handlers": ["console"], "level": "INFO", "propagate": True},
+        "mainApp.services.telegram_timing": {"handlers": ["console"], "level": "INFO", "propagate": False},
+    },
 }
 
 # ========= ✅ NUEVO FORMATO CSP (django-csp >= 4.0) =========

@@ -1,5 +1,27 @@
 (() => {
   'use strict';
+  const forms = Array.from(document.querySelectorAll('[data-closing-expense-form]'));
+  forms.forEach(form => form.addEventListener('submit', event => {
+    if (!form.checkValidity()) return;
+    if (form.dataset.submitting === 'true') {
+      event.preventDefault();
+      return;
+    }
+    form.dataset.submitting = 'true';
+    const button = form.querySelector('button[type="submit"]');
+    if (button) {
+      button.disabled = true;
+      button.querySelector('span').textContent = 'Registrando…';
+    }
+  }));
+  window.addEventListener('pageshow', () => forms.forEach(form => {
+    delete form.dataset.submitting;
+    const button = form.querySelector('button[type="submit"]');
+    if (button) {
+      button.disabled = false;
+      button.querySelector('span').textContent = 'Confirmar y registrar pago';
+    }
+  }));
   const input = document.querySelector('[data-ledger-search]');
   const output = document.querySelector('[data-ledger-results]');
   if (!input || !output) return;

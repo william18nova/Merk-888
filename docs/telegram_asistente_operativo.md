@@ -77,8 +77,11 @@ El resumen y las diferencias usan lo registrado **hasta la hora del informe**,
 no los movimientos posteriores de ese día. El inventario describe el estado
 actual y cuenta registros producto/sucursal, no productos únicos.
 
-El trabajador con `--followups` revisa reglas cada minuto y procesa hasta cinco
-por revisión. Puede retrasarse si está atendiendo audios o solicitudes. Si estuvo
+El trabajador con `--followups` da prioridad a los mensajes. Cuando la cola no
+tiene mensajes disponibles revisa reglas cada diez segundos y procesa un informe
+por revisión, volviendo después a comprobar el chat. Puede retrasarse si está
+atendiendo audios o solicitudes; con una cola ocupada continuamente, los informes
+esperan a que quede libre. Si estuvo
 apagado, al volver ejecuta los informes vencidos del **día actual**, no recupera
 los de días anteriores.
 
@@ -88,6 +91,33 @@ pierde la respuesta de Telegram, **no lo reenvía automáticamente** para evitar
 duplicados; el estado queda `RESERVADO` o `ERROR_INCIERTO`. No se promete entrega
 exactamente una vez. Un informe sin resultados o sin permiso queda `OMITIDO`.
 No se guardan excepciones de transporte que puedan contener tokens.
+
+## Rendimiento del trabajador
+
+- Consulta la cola cada 0,5 segundos cuando está libre (antes, cada 2 segundos).
+  `--sleep` permite cambiarlo. Se conserva el orden dentro de cada conversación.
+- Reutiliza durante hasta 60 segundos la conexión de BD, con comprobación de
+  salud y cierre de conexiones obsoletas. Solo se aplica al comando del bot;
+  no modifica las conexiones de la web ni conserva resultados o permisos en caché.
+- El presupuesto de interpretación de texto sigue siendo 35 segundos y cinco
+  intentos como máximo, pero ahora también rige la primera ronda de respaldos.
+  La conexión HTTP espera hasta 3 segundos y la lectura hasta 12, limitadas al
+  presupuesto restante. La transcripción usa un presupuesto de 60 segundos y
+  hasta 20 de lectura por petición. No se recortan los audios ni las instrucciones.
+- Estos presupuestos limitan intentos y esperas HTTP; no garantizan un tiempo
+  absoluto de entrega: DNS, lecturas parciales, BD, descargas y Telegram también
+  consumen tiempo. Las caídas/cuotas de proveedores aún pueden impedir responder.
+- `mainApp.services.telegram_timing` registra espera en cola, descarga,
+  transcripción, petición IA, preparación y envío. Incluye ID de actualización,
+  etapa, proveedor, duración y resultado; no texto, audio, importes, claves ni
+  identificadores de chat. Un HTTP terminado no significa que la respuesta de
+  IA sea válida: el validador mantiene su propio registro de fallos.
+
+No se añaden trabajadores paralelos, proveedores, suscripciones ni llamadas de
+IA extra por una respuesta correcta. Los botones, permisos y la idempotencia de
+pagos se conservan. No hay migración para estos cambios. Tras publicarlos, el
+trabajador con `--reload` los carga entre mensajes; nunca interrumpir una
+confirmación en curso ni reenviar pagos fallidos para probar velocidad.
 
 Las alertas de stock pueden volver a informar de los mismos agotados al día
 siguiente. Son informes diarios de situación, no detectores de cambios en tiempo
@@ -159,3 +189,50 @@ las vistas del navbar son clases (los horarios usan funciones), y dos pruebas
 de Generar Venta todavía exigen versiones antiguas exactas de CSS/JavaScript.
 No se cambiaron esos archivos ni se debilitaron esas pruebas para ocultar los
 fallos. La suite específica de Telegram pasa completa.
+
+## Audios y claves especiales Merk2 (noviembre de 2026)
+
+Los fallos de audio revisados incluían transcripciones completas: el problema
+posterior era la interpretación por IA (conexión, HTTP 503, 413 o 429), y en otro
+caso se entendió un medio inexistente en vez de Nequi. Para reducirlo:
+
+- Se acotan los intentos de interpretación a un presupuesto compartido de 35 s;
+  cada conexión/lectura también se limita. Las esperas no son un SLA absoluto:
+  DNS y lecturas parciales dependen de la red.
+- Los mensajes tienen prioridad sobre informes programados. La conexión de BD
+  del trabajador se reutiliza de forma controlada y con comprobación de salud.
+- Whisper recibe vocabulario público (Nequi, Banco Caja Social, Merk2, etc.),
+  usando el [prompt de vocabulario documentado por Groq](https://console.groq.com/docs/speech-to-text).
+  No se le agrega historial, claves ni datos privados como contexto.
+- Una solicitud completa como `Pago de 90.000 por Nequi para vitaminas y comida`
+  puede preparar la propuesta sin IA de texto. Solo admite formatos numéricos
+  inequívocos y medios conocidos; no calcula el impuesto ni confirma el pago.
+- Si el medio transcrito es desconocido, se pregunta cuál fue, conservando la
+  conversación. No se traduce una sigla dudosa a Nequi ni se guarda un pago.
+- Se conservan las rutas de respaldo y recuperación de formato/413 existentes.
+  Nunca se reejecutan automáticamente mensajes antiguos que quedaron en ERROR.
+
+### Solicitar una clave
+
+1. Usar un chat **privado**, vinculado a una cuenta activa **Web Master**.
+2. Escribir `/clave_merk2` (también `/clave_merk2888`), o dictar
+   `Genera una clave de Merk2`.
+3. Revisar la propuesta y pulsar **Generar clave**. Decir «sí» o «confirmar»
+   únicamente vuelve a mostrar los botones; no genera la clave.
+4. El bot utiliza el mismo servicio web de autorización especial del cliente
+   `merk2888`: código de 8 dígitos, un solo uso, 15 minutos de vigencia y las
+   mismas restricciones y bloqueos del dominio. No es una contraseña de acceso.
+
+Los permisos se vuelven a comprobar al confirmar. Una clave vigente no se
+reemplaza ni revoca automáticamente. Una confirmación repetida no crea otra.
+La clave se envía una vez por Telegram; **el mensaje permanece en ese chat**.
+En NovaPOS solo queda el hash y la referencia: propuestas, auditorías e historial
+que se envía a la IA no conservan la clave en claro. Si la entrega resulta
+incierta, revisar/revocar desde la web antes de pedir otra; el bot no la recupera.
+
+No requiere migraciones nuevas. Para activarlo en producción hay que desplegar
+los archivos actualizados y reiniciar el trabajador existente (no lanzar uno
+adicional). El comando escrito funciona sin reconfigurar el webhook; actualizar
+su menú es opcional. Estas modificaciones se verificaron localmente con 481
+pruebas aisladas, incluida la entrega incierta, sin pagos, claves ni mensajes
+reales de prueba.

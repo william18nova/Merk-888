@@ -3,17 +3,19 @@
 {% block title %}Revisar pagos de cierres{% endblock %}
 {% block extra_head %}
 <link rel="stylesheet" href="{% static 'css/registrar_egreso.css' %}?v=4">
-<link rel="stylesheet" href="{% static 'css/pagos_cierres_revision.css' %}?v=2">
+<link rel="stylesheet" href="{% static 'css/pagos_cierres_revision.css' %}?v=3">
 {% endblock %}
 {% block content %}
 <main class="expense-page reconciliation-page">
   <header class="expense-hero">
-    <div><p class="expense-eyebrow">Control de pagos · Solo consulta</p>
+    <div><p class="expense-eyebrow">Control de pagos · Revisión y registro</p>
       <h1>Pagos declarados en cierres de tarde</h1>
-      <p>Compara lo que declararon los cajeros con los pagos registrados. No crea pagos ni modifica los cierres.</p>
+      <p>Compara lo declarado por los cajeros y registra los pagos faltantes después de revisarlos. No modifica los cierres ni vuelve a descontar dinero de caja.</p>
       <a class="expense-link" href="{% url 'registrar_egreso' %}">← Volver a Registrar pago</a>
     </div>
   </header>
+  {% if messages %}<section class="expense-messages" aria-live="polite">{% for message in messages %}<div class="expense-message expense-message--{{ message.tags|default:'info' }}"><p>{{ message }}</p></div>{% endfor %}</section>{% endif %}
+  {% if registration_error %}<p class="expense-warning" role="alert">{{ registration_error }}</p>{% endif %}
   <form method="get" class="reconciliation-filters">
     <label>Desde<input type="date" name="desde" value="{{ start }}" min="{{ report_start }}" required></label>
     <label>Hasta<input type="date" name="hasta" value="{{ end }}" min="{{ report_start }}" required></label>
@@ -42,6 +44,31 @@
         {% for candidate in row.candidates %}<li><a class="expense-link" href="{% url 'editar_egreso' candidate.id %}">Pago #{{ candidate.id }} · {{ candidate.name }}</a><span>{{ candidate.date|date:'d/m/Y' }} · {{ candidate.method }} · $ {{ candidate.amount|floatformat:2 }}</span></li>{% endfor %}
       </ul>
       {% endif %}
+      {% if row.source_error %}<p class="expense-warning">{{ row.source_error }}</p>{% endif %}
+      {% if row.registration_error %}<p class="expense-warning">{{ row.registration_error }}</p>{% endif %}
+      {% if row.registration %}
+      <details class="reconciliation-register">
+        <summary>Registrar este pago</summary>
+        <form method="post" action="{% url 'pagos_revisar_cierres' %}" data-closing-expense-form>
+          {% csrf_token %}
+          <input type="hidden" name="source_token" value="{{ row.registration.token }}">
+          <input type="hidden" name="desde" value="{{ start }}"><input type="hidden" name="hasta" value="{{ end }}">
+          <input type="hidden" name="estado" value="{{ selected_status }}">
+          <h3>Revisar antes de registrar</h3>
+          <dl class="reconciliation-register-values">
+            <div><dt>Concepto</dt><dd>{{ row.name }}</dd></div>
+            <div><dt>Fecha del pago</dt><dd>{{ row.date|date:'d/m/Y' }}</dd></div>
+            <div><dt>Medio</dt><dd>Efectivo</dd></div>
+            <div><dt>Valor declarado / base</dt><dd>$ {{ row.registration.base|floatformat:2 }}</dd></div>
+            <div><dt>4 × 1.000</dt><dd>$ {{ row.registration.tax|floatformat:2 }}</dd></div>
+            <div><dt>Total a registrar</dt><dd>$ {{ row.registration.total|floatformat:2 }}</dd></div>
+          </dl>
+          <p>Este desglose fue declarado como efectivo. Los datos se toman del cierre; no se modifican aquí. Si son incorrectos, revisa primero el cierre.</p>
+          <label class="reconciliation-confirm"><input type="checkbox" name="confirm_registration" value="1" required><span>Revisé los pagos existentes y confirmo que este pago se realizó y falta por registrar en Pagos.</span></label>
+          <button type="submit" class="expense-submit"><span>Confirmar y registrar pago</span></button>
+        </form>
+      </details>
+      {% elif row.status == 'possible' or row.status == 'review' %}<p class="reconciliation-registration-help">Revisa las coincidencias y el detalle antes de registrar otro pago. Aquí no se duplican pagos con coincidencias pendientes.</p>{% endif %}
     </article>
     {% empty %}<p class="expense-empty">No hay declaraciones para el rango y estado seleccionados.</p>{% endfor %}
   </div>
@@ -68,4 +95,4 @@
   {% endif %}
 </main>
 {% endblock %}
-{% block scripts %}<script defer src="{% static 'javascript/pagos_cierres_revision.js' %}?v=1"></script>{% endblock %}
+{% block scripts %}<script defer src="{% static 'javascript/pagos_cierres_revision.js' %}?v=2"></script>{% endblock %}

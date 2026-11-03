@@ -27,6 +27,7 @@ from .telegram_wording import page_note
 from .telegram_payments import TOOL_DEFINITIONS as PAYMENT_DEFINITIONS, TOOL_FUNCTIONS as PAYMENT_FUNCTIONS
 from .telegram_business import TOOL_DEFINITIONS as BUSINESS_DEFINITIONS, TOOL_FUNCTIONS as BUSINESS_FUNCTIONS
 from .telegram_workspace import TOOL_DEFINITIONS as WORKSPACE_DEFINITIONS, TOOL_FUNCTIONS as WORKSPACE_FUNCTIONS
+from .telegram_special_codes import TOOL_DEFINITION as SPECIAL_CODE_DEFINITION, prepare_code
 
 
 @dataclass(frozen=True)
@@ -552,7 +553,9 @@ def tool_capabilities(profile, arguments):
             verbs.append("editar")
         if verbs:
             writable.append(f"{key} ({'/'.join(verbs)})")
-    from mainApp.permissions import user_can_change_sale
+    from mainApp.permissions import is_web_master_role, user_can_change_sale
+    if is_web_master_role(profile.usuario):
+        writable.append("generar clave especial Merk2 / merk2888 de un uso con /clave_merk2")
     if user_can_change_sale(profile.usuario):
         writable.append("devolver productos de una venta y registrar su reintegro")
     if bot.user_can_access_url_name(profile.usuario, "guardar_turno_empleado"):
@@ -579,6 +582,7 @@ def tool_capabilities(profile, arguments):
 
 
 TOOL_FUNCTIONS = {
+    "preparar_clave_merk2": prepare_code,
     **BUSINESS_FUNCTIONS,
     **WORKSPACE_FUNCTIONS,
     **PAYMENT_FUNCTIONS,
@@ -595,6 +599,7 @@ TOOL_FUNCTIONS = {
 }
 
 TOOL_DEFINITIONS = [
+    SPECIAL_CODE_DEFINITION,
     *BUSINESS_DEFINITIONS,
     *WORKSPACE_DEFINITIONS,
     *PAYMENT_DEFINITIONS,

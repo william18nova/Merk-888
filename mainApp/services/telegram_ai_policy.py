@@ -120,6 +120,8 @@ def selected_tool_names(text, history, available):
             clarification = next((normalized(item.get("text", "")) for item in reversed(history or []) if item.get("role") == "model"), "")
             query += " " + clarification
     domains = [
+        (r"\b(?:clave|codigo)\b.*\bmerk\s*(?:2|dos|2888)\b", {"preparar_clave_merk2"}),
+        (r"\b(?:agrega|agregar|registra|registrar|anota|anotar)\b.*\b(?:nequi|neki|efectivo|daviplata|tarjeta|banco caja social)\b", {"preparar_registro_pago", "consultar_pagos"}),
         (r"\b(?:alias|recuerda|llamarle|nombres alternativos)\b", {"preparar_alias", "consultar_aliases", "consultar_registros", "buscar_producto"}),
         (r"\b(?:avisame|notifica\w*|alerta\w*|seguimiento\w*|todos los dias|cada dia|diariamente)\b", {"preparar_seguimiento", "consultar_seguimientos"}),
         (r"\b(?:pedido\w*|reabastec\w*|surtir|surtido\w*)\b", {"planificar_reabastecimiento", "preparar_pedido_proveedor", "consultar_registros", "buscar_producto"}),
@@ -175,7 +177,8 @@ def compact_prompt(today, names):
         "Pregunta datos esenciales o identidades ambiguas; no inventes fechas, cantidades, nombres, teléfonos, precios ni códigos. "
         "Resuelve fechas relativas a Colombia. Usa el historial solo de esta conversación, no inventes contexto. "
         "Para campos y capacidades usa consultar_capacidades. Para operaciones no disponibles ofrece buscar_vistas, sin ejecutarlas. "
-        "No ejecutes eliminaciones, facturación, cierres de caja, claves o permisos. "
+        "No ejecutes eliminaciones, facturación, cierres de caja, contraseñas de acceso o permisos. "
+        "Las claves especiales Merk2/merk2888 solo se preparan con preparar_clave_merk2; el servidor exige Web Master y botón Confirmar. Nunca inventes ni incluyas una clave en texto. "
         "Inventario solo mediante preparar_movimiento_inventario: sucursal, cantidad, modo y motivo explícitos, luego botón Confirmar. "
         "Pedidos solo En espera mediante preparar_pedido_proveedor; no recibir ni pagar automáticamente."
     ]
@@ -191,7 +194,8 @@ def compact_prompt(today, names):
         rules.append("Lista de empleados: respuesta compacta; detalle=true solo si pide más datos o la cuenta vinculada.")
     if "preparar_registro_pago" in names:
         rules.append("Registrar pagos usa preparar_registro_pago. Conserva el concepto dictado: la herramienta ofrece elegir conceptos parecidos o uno nuevo. "
-                     "La elección y confirmación son por botones; nunca inventes una elección.")
+                     "La elección y confirmación son por botones; nunca inventes una elección. "
+                     "Medios habituales: efectivo, nequi, daviplata y tarjeta (Banco Caja Social). No conviertas siglas desconocidas de audio en Nequi: pregunta el medio si es dudoso.")
     if "preparar_edicion_pago" in names:
         rules.append("Corregir un pago existente usa preparar_edicion_pago con pago_id y SOLO los datos solicitados; NO registrar otro pago. "
                      "Pregunta el motivo si no lo dijo. No cambies fecha ni creador. concepto_nuevo=true solo si eligió crear un concepto frente a coincidencias. "

@@ -44,6 +44,21 @@
 .reconciliation-ledger-item p {margin:10px 0}
 .reconciliation-ledger-relation {padding:10px;background:#102d4d;border-radius:8px;font-size:.9rem}
 .reconciliation-ledger-item[hidden] {display:none}
+.reconciliation-register {margin-top:18px;border-top:1px solid #607e9f;padding-top:18px}
+.reconciliation-register summary {display:inline-flex;cursor:pointer;align-items:center;padding:11px 16px;border:1px solid #73c0ff;border-radius:12px;background:#235784;color:#fff;font-weight:700;list-style:none}
+.reconciliation-register summary::-webkit-details-marker {display:none}
+.reconciliation-register summary::before {content:'+';margin-right:10px;font-size:1.2rem}
+.reconciliation-register[open] summary::before {content:'−'}
+.reconciliation-register form {margin-top:18px;padding:16px;border:1px solid #607e9f;border-radius:12px;background:#102d4d}
+.reconciliation-register h3 {font-size:1.05rem;margin:0 0 16px}
+.reconciliation-register-values {margin:0;display:grid;gap:12px;grid-template-columns:repeat(2,minmax(0,1fr))}
+.reconciliation-register-values div {min-width:0}.reconciliation-register-values dt {font-size:.85rem;color:#bfd3eb}
+.reconciliation-register-values dd {margin:5px 0 0;color:#fff;font-weight:700;overflow-wrap:anywhere}
+.reconciliation-confirm {display:flex;gap:12px;align-items:flex-start;line-height:1.5;margin:18px 0}
+.reconciliation-confirm input {flex:none;width:20px;height:20px;margin-top:3px;accent-color:#65b9ff}
+.reconciliation-register .expense-submit {margin-top:0;min-height:44px}
+.reconciliation-registration-help {font-size:.9rem;color:#bfd3eb}
+.reconciliation-register summary:focus-visible {outline:3px solid #9be2ff;outline-offset:4px}
 @media(max-width:1100px){.reconciliation-comparison{grid-template-columns:minmax(0,1fr)}.reconciliation-scroll{max-height:65vh}.reconciliation-column{margin-bottom:20px}}
 @media(max-width:850px){.reconciliation-summary{grid-template-columns:repeat(2,minmax(0,1fr))}}
-@media(max-width:520px){.reconciliation-item header,.reconciliation-ledger-item header{flex-direction:column;gap:0}.reconciliation-filters button{width:100%}.reconciliation-stat{padding:14px}.reconciliation-item{padding:16px}}
+@media(max-width:520px){.reconciliation-item header,.reconciliation-ledger-item header{flex-direction:column;gap:0}.reconciliation-filters button{width:100%}.reconciliation-stat{padding:14px}.reconciliation-item{padding:16px}.reconciliation-register-values{grid-template-columns:minmax(0,1fr)}.reconciliation-register form{padding:12px}}

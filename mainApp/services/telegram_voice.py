@@ -14,9 +14,16 @@ import requests
 
 from . import telegram_providers as providers
 from .telegram_ai_policy import response_failure
+from .telegram_timing import measured, network_timeout
 
 logger = logging.getLogger(__name__)
 _FAILURES = {}
+# Contexto ortográfico breve, sin clientes, importes, conversaciones ni secretos.
+# Whisper admite un prompt de vocabulario en el mismo idioma del audio.
+SPANISH_VOCABULARY = (
+    "NovaPOS, Nova Advance, Merk2, merk2888, Nequi, Daviplata, efectivo, "
+    "tarjeta, Banco Caja Social, Yerbabuena, pago, egreso, inventario, turno."
+)
 
 
 def _error(name, kind, **kwargs):
@@ -29,7 +36,8 @@ def _request(name, method, url, *, deadline, **kwargs):
     if remaining <= 1:
         raise _error(name, "connection")
     try:
-        response = getattr(requests, method)(url, timeout=(5, min(30, remaining)), allow_redirects=False, **kwargs)
+        with measured("voz_http", provider=providers.LABELS[name]):
+            response = getattr(requests, method)(url, timeout=network_timeout(remaining, read_limit=20), allow_redirects=False, **kwargs)
     except requests.RequestException:
         raise _error(name, "connection", delay=10) from None
     try:
@@ -56,7 +64,7 @@ def _groq(audio, state, save, deadline):
     data = _request("groq", "post", "https://api.groq.com/openai/v1/audio/transcriptions", deadline=deadline,
                     headers={"Authorization": "Bearer " + providers.value("GROQ_API_KEY")},
                     data={"model": providers.value("GROQ_WHISPER_MODEL", "whisper-large-v3-turbo"),
-                          "language": "es", "response_format": "json"},
+                          "language": "es", "response_format": "json", "prompt": SPANISH_VOCABULARY},
                     files={"file": ("telegram.ogg", io.BytesIO(audio), "audio/ogg")})
     return _text("groq", data.get("text"))
 
@@ -185,9 +193,12 @@ def transcribe(audio, *, update=None):
         if update is not None:
             update.transcripcion_estado = state
             update.save(update_fields=["transcripcion_estado"])
-    deadline, errors = time.monotonic() + 150, []
+    deadline, errors = time.monotonic() + 60, []
     functions = {"groq": _groq, "azure": _azure, "deepgram": _deepgram, "assemblyai": _assemblyai, "gemini": _gemini}
     for name in names:
+        if deadline - time.monotonic() <= 1:
+            errors.append(_error(name, "connection", retry_soon=False, reason="budget"))
+            break
         # En una reanudación solo consultar el trabajo asíncrono existente;
         # no volver a enviar el mismo audio a los servicios ya intentados.
         if name in state.get("attempted", []):

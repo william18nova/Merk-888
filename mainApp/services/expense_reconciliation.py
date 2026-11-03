@@ -1,15 +1,18 @@
-"""Conservative, read-only comparison of closing declarations and expenses.
+"""Conservative comparison of closing declarations and expenses.
 
 Only an explicit audited source link confirms a match. Similarity is a hint,
 never authority to create a payment or reuse one expense for several closes.
 """
 import re
+import hashlib
+import json
 import unicodedata
 from collections import Counter
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal, InvalidOperation
 from difflib import SequenceMatcher
 from zoneinfo import ZoneInfo
+from .close_payments import validate
 
 CO = ZoneInfo('America/Bogota')
 # Fixed activation date requested by the owner, not a moving "today" filter.
@@ -17,6 +20,16 @@ RECONCILIATION_START = date(2026, 11, 1)
 STOP = {'PAGO', 'PAGAR', 'TURNO', 'SRA', 'SENORA', 'SENOR', 'FACTURA',
         'COMPLEMENTO', 'COMPLETO', 'SALDO', 'DE', 'LA', 'EL', 'A', 'LE',
         'ENTREGUE', 'TERMINAR', 'SE', 'DINERO', 'Y', 'DON'}
+
+
+def source_version(source):
+    """Identidad de la declaración completa; detecta cambios y reordenamientos."""
+    turn = source.turno
+    data = {'turn': turn.pk, 'state': turn.estado, 'start': turn.inicio.isoformat(),
+            'register': turn.puntopago_id, 'cashier': turn.cajero_id,
+            'total': str(source.total), 'payments': source.pagos,
+            'updated': source.registrado_en.isoformat()}
+    return hashlib.sha256(json.dumps(data, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
 
 def name_key(value):
@@ -65,7 +78,9 @@ def reconcile(declarations, expenses, links):
                 row['candidates'] = audited
                 valid = (sum(e['amount'] for e in audited) == amount
                          and all(e['date'] == row['date'] and e['method'] == 'efectivo'
-                                 and similarity(row['name'], e['name']) >= .72 for e in audited))
+                                 and (similarity(row['name'], e['name']) >= .72 or
+                                      (row['name'].strip() and ' '.join(row['name'].split()).casefold() ==
+                                       ' '.join(e['name'].split()).casefold())) for e in audited))
                 row.update(status='linked' if valid else 'review', explanation=(
                     'Vínculo auditado con este cierre.' if valid else 'Existe vínculo auditado, pero cambió el importe, la fecha o el medio.'))
             else:
@@ -127,6 +142,12 @@ def closing_report(start, end):
         declarations.append(dict(turn=t.pk, date=dt.date(), afternoon=12 <= dt.hour < 20,
             cashier=t.cajero.nombreusuario, register=t.puntopago.nombre,
             branch=str(t.puntopago.sucursalid), payments=s.pagos or [], total=s.total))
+        declarations[-1]['source_version'] = source_version(s)
+        try:
+            validate(s.total, s.pagos)
+            declarations[-1]['source_error'] = ''
+        except (ValueError, TypeError):
+            declarations[-1]['source_error'] = 'El desglose o su total requieren revisión antes de registrar pagos.'
     expenses=[dict(id=e.pk, date=timezone.localtime(e.creado_en, CO).date(),
         paid_at=timezone.localtime(e.creado_en, CO), registered_by=e.registrado_por_nombre,
         name=e.concepto.nombre, amount=e.monto_base, total=e.monto,
