@@ -9,6 +9,12 @@ from email.utils import parsedate_to_datetime
 from .telegram_wording import CONVERSATION_STYLE
 from .telegram_queries import SMART_QUERY_RULES
 
+# Grafías habituales del mismo nombre al dictarlo; no equivale a aceptar
+# contraseñas de otras cuentas ni nombres de clientes arbitrarios.
+SPECIAL_CODE_CLIENT_PATTERN = (
+    r"(?:merk|merc|merck)\s*-?\s*(?:2888|2|dos(?: ocho ocho ocho| mil ochocientos ochenta y ocho)?)"
+)
+
 
 def normalized(text):
     return "".join(c for c in unicodedata.normalize("NFKD", str(text).lower()) if not unicodedata.combining(c))
@@ -120,7 +126,7 @@ def selected_tool_names(text, history, available):
             clarification = next((normalized(item.get("text", "")) for item in reversed(history or []) if item.get("role") == "model"), "")
             query += " " + clarification
     domains = [
-        (r"\b(?:clave|codigo)\b.*\bmerk\s*(?:2|dos|2888)\b", {"preparar_clave_merk2"}),
+        (rf"\b(?:claves?|codigos?)\b.*\b{SPECIAL_CODE_CLIENT_PATTERN}\b", {"preparar_clave_merk2"}),
         (r"\b(?:agrega|agregar|registra|registrar|anota|anotar)\b.*\b(?:nequi|neki|efectivo|daviplata|tarjeta|banco caja social)\b", {"preparar_registro_pago", "consultar_pagos"}),
         (r"\b(?:alias|recuerda|llamarle|nombres alternativos)\b", {"preparar_alias", "consultar_aliases", "consultar_registros", "buscar_producto"}),
         (r"\b(?:avisame|notifica\w*|alerta\w*|seguimiento\w*|todos los dias|cada dia|diariamente)\b", {"preparar_seguimiento", "consultar_seguimientos"}),

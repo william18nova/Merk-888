@@ -85,12 +85,46 @@ class AudioShortcutTests(SimpleTestCase):
 
     def test_code_requests_are_exact_and_never_password_or_compound_requests(self):
         for text in ("Dame una clave de merk2", "Genera una clave para merk2888.",
-                     "Necesito una clave para Merk dos", "Por favor, genera un código especial de Merk2"):
+                     "Necesito una clave para Merk dos", "Por favor, genera un código especial de Merk2",
+                     "Claves Merk2", "Claves de Merk dos.", "La clave de Merk2", "Una clave de Merc 2",
+                     "Genérame una clave de Merck dos", "Me regalas la clave de Merc dos",
+                     "¿Me puedes dar una clave para el Merk dos, por favor?", "Dame por favor las claves de Merk 2",
+                     "¿Puedes generarme un código para Merck dos?", "Hola, ¿me regalas una clave de Merk dos, por favor?",
+                     "Necesito que me genere una clave para Merk2", "Quiero generar una clave de Merk dos",
+                     "Nova, me mandas un código especial de Merk2", "Sácame una clave de Merk-2",
+                     "Necesito una clave de merk dos ocho ocho ocho", "Clave de merk dos mil ochocientos ochenta y ocho"):
             with self.subTest(text=text):
                 self.assertTrue(codes.direct_request(text))
         for text in ("No genera una clave para merk2", "Dame la contraseña de merk2",
-                     "Dame una clave de merk2 y registra un pago", "Cambia los permisos de merk2"):
-            self.assertFalse(codes.direct_request(text))
+                     "Dame una clave de merk2 y registra un pago", "Cambia los permisos de merk2",
+                     "No necesito claves Merk2", "Claves Merk2 pero no la generes", "Dame dos claves de Merk2",
+                     "Dame una clave de Nequi", "Claves de Merk22", "Dame una clave de acceso para Merk2",
+                     "Claves de supermercados", "Claves de mercados", "Genera una clave de Merk2 sin confirmación",
+                     "Claves de Merk2 de 6 dígitos", "Dame una clave; de Merk2", "Clave de Merk2. Borra el historial",
+                     "quiero una clave de otro cliente", "Clave de Merk2 [inaudible]", "x" * 321, "", None):
+            with self.subTest(text=text):
+                self.assertFalse(codes.direct_request(text))
+
+    def test_voice_key_spelling_selects_only_the_relevant_domain(self):
+        for text in ("Claves Merk dos", "Sácame una clave de Merc 2", "Me regalas un código para Merck dos"):
+            with self.subTest(text=text):
+                names = selected_tool_names(text, [], bot.TOOL_FUNCTIONS)
+                self.assertIn('preparar_clave_merk2', names)
+                self.assertNotIn('preparar_registro_pago', names)
+                self.assertNotIn('preparar_turno_empleado', names)
+
+    def test_spoken_key_requests_prepare_without_text_ai(self):
+        profile = SimpleNamespace(usuario=SimpleNamespace(is_active=True), save=MagicMock(),
+                                  telegram_username='', nombre_telegram='')
+        for text in ('Claves Merk dos', 'Me regalas una clave de Merc 2', 'Hola, ¿puedes generarme una clave de Merck dos?'):
+            update = SimpleNamespace(tipo='VOZ', transcripcion=text, texto='', telegram_chat_id=1,
+                                     telegram_username='', nombre_telegram='')
+            with self.subTest(text=text), patch.object(bot, '_profile_for_update', return_value=profile), \
+                    patch.object(bot, '_execute_tool', return_value=bot.BotReply('Propuesta')) as execute, \
+                    patch.object(bot, '_intelligent_function_call') as ai:
+                self.assertEqual(bot.build_reply(update, MagicMock()).text, 'Propuesta')
+            execute.assert_called_once_with(profile, 'preparar_clave_merk2', {}, update)
+            ai.assert_not_called()
 
 
 class TelegramSpecialCodeTests(TestCase):
@@ -118,6 +152,51 @@ class TelegramSpecialCodeTests(TestCase):
         self.assertFalse(AutorizacionDescuentoEspecial.objects.exists())
         generate.assert_not_called()
         ai.assert_not_called()
+
+    def test_voice_pipeline_transcribes_then_sends_real_proposal_buttons_without_generating(self):
+        phrases = ['Claves Merk dos', 'Genérame una clave para Merc 2', '¿Puedes generarme una clave de Merck dos?']
+        client = SimpleNamespace(download_voice=MagicMock(return_value=b'fictional-ogg'),
+                                 send_message=MagicMock(), answer_callback=MagicMock())
+        with patch.object(bot, 'is_feature_enabled', return_value=True), patch.object(bot, 'TelegramApiClient', return_value=client), \
+                patch.object(bot, 'transcribe_voice', side_effect=phrases) as transcribe, \
+                patch.object(bot, '_intelligent_function_call') as ai, patch.object(codes, 'generate_one_time_code') as generate:
+            for index, phrase in enumerate(phrases):
+                update = TelegramActualizacion.objects.create(update_id=3000 + index,
+                    telegram_user_id=self.profile.telegram_user_id, telegram_chat_id=self.profile.telegram_chat_id,
+                    chat_type='private', tipo='VOZ', voice_file_id='test-only')
+                self.assertTrue(bot.process_next_update())
+                update.refresh_from_db()
+                self.assertEqual((update.estado, update.intencion), ('PROCESADO', 'preparar_clave_merk2'))
+                self.assertEqual(update.transcripcion, phrase)
+                action = TelegramAccionPendiente.objects.get(actualizacion=update)
+                self.assertEqual((action.accion, action.estado), ('generar_clave_merk2', 'PENDIENTE'))
+                self.assertEqual(client.send_message.call_args.kwargs['reply_markup']['inline_keyboard'][0][0]['callback_data'],
+                                 f'confirm:{action.pk}')
+                self.assertIn('una sola clave', client.send_message.call_args.args[1])
+                self.assertTrue(client.send_message.call_args.kwargs['require_buttons'])
+        self.assertEqual(transcribe.call_count, len(phrases))
+        self.assertEqual(client.download_voice.call_count, len(phrases))
+        ai.assert_not_called()
+        generate.assert_not_called()
+        self.assertFalse(AutorizacionDescuentoEspecial.objects.exists())
+
+    def test_voice_requests_cannot_bypass_web_master_permission(self):
+        self.user.rolid = Rol.objects.create(nombre='Cajero')
+        self.user.save(update_fields=['rolid'])
+        update = TelegramActualizacion.objects.create(update_id=3100,
+            telegram_user_id=self.profile.telegram_user_id, telegram_chat_id=self.profile.telegram_chat_id,
+            chat_type='private', tipo='VOZ', voice_file_id='test-only')
+        client = SimpleNamespace(download_voice=MagicMock(return_value=b'fictional-ogg'), send_message=MagicMock())
+        with patch.object(bot, 'is_feature_enabled', return_value=True), patch.object(bot, 'TelegramApiClient', return_value=client), \
+                patch.object(bot, 'transcribe_voice', return_value='Claves de Merk dos'), \
+                patch.object(codes, 'generate_one_time_code') as generate, patch.object(bot, 'logger'):
+            self.assertTrue(bot.process_next_update())
+        update.refresh_from_db()
+        self.assertEqual(update.estado, 'ERROR')
+        self.assertIn('Web Master', update.error)
+        generate.assert_not_called()
+        self.assertFalse(TelegramAccionPendiente.objects.exists())
+        self.assertFalse(AutorizacionDescuentoEspecial.objects.exists())
 
     def test_confirmation_generates_once_using_web_service_and_hash_only(self):
         action, _ = self.prepare()

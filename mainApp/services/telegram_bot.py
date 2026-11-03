@@ -1833,6 +1833,7 @@ HELP_TEXT = (
     "• Por texto/audio puedes asignar, mover o cancelar una jornada con fechas, horas y confirmación\n"
     "• /devolver VENTA PRODUCTO:CANTIDAD [MEDIO] — preparar devolución; efectivo por defecto\n"
     "• /clave_merk2 — clave especial de un uso para merk2888, solo Web Master y con confirmación\n"
+    "• También puedes pedir por voz: «Claves de Merk dos» o «Genérame una clave de Merk dos»\n"
     "• /acciones [ENTIDAD] — capacidades y campos para crear/editar\n"
     "• /catalogo RECURSO [BUSQUEDA] — por ejemplo, /catalogo proveedores\n"
     "• /vistas [PALABRA] — enlaces a las páginas que puedes usar\n"

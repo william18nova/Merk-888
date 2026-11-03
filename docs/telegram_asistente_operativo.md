@@ -216,12 +216,21 @@ caso se entendió un medio inexistente en vez de Nequi. Para reducirlo:
 
 1. Usar un chat **privado**, vinculado a una cuenta activa **Web Master**.
 2. Escribir `/clave_merk2` (también `/clave_merk2888`), o dictar
-   `Genera una clave de Merk2`.
+   `Genera una clave de Merk dos`. También reconoce peticiones cortas por voz,
+   como `Claves Merk dos`, `La clave de Merk2`, `Me regalas una clave de Merc dos`
+   o `¿Puedes generarme un código para Merck dos?`. Las grafías Merk/Merc/Merck
+   se refieren aquí al mismo cliente especial y se muestran como **Merk2
+   (merk2888)** en la propuesta. No se generan claves de otras cuentas.
 3. Revisar la propuesta y pulsar **Generar clave**. Decir «sí» o «confirmar»
    únicamente vuelve a mostrar los botones; no genera la clave.
 4. El bot utiliza el mismo servicio web de autorización especial del cliente
    `merk2888`: código de 8 dígitos, un solo uso, 15 minutos de vigencia y las
    mismas restricciones y bloqueos del dominio. No es una contraseña de acceso.
+
+Las peticiones de voz completas reconocidas preparan los botones sin depender
+de la IA de texto después de transcribir el audio. Incluso si se pide «claves»
+en plural, se propone **una sola clave**, nunca un lote. No se acepta «genera
+dos claves» como una solicitud directa ni se puede confirmar con un audio.
 
 Los permisos se vuelven a comprobar al confirmar. Una clave vigente no se
 reemplaza ni revoca automáticamente. Una confirmación repetida no crea otra.

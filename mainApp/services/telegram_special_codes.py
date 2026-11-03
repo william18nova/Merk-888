@@ -12,7 +12,7 @@ from django.utils import timezone
 
 from mainApp.permissions import is_web_master_role
 from .special_discount import SpecialDiscountError, generate_one_time_code
-from .telegram_ai_policy import normalized
+from .telegram_ai_policy import SPECIAL_CODE_CLIENT_PATTERN, normalized
 
 
 TOOL_DEFINITION = {
@@ -35,15 +35,28 @@ def require_access(profile):
 
 
 def direct_request(text):
-    """Solo peticiones completas e inequívocas; no negaciones ni órdenes compuestas."""
-    query = re.sub(r"\s+", " ", normalized(text)).strip(" ¿?¡!.,")
+    """Texto o transcripción completa: pedir una propuesta, nunca confirmarla.
+
+    Admite peticiones breves y grafías de voz conocidas. El cliente siempre se
+    muestra como Merk2 / merk2888 en los botones antes de generar una clave.
+    """
+    if not isinstance(text, str) or len(text) > 320:
+        return False
+    # La puntuación automática de la voz no cambia la intención. No eliminar
+    # palabras, negaciones ni otros símbolos para rescatar parte de una orden.
+    query = re.sub(r"\s+", " ", re.sub(r"[¿?¡!.,]", " ", normalized(text))).strip()
     return bool(re.fullmatch(
-        r"(?:(?:hola|oye|por favor)[, ]+)*"
-        r"(?:(?:(?:me )?(?:puedes|podrias) )?(?:genera|generar|generame|crear|crea|creame|dame|darme)"
-        r"|(?:necesito|quiero)(?: que me generes| que generes)?) "
-        r"(?:(?:un|una|la|otra) )?(?:clave|codigo)(?: especial| de descuento)? "
-        r"(?:(?:de|del|para|en) )?(?:merk\s*(?:2|dos|2888))"
-        r"(?:[, ]+(?:por favor|gracias))?",
+        r"(?:(?:hola|oye|por favor|porfa|nova|asistente|bot) )*"
+        r"(?:(?:(?:me )?(?:puedes|podrias) )?"
+        r"(?:genera|generar|generame|generarme|crear|crea|creame|crearme|dar|dame|darme|"
+        r"regalar|regalame|regalarme|sacar|sacame|sacarme|enviar|enviame|enviarme|mandar|mandame|mandarme) "
+        r"|me (?:generas?|creas?|das?|regalas?|sacas?|envias?|mandas?) "
+        r"|(?:necesito|quiero|quisiera)(?: que (?:me )?(?:generes?|crees?|des?|regales?|saques?|envies?)"
+        r"| (?:generar|crear|solicitar))? )?"
+        r"(?:por favor |porfa )?"
+        r"(?:(?:un|una|la|las|los|otra|otro|unas|unos) )?(?:claves?|codigos?)(?: especial(?:es)?)?(?: de descuento)? "
+        r"(?:(?:de|del|para|en) (?:el )?)?" + SPECIAL_CODE_CLIENT_PATTERN +
+        r"(?: (?:por favor|porfa|gracias))*",
         query,
     ))
 
@@ -61,6 +74,7 @@ def prepare_code(profile, arguments, update=None):
     )
     return _bot().BotReply(
         "Generar una clave de descuento especial para Merk2 (cliente merk2888).\n"
+        "Se genera una sola clave a la vez. "
         "Será de un solo uso y vencerá 15 minutos después de generarla. "
         "No cambia contraseñas ni concede permisos. Si ya hay una clave vigente, no la reemplazaré.\n\n"
         "Pulsa Generar clave para confirmarlo; aún no se ha generado ninguna.",
