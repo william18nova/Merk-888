@@ -98,8 +98,8 @@ def register_closing_expense(*, user, token, confirmed):
         raise ClosingExpenseConflict("El desglose del cierre ya no está disponible. No se guardó ningún pago.")
     source.turno = turn
     local_start = timezone.localtime(turn.inicio, CO)
-    if turn.estado != "CERRADO" or local_start.date() < RECONCILIATION_START or not 12 <= local_start.hour < 20:
-        raise ClosingExpenseConflict("Solo se pueden registrar declaraciones de cierres de tarde desde el 01/11/2026.")
+    if turn.estado != "CERRADO" or local_start.date() < RECONCILIATION_START:
+        raise ClosingExpenseConflict("Solo se pueden registrar declaraciones de turnos cerrados desde el 01/11/2026.")
     if data["version"] != source_version(source):
         raise ClosingExpenseConflict("El cierre cambió desde que lo revisaste. Recarga la página antes de registrar el pago.")
     try:

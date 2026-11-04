@@ -10,7 +10,7 @@ from mainApp.expense_reconciliation_views import PagosCierresRevisionView
 
 class ReconciliationTests(SimpleTestCase):
     def declaration(self, turn=1, name='TURNO FABIAN', amount='70000'):
-        return dict(turn=turn,date=date(2026,11,1),afternoon=True,payments=[dict(nombre=name,monto=amount)])
+        return dict(turn=turn,date=date(2026,11,1),payments=[dict(nombre=name,monto=amount)])
 
     def expense(self, name='FABIÁN', amount='70000', day=1, method='efectivo'):
         return dict(id=10,date=date(2026,11,day),name=name,amount=Decimal(amount),method=method)

@@ -57,12 +57,24 @@ class ClosingExpenseRegistrationTests(TestCase):
         data.update(changes)
         return signing.dumps(data, salt=SALT)
 
+    def extra_source(self, start, *, name='TURNO CAMILA', amount='70000', state='CERRADO', end=None):
+        turn = TurnoCaja.objects.create(cajero=self.cashier, puntopago=self.point, estado=state)
+        TurnoCaja.objects.filter(pk=turn.pk).update(inicio=timezone.make_aware(start, CO),
+            fin=timezone.make_aware(end, CO) if end else None)
+        turn.refresh_from_db()
+        source = DesglosePagosCierre.objects.create(turno=turn, registrado_por=self.cashier,
+            total=Decimal(amount), pagos=[{'nombre': name, 'monto': amount}])
+        return source
+
     def test_page_has_per_declaration_confirmation_and_no_get_writes(self):
         response = self.client.get(self.url, self.query)
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'Registrar este pago')
         self.assertContains(response, 'Confirmar y registrar pago')
         self.assertContains(response, 'confirm_registration')
+        self.assertContains(response, 'Incluye todos los turnos cerrados')
+        self.assertContains(response, 'Inicio 14:00')
+        self.assertNotContains(response, 'cierres de tarde')
         self.assertEqual(response['Cache-Control'], 'no-store, private')
         self.assertFalse(Egreso.objects.exists())
         self.assertFalse(CambioEgreso.objects.exists())
@@ -151,14 +163,89 @@ class ClosingExpenseRegistrationTests(TestCase):
             self.apply(self.signed(row=1))
         self.assertFalse(Egreso.objects.exists())
 
-    def test_only_closed_afternoon_turns_after_activation(self):
-        for state, stamp in [('ABIERTO', datetime(2026, 11, 2, 14)),
-                             ('CERRADO', datetime(2026, 11, 2, 7)),
-                             ('CERRADO', datetime(2026, 10, 31, 14))]:
+    def test_only_closed_turns_after_activation(self):
+        for state, stamp in [('ABIERTO', datetime(2026, 11, 2, 7)),
+                             ('CIERRE', datetime(2026, 11, 2, 20)),
+                             ('CERRADO', datetime(2026, 10, 31, 23, 59))]:
             TurnoCaja.objects.filter(pk=self.turn.pk).update(estado=state, inicio=timezone.make_aware(stamp, CO))
             with self.subTest(state=state, stamp=stamp), self.assertRaises(ClosingExpenseConflict):
                 self.apply(self.signed())
         self.assertFalse(Egreso.objects.exists())
+
+    def test_report_and_page_include_all_start_times_in_colombia(self):
+        times = [(0, 0), (7, 0), (11, 59), (12, 0), (19, 59), (20, 0), (23, 59)]
+        sources = [self.extra_source(datetime(2026, 11, 2, hour, minute)) for hour, minute in times]
+        # A declaration is eligible only after the turn is actually closed and
+        # belongs to the date range by local start, not by UTC or end time.
+        self.extra_source(datetime(2026, 11, 2, 8), state='ABIERTO')
+        self.extra_source(datetime(2026, 11, 2, 9), state='CIERRE')
+        self.extra_source(datetime(2026, 10, 31, 23, 59), end=datetime(2026, 11, 2, 1))
+        self.extra_source(datetime(2026, 11, 3, 0))
+        empty = self.extra_source(datetime(2026, 11, 2, 6))
+        DesglosePagosCierre.objects.filter(pk=empty.pk).update(total=Decimal(0), pagos=[])
+        report = closing_report(date(2026, 11, 2), date(2026, 11, 2))
+        expected = {self.turn.pk, *(source.turno_id for source in sources)}
+        self.assertEqual({row['turn'] for row in report['rows']}, expected)
+        self.assertEqual(report['source_count'], 8)
+        missing = next(item for item in report['summary'] if item['code'] == 'missing')
+        self.assertEqual((missing['count'], missing['total']), (8, Decimal('560000')))
+        starts = {(row['started_at'].hour, row['started_at'].minute) for row in report['rows']}
+        self.assertEqual(starts, {*times, (14, 0)})
+        response = self.client.get(self.url, self.query)
+        self.assertContains(response, '8 cierres con detalle')
+        for hour, minute in times:
+            with self.subTest(hour=hour, minute=minute):
+                self.assertContains(response, f'Inicio {hour:02}:{minute:02}')
+        self.assertEqual({row['turn'] for row in response.context['rows']}, expected)
+        self.assertTrue(all('registration' in row for row in response.context['rows']))
+        self.assertFalse(Egreso.objects.exists())
+
+    def test_shared_payment_in_morning_and_afternoon_requires_review_for_both(self):
+        morning = self.extra_source(datetime(2026, 11, 2, 7))
+        expense = register_operational_expense(user=self.user, concept='CAMILA', amount='70000', payment_method='efectivo')
+        Egreso.objects.filter(pk=expense.pk).update(creado_en=self.turn.inicio)
+        report = closing_report(date(2026, 11, 2), date(2026, 11, 2))
+        registration_previews(report['rows'], self.user)
+        self.assertEqual({row['turn'] for row in report['rows']}, {morning.turno_id, self.turn.pk})
+        self.assertTrue(all(row['status'] == 'review' and 'registration' not in row for row in report['rows']))
+        self.assertEqual({ref['turn'] for ref in report['registered_payments'][0]['references']},
+                         {morning.turno_id, self.turn.pk})
+
+    def test_morning_night_and_overnight_can_register_without_duplicates_or_cash_changes(self):
+        cases = [(7, 0, 'AREPAS', '30000'), (20, 0, 'VIGILANCIA', '40000'),
+                 (0, 30, 'TRANSPORTE', '50000'), (23, 59, 'INSUMOS', '60000')]
+        for index, (hour, minute, name, amount) in enumerate(cases, start=1):
+            with self.subTest(hour=hour, minute=minute):
+                source = self.extra_source(datetime(2026, 11, 2, hour, minute), name=name, amount=amount,
+                    end=datetime(2026, 11, 3, 2) if hour >= 20 else datetime(2026, 11, 2, 14))
+                before = TurnoCaja.objects.values().get(pk=source.turno_id)
+                row = next(row for row in self.rows() if row['turn'] == source.turno_id)
+                token = row['registration']['token']
+                expense, created = self.apply(token)
+                same, created_again = self.apply(token)
+                self.assertTrue(created)
+                self.assertFalse(created_again)
+                self.assertEqual(same.pk, expense.pk)
+                self.assertEqual(timezone.localtime(expense.creado_en, CO).date(), date(2026, 11, 2))
+                self.assertEqual((expense.concepto.nombre, expense.monto_base), (name, Decimal(amount)))
+                self.assertEqual((Egreso.objects.count(), CambioEgreso.objects.count()), (index, index))
+                linked = next(row for row in self.rows() if row['turn'] == source.turno_id)
+                self.assertEqual(linked['status'], 'linked')
+                self.assertEqual(TurnoCaja.objects.values().get(pk=source.turno_id), before)
+        self.point.refresh_from_db()
+        self.assertEqual(self.point.dinerocaja, Decimal('123456'))
+
+    def test_morning_post_retains_status_filter_and_registers_source_date(self):
+        TurnoCaja.objects.filter(pk=self.turn.pk).update(inicio=timezone.make_aware(datetime(2026, 11, 2, 7), CO))
+        response = self.client.post(self.url, {'source_token': self.token(), 'confirm_registration': '1',
+            'estado': 'missing', **self.query})
+        self.assertEqual(response.status_code, 302)
+        self.assertIn('estado=missing', response.url)
+        expense = Egreso.objects.get()
+        self.assertEqual(timezone.localtime(expense.creado_en, CO).date(), date(2026, 11, 2))
+        response = self.client.get(response.url)
+        self.assertEqual(response.context['rows'], [])
+        self.assertEqual([payment['id'] for payment in response.context['registered_payments']], [expense.pk])
 
     def test_foreign_tampered_and_expired_tokens_cannot_write(self):
         token = self.token()

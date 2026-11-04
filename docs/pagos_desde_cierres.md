@@ -1,8 +1,10 @@
 # Registrar pagos desde la revisión de cierres
 
-Ruta: **Caja → Registrar pago → Revisar pagos de cierres de tarde**.
+Ruta: **Caja → Registrar pago → Revisar pagos de todos los cierres**.
 
-1. Selecciona las fechas, desde el 1 de noviembre de 2026.
+1. Selecciona las fechas, desde el 1 de noviembre de 2026. Se incluyen todos los
+   turnos cerrados, a cualquier hora. La fecha es la del inicio del turno, hora
+   de Colombia, aunque haya terminado al día siguiente.
 2. En una declaración **Sin coincidencia**, pulsa **Registrar este pago**.
 3. Revisa concepto, fecha, valor base, 4 × 1.000 y total.
 4. Marca que comprobaste los pagos existentes y que este pago falta por registrar.
@@ -22,7 +24,7 @@ Efectivo y se muestra antes de confirmar.
 ## Protecciones
 
 - Requiere cuenta activa Web Master o permiso `pagos_editar`, igual que la página.
-- Solo online, para cierres cerrados de tarde y con un desglose válido.
+- Solo online, para turnos cerrados de cualquier horario y con un desglose válido.
 - Una coincidencia posible o un dato que requiere revisión no habilita otro
   registro: primero revisa el pago existente. No hay vinculación automática por
   nombres parecidos, ni un botón para forzar un duplicado.

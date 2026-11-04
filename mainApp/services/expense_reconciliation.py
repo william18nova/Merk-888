@@ -139,7 +139,7 @@ def closing_report(start, end):
     for s in sources:
         t=s.turno
         dt=timezone.localtime(t.inicio, CO)
-        declarations.append(dict(turn=t.pk, date=dt.date(), afternoon=12 <= dt.hour < 20,
+        declarations.append(dict(turn=t.pk, date=dt.date(), started_at=dt,
             cashier=t.cajero.nombreusuario, register=t.puntopago.nombre,
             branch=str(t.puntopago.sucursalid), payments=s.pagos or [], total=s.total))
         declarations[-1]['source_version'] = source_version(s)
@@ -159,13 +159,12 @@ def closing_report(start, end):
         if match:
             key=(int(match[1]),int(match[2] or 0))
             links.setdefault(key,set()).add(audit['egreso_id'])
-    # Compare morning too, so a candidate shared by two shifts is visibly ambiguous.
-    all_rows=reconcile(declarations,expenses,links)
-    rows=[r for r in all_rows if r['afternoon']]
+    # All closed shifts participate in the same comparison, at any start time.
+    rows=reconcile(declarations,expenses,links)
     labels={'linked':'Conciliado con auditoría','possible':'Puede estar registrado','missing':'Sin coincidencia','review':'Revisar'}
     for r in rows:
         r['label']=labels[r['status']]
     summary=[dict(code=code,label=label,count=sum(r['status']==code for r in rows),
         total=sum((r['amount'] for r in rows if r['status']==code),Decimal(0))) for code,label in labels.items()]
-    return dict(rows=rows, summary=summary, source_count=sum(d['afternoon'] and bool(d['payments']) for d in declarations),
+    return dict(rows=rows, summary=summary, source_count=sum(bool(d['payments']) for d in declarations),
         **registered_payments(expenses, rows, start, end))
