@@ -58,9 +58,10 @@ from mainApp.services.telegram_search import choose_match, rank_candidates, rank
 from mainApp.services.telegram_queries import SMART_QUERY_RULES
 from mainApp.services.telegram_shortcuts import specific_read_request
 from mainApp.services.telegram_special_codes import confirm_code, direct_request as special_code_request
-from mainApp.services.telegram_expense_shortcuts import direct_expense_request
+from mainApp.services.telegram_expense_shortcuts import direct_expense_request, expense_clarification
 from mainApp.services import telegram_providers
 from mainApp.services.telegram_timing import ai_deadline, logger as timing_logger, measured, network_timeout
+from mainApp.services.telegram_transport import http_request
 
 
 logger = logging.getLogger(__name__)
@@ -467,13 +468,13 @@ class TelegramApiClient:
         uncertain = method == "sendMessage"
         response = None
         try:
-            response = requests.post(
+            response = http_request(
+                "post",
                 f"{self.base_url}/{method}",
                 json=payload if files is None else None,
                 data=payload if files is not None else None,
                 files=files,
                 timeout=timeout,
-                allow_redirects=False,
             )
             try:
                 data = response.json()
@@ -1440,7 +1441,7 @@ def _ai_response(provider, url, **kwargs):
         raise TelegramAIProviderError(provider, "connection", retry_soon=False, reason="budget")
     try:
         with measured("ia_http", provider=provider):
-            response = requests.post(url, timeout=network_timeout(remaining, read_limit=12), allow_redirects=False, **kwargs)
+            response = http_request("post", url, timeout=network_timeout(remaining, read_limit=12), **kwargs)
     except requests.RequestException:
         raise TelegramAIProviderError(provider, "connection", delay=10) from None
     try:
@@ -2269,6 +2270,10 @@ def _build_reply(update, client):
     expense_arguments = direct_expense_request(text)
     if expense_arguments is not None:
         return _execute_tool(profile, "preparar_registro_pago", expense_arguments, update)
+    payment_question = expense_clarification(text)
+    if payment_question is not None:
+        _require_access(profile, "registrar_egreso")
+        return BotReply(payment_question, "aclarar_pago")
     if re.sub(r"\s+", " ", _normalized_text(text)).strip(" ¿?¡!.,") in {
         "confirmar", "confirmo", "confirmar pago", "confirmar devolucion", "botones",
         "no veo los botones", "no aparecen los botones", "no me salen los botones",
@@ -2310,7 +2315,8 @@ def _build_reply(update, client):
             history.append({"role": "user", "text": previous_text})
         if item.respuesta:
             history.append({"role": "model", "text": item.respuesta})
-    tool_name, arguments, plain_text = _intelligent_function_call(text, history=history)
+    with measured("interpretar_texto_ia", update_id=update.pk):
+        tool_name, arguments, plain_text = _intelligent_function_call(text, history=history)
     if not tool_name:
         return BotReply(plain_text, "respuesta_ia")
     return _execute_tool(profile, tool_name, arguments, update)

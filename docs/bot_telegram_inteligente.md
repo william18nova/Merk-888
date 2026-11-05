@@ -908,6 +908,34 @@ python manage.py test mainApp.test_telegram_ai_resilience mainApp.test_telegram_
 Referencias de la política de recuperación: [cabeceras y límites de Groq](https://console.groq.com/docs/rate-limits)
 y [errores y reintentos de Gemini](https://ai.google.dev/gemini-api/docs/troubleshooting).
 
+### Ruta rápida para texto y audio
+
+- «Cuánto llevamos vendido hoy», «muéstrame los pagos en efectivo de ayer» y
+  «consulta el inventario del producto Arroz Diana» van directo a los datos de NovaPOS.
+  Conservan fechas, medios y permisos. Un audio nuevo aún se transcribe, pero
+  estas frases no requieren otra llamada para interpretar el texto.
+- «Consígueme una clave para el cliente Merk dos» prepara la propuesta habitual
+  del Web Master. Si en una petición clara de pago falta el concepto o el medio,
+  el bot lo pregunta sin crear una propuesta ni un pago. Las peticiones ambiguas
+  y las continuaciones siguen usando la interpretación con contexto. Los cambios
+  todavía requieren confirmar por botón y la clave se entrega por separado.
+- El trabajador reutiliza conexiones HTTPS por destino entre mensajes. No guarda
+  cookies ni encabezados de autenticación entre peticiones, no sigue redirecciones
+  ni reintenta automáticamente envíos de resultado incierto.
+
+No requiere migraciones, claves nuevas ni otro trabajador. Para comprobar la
+mejora tras el despliegue, compara las mismas consultas sin datos sensibles por
+texto y por voz. En el registro del trabajador, `interpretar_texto_ia` aparece
+solo si fue necesaria la IA de texto; `transcribir_audio` mide la transcripción
+aparte. Compara también `espera_segundos` de la cola y `segundos` del proceso.
+Estas métricas no incluyen mensajes, importes ni claves. Las pruebas locales usan
+texto y transcripciones sintéticas: verifican las llamadas evitadas, no la
+latencia real de Telegram o de un proveedor en producción.
+
+```bash
+python manage.py test mainApp.test_telegram_fast_paths mainApp.test_telegram_performance --settings=NovaSoft.test_settings
+```
+
 ## 1. Crear las credenciales
 
 1. En Telegram abre `@BotFather`, crea el bot con `/newbot` y copia el token.

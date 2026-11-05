@@ -11,6 +11,7 @@ from django.test import SimpleTestCase, TestCase
 from .models import Egreso, MetodoPago, Rol, TelegramAccionPendiente, TelegramActualizacion, TelegramUsuario, Usuario
 from .services import telegram_bot as bot
 from .services.telegram_runtime import SourceWatcher
+from .services.telegram_transport import _http_session
 
 
 class SourceWatcherTests(SimpleTestCase):
@@ -67,16 +68,20 @@ class SourceWatcherTests(SimpleTestCase):
         watcher = MagicMock()
         watcher.poll.side_effect = ['ready', 'waiting', 'reload']
         module = 'mainApp.management.commands.procesar_telegram_bot.'
+
+        def reexec(*args):
+            events.append(('restart', _http_session.get()))
+
         with patch(module + 'SourceWatcher', return_value=watcher), \
                 patch(module + 'recover_stale_updates'), patch(module + 'close_old_connections'), \
                 patch(module + 'is_feature_enabled', return_value=True), \
                 patch(module + 'time.sleep'), \
                 patch(module + 'process_next_update', side_effect=lambda: events.append('finished message') or True) as process, \
-                patch(module + 'os.execv', side_effect=lambda *args: events.append('restart')) as restart:
+                patch(module + 'os.execv', side_effect=reexec) as restart:
             call_command('procesar_telegram_bot', reload=True, stdout=StringIO())
         process.assert_called_once()
         restart.assert_called_once()
-        self.assertEqual(events, ['finished message', 'restart'])
+        self.assertEqual(events, ['finished message', ('restart', None)])
         self.assertEqual(restart.call_args.args[0], restart.call_args.args[1][0])
 
     def test_once_never_restarts_or_creates_a_watcher(self):

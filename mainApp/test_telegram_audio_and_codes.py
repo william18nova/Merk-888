@@ -179,7 +179,8 @@ class TelegramSpecialCodeTests(TestCase):
         ai.assert_not_called()
 
     def test_voice_pipeline_transcribes_then_sends_real_proposal_buttons_without_generating(self):
-        phrases = ['Claves Merk dos', 'Genérame una clave para Merc 2', '¿Puedes generarme una clave de Merck dos?']
+        phrases = ['Claves Merk dos', 'Genérame una clave para Merc 2', '¿Puedes generarme una clave de Merck dos?',
+                   '¿Puedes conseguirme una clave para el cliente Merk dos?']
         client = SimpleNamespace(download_voice=MagicMock(return_value=b'fictional-ogg'),
                                  send_message=MagicMock(), answer_callback=MagicMock())
         with patch.object(bot, 'is_feature_enabled', return_value=True), patch.object(bot, 'TelegramApiClient', return_value=client), \

@@ -49,13 +49,14 @@ def direct_request(text):
         r"(?:(?:hola|oye|por favor|porfa|nova|asistente|bot) )*"
         r"(?:(?:(?:me )?(?:puedes|podrias) )?"
         r"(?:genera|generar|generame|generarme|crear|crea|creame|crearme|dar|dame|darme|"
-        r"regalar|regalame|regalarme|sacar|sacame|sacarme|enviar|enviame|enviarme|mandar|mandame|mandarme) "
+        r"regalar|regalame|regalarme|sacar|sacame|sacarme|enviar|enviame|enviarme|mandar|mandame|mandarme|"
+        r"conseguir|consigueme|conseguirme) "
         r"|me (?:generas?|creas?|das?|regalas?|sacas?|envias?|mandas?) "
         r"|(?:necesito|quiero|quisiera)(?: que (?:me )?(?:generes?|crees?|des?|regales?|saques?|envies?)"
         r"| (?:generar|crear|solicitar))? )?"
         r"(?:por favor |porfa )?"
         r"(?:(?:un|una|la|las|los|otra|otro|unas|unos) )?(?:claves?|codigos?)(?: especial(?:es)?)?(?: de descuento)? "
-        r"(?:(?:de|del|para|en) (?:el )?)?" + SPECIAL_CODE_CLIENT_PATTERN +
+        r"(?:(?:de|del|para|en) (?:el )?(?:cliente )?)?" + SPECIAL_CODE_CLIENT_PATTERN +
         r"(?: (?:por favor|porfa|gracias))*",
         query,
     ))

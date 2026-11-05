@@ -3,12 +3,37 @@ import math
 import logging
 import re
 import time
+from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
+from http.cookiejar import DefaultCookiePolicy
 
 import requests
 
 logger = logging.getLogger(__name__)
+_http_session = ContextVar('telegram_http_session', default=None)
+
+
+@contextmanager
+def pooled_http_session():
+    """Reutiliza TLS por destino solo durante la vida del trabajador."""
+    with requests.Session() as session:
+        # El pool no guarda autenticación ni cookies de otros mensajes. Los
+        # encabezados privados solo se entregan en la petición correspondiente.
+        session.cookies.set_policy(DefaultCookiePolicy(allowed_domains=()))
+        token = _http_session.set(session)
+        try:
+            yield
+        finally:
+            _http_session.reset(token)
+
+
+def http_request(method, url, **kwargs):
+    # Session mantiene los timeouts, proxy y TLS de requests sin reintentos
+    # automáticos. El trabajador ya distingue fallos seguros de entregas dudosas.
+    transport = _http_session.get() or requests
+    return getattr(transport, method)(url, allow_redirects=False, **kwargs)
 
 
 def retry_after(data, headers=None):
@@ -53,8 +78,8 @@ def download_voice_file(token, result, *, limit):
     response = None
     deadline = time.monotonic() + 45
     try:
-        response = requests.get(f'https://api.telegram.org/file/bot{token}/{path}',
-                                timeout=(3, 20), stream=True, allow_redirects=False)
+        response = http_request('get', f'https://api.telegram.org/file/bot{token}/{path}',
+                                timeout=(3, 20), stream=True)
         if response.status_code == 429:
             raise TelegramRateLimit(retry_after(None, response.headers))
         if response.status_code != 200:

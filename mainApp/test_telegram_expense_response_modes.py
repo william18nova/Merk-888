@@ -81,6 +81,25 @@ class TelegramExpenseResponseModeTests(TestCase):
         self.assertNotIn("Por medio de pago", reply.text)
         self.assertNotIn("Detalle", reply.text)
 
+    def test_transcribed_method_first_filters_real_payments_by_method_and_day(self):
+        Egreso.objects.filter(pk=self.cash.pk).update(creado_en=timezone.now() - timedelta(days=1))
+        # Uno del mismo medio pero de hoy, otro de ayer pero de otro medio.
+        Egreso.objects.create(concepto=self.cash.concepto, monto=Decimal("3100"), medio_pago="efectivo")
+        older_nequi = Egreso.objects.create(concepto=self.nequi.concepto, monto=Decimal("4200"), medio_pago="nequi")
+        Egreso.objects.filter(pk=older_nequi.pk).update(creado_en=timezone.now() - timedelta(days=1))
+        update = TelegramActualizacion.objects.create(update_id=9301, tipo="VOZ", chat_type="private",
+            telegram_user_id=self.profile.telegram_user_id, telegram_chat_id=self.profile.telegram_chat_id,
+            transcripcion="Muéstrame los pagos en efectivo de ayer.")
+        with patch("mainApp.services.telegram_bot._intelligent_function_call", side_effect=AssertionError("No usar IA")):
+            reply = build_reply(update, self.client_stub)
+        self.assertIn(f"#{self.cash.pk}", reply.text)
+        self.assertIn("$1.000,25", reply.text)
+        self.assertNotIn("$3.100", reply.text)
+        self.assertNotIn("$4.200", reply.text)
+        self.assertNotIn("Por medio de pago", reply.text)
+        self.assertEqual(Egreso.objects.count(), 4)
+        self.assertFalse(TelegramAccionPendiente.objects.exists())
+
     def test_follow_up_keeps_dates_and_filters_without_carrying_list_format(self):
         yesterday = timezone.localdate() - timedelta(days=1)
         Egreso.objects.filter(pk=self.cash.pk).update(creado_en=timezone.now() - timedelta(days=1))

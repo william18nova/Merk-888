@@ -15,10 +15,31 @@ def conversational_read_text(text):
             "", text, flags=re.IGNORECASE,
         )
         text = re.sub(r"[,\s]+por favor[?!.\s]*$", "", text, flags=re.IGNORECASE)
-        text = re.sub(r"^dime\s+(?=(?:cu[aá]nt[oa]s?|qui[eé]n(?:es)?|qu[eé]|c[oó]mo)\b)", "", text, flags=re.IGNORECASE)
+        text = re.sub(r"^[¿¡\s]*dime\s+(?=(?:(?:en )?cu[aá]nt[oa]s?|cu[aá]l(?:es)?|qui[eé]n(?:es)?|qu[eé]|c[oó]mo)\b)", "", text, flags=re.IGNORECASE)
         if previous == text:
             break
     return text
+
+
+def _stock_request(normalized, prefix):
+    # «Inventario de X» también puede referirse a una sucursal o categoría.
+    # Exigir producto/unidades y no tragar filtros dentro del nombre.
+    item = r"(?P<item>[a-z0-9][a-z0-9-]*(?: [a-z0-9][a-z0-9-]*){0,9})"
+    match = re.fullmatch(
+        rf"(?:(?:{prefix}) (?:el )?(?:inventario|stock)|que stock hay) del producto {item}",
+        normalized,
+    ) or re.fullmatch(rf"cuantas unidades de {item} quedan en (?:el )?inventario", normalized)
+    if not match:
+        return None
+    query = match["item"]
+    if re.search(
+        r"\b(?:en|con|sin|excepto|salvo|menos|por|para|o|pero|segun|sucursales?|marca|categorias?|bodega|"
+        r"hoy|ayer|actual|actualmente|semana|mes|ano|pasad[oa]|todos?|todas?|mism[oa]|anteriores?|solo|no|otro|otra|"
+        r"productos?|agotados?|vencidos?|vendidos?|disponibles?|activos?|inactivos?|"
+        r"id|codigo|barras|buscar|busca|muestra|cuanto|cuanta|cuantas)\b", query,
+    ) or len(query) > 100:
+        return None
+    return "consultar_inventario", {"consulta": query}
 
 
 def specific_read_request(text):
@@ -63,6 +84,9 @@ def specific_read_request(text):
     # Nunca convertir una orden o dos peticiones en una búsqueda de producto.
     if re.search(r"\b(?:y|ademas|luego|despues|manana|anteayer|cambia|cambiar|registra|registrar|borra|elimina|crea|agrega|actualiza|corrige|devuelve)\b", normalized):
         return None
+    stock = _stock_request(normalized, prefix)
+    if stock:
+        return stock
     lookup = re.fullmatch(r"(?:cuanto (?:cuesta|vale)|(?:dime|dame|muestrame) (?:el )?precio de) (?:el |la |un |una )?(.+)", normalized)
     if lookup:
         return "buscar_producto", {"consulta": lookup[1], "vista": "precio"}

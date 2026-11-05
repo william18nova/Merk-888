@@ -395,15 +395,18 @@ def common_read_request(text):
     periods = r"hoy|ayer|esta semana|este mes|la semana pasada|el mes pasado"
     if re.fullmatch(r"(?:(?:muestrame|dame|quiero ver|ver) )?(?:la )?lista de (?:los )?empleados|(?:muestrame|dame|quiero ver|ver) (?:todos )?(?:los )?empleados", normalized):
         return "listar_empleados", {}
-    payment_total = r"(?:cuanto (?:(?:he|hemos|se ha) pagado|pague|pagamos|se pago)|(?:(?:dame|muestrame|cual es) )?(?:el )?total (?:de )?(?:los )?pagos)"
-    payment_list = r"(?:(?:muestrame|dame|lista|quiero ver|ver) (?:la lista de )?(?:los )?pagos|(?:la )?lista de (?:los )?pagos|los pagos)"
-    payment = re.fullmatch(
-        r"(?P<request>" + payment_total + "|" + payment_list + r")"
-        r"(?: (?:(?:de|del|durante|en) )?(?P<period>" + periods + r"))?"
-        r"(?: (?P<breakdown>por (?:metodos? de pago|medios? de pago|medios?)))?"
-        r"(?: en (?P<method>nequi|efectivo|tarjeta|caja social|banco caja social))?", normalized,
+    period = rf"(?:(?:de|del|durante|en) )?(?P<period>{periods})"
+    breakdown = r"(?P<breakdown>por (?:metodos? de pago|medios? de pago|medios?))"
+    payment_total = r"(?:cuanto (?:(?:he|hemos|se ha|llevamos) pagado|pague|pagamos|se pago)|(?:(?:dame|muestrame|cual es) )?(?:el )?total (?:de )?(?:los )?pagos)"
+    payment_list = r"(?:(?:(?:muestrame|muestra|dame|lista|quiero ver|ver|consulta) (?:la lista de )?|(?:la )?lista de )?(?:los )?pagos)"
+    request = rf"(?P<request>{payment_total}|{payment_list})"
+    method = r"(?:en|por|con) (?P<method>nequi|efectivo|daviplata|tarjeta|caja social|banco caja social)"
+    # Se admiten ambos órdenes sin quitar el filtro, p. ej. «pagos de ayer por
+    # Nequi» y «pagos en Nequi de ayer». Los nombres/medios extra van a la IA.
+    payment = re.fullmatch(rf"{request}(?: {period})?(?: {breakdown})?(?: {method})?", normalized) or re.fullmatch(
+        rf"{request} {method}(?: {period})?(?: {breakdown})?", normalized,
     )
-    if payment:
+    if payment and normalized != "pagos":  # Un «pagos» aislado puede referirse al mensaje anterior.
         start, end = _period_dates(payment["period"] or "hoy")
         arguments = {"desde": start.isoformat(), "hasta": end.isoformat(),
                      "detalle": re.fullmatch(payment_list, payment["request"]) is not None,
@@ -411,10 +414,17 @@ def common_read_request(text):
         if payment["method"]:
             arguments["medio_pago"] = bot.normalize_payment_method_code(payment["method"])
         return "consultar_pagos", arguments
-    sales = re.fullmatch(r"cuanto (?:vendimos|hemos vendido|se ha vendido|se vendio)(?: (" + periods + r"))?", normalized)
+    sales = re.fullmatch(
+        r"(?:cuanto (?:vendimos|hemos vendido|se ha vendido|se vendio|llevamos vendido)"
+        r"|en cuanto van las ventas|(?:(?:dame|muestrame|cual es) )?(?:el )?total de (?:las )?ventas)"
+        rf"(?: {period})?(?: {breakdown})?", normalized,
+    )
     if sales:
-        start, end = _period_dates(sales[1] or "hoy")
-        return "consultar_ventas", {"desde": start.isoformat(), "hasta": end.isoformat()}
+        start, end = _period_dates(sales["period"] or "hoy")
+        arguments = {"desde": start.isoformat(), "hasta": end.isoformat()}
+        if sales["breakdown"]:
+            arguments["desglose_por_medio"] = True
+        return "consultar_ventas", arguments
     match = re.fullmatch(r"(?:y|ahora|pero) (" + periods + "|" + SCHEDULE_PERIODS + r")", normalized)
     if match:
         return "continuar_consulta", {"periodo": match[1]}

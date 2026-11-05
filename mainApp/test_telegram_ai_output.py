@@ -204,7 +204,7 @@ class AIOutputRecoveryTests(SimpleTestCase):
                     execute.assert_called_once()
 
     def test_politeness_does_not_drop_additional_filters_or_instructions(self):
-        for text in ("Me puedes decir cuánto pagué hoy y registra un pago", "Quisiera saber cuánto vendimos ayer en Yerbabuena", "Dime cuánto pagué en Daviplata", "Me puedes mostrar los pagos de hoy de William"):
+        for text in ("Me puedes decir cuánto pagué hoy y registra un pago", "Quisiera saber cuánto vendimos ayer en Yerbabuena", "Dime cuánto pagué en una billetera no identificada", "Me puedes mostrar los pagos de hoy de William"):
             with self.subTest(text=text):
                 self.assertIsNone(common_read_request(text))
                 self.assertIsNone(specific_read_request(text))

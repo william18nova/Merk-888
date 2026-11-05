@@ -239,9 +239,11 @@ class NaturalLanguageShortcutTests(SimpleTestCase):
                 self.assertEqual(arguments["desglose_por_medio"], breakdown)
 
     def test_method_filter_does_not_imply_breakdown(self):
-        _, args = common_read_request("Cuánto he pagado hoy en Nequi")
-        self.assertEqual(args["medio_pago"], "nequi")
-        self.assertFalse(args["desglose_por_medio"])
+        for method in ("Nequi", "Daviplata"):
+            with self.subTest(method=method):
+                _, args = common_read_request(f"Cuánto he pagado hoy en {method}")
+                self.assertEqual(args["medio_pago"], method.lower())
+                self.assertFalse(args["desglose_por_medio"])
 
     def test_employee_list_tomorrow_schedule_and_sales(self):
         self.assertEqual(common_read_request("Muéstrame la lista de empleados"), ("listar_empleados", {}))
@@ -249,7 +251,7 @@ class NaturalLanguageShortcutTests(SimpleTestCase):
         self.assertEqual(common_read_request("Cuánto vendimos ayer"), ("consultar_ventas", {"desde": "2026-09-06", "hasta": "2026-09-06"}))
 
     def test_unrecognized_filters_or_writes_must_not_be_silently_ignored(self):
-        for text in ("Paga 1000 en efectivo", "Muéstrame los pagos de hoy de William", "Cuánto pagué hoy en Daviplata", "Cuánto vendimos ayer en Yerbabuena", "Mi horario mañana y cancélalo", "Muestra los pagos mayores de 5000"):
+        for text in ("Paga 1000 en efectivo", "Muéstrame los pagos de hoy de William", "Cuánto pagué hoy en Nequi y Daviplata", "Cuánto vendimos ayer en Yerbabuena", "Mi horario mañana y cancélalo", "Muestra los pagos mayores de 5000"):
             with self.subTest(text=text):
                 self.assertIsNone(common_read_request(text))
 

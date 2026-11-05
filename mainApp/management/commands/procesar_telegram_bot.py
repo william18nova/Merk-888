@@ -2,6 +2,7 @@ import os
 import math
 import sys
 import time
+from contextlib import ExitStack
 
 from django.core.management.base import BaseCommand, CommandError
 from django.conf import settings
@@ -10,6 +11,7 @@ from django.db import DatabaseError, close_old_connections, connection
 from mainApp.services.feature_flags import TELEGRAM_BOT_FEATURE, is_feature_enabled
 from mainApp.services.telegram_bot import process_next_update, recover_stale_updates
 from mainApp.services.telegram_runtime import SourceWatcher
+from mainApp.services.telegram_transport import pooled_http_session
 
 
 class Command(BaseCommand):
@@ -54,7 +56,9 @@ class Command(BaseCommand):
         previous_checks = db_config.get("CONN_HEALTH_CHECKS", False)
         db_config["CONN_MAX_AGE"] = 60
         db_config["CONN_HEALTH_CHECKS"] = True
+        transports = ExitStack()
         try:
+            transports.enter_context(pooled_http_session())
             last_recovery = None
             last_followups = None
             db_failures = 0
@@ -67,7 +71,12 @@ class Command(BaseCommand):
                             self.stdout.write("Código actualizado: recargando el mismo trabajador entre mensajes. No se reenvían solicitudes terminadas.")
                             self.stdout.flush()
                             close_old_connections()
-                            os.execv(sys.executable, [sys.executable, "-u", *sys.argv])
+                            transports.close()
+                            try:
+                                os.execv(sys.executable, [sys.executable, "-u", *sys.argv])
+                            except OSError:
+                                transports.enter_context(pooled_http_session())
+                                raise
                             return
                         if state == "waiting":
                             time.sleep(sleep_seconds)
@@ -115,7 +124,10 @@ class Command(BaseCommand):
         except KeyboardInterrupt:
             self.stdout.write("Procesador detenido.")
         finally:
-            db_config["CONN_MAX_AGE"] = previous_age
-            db_config["CONN_HEALTH_CHECKS"] = previous_checks
-            close_old_connections()
+            try:
+                transports.close()
+            finally:
+                db_config["CONN_MAX_AGE"] = previous_age
+                db_config["CONN_HEALTH_CHECKS"] = previous_checks
+                close_old_connections()
         self.stdout.write(self.style.SUCCESS(f"Mensajes atendidos en esta ejecución: {processed}."))

@@ -1,5 +1,7 @@
 """Pruebas deterministas de latencia: sin servicios externos ni base real."""
+from http.client import HTTPMessage
 from io import StringIO
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import requests
@@ -8,6 +10,7 @@ from django.db import connection
 from django.test import SimpleTestCase, override_settings
 
 from .services import telegram_bot as bot, telegram_timing as timing, telegram_voice as voice
+from .services import telegram_transport as transport
 
 
 @override_settings(GEMINI_API_KEY="test", GROQ_API_KEY="test", CEREBRAS_API_KEY="test", OPENROUTER_API_KEY="test")
@@ -80,6 +83,7 @@ class TelegramWorkerPriorityTests(SimpleTestCase):
         def message():
             self.assertEqual(connection.settings_dict['CONN_MAX_AGE'], 60)
             self.assertTrue(connection.settings_dict['CONN_HEALTH_CHECKS'])
+            self.assertIsNotNone(transport._http_session.get())
             events.append('message')
             return found
         with patch(module + 'recover_stale_updates'), patch(module + 'close_old_connections'), \
@@ -88,6 +92,7 @@ class TelegramWorkerPriorityTests(SimpleTestCase):
                 patch('mainApp.services.telegram_followups.process_followups', side_effect=lambda **kw: events.append(('followup', kw))) as followups:
             call_command('procesar_telegram_bot', once=True, followups=True, stdout=StringIO())
         self.assertEqual(connection.settings_dict, before)
+        self.assertIsNone(transport._http_session.get())
         return events, followups
 
     def test_chat_has_priority_over_scheduled_reports(self):
@@ -103,3 +108,61 @@ class TelegramWorkerPriorityTests(SimpleTestCase):
         from .management.commands.procesar_telegram_bot import Command
         parser = Command().create_parser('manage.py', 'procesar_telegram_bot')
         self.assertEqual(parser.parse_args([]).sleep, .5)
+
+    def test_http_session_is_shared_across_messages_and_closed_on_exit(self):
+        module = 'mainApp.management.commands.procesar_telegram_bot.'
+        sessions = []
+
+        def message():
+            sessions.append(transport._http_session.get())
+            return True
+
+        session = requests.Session()
+        with patch.object(transport.requests, 'Session', return_value=session), \
+                patch.object(session, 'close', wraps=session.close) as close, \
+                patch(module + 'recover_stale_updates'), patch(module + 'close_old_connections'), \
+                patch(module + 'is_feature_enabled', return_value=True), \
+                patch(module + 'process_next_update', side_effect=message):
+            call_command('procesar_telegram_bot', max_messages=2, stdout=StringIO())
+        self.assertEqual(sessions, [session, session])
+        self.assertIsNone(transport._http_session.get())
+        close.assert_called_once_with()
+
+
+class TelegramHTTPPoolTests(SimpleTestCase):
+    def test_pool_does_not_keep_credentials_follow_redirects_or_enable_retries(self):
+        cookie_header = HTTPMessage()
+        cookie_header.add_header('Set-Cookie', 'sid=previous-message; Path=/; Secure')
+        sent = []
+
+        def send(request, **kwargs):
+            sent.append((request, kwargs))
+            response = requests.Response()
+            response.status_code = 302 if len(sent) == 1 else 200
+            response.url, response.request = request.url, request
+            response._content = b'{}'
+            response._content_consumed = True
+            response.raw = SimpleNamespace(_original_response=SimpleNamespace(msg=cookie_header))
+            if response.status_code == 302:
+                response.headers['Location'] = 'https://redirect.example.invalid/'
+            return response
+
+        with transport.pooled_http_session():
+            session = transport._http_session.get()
+            adapter = session.get_adapter('https://one.example.invalid/')
+            self.assertEqual(adapter.max_retries.total, 0)
+            with patch.object(adapter, 'send', side_effect=send):
+                first = transport.http_request('post', 'https://one.example.invalid/1',
+                                               headers={'Authorization': 'Bearer synthetic'}, timeout=(3, 12))
+                self.assertEqual(first.status_code, 302)
+                self.assertEqual(len(sent), 1)
+                self.assertFalse(session.cookies)
+                transport.http_request('get', 'https://one.example.invalid/2', timeout=(3, 20))
+                transport.http_request('get', 'https://other.example.invalid/3', timeout=(3, 20))
+        self.assertEqual(sent[0][0].headers['Authorization'], 'Bearer synthetic')
+        self.assertEqual(sent[0][1]['timeout'], (3, 12))
+        for request, options in sent[1:]:
+            self.assertNotIn('Authorization', request.headers)
+            self.assertNotIn('Cookie', request.headers)
+            self.assertEqual(options['timeout'], (3, 20))
+        self.assertIsNone(transport._http_session.get())

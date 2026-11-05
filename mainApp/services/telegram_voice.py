@@ -16,6 +16,7 @@ import requests
 from . import telegram_providers as providers
 from .telegram_ai_policy import response_failure
 from .telegram_timing import measured, network_timeout
+from .telegram_transport import http_request
 
 logger = logging.getLogger(__name__)
 _FAILURES = {}
@@ -38,7 +39,7 @@ def _request(name, method, url, *, deadline, **kwargs):
         raise _error(name, "connection")
     try:
         with measured("voz_http", provider=providers.LABELS[name]):
-            response = getattr(requests, method)(url, timeout=network_timeout(remaining, read_limit=20), allow_redirects=False, **kwargs)
+            response = http_request(method, url, timeout=network_timeout(remaining, read_limit=20), **kwargs)
     except requests.RequestException:
         raise _error(name, "connection", delay=10) from None
     try:
