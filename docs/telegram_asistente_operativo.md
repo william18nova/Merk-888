@@ -1,5 +1,8 @@
 # Asistente operativo por Telegram
 
+Para los cambios de recuperación, transporte, audios pendientes y diagnóstico
+preparados el 4 de noviembre de 2026, ver [Fiabilidad del bot](telegram_fiabilidad.md).
+
 Esta ampliación añade tareas encadenadas, alias personales, referencias a listas,
 inventario, pedidos y seguimientos diarios. Conserva los proveedores de IA y las
 funciones existentes; no añade claves, servicios externos ni dependencias.

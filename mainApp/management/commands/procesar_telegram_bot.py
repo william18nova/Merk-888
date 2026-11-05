@@ -1,8 +1,9 @@
 import os
+import math
 import sys
 import time
 
-from django.core.management.base import BaseCommand
+from django.core.management.base import BaseCommand, CommandError
 from django.conf import settings
 from django.db import DatabaseError, close_old_connections, connection
 
@@ -38,7 +39,10 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         once = bool(options["once"])
-        sleep_seconds = min(max(float(options["sleep"]), 0.2), 60.0)
+        requested_sleep = float(options["sleep"])
+        if not math.isfinite(requested_sleep):
+            raise CommandError("--sleep debe ser un número finito de segundos.")
+        sleep_seconds = min(max(requested_sleep, 0.2), 60.0)
         maximum = max(int(options["max_messages"]), 0)
         processed = 0
         watcher = SourceWatcher(settings.BASE_DIR) if options["reload"] and not once else None
@@ -51,30 +55,30 @@ class Command(BaseCommand):
         db_config["CONN_MAX_AGE"] = 60
         db_config["CONN_HEALTH_CHECKS"] = True
         try:
-            recover_stale_updates()
-            last_recovery = time.monotonic()
+            last_recovery = None
             last_followups = None
+            db_failures = 0
             while True:
-                close_old_connections()
-                if watcher is not None:
-                    state = watcher.poll()
-                    if state == "reload":
-                        self.stdout.write("Código actualizado: recargando el mismo trabajador entre mensajes. No se reenvían solicitudes terminadas.")
-                        self.stdout.flush()
-                        close_old_connections()
-                        os.execv(sys.executable, [sys.executable, "-u", *sys.argv])
-                        return  # execv no retorna; permite probar sin lanzar procesos.
-                    if state == "waiting":
-                        time.sleep(sleep_seconds)
-                        continue
-                if not is_feature_enabled(TELEGRAM_BOT_FEATURE, fresh=True):
-                    if once:
-                        self.stdout.write("El bot está desactivado; no se procesó ningún mensaje.")
-                        break
-                    time.sleep(max(sleep_seconds, 10.0))
-                    continue
                 try:
-                    if time.monotonic() - last_recovery >= 60:
+                    close_old_connections()
+                    if watcher is not None:
+                        state = watcher.poll()
+                        if state == "reload":
+                            self.stdout.write("Código actualizado: recargando el mismo trabajador entre mensajes. No se reenvían solicitudes terminadas.")
+                            self.stdout.flush()
+                            close_old_connections()
+                            os.execv(sys.executable, [sys.executable, "-u", *sys.argv])
+                            return
+                        if state == "waiting":
+                            time.sleep(sleep_seconds)
+                            continue
+                    if not is_feature_enabled(TELEGRAM_BOT_FEATURE, fresh=True):
+                        if once:
+                            self.stdout.write("El bot está desactivado; no se procesó ningún mensaje.")
+                            break
+                        time.sleep(max(sleep_seconds, 10.0))
+                        continue
+                    if last_recovery is None or time.monotonic() - last_recovery >= 60:
                         recover_stale_updates()
                         last_recovery = time.monotonic()
                     found = process_next_update()
@@ -84,12 +88,21 @@ class Command(BaseCommand):
                         from mainApp.services.telegram_followups import process_followups
                         process_followups(limit=1)
                         last_followups = time.monotonic()
+                    db_failures = 0
                 except DatabaseError as exc:
-                    self.stderr.write(f"Base de datos no disponible: {exc}")
+                    self.stderr.write(f"Base de datos no disponible ({type(exc).__name__}); se reintentará sin repetir acciones terminadas.")
                     close_old_connections()
                     if once:
-                        raise
-                    time.sleep(min(max(sleep_seconds * 3, 5.0), 30.0))
+                        raise CommandError("No se pudo consultar la base de datos; no se repetirá ninguna acción en esta ejecución.") from None
+                    db_failures = min(db_failures + 1, 4)
+                    time.sleep(min(5 * (2 ** (db_failures - 1)), 30.0))
+                    continue
+                except Exception as exc:
+                    self.stderr.write(f"El ciclo del bot se interrumpió ({type(exc).__name__}); se conservará la cola para recuperarla de forma segura.")
+                    close_old_connections()
+                    if once:
+                        raise CommandError("El ciclo no pudo terminar. Revisa la cola antes de repetir una solicitud.") from None
+                    time.sleep(10.0)
                     continue
                 if found:
                     processed += 1

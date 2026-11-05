@@ -10258,8 +10258,14 @@ class TelegramWebhookView(View):
         if content_length > 262144:
             return JsonResponse({"ok": False, "error": "payload_too_large"}, status=413)
         try:
-            payload = json.loads(request.body.decode("utf-8"))
+            from django.core.exceptions import RequestDataTooBig
+            raw_body = request.body
+            if len(raw_body) > 262144:
+                return JsonResponse({"ok": False, "error": "payload_too_large"}, status=413)
+            payload = json.loads(raw_body.decode("utf-8"))
             normalized = normalize_webhook_update(payload)
+        except (RecursionError, RequestDataTooBig):
+            return JsonResponse({"ok": False, "error": "payload_too_large"}, status=413)
         except (UnicodeDecodeError, json.JSONDecodeError, TelegramBotError) as exc:
             return JsonResponse({"ok": False, "error": str(exc)}, status=400)
         if not _telegram_tables_ready():
@@ -10272,8 +10278,8 @@ class TelegramWebhookView(View):
                 update_id=normalized.pop("update_id"),
                 defaults=normalized,
             )
-        except DatabaseError:
-            logger.exception("No se pudo encolar una actualización de Telegram")
+        except DatabaseError as exc:
+            logger.error("Telegram cola=no_disponible clase=%s", type(exc).__name__)
             return JsonResponse({"ok": False, "error": "queue_unavailable"}, status=503)
         return JsonResponse({"ok": True, "created": created}, status=202 if created else 200)
 

@@ -215,13 +215,14 @@ class HumanBusinessRepliesTests(TestCase):
         self.assertIn("Todavía no lo he guardado", selected.text)
         self.assertEqual(Egreso.objects.count(), 1)
 
-    def test_friendly_error_keeps_technical_diagnostic_only_in_audit(self):
+    def test_friendly_error_keeps_only_a_structured_safe_diagnostic(self):
         update = self.message("Haz una consulta compleja")
         detail = "Gemini HTTP 429 y Groq HTTP 503; diagnóstico de prueba"
         with patch.object(bot, "is_feature_enabled", return_value=True), patch.object(bot, "TelegramApiClient", return_value=self.client_stub), patch.object(bot, "logger"), patch.object(bot, "build_reply", side_effect=bot.TelegramAIUnavailable(detail)):
             self.assertTrue(bot.process_next_update())
         update.refresh_from_db()
-        self.assertEqual(update.error, detail)
+        self.assertIn('TelegramAIUnavailable', update.error)
+        self.assertNotIn(detail, update.error)
         self.assertEqual(update.estado, "ERROR")
         sent = self.client_stub.send_message.call_args.args[1]
         self.assertIn("Ahora mismo no pude atender", sent)

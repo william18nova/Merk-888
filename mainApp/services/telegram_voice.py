@@ -4,6 +4,7 @@ import base64
 import hashlib
 import io
 import logging
+import math
 import re
 import subprocess
 import time
@@ -149,6 +150,13 @@ def _assemblyai(audio, state, save, deadline):
     from .telegram_bot import TelegramTranscriptionPending
     headers = {"authorization": providers.value("ASSEMBLYAI_API_KEY")}
     job = state.setdefault("assemblyai", {})
+    if not isinstance(job, dict):
+        raise _error("assemblyai", "request")
+    started = job.get("started", 0)
+    if not isinstance(started, (int, float)) or isinstance(started, bool) or not math.isfinite(started):
+        raise _error("assemblyai", "request")
+    if job.get("id") and (started <= 0 or started > time.time() + 60):
+        raise _error("assemblyai", "request")
     if not job.get("id"):
         # Si el proceso cayó después de enviar, no reenviar un trabajo cuyo
         # resultado es incierto (el proveedor no garantiza idempotencia).
@@ -175,20 +183,44 @@ def _assemblyai(audio, state, save, deadline):
     data = _request("assemblyai", "get", "https://api.assemblyai.com/v2/transcript/" + job["id"], deadline=deadline, headers=headers)
     if data.get("status") == "completed":
         return _text("assemblyai", data.get("text"))
-    if data.get("status") in {"queued", "processing"} and time.time() - job.get("started", 0) < 600:
+    if data.get("status") in {"queued", "processing"} and 0 <= time.time() - job.get("started", 0) < 600:
         raise TelegramTranscriptionPending("El audio sigue procesándose en el proveedor de respaldo.")
     raise _error("assemblyai", "invalid_response")
+
+
+def needs_audio(update):
+    state = update.transcripcion_estado or {}
+    if not isinstance(state, dict):
+        return False  # El validador informa del estado inválido sin descargar.
+    job = state.get("assemblyai")
+    if isinstance(job, dict) and job.get("id"):
+        started = job.get("started", 0)
+        if not isinstance(started, (int, float)) or isinstance(started, bool) or not math.isfinite(started):
+            return False
+        # Al vencer puede hacer falta el audio íntegro para otro respaldo.
+        return time.time() - started >= 600
+    return True
 
 
 def transcribe(audio, *, update=None):
     from .telegram_bot import (TelegramAIProviderError, TelegramBotError, TelegramConfigurationError,
                               TelegramTranscriptionPending, TelegramTranscriptionUnavailable, TELEGRAM_FILE_LIMIT)
-    if not isinstance(audio, bytes) or not audio or len(audio) > TELEGRAM_FILE_LIMIT:
+    state = dict(update.transcripcion_estado or {}) if update is not None and isinstance(update.transcripcion_estado, dict) else {}
+    if update is not None and update.transcripcion_estado and not isinstance(update.transcripcion_estado, dict):
+        raise TelegramBotError("No pude recuperar el estado del audio. Envía la solicitud por escrito para revisarla.")
+    attempted = state.get("attempted", [])
+    if not isinstance(attempted, list) or any(not isinstance(item, str) for item in attempted):
+        raise TelegramBotError("No pude recuperar el estado del audio. Envía la solicitud por escrito para revisarla.")
+    resuming = update is not None and not needs_audio(update)
+    if not resuming and (not isinstance(audio, bytes) or not audio or len(audio) > TELEGRAM_FILE_LIMIT):
         raise TelegramBotError("El audio está vacío o supera el límite de 20 MB.")
     names = providers.active("voice")
     if not names:
         raise TelegramConfigurationError("No hay proveedores de transcripción habilitados y configurados.")
-    state = dict(update.transcripcion_estado or {}) if update is not None else {}
+    if resuming:
+        names = [name for name in names if name == "assemblyai"]
+        if not names:
+            raise TelegramConfigurationError("El proveedor del audio pendiente ya no está habilitado. Envía la solicitud por escrito.")
     def save():
         if update is not None:
             update.transcripcion_estado = state
@@ -208,6 +240,14 @@ def transcribe(audio, *, update=None):
         ])).encode()).hexdigest()
         failed = _FAILURES.get(name)
         if failed and failed[0] == fingerprint and failed[1] > time.monotonic():
+            if resuming and failed[2].kind in {"connection", "unavailable", "rate_limit"}:
+                wait = max(15, math.ceil(failed[1] - time.monotonic()))
+                job = state.get("assemblyai", {})
+                started = job.get("started", 0) if isinstance(job, dict) else 0
+                if isinstance(started, (int, float)) and 0 <= time.time() - started < 600 - wait:
+                    pending = TelegramTranscriptionPending("El audio pendiente espera a que el proveedor esté disponible.")
+                    pending.retry_after = wait
+                    raise pending
             errors.append(failed[2])
             continue
         try:
@@ -219,6 +259,15 @@ def transcribe(audio, *, update=None):
         except TelegramBotError as exc:
             failure = exc if isinstance(exc, TelegramAIProviderError) else _error(name, "request")
             errors.append(failure)
+            job = state.get("assemblyai", {})
+            if (name == "assemblyai" and isinstance(job, dict) and job.get("id")
+                    and failure.kind in {"connection", "unavailable", "rate_limit"}
+                    and isinstance(job.get("started"), (int, float))
+                    and 0 <= time.time() - job["started"] < 600
+                    and max(15, failure.delay) < 600 - (time.time() - job["started"])):
+                pending = TelegramTranscriptionPending("Se reconsultará el mismo audio pendiente tras un fallo temporal.")
+                pending.retry_after = max(15, failure.delay)
+                raise pending from None
             if failure.delay:
                 _FAILURES[name] = (fingerprint, time.monotonic() + failure.delay, failure)
             state.setdefault("attempted", []).append(name)

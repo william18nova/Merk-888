@@ -48,7 +48,7 @@ class AudioShortcutTests(SimpleTestCase):
         with patch.object(bot, "_configured", return_value="TEST_PRIVATE_TOKEN"):
             client = bot.TelegramApiClient()
         with patch.object(bot.requests, "post", side_effect=requests.Timeout("TEST_PRIVATE_TOKEN PRIVATE_MESSAGE")):
-            with self.assertRaises(bot.TelegramExternalError) as raised:
+            with self.assertRaises(bot.TelegramDeliveryUncertain) as raised:
                 client.send_message(1, "PRIVATE_MESSAGE")
         self.assertNotIn("TEST_PRIVATE_TOKEN", str(raised.exception))
         self.assertNotIn("PRIVATE_MESSAGE", str(raised.exception))
@@ -218,7 +218,8 @@ class TelegramSpecialCodeTests(TestCase):
             self.assertTrue(bot.process_next_update())
         update.refresh_from_db()
         self.assertEqual(update.estado, 'ERROR')
-        self.assertIn('Web Master', update.error)
+        self.assertIn('PermissionDenied', update.error)
+        self.assertIn('no tiene permiso', update.error)
         generate.assert_not_called()
         self.assertFalse(TelegramAccionPendiente.objects.exists())
         self.assertFalse(AutorizacionDescuentoEspecial.objects.exists())
@@ -362,9 +363,10 @@ class TelegramSpecialCodeTests(TestCase):
         with patch.object(bot, "is_feature_enabled", return_value=True), patch.object(bot, "TelegramApiClient", return_value=self.client), \
                 patch("mainApp.services.special_discount.secrets.randbelow", return_value=12345678), patch.object(bot, "logger"):
             self.assertTrue(bot.process_next_update())
-            self.assertTrue(bot.process_next_update())
+            self.assertFalse(bot.process_next_update())
         update.refresh_from_db()
-        self.assertEqual(update.estado, "PROCESADO")
+        self.assertEqual(update.estado, "ERROR")
+        self.assertIn('revoca', update.error)
         self.assertEqual(AutorizacionDescuentoEspecial.objects.count(), 1)
         self.assertNotIn("12345678", self.client.send_message.call_args_list[0].args[1])
         self.assertNotIn("12345678", self.client.send_message.call_args_list[1].args[1])

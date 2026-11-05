@@ -50,7 +50,10 @@ def run(args):
             ("NovaSoft.hybrid_test_postgres_settings", ["mainApp.test_hybrid_backup", "mainApp.test_hybrid_activation_checks", "mainApp.test_pos_request_receipts", "mainApp.test_pos_receipt_migration",
                 "mainApp.test_cash_receipt", "mainApp.test_hybrid", "mainApp.test_hybrid_postgres", "mainApp.test_nequi_selection", "mainApp.test_close_payments"]),
         ]
-        if args.reconciliation_only:
+        if args.telegram_only:
+            labels = ['mainApp.' + path.stem for path in sorted((ROOT / 'mainApp').glob('test_telegram*.py'))]
+            suites = [("NovaSoft.hybrid_test_postgres_settings", labels)]
+        elif args.reconciliation_only:
             suites = [("NovaSoft.hybrid_test_postgres_settings", ["mainApp.test_expense_reconciliation",
                 "mainApp.test_expense_reconciliation_registration", "mainApp.test_expense_editing",
                 "mainApp.test_expense_tax", "mainApp.test_operational_expenses", "mainApp.test_close_payments"])]
@@ -106,5 +109,6 @@ if __name__ == "__main__":
     parser.add_argument("--ptm-only", action="store_true", help="Cash-pool, reader, closing and offline regressions on a new disposable cluster")
     parser.add_argument("--storage-only", action="store_true", help="Closing checkpoints, payment details and offline regressions")
     parser.add_argument("--reconciliation-only", action="store_true", help="Closing-to-expense registration, duplicates, permissions, tax and cash isolation")
+    parser.add_argument("--telegram-only", action="store_true", help="Full Telegram suite on a fresh disposable PostgreSQL cluster; no external APIs")
     parser.add_argument("--linux-python", help="Existing WSL Python environment for the production-only suite")
     run(parser.parse_args())

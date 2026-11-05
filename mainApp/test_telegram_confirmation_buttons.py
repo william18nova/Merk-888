@@ -359,13 +359,16 @@ class ConfirmationRecoveryTests(TestCase):
 
     def test_send_failure_reuses_same_proposal_automatically_without_new_ai_call(self):
         update = self.message("Registra 1000 por AGUA en efectivo", voice=True)
-        self.client_stub.send_message.side_effect = [bot.TelegramExternalError("Error de envío simulado"), None]
+        self.client_stub.send_message.side_effect = [bot.TelegramRateLimit(7), None]
         with patch.object(bot, "is_feature_enabled", return_value=True), patch.object(bot, "TelegramApiClient", return_value=self.client_stub), patch.object(bot, "logger"), patch.object(bot, "_intelligent_function_call", return_value=("preparar_registro_pago", {"concepto": "AGUA", "monto": 1000, "medio_pago": "efectivo"}, "")) as intelligent:
             self.assertTrue(bot.process_next_update())
             update.refresh_from_db()
             self.assertEqual(update.estado, "PENDIENTE")
+            self.assertFalse(bot.process_next_update())
+            self.assertGreater(update.reintentar_en, timezone.now())
             action = TelegramAccionPendiente.objects.get()
             expiry = action.vence_en
+            TelegramActualizacion.objects.filter(pk=update.pk).update(reintentar_en=timezone.now()-timedelta(seconds=1))
             self.assertTrue(bot.process_next_update())
         update.refresh_from_db()
         action.refresh_from_db()
@@ -381,12 +384,13 @@ class ConfirmationRecoveryTests(TestCase):
 
     def test_retry_does_not_revive_expired_proposal_or_reinterpret_request(self):
         update = self.message("Registra 1000 por AGUA en efectivo")
-        self.client_stub.send_message.side_effect = [bot.TelegramExternalError("Error de envío simulado"), None]
+        self.client_stub.send_message.side_effect = [bot.TelegramRateLimit(7), None]
         with patch.object(bot, "is_feature_enabled", return_value=True), patch.object(bot, "TelegramApiClient", return_value=self.client_stub), patch.object(bot, "logger"), patch.object(bot, "_intelligent_function_call", return_value=("preparar_registro_pago", {"concepto": "AGUA", "monto": 1000, "medio_pago": "efectivo"}, "")) as intelligent:
             bot.process_next_update()
             action = TelegramAccionPendiente.objects.get()
             action.vence_en = timezone.now() - timedelta(seconds=1)
             action.save(update_fields=["vence_en"])
+            TelegramActualizacion.objects.filter(pk=update.pk).update(reintentar_en=timezone.now()-timedelta(seconds=1))
             bot.process_next_update()
         update.refresh_from_db()
         self.assertEqual(update.estado, "PROCESADO")

@@ -16,7 +16,7 @@ from uuid import UUID
 import requests
 from django.conf import settings
 from django.core.exceptions import PermissionDenied
-from django.db import DatabaseError, DataError, IntegrityError, ProgrammingError, close_old_connections, transaction
+from django.db import DatabaseError, DataError, IntegrityError, ProgrammingError, close_old_connections, connection, transaction
 from django.db.models import Case, Count, Exists, IntegerField, OuterRef, Q, Sum, When
 from django.utils import timezone
 from django.utils.dateparse import parse_date
@@ -90,6 +90,20 @@ class TelegramBotError(RuntimeError):
 
 class TelegramExternalError(TelegramBotError):
     retryable = True
+
+
+class TelegramSendDeferred(TelegramExternalError):
+    """Telegram no aceptó el mensaje; se puede reintentar sin duplicar el envío."""
+
+
+class TelegramRateLimit(TelegramSendDeferred):
+    def __init__(self, retry_after=30):
+        self.retry_after = min(max(int(retry_after), 1), 86400)
+        super().__init__("Telegram pidió esperar antes de volver a enviar la respuesta.")
+
+
+class TelegramDeliveryUncertain(TelegramBotError):
+    """No repetir una acción por una respuesta cuya entrega no se pudo verificar."""
 
 
 class TelegramConfigurationError(TelegramBotError):
@@ -367,34 +381,54 @@ def normalize_webhook_update(payload):
     if not isinstance(payload, dict):
         raise TelegramBotError("El contenido recibido no es un objeto JSON.")
     try:
-        update_id = int(payload["update_id"])
+        raw_id = payload["update_id"]
+        if type(raw_id) is not int or not 0 <= raw_id < 2 ** 63:
+            raise ValueError
+        update_id = raw_id
     except (KeyError, TypeError, ValueError):
         raise TelegramBotError("La actualización no tiene un update_id válido.")
 
-    callback = payload.get("callback_query") or {}
-    message = payload.get("message") or payload.get("edited_message") or {}
+    def obj(value):
+        if value is None:
+            return {}
+        if not isinstance(value, dict):
+            raise TelegramBotError("La estructura de la actualización no es válida.")
+        return value
+
+    def identity(value, *, signed=False):
+        if value is None:
+            return None
+        if type(value) is not int or not (-(2 ** 63) if signed else 1) <= value < 2 ** 63 or value == 0:
+            raise TelegramBotError("La identidad de la actualización no es válida.")
+        return value
+
+    callback = obj(payload.get("callback_query"))
+    message = obj(payload.get("message") or payload.get("edited_message"))
     if callback:
-        message = callback.get("message") or {}
-        sender = callback.get("from") or {}
-        chat = message.get("chat") or {}
+        message = obj(callback.get("message"))
+        sender = obj(callback.get("from"))
+        chat = obj(message.get("chat"))
         return {
             "update_id": update_id,
-            "telegram_user_id": sender.get("id"),
-            "telegram_chat_id": chat.get("id"),
+            "telegram_user_id": identity(sender.get("id")),
+            "telegram_chat_id": identity(chat.get("id"), signed=True),
             "telegram_username": str(sender.get("username") or "")[:80],
             "nombre_telegram": " ".join(filter(None, [
                 str(sender.get("first_name") or "").strip(),
                 str(sender.get("last_name") or "").strip(),
             ]))[:160],
-            "chat_type": chat.get("type", ""),
+            "chat_type": str(chat.get("type") or "")[:20],
             "tipo": "CALLBACK",
             "texto": str(callback.get("data") or "")[:500],
             "callback_query_id": str(callback.get("id") or "")[:160],
         }
 
-    sender = message.get("from") or {}
-    chat = message.get("chat") or {}
-    voice = message.get("voice") or {}
+    sender = obj(message.get("from"))
+    chat = obj(message.get("chat"))
+    voice = obj(message.get("voice"))
+    file_size = voice.get("file_size")
+    if file_size is not None and (type(file_size) is not int or not 0 <= file_size < 2 ** 63):
+        raise TelegramBotError("El tamaño del audio no es válido.")
     if voice:
         kind = "VOZ"
     elif message.get("text") is not None:
@@ -403,18 +437,18 @@ def normalize_webhook_update(payload):
         kind = "OTRO"
     return {
         "update_id": update_id,
-        "telegram_user_id": sender.get("id"),
-        "telegram_chat_id": chat.get("id"),
+        "telegram_user_id": identity(sender.get("id")),
+        "telegram_chat_id": identity(chat.get("id"), signed=True),
         "telegram_username": str(sender.get("username") or "")[:80],
         "nombre_telegram": " ".join(filter(None, [
             str(sender.get("first_name") or "").strip(),
             str(sender.get("last_name") or "").strip(),
         ]))[:160],
-        "chat_type": chat.get("type", ""),
+        "chat_type": str(chat.get("type") or "")[:20],
         "tipo": kind,
         "texto": str(message.get("text") or "")[:8000],
         "voice_file_id": str(voice.get("file_id") or "")[:255],
-        "voice_file_size": voice.get("file_size"),
+        "voice_file_size": file_size,
     }
 
 
@@ -426,8 +460,12 @@ class TelegramApiClient:
                 "Falta configurar TELEGRAM_BOT_TOKEN."
             )
         self.base_url = f"https://api.telegram.org/bot{self.token}"
+        self._next_send = 0.0
 
-    def _post(self, method, *, payload=None, files=None, timeout=25):
+    def _post(self, method, *, payload=None, files=None, timeout=(3, 20)):
+        from .telegram_transport import retry_after
+        uncertain = method == "sendMessage"
+        response = None
         try:
             response = requests.post(
                 f"{self.base_url}/{method}",
@@ -435,16 +473,35 @@ class TelegramApiClient:
                 data=payload if files is not None else None,
                 files=files,
                 timeout=timeout,
+                allow_redirects=False,
             )
-            data = response.json()
-        except (requests.RequestException, ValueError):
+            try:
+                data = response.json()
+            except ValueError:
+                data = None
+        except requests.ConnectTimeout:
+            raise TelegramSendDeferred("No se pudo conectar con Telegram para enviar la solicitud.") from None
+        except requests.RequestException:
             # requests incluye la URL privada del bot en algunas excepciones.
-            raise TelegramExternalError("Telegram no respondió correctamente.") from None
+            error = TelegramDeliveryUncertain if uncertain else TelegramExternalError
+            raise error("No pude confirmar la respuesta de Telegram. Revisa el chat y el estado de tu solicitud antes de repetir una acción.") from None
+        finally:
+            if response is not None:
+                close = getattr(response, "close", None)
+                if callable(close):
+                    try:
+                        close()
+                    except (OSError, requests.RequestException):
+                        logger.warning("Telegram cierre_conexion=no_disponible")
+        if response.status_code == 429 or (isinstance(data, dict) and data.get("error_code") == 429):
+            raise TelegramRateLimit(retry_after(data, getattr(response, "headers", None)))
+        if response.status_code >= 500 or 300 <= response.status_code < 400:
+            error = TelegramDeliveryUncertain if uncertain else TelegramExternalError
+            raise error("Telegram no pudo confirmar la solicitud. Revisa el resultado antes de repetir una acción.")
         if not isinstance(data, dict):
-            raise TelegramExternalError("Telegram devolvió una respuesta no válida.")
-        if response.status_code >= 500 or response.status_code == 429:
-            raise TelegramExternalError(f"Telegram no está disponible temporalmente (HTTP {response.status_code}).")
-        if not response.ok or not data.get("ok"):
+            error = TelegramDeliveryUncertain if uncertain else TelegramExternalError
+            raise error("Telegram devolvió una respuesta no válida; no se pudo verificar la entrega.")
+        if not response.ok or data.get("ok") is not True:
             raise TelegramBotError(f"Telegram rechazó la solicitud (HTTP {response.status_code}).")
         return data.get("result")
 
@@ -477,16 +534,44 @@ class TelegramApiClient:
             payload = {"chat_id": int(chat_id), "text": chunk, "disable_web_page_preview": True}
             if reply_markup and index == len(chunks) - 1:
                 payload["reply_markup"] = reply_markup
-            result = self._post("sendMessage", payload=payload)
+            try:
+                # La segunda burbuja y los informes largos no deben provocar
+                # ráfagas; una pausa corta no vuelve a interpretar la solicitud.
+                for attempt in range(2):
+                    wait = max(0, self._next_send - time.monotonic())
+                    if wait:
+                        time.sleep(wait)
+                    try:
+                        result = self._post("sendMessage", payload=payload)
+                        self._next_send = time.monotonic() + 1.05
+                        break
+                    except TelegramRateLimit as exc:
+                        if attempt or exc.retry_after > 3:
+                            raise
+                        self._next_send = time.monotonic() + exc.retry_after
+            except TelegramBotError as exc:
+                if index:
+                    failure = TelegramDeliveryUncertain(
+                        "Solo pude entregar parte de la respuesta. Puedes repetir una consulta para verla completa; "
+                        "si era un cambio, revisa su estado antes de volver a solicitarlo."
+                    )
+                    failure.retry_after = getattr(exc, "retry_after", 0)
+                    raise failure from None
+                raise
         return result
 
     def answer_callback(self, callback_query_id, text=""):
         if not callback_query_id:
             return None
-        return self._post("answerCallbackQuery", payload={
-            "callback_query_id": callback_query_id,
-            "text": str(text or "")[:180],
-        })
+        try:
+            return self._post("answerCallbackQuery", payload={
+                "callback_query_id": callback_query_id,
+                "text": str(text or "")[:180],
+            }, timeout=(2, 3))
+        except TelegramBotError:
+            # El aviso efímero no es el resultado durable de una operación.
+            logger.warning("Telegram aviso_boton=no_disponible")
+            return None
 
     def configure_webhook(self, url):
         secret = _configured("TELEGRAM_WEBHOOK_SECRET")
@@ -536,26 +621,9 @@ class TelegramApiClient:
         return self._post("deleteWebhook", payload={"drop_pending_updates": False})
 
     def download_voice(self, file_id):
+        from .telegram_transport import download_voice_file
         result = self._post("getFile", payload={"file_id": file_id})
-        file_path = str((result or {}).get("file_path") or "")
-        file_size = (result or {}).get("file_size")
-        if not file_path:
-            raise TelegramBotError("Telegram no devolvió la ruta del audio.")
-        if file_size and int(file_size) > TELEGRAM_FILE_LIMIT:
-            raise TelegramBotError("El audio supera el límite de 20 MB.")
-        try:
-            response = requests.get(
-                f"https://api.telegram.org/file/bot{self.token}/{file_path}",
-                timeout=40,
-            )
-            response.raise_for_status()
-        except requests.RequestException:
-            raise TelegramExternalError(
-                "No se pudo descargar el audio desde Telegram."
-            ) from None
-        if len(response.content) > TELEGRAM_FILE_LIMIT:
-            raise TelegramBotError("El audio supera el límite de 20 MB.")
-        return response.content
+        return download_voice_file(self.token, result, limit=TELEGRAM_FILE_LIMIT)
 
 
 def transcribe_voice(audio_bytes, *, update=None):
@@ -2252,6 +2320,13 @@ def recover_stale_updates():
     from mainApp.models import TelegramActualizacion
 
     threshold = timezone.now() - timedelta(minutes=10)
+    # El dominio pudo confirmar la operación antes de un corte de proceso.
+    # Una clave solo existió en RAM: nunca intentar regenerarla para entregarla.
+    TelegramActualizacion.objects.filter(
+        estado="PROCESANDO", iniciado_en__lt=threshold,
+        intencion__in=["callback_confirm", "clave_merk2_generada"],
+    ).exclude(respuesta="").update(estado="ERROR", procesado_en=timezone.now(),
+        error="La operación produjo una respuesta, pero su entrega quedó incierta. Revisa su estado en la web antes de repetirla.")
     TelegramActualizacion.objects.filter(
         estado="PROCESANDO", iniciado_en__lt=threshold, intentos__gte=3,
     ).update(estado="ERROR", procesado_en=timezone.now(), error="El trabajador se interrumpió en el último intento. Revisa el resultado antes de repetir una acción.")
@@ -2262,27 +2337,63 @@ def recover_stale_updates():
     ).update(estado="PENDIENTE", iniciado_en=None)
 
 
-def _send_bot_reply(client, chat_id, reply):
+def _validate_bot_reply(reply):
+    if not isinstance(reply, BotReply) or not isinstance(reply.text, str):
+        raise TelegramBotError("No pude preparar una respuesta válida. Revisa el resultado en la web antes de repetir una acción.")
     code = reply.copyable_code
     if code is not None or reply.intent == "clave_merk2_generada":
         if (reply.intent != "clave_merk2_generada" or reply.proposal_id
                 or not isinstance(code, str) or re.fullmatch(r"[0-9]{8}", code) is None
-                or not isinstance(reply.history_text, str) or not reply.history_text.strip()):
+                or not isinstance(reply.history_text, str) or not reply.history_text.strip()
+                or code in reply.text or code in reply.history_text):
             raise TelegramBotError("No pude preparar el mensaje separado de la clave. Revisa su estado en la web antes de solicitar otra.")
-    client.send_message(chat_id, reply.text, reply_markup=reply.reply_markup,
-                        require_buttons=bool(reply.proposal_id))
-    if code is not None:
-        try:
+    return code
+
+
+def _send_bot_reply(client, chat_id, reply):
+    code = _validate_bot_reply(reply)
+    try:
+        client.send_message(chat_id, reply.text, reply_markup=reply.reply_markup,
+                            require_buttons=bool(reply.proposal_id))
+        if code is not None:
             # Texto plano exacto: sin título, prefijo, Markdown ni otros datos.
             client.send_message(chat_id, code)
-        except TelegramBotError:
+    except TelegramBotError as exc:
+        if code is not None:
             # La autorización ya está confirmada y la entrega puede ser incierta.
             # No regenerar ni guardar la clave para reintentar otro envío después.
-            raise TelegramBotError(
+            failure = TelegramBotError(
                 "La clave se generó, pero no pude confirmar el envío del mensaje separado. "
                 "Revisa si te llegó la burbuja con los 8 dígitos. Si no la recibiste, "
                 "revoca la clave en la web antes de solicitar otra. No se generó otra clave."
+            )
+            failure.retry_after = getattr(exc, "retry_after", 0)
+            raise failure from None
+        if isinstance(exc, TelegramExternalError) and not isinstance(exc, TelegramSendDeferred):
+            raise TelegramDeliveryUncertain(
+                "No pude confirmar la entrega de la respuesta. Revisa el chat y el estado de tu solicitud "
+                "antes de repetir una acción. Puedes usar /pendientes para recuperar una propuesta."
             ) from None
+        raise
+
+
+def _retry_delay(error, attempt):
+    # Se devuelve a la cola: otros chats continúan; no dormir al trabajador.
+    try:
+        requested = float(getattr(error, "retry_after", 0) or 0)
+        if not math.isfinite(requested) or requested < 0:
+            requested = 0
+    except (TypeError, ValueError, OverflowError):
+        requested = 0
+    return max(min(requested, 86400),
+               min(5 * (3 ** max(0, attempt - 1)), 60) + random.uniform(0, 1))
+
+
+def _close_bot_connections():
+    # No cerrar una transacción de quien llamó al servicio. El trabajador normal
+    # está en autocommit; las pruebas y otros adaptadores pueden no estarlo.
+    if not connection.in_atomic_block:
+        close_old_connections()
 
 
 def process_next_update():
@@ -2290,7 +2401,7 @@ def process_next_update():
 
     if not is_feature_enabled(TELEGRAM_BOT_FEATURE, fresh=True):
         return False
-    close_old_connections()
+    _close_bot_connections()
     with transaction.atomic():
         # Una conversación espera a su mensaje anterior, incluso si otro
         # trabajador lo tiene bloqueado. Otras conversaciones sí pueden avanzar.
@@ -2312,8 +2423,9 @@ def process_next_update():
         update.estado = "PROCESANDO"
         update.intentos += 1
         update.iniciado_en = timezone.now()
+        update.reintentar_en = None
         update.error = ""
-        update.save(update_fields=["estado", "intentos", "iniciado_en", "error"])
+        update.save(update_fields=["estado", "intentos", "iniciado_en", "reintentar_en", "error"])
 
     client = None
     processing_started = time.monotonic()
@@ -2329,7 +2441,7 @@ def process_next_update():
         elif update.tipo == "OTRO":
             client = TelegramApiClient()
             reply = BotReply("Por ahora acepto mensajes de texto y notas de voz.", "tipo_no_soportado")
-            client.send_message(update.telegram_chat_id, reply.text)
+            _send_bot_reply(client, update.telegram_chat_id, reply)
             update.estado = "PROCESADO"
             update.intencion = reply.intent
             update.respuesta = reply.text
@@ -2343,14 +2455,23 @@ def process_next_update():
                     raise PermissionDenied("Usuario inactivo.")
                 if update.voice_file_size and update.voice_file_size > TELEGRAM_FILE_LIMIT:
                     raise TelegramBotError("El audio supera el límite de 20 MB.")
-                with measured("descargar_audio", update_id=update.pk):
-                    audio = client.download_voice(update.voice_file_id)
+                from .telegram_voice import needs_audio
+                audio = None
+                if needs_audio(update):
+                    with measured("descargar_audio", update_id=update.pk):
+                        audio = client.download_voice(update.voice_file_id)
                 with measured("transcribir_audio", update_id=update.pk):
                     update.transcripcion = transcribe_voice(audio, update=update)
                 update.save(update_fields=["transcripcion"])
             with measured("preparar_respuesta", update_id=update.pk):
                 reply = reuse_update_proposal(update) or build_reply(update, client)
             reply = ensure_proposal_buttons(update, reply)
+            _validate_bot_reply(reply)
+            # Guardar el resultado seguro antes del envío. Un fallo de transporte
+            # no borra la constancia de la operación ni persiste una clave.
+            update.intencion = reply.intent[:80]
+            update.respuesta = (reply.history_text if reply.history_text is not None else reply.text)[:8000]
+            update.save(update_fields=["intencion", "respuesta"])
             with measured("enviar_respuesta", update_id=update.pk):
                 _send_bot_reply(client, update.telegram_chat_id, reply)
             update.estado = "PROCESADO"
@@ -2358,10 +2479,10 @@ def process_next_update():
             update.respuesta = (reply.history_text if reply.history_text is not None else reply.text)[:8000]
         update.procesado_en = timezone.now()
         update.save(update_fields=["estado", "intencion", "respuesta", "procesado_en"])
-    except TelegramTranscriptionPending:
+    except TelegramTranscriptionPending as exc:
         update.estado = "PENDIENTE"
         update.intentos = max(0, update.intentos - 1)
-        update.reintentar_en = timezone.now() + timedelta(seconds=15)
+        update.reintentar_en = timezone.now() + timedelta(seconds=max(15, getattr(exc, "retry_after", 15)))
         update.error = "Transcripción asíncrona pendiente; se consultará el mismo trabajo."
         update.save(update_fields=["estado", "intentos", "reintentar_en", "error"])
         if not update.transcripcion_estado.get("pending_notified"):
@@ -2373,25 +2494,37 @@ def process_next_update():
             except TelegramBotError:
                 logger.warning("No se pudo avisar de la transcripción pendiente de Telegram update %s", update.pk)
     except Exception as exc:
-        logger.exception("Falló el procesamiento de Telegram update %s", update.pk)
+        # No imprimir excepciones crudas: BD y transporte pueden incluir SQL,
+        # datos personales, rutas privadas, claves y el token del bot.
+        trace = exc.__traceback__
+        while trace is not None and trace.tb_next is not None:
+            trace = trace.tb_next
+        logger.error("Telegram fallo update=%s clase=%s funcion=%s linea=%s", update.pk,
+                     type(exc).__name__, trace.tb_frame.f_code.co_name if trace else "-",
+                     trace.tb_lineno if trace else "-")
         retryable = (
             bool(getattr(exc, "retryable", False))
             or (isinstance(exc, DatabaseError) and _database_failure_kind(exc) == "temporary")
         ) and update.intentos < 3
         update.estado = "PENDIENTE" if retryable else "ERROR"
-        update.error = str(exc)[:8000]
+        category = _database_failure_kind(exc) if isinstance(exc, DatabaseError) else getattr(exc, "kind", "-")
+        update.error = f"{type(exc).__name__} [{category}] | {_user_error_message(exc, update)}"[:8000]
         update.procesado_en = None if retryable else timezone.now()
-        update.save(update_fields=["estado", "error", "procesado_en"])
-        if not retryable and update.telegram_chat_id:
+        update.reintentar_en = timezone.now() + timedelta(seconds=_retry_delay(exc, update.intentos)) if retryable else None
+        # Un corte al persistir el estado se recupera por el trabajador; no se
+        # vuelve a ejecutar aquí la operación de negocio.
+        update.save(update_fields=["estado", "error", "procesado_en", "reintentar_en"])
+        # No agravar un flood limit con otro mensaje de error inmediato.
+        if not retryable and update.telegram_chat_id and not getattr(exc, "retry_after", 0):
             try:
                 (client or TelegramApiClient()).send_message(
                     update.telegram_chat_id,
                     _user_error_message(exc, update),
                 )
             except TelegramBotError:
-                logger.exception("Tampoco se pudo notificar el error por Telegram")
+                logger.warning("Telegram aviso_error=no_disponible update=%s", update.pk)
     finally:
         timing_logger.info("Telegram proceso update=%s tipo=%s estado=%s segundos=%.3f",
                     update.pk, update.tipo, update.estado, time.monotonic() - processing_started)
-        close_old_connections()
+        _close_bot_connections()
     return True

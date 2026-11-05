@@ -229,7 +229,8 @@ class TelegramBotTests(TestCase):
                 update.refresh_from_db()
                 self.assertEqual(update.estado, expected)
                 self.assertEqual(update.intentos, 1)
-                self.assertEqual(update.error, str(failure))
+                self.assertIn(type(failure).__name__, update.error)
+                self.assertNotIn(str(failure), update.error)
                 if expected == "ERROR":
                     client.send_message.assert_called_once()
                     sent = client.send_message.call_args.args[1]
