@@ -919,6 +919,25 @@ y [errores y reintentos de Gemini](https://ai.google.dev/gemini-api/docs/trouble
   el bot lo pregunta sin crear una propuesta ni un pago. Las peticiones ambiguas
   y las continuaciones siguen usando la interpretación con contexto. Los cambios
   todavía requieren confirmar por botón y la clave se entrega por separado.
+- Compras y pagos operativos admiten «pago de 85.900 a la empresa por Nequi»,
+  «compra en la empresa por valor de 85.900 en efectivo» y «anota 90 mil para
+  el proveedor por Nequi». Se conserva el concepto dictado y se prepara una
+  propuesta con el detalle; no se registra hasta pulsar **Confirmar**. Si una
+  coma deja ambiguo un monto como `85,900`, primero se pide el valor en pesos.
+  Puedes responder solo `85900` en el mismo chat dentro de 10 minutos, siempre
+  que no hayas cambiado de tema. La corrección solo prepara el pago.
+- Para expresiones más libres («a Papelería Sol le pasé ochenta y cinco mil
+  novecientos con Nequi; apúntame eso»), los proveedores de texto extraen el
+  concepto, el monto y el medio en campos separados. El servidor exige que los
+  fragmentos estén en el mensaje actual y convierte importes en palabras a
+  pesos; no acepta cifras ni medios inventados por la IA. En Groq la extracción
+  de pagos usa JSON desde el primer intento.
+- Si falta un dato, el borrador conserva solo los campos comprobados de ese
+  pago. «Fue por Nequi» o «son ochenta y cinco mil novecientos» pueden completar
+  la pregunta reciente del mismo chat sin volver a llamar a la IA. El borrador
+  no se recupera de otro chat, después de otro tema, si la pregunta no se
+  entregó o pasaron 10 minutos. No es un pago registrado ni tiene Confirmar
+  hasta que estén completos los datos y se verifiquen los permisos.
 - El trabajador reutiliza conexiones HTTPS por destino entre mensajes. No guarda
   cookies ni encabezados de autenticación entre peticiones, no sigue redirecciones
   ni reintenta automáticamente envíos de resultado incierto.

@@ -33,7 +33,11 @@ def validate_plain_reply(text):
         r"(?:(?:en|el|la|un|una|uno|los|las|estos|estas|de|siguiente|siguientes)\s+)*"
         r"(?:boton(?:es)?|confirmar|cancelar|opciones)\b", normalized,
     )
-    if confirmation or button_instruction:
+    completed_payment = re.search(
+        r"(?:^|[.!]\s+)(?:listo[,.: ]+)?(?:ya\s+)?(?:registre|guarde|he registrado|he guardado)\s+"
+        r"(?:(?:tu|este|el|un)\s+)?(?:pago|egreso)\b", normalized,
+    )
+    if confirmation or button_instruction or completed_payment:
         raise AIOutputError("missing_action")
     return text
 
@@ -80,9 +84,10 @@ def parse_selection(answer, allowed):
     return AIToolSelection(tuple(names))
 
 
-def json_plan_instruction(definitions):
+def json_plan_instruction(definitions, *, recovery=True):
     return (
-        "MODO DE RECUPERACIÓN JSON: no uses llamadas nativas ni escribas SQL, código o prosa fuera del objeto. "
+        ("MODO DE RECUPERACIÓN JSON: " if recovery else "MODO JSON: ")
+        + "No uses llamadas nativas ni escribas SQL, código o prosa fuera del objeto. "
         "Devuelve SOLO {\"name\":\"función\",\"arguments\":{...}} usando exactamente uno de los esquemas siguientes. "
         "Conserva TODOS los filtros, importes e intenciones de la petición original y del historial relevante. "
         "Si falta información, devuelve {\"pregunta\":\"¿Dato que necesitas?\"}. No inventes datos ni resultados. "

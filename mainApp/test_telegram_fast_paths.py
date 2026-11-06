@@ -8,7 +8,7 @@ from django.test import SimpleTestCase
 
 from .services import telegram_bot as bot
 from .services.telegram_assistant import common_read_request
-from .services.telegram_expense_shortcuts import direct_expense_request, expense_clarification
+from .services.telegram_expense_shortcuts import direct_expense_request, expense_request, incomplete_expense_fields
 from .services.telegram_shortcuts import specific_read_request
 from .services.telegram_special_codes import direct_request as special_code_request
 
@@ -20,7 +20,7 @@ WEEK_ARGS = {"desde": "2026-11-02", "hasta": "2026-11-05"}
 
 
 def message(phrase, voice):
-    return SimpleNamespace(tipo="VOZ" if voice else "TEXTO", texto="" if voice else phrase,
+    return SimpleNamespace(pk=1, tipo="VOZ" if voice else "TEXTO", texto="" if voice else phrase,
                            transcripcion=phrase if voice else "", telegram_chat_id=1,
                            telegram_username="", nombre_telegram="")
 
@@ -78,16 +78,79 @@ class TelegramFastPathTests(SimpleTestCase):
                 with self.subTest(phrase=phrase, voice=voice), \
                         patch.object(bot, "_profile_for_update", return_value=self.profile), \
                         patch.object(bot, "_require_access") as access, \
+                        patch.object(bot, "payment_method_options", return_value=[{"code": "efectivo", "label": "Efectivo"}]), \
+                        patch.object(bot, "_audit") as audit, \
                         patch.object(bot, "_execute_tool") as execute, \
                         patch.object(bot, "_intelligent_function_call") as ai:
                     reply = bot.build_reply(message(phrase, voice), MagicMock())
                     self.assertTrue(reply.text.startswith(question))
-                    self.assertEqual(reply.intent, "aclarar_pago")
+                    self.assertEqual(reply.intent, bot.PAYMENT_DIALOGUE)
                     self.assertIsNone(reply.reply_markup)
                     self.assertFalse(reply.proposal_id)
                     access.assert_called_once_with(self.profile, "registrar_egreso")
+                    audit.assert_called_once()
+                    self.assertEqual(audit.call_args.args[2]["datos"]["monto"], "50000")
                     execute.assert_not_called()
                     ai.assert_not_called()
+
+    def test_natural_payment_variants_prepare_exact_fields_for_text_and_voice(self):
+        cases = (
+            ("Compra de 85.900 a Empresa Ejemplo por Nequi.", "Empresa Ejemplo", "85900", "nequi"),
+            ("Pago de $85.900 de Envuelto y Bebidas en efectivo", "Envuelto y Bebidas", "85900", "efectivo"),
+            ("Pago 85.900 mantenimiento de Equipo Uno por Nequi.", "mantenimiento de Equipo Uno", "85900", "nequi"),
+            ("Regístrame un pago de 90 mil a Comercial D1 por Neki", "Comercial D1", "90000", "nequi"),
+            ("Compra en Papelería Sol por valor de 85900 por Nequi.", "Papelería Sol", "85900", "nequi"),
+            ("Compré en Panadería El Trigal por valor de $83.900,50, y pagué con Daviplata.",
+             "Panadería El Trigal", "83900.50", "daviplata"),
+            ("Anota una compra de 85900 a favor de Taller Uno con Banco Caja Social.",
+             "Taller Uno", "85900", "tarjeta"),
+        )
+        for phrase, concept, amount, method in cases:
+            for voice in (False, True):
+                update = message(phrase, voice)
+                with self.subTest(phrase=phrase, voice=voice), \
+                        patch.object(bot, "_profile_for_update", return_value=self.profile), \
+                        patch.object(bot, "_execute_tool", return_value=bot.BotReply("Propuesta")) as execute, \
+                        patch.object(bot, "_intelligent_function_call") as ai:
+                    self.assertEqual(bot.build_reply(update, MagicMock()).text, "Propuesta")
+                    execute.assert_called_once_with(self.profile, "preparar_registro_pago", {
+                        "concepto": concept, "monto": amount, "medio_pago": method,
+                    }, update)
+                    ai.assert_not_called()
+
+    def test_unsafe_payment_phrases_are_not_reduced_to_one_expense(self):
+        for phrase in (
+            "Pago de 85,900 a Empresa Ejemplo por Nequi y por Daviplata",
+            "Pago de 85.900 por Nequi a Empresa Ejemplo con tarjeta",
+            "Pago de 85000 a Empresa Uno y 5000 a Empresa Dos por Nequi",
+            "Pago de 85000 a Empresa Uno y paga 5000cop a Empresa Dos por Nequi",
+            "Pago de 85.900 por Nequi a Empresa Ejemplo sin confirmación",
+            "Pago de 85.900 a Empresa Ejemplo del martes por Nequi",
+            "Pago de 85.900 a Empresa Ejemplo en dos cuotas por Nequi",
+            "Pago de 85,900ABC a Empresa Ejemplo por Nequi",
+            "Pago de 85,900 a Empresa Ejemplo por NXD",
+            "Ya registré el pago de 85000 a Empresa Ejemplo por Nequi",
+            "No registres un pago de 85.900 a Empresa Ejemplo por Nequi",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertEqual(expense_request(phrase), (None, False))
+
+    def test_ambiguous_comma_in_complete_payment_asks_for_amount_only(self):
+        for voice in (False, True):
+            update = message("Pago de 85,900 a Empresa Ejemplo por Nequi.", voice)
+            with self.subTest(voice=voice), \
+                    patch.object(bot, "_profile_for_update", return_value=self.profile), \
+                    patch.object(bot, "_require_access") as access, \
+                    patch.object(bot, "_execute_tool") as execute, \
+                    patch.object(bot, "_intelligent_function_call") as ai:
+                reply = bot.build_reply(update, MagicMock())
+                self.assertEqual(reply.intent, bot.EXPENSE_AMOUNT_CLARIFICATION)
+                self.assertIn("¿Cuántos pesos pagaste?", reply.text)
+                self.assertIsNone(reply.reply_markup)
+                self.assertFalse(reply.proposal_id)
+                access.assert_called_once_with(self.profile, "registrar_egreso")
+                execute.assert_not_called()
+                ai.assert_not_called()
 
     def test_payment_clarification_does_not_bypass_role(self):
         with patch.object(bot, "_profile_for_update", return_value=self.profile), \
@@ -124,5 +187,5 @@ class TelegramFastPathTests(SimpleTestCase):
                 self.assertIsNone(common_read_request(phrase))
                 self.assertIsNone(specific_read_request(phrase))
                 self.assertIsNone(direct_expense_request(phrase))
-                self.assertIsNone(expense_clarification(phrase))
+                self.assertIsNone(incomplete_expense_fields(phrase))
                 self.assertFalse(special_code_request(phrase))

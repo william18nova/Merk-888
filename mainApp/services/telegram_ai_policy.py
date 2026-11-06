@@ -113,6 +113,8 @@ def response_failure(response, data):
 
 def selected_tool_names(text, history, available):
     """Selección conservadora: si el tema es incierto mantiene el catálogo completo."""
+    from .telegram_expense_language import payment_context, payment_language
+
     query = normalized(text)
     short_reply = bool(re.fullmatch(
         r"\s*(?:(?:por|en)\s*)?(?:nequi|neki|efectivo|tarjeta|daviplata|banco caja social|caja social)[.!?\s]*",
@@ -145,6 +147,10 @@ def selected_tool_names(text, history, available):
         (r"\b(?:balance|negocio|resumen|saldo|queda\w*|resta\w*)\b", {"consultar_balance", "consultar_resumen_negocio", "consultar_ventas", "consultar_pagos", "consultar_informe"}),
     ]
     matches = [names for pattern, names in domains if re.search(pattern, query)]
+    payment = payment_context.get()
+    if (payment and (payment.draft is not None or payment_language(text))
+            and not any("preparar_registro_pago" in names for names in matches)):
+        matches.append({"preparar_registro_pago", "consultar_pagos"})
     if not matches:
         return set(available)
     result = {"consultar_capacidades", "buscar_vistas", "consultar_pendientes", "consultar_datos"}.union(*matches)

@@ -1,5 +1,6 @@
 import json
 from datetime import timedelta
+from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -117,25 +118,61 @@ class ConfirmationRecoveryTests(TestCase):
     def callbacks(reply):
         return [item["callback_data"] for row in (reply.reply_markup or {}).get("inline_keyboard", []) for item in row]
 
-    def test_real_failed_audio_example_now_produces_real_buttons_without_saving(self):
-        args = {"concepto": "ENVUELTOS", "monto": 85900, "medio_pago": "efectivo"}
-        update = self.message("Pago de $85,900 de envueltos en efectivo", voice=True)
-        with patch.object(bot.requests, "post", side_effect=[gemini_text("¿Confirmas que registre este pago?\nPulsa Confirmar."), chat_calls(("preparar_registro_pago", args))]):
-            reply = bot.build_reply(update, self.client_stub)
+    def test_audio_with_ambiguous_amount_waits_then_prepares_real_buttons_without_ai(self):
+        MetodoPago.objects.create(codigo="nequi", nombre="Nequi", activo=True)
+        original = self.message("Pago de $85,900 de agua por Nequi", voice=True)
+        with patch.object(bot, "is_feature_enabled", return_value=True), \
+                patch.object(bot, "TelegramApiClient", return_value=self.client_stub), \
+                patch.object(bot, "_intelligent_function_call", side_effect=AssertionError("No usar IA")) as ai:
+            self.assertTrue(bot.process_next_update())
+            original.refresh_from_db()
+            self.assertEqual((original.estado, original.intencion), ("PROCESADO", bot.EXPENSE_AMOUNT_CLARIFICATION))
+            self.assertFalse(TelegramAccionPendiente.objects.exists())
+            self.assertFalse(Egreso.objects.exists())
+            update = self.message("Son 85900 pesos", voice=True)
+            self.assertTrue(bot.process_next_update())
+            ai.assert_not_called()
         action = TelegramAccionPendiente.objects.get()
-        self.assertIn(f"confirm:{action.pk}", self.callbacks(reply))
-        self.assertIn("$85.900", reply.text)
+        sent = self.client_stub.send_message.call_args
+        self.assertEqual(sent.kwargs["reply_markup"]["inline_keyboard"][0][0]["callback_data"], f"confirm:{action.pk}")
+        self.assertIn("$85.900", sent.args[1])
         self.assertEqual(action.actualizacion_id, update.pk)
+        self.assertEqual(action.argumentos["medio_pago"], "nequi")
+        self.assertEqual(action.argumentos["concepto"], "AGUA")
         self.assertFalse(Egreso.objects.exists())
         self.callback(action, "confirm")
         self.callback(action, "confirm")
         self.assertEqual(Egreso.objects.count(), 1)
+        self.assertEqual(Egreso.objects.get().monto, Decimal("85900"))
+
+    def test_amount_only_never_revives_an_old_undelivered_or_unrelated_question(self):
+        for boundary in ("expired", "undelivered", "interrupted", "other_chat", "other_user"):
+            previous = self.message("Pago de $85,900 de agua en efectivo")
+            fields = {"estado": "PROCESADO", "intencion": bot.EXPENSE_AMOUNT_CLARIFICATION}
+            if boundary == "expired":
+                fields["recibido_en"] = timezone.now() - timedelta(minutes=11)
+            elif boundary == "undelivered":
+                fields["estado"] = "ERROR"
+            elif boundary == "interrupted":
+                intervening = self.message("¿Qué puedes hacer?")
+                TelegramActualizacion.objects.filter(pk=intervening.pk).update(estado="PROCESADO", intencion="ayuda")
+            elif boundary == "other_chat":
+                fields["telegram_chat_id"] = self.profile.telegram_chat_id + 1
+            elif boundary == "other_user":
+                fields["telegram_user_id"] = self.profile.telegram_user_id + 1
+            TelegramActualizacion.objects.filter(pk=previous.pk).update(**fields)
+            with self.subTest(boundary=boundary), patch.object(bot, "_intelligent_function_call", return_value=("", {}, "Falta contexto.")) as ai:
+                self.assertEqual(bot.build_reply(self.message("85900"), self.client_stub).text, "Falta contexto.")
+                ai.assert_called_once()
+                self.assertFalse(TelegramAccionPendiente.objects.exists())
+                self.assertFalse(Egreso.objects.exists())
 
     def test_worker_delivers_generated_buttons_to_telegram(self):
-        args = {"concepto": "AGUA", "monto": 1000, "medio_pago": "efectivo"}
         self.message("Registra 1000 por AGUA en efectivo", voice=True)
-        with patch.object(bot, "is_feature_enabled", return_value=True), patch.object(bot, "TelegramApiClient", return_value=self.client_stub), patch.object(bot.requests, "post", return_value=chat_calls(("preparar_registro_pago", args))), patch.object(bot.telegram_providers, "active", return_value=["groq"]):
+        with patch.object(bot, "is_feature_enabled", return_value=True), patch.object(bot, "TelegramApiClient", return_value=self.client_stub), \
+                patch.object(bot, "_intelligent_function_call", side_effect=AssertionError("No usar IA")) as ai:
             self.assertTrue(bot.process_next_update())
+            ai.assert_not_called()
         action = TelegramAccionPendiente.objects.get()
         markup = self.client_stub.send_message.call_args.kwargs["reply_markup"]
         self.assertEqual(markup["inline_keyboard"][0][0]["callback_data"], f"confirm:{action.pk}")
@@ -349,7 +386,7 @@ class ConfirmationRecoveryTests(TestCase):
             result.reply_markup = None
             return result
 
-        with patch.object(bot, "is_feature_enabled", return_value=True), patch.object(bot, "TelegramApiClient", return_value=self.client_stub), patch.object(bot, "build_reply", side_effect=forget_keyboard), patch.object(bot, "_intelligent_function_call", return_value=("preparar_registro_pago", {"concepto": "AGUA", "monto": 1000, "medio_pago": "efectivo"}, "")):
+        with patch.object(bot, "is_feature_enabled", return_value=True), patch.object(bot, "TelegramApiClient", return_value=self.client_stub), patch.object(bot, "build_reply", side_effect=forget_keyboard), patch.object(bot, "_intelligent_function_call", side_effect=AssertionError("No usar IA")):
             self.assertTrue(bot.process_next_update())
         update.refresh_from_db()
         self.assertEqual(update.estado, "PROCESADO")
@@ -357,10 +394,12 @@ class ConfirmationRecoveryTests(TestCase):
         self.assertTrue(self.client_stub.send_message.call_args.kwargs["reply_markup"]["inline_keyboard"])
         self.assertFalse(Egreso.objects.exists())
 
-    def test_send_failure_reuses_same_proposal_automatically_without_new_ai_call(self):
+    def test_send_failure_reuses_direct_proposal_without_second_preparation(self):
         update = self.message("Registra 1000 por AGUA en efectivo", voice=True)
         self.client_stub.send_message.side_effect = [bot.TelegramRateLimit(7), None]
-        with patch.object(bot, "is_feature_enabled", return_value=True), patch.object(bot, "TelegramApiClient", return_value=self.client_stub), patch.object(bot, "logger"), patch.object(bot, "_intelligent_function_call", return_value=("preparar_registro_pago", {"concepto": "AGUA", "monto": 1000, "medio_pago": "efectivo"}, "")) as intelligent:
+        with patch.object(bot, "is_feature_enabled", return_value=True), patch.object(bot, "TelegramApiClient", return_value=self.client_stub), \
+                patch.object(bot, "logger"), patch.object(bot, "build_reply", wraps=bot.build_reply) as build, \
+                patch.object(bot, "_intelligent_function_call", side_effect=AssertionError("No usar IA")) as ai:
             self.assertTrue(bot.process_next_update())
             update.refresh_from_db()
             self.assertEqual(update.estado, "PENDIENTE")
@@ -377,13 +416,15 @@ class ConfirmationRecoveryTests(TestCase):
         self.assertEqual(action.vence_en, expiry)
         self.assertEqual(TelegramAccionPendiente.objects.count(), 1)
         self.assertFalse(Egreso.objects.exists())
-        intelligent.assert_called_once()
+        build.assert_called_once()
+        ai.assert_not_called()
         keyboards = [call.kwargs["reply_markup"] for call in self.client_stub.send_message.call_args_list]
         self.assertEqual(keyboards[0], keyboards[1])
         self.assertTrue(all(call.kwargs["require_buttons"] for call in self.client_stub.send_message.call_args_list))
 
     def test_retry_does_not_revive_expired_proposal_or_reinterpret_request(self):
-        update = self.message("Registra 1000 por AGUA en efectivo")
+        # Redacción libre fuera del atajo para probar que la IA se usa solo en el primer intento.
+        update = self.message("Por el agua pagué mil pesos en efectivo. ¿Me lo registras?")
         self.client_stub.send_message.side_effect = [bot.TelegramRateLimit(7), None]
         with patch.object(bot, "is_feature_enabled", return_value=True), patch.object(bot, "TelegramApiClient", return_value=self.client_stub), patch.object(bot, "logger"), patch.object(bot, "_intelligent_function_call", return_value=("preparar_registro_pago", {"concepto": "AGUA", "monto": 1000, "medio_pago": "efectivo"}, "")) as intelligent:
             bot.process_next_update()

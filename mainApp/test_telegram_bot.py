@@ -432,19 +432,13 @@ class TelegramBotTests(TestCase):
             telegram_chat_id=9010,
             chat_type="private",
             tipo="TEXTO",
-            texto="Paga 25000 en efectivo por servicio de agua",
+            texto="Por el servicio de agua salieron 25000 pesos en efectivo, anótalo",
         )
         rejected = _ai_response({"error": {"message": "Unavailable"}}, status=503)
-        accepted = _ai_response({"choices": [{"message": {"tool_calls": [{
-            "function": {
-                "name": "preparar_registro_pago",
-                "arguments": json.dumps({
-                    "concepto": "servicio de agua",
-                    "monto": 25000,
-                    "medio_pago": "efectivo",
-                }),
-            },
-        }]}}]})
+        accepted = _ai_response({"choices": [{"message": {"content": json.dumps({
+            "name": "preparar_registro_pago",
+            "arguments": {"concepto": "servicio de agua", "monto_texto": "25000 pesos", "medio_texto": "efectivo"},
+        })}}]})
         client = SimpleNamespace(answer_callback=MagicMock())
         with patch(
             "mainApp.services.telegram_bot.requests.post",

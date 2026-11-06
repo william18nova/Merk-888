@@ -58,7 +58,14 @@ from mainApp.services.telegram_search import choose_match, rank_candidates, rank
 from mainApp.services.telegram_queries import SMART_QUERY_RULES
 from mainApp.services.telegram_shortcuts import specific_read_request
 from mainApp.services.telegram_special_codes import confirm_code, direct_request as special_code_request
-from mainApp.services.telegram_expense_shortcuts import direct_expense_request, expense_clarification
+from mainApp.services.telegram_expense_shortcuts import (
+    complete_expense_amount, expense_request, incomplete_expense_fields,
+)
+from mainApp.services.telegram_expense_language import (
+    PAYMENT_DIALOGUE, PAYMENT_FIELDS, PAYMENT_QUESTIONS, PaymentContext, PaymentExtraction,
+    extract_payment, may_continue_payment, payment_context, payment_definition, payment_language, payment_prompt,
+    spoken_amount_reply,
+)
 from mainApp.services import telegram_providers
 from mainApp.services.telegram_timing import ai_deadline, logger as timing_logger, measured, network_timeout
 from mainApp.services.telegram_transport import http_request
@@ -68,6 +75,7 @@ logger = logging.getLogger(__name__)
 
 TELEGRAM_FILE_LIMIT = 20 * 1024 * 1024
 ACTION_TTL_MINUTES = 10
+EXPENSE_AMOUNT_CLARIFICATION = "aclarar_monto_pago"
 LINK_CODE_TTL_MINUTES = 10
 AI_MAX_ATTEMPTS = 5  # Incluye selección de herramientas y recuperación de formato/tamaño.
 AI_RETRY_BUDGET_SECONDS = 35
@@ -728,6 +736,15 @@ def _resolve_payment_method(raw, *, active_only=False):
     return choose_match(raw, matches, entity="un medio de pago").pk if matches else code
 
 
+def _exact_expense_method(raw, options):
+    code = normalize_payment_method_code(raw)
+    code = "nequi" if code == "neki" else code
+    if code in options:
+        return code
+    exact = [key for key, row in options.items() if normalize_payment_method_code(row["label"]) == code]
+    return exact[0] if len(exact) == 1 else ""
+
+
 def tool_sales(profile, arguments):
     from mainApp.models import PagoVenta, Venta
 
@@ -1156,8 +1173,8 @@ def tool_prepare_expense(profile, arguments, update=None):
         raise TelegramBotError("El monto debe ser mayor que cero.")
     if amount >= Decimal("1000000000000"):
         raise TelegramBotError("El valor pagado es demasiado grande.")
-    method = _resolve_payment_method(arguments.get("medio_pago"), active_only=True)
     options = {row["code"]: row for row in payment_method_options(active_only=True)}
+    method = _exact_expense_method(arguments.get("medio_pago"), options)
     if method not in options:
         available = ", ".join(row["label"] for row in options.values())
         raise TelegramClarification(
@@ -1410,8 +1427,8 @@ def _lowercase_json_schema(value):
     return value
 
 
-GROQ_CHAT_TOOLS = [
-    {
+def _chat_tool(definition):
+    return {
         "type": "function",
         "function": {
             "name": definition["name"],
@@ -1419,8 +1436,9 @@ GROQ_CHAT_TOOLS = [
             "parameters": _lowercase_json_schema(definition["parameters"]),
         },
     }
-    for definition in GEMINI_TOOLS[0]["functionDeclarations"]
-]
+
+
+GROQ_CHAT_TOOLS = [_chat_tool(definition) for definition in GEMINI_TOOLS[0]["functionDeclarations"]]
 
 
 def _ai_request_context(user_text, history=None, *, selected_names=None):
@@ -1429,6 +1447,10 @@ def _ai_request_context(user_text, history=None, *, selected_names=None):
         raise AIOutputError("unknown_tool")
     definitions = [item for item in GEMINI_TOOLS[0]["functionDeclarations"] if item["name"] in names]
     system = _assistant_system_prompt() if names == set(TOOL_FUNCTIONS) else compact_prompt(timezone.localdate().isoformat(), names)
+    context = payment_context.get()
+    if context is not None and "preparar_registro_pago" in names:
+        definitions = [payment_definition(item) if item["name"] == "preparar_registro_pago" else item for item in definitions]
+        system += "\n" + payment_prompt(context.draft is not None)
     return definitions, system, compact_history(history)
 
 
@@ -1518,6 +1540,9 @@ def _validated_ai_call(name, arguments, allowed=None):
         raise AIOutputError("unknown_tool")
     if not isinstance(arguments, dict):
         raise AIOutputError("schema")
+    context = payment_context.get()
+    if name == "preparar_registro_pago" and context is not None:
+        return "", {}, extract_payment(arguments, context)
     if name in READ_TOOLS:
         schema = next(d["parameters"] for d in GEMINI_TOOLS[0]["functionDeclarations"] if d["name"] == name)
         arguments = normalize_read_arguments(arguments, schema)
@@ -1599,14 +1624,19 @@ def _compatible_function_call(provider, key_setting, model_setting, default_mode
         raise TelegramConfigurationError("OpenRouter solo permite un modelo fijo con sufijo :free.")
     definitions, system, history = _ai_request_context(user_text, history, selected_names=selected_names)
     routing = provider == "Groq" and repair == "context_size"
-    json_repair = provider == "Groq" and repair in {"format", "schema", "truncated", "empty", "unknown_tool", "multiple_actions", "missing_action"}
+    names = {item["name"] for item in definitions}
+    context = payment_context.get()
+    payment_json = (context is not None and "preparar_registro_pago" in names
+                    and (context.draft is not None or payment_language(user_text)))
+    json_plan = provider == "Groq" and not routing and (payment_json or repair in {
+        "format", "schema", "truncated", "empty", "unknown_tool", "multiple_actions", "missing_action",
+    })
     if routing:
         # Solo envía el catálogo, no los 25 esquemas; la interpretación posterior
         # recupera los esquemas elegidos sin recortar petición ni historial.
         system = selection_prompt(GEMINI_TOOLS[0]["functionDeclarations"])
     elif repair:
-        system += "\n" + repair_instruction(repair, json_mode=json_repair)
-    names = {item["name"] for item in definitions}
+        system += "\n" + repair_instruction(repair, json_mode=json_plan)
     messages = [{"role": "system", "content": system}]
     for item in history or []:
         role = "assistant" if item.get("role") == "model" else "user"
@@ -1617,7 +1647,8 @@ def _compatible_function_call(provider, key_setting, model_setting, default_mode
     payload = {
         "model": model,
         "messages": messages,
-        "tools": [item for item in GROQ_CHAT_TOOLS if item["function"]["name"] in names],
+        "tools": ([_chat_tool(item) for item in definitions] if context is not None and "preparar_registro_pago" in names
+                  else [item for item in GROQ_CHAT_TOOLS if item["function"]["name"] in names]),
         "tool_choice": "auto",
         "temperature": 0.1,
         "max_completion_tokens": 8192 if repair == "truncated" else AI_OUTPUT_TOKENS,
@@ -1627,12 +1658,12 @@ def _compatible_function_call(provider, key_setting, model_setting, default_mode
         payload["provider"] = {"require_parameters": True, "max_price": {"prompt": 0, "completion": 0, "request": 0}}
     if provider == "Cerebras":
         payload["parallel_tool_calls"] = False
-    if routing or json_repair:
+    if routing or json_plan:
         payload.pop("tools")
         payload.pop("tool_choice")
         payload["response_format"] = {"type": "json_object"}
-        if json_repair:
-            messages[0]["content"] += "\n" + json_plan_instruction(definitions)
+        if json_plan:
+            messages[0]["content"] += "\n" + json_plan_instruction(definitions, recovery=bool(repair))
     data = _ai_response(
         provider,
         url,
@@ -1651,7 +1682,7 @@ def _compatible_function_call(provider, key_setting, model_setting, default_mode
         message = choice["message"]
         if routing:
             return parse_selection(message.get("content"), set(TOOL_FUNCTIONS))
-        if json_repair:
+        if json_plan:
             value = strict_json(message.get("content"))
             question = plan_question(value)
             if question is not None:
@@ -2232,6 +2263,82 @@ def _handle_command(update, profile, text):
     return BotReply("No conozco ese comando. Cuéntame con tus palabras qué necesitas o escribe /ayuda.", "comando_desconocido")
 
 
+def _chat_updates_before(profile, update, age):
+    from mainApp.models import TelegramActualizacion
+
+    return TelegramActualizacion.objects.filter(
+        telegram_user_id=update.telegram_user_id,
+        telegram_chat_id=update.telegram_chat_id,
+        recibido_en__gte=max(profile.vinculado_en, timezone.now() - age),
+    ).filter(
+        Q(recibido_en__lt=update.recibido_en) | Q(recibido_en=update.recibido_en, update_id__lt=update.pk),
+    ).order_by("-recibido_en", "-update_id")
+
+
+def _expense_from_amount_reply(profile, update, amount):
+    # No buscar hacia atrás si hubo otro tema o la pregunta no se entregó.
+    previous = _chat_updates_before(profile, update, timedelta(minutes=ACTION_TTL_MINUTES)).only(
+        "estado", "intencion", "transcripcion", "texto",
+    ).first()
+    if (previous and previous.pk < update.pk and previous.estado == "PROCESADO"
+            and previous.intencion == EXPENSE_AMOUNT_CLARIFICATION):
+        return complete_expense_amount(previous.transcripcion or previous.texto, amount)
+    return None
+
+
+def _reply_from_payment_extraction(profile, update, result):
+    _require_access(profile, "registrar_egreso")
+    if result.question:
+        return BotReply(result.question, "aclarar_alcance_pago")
+    arguments = dict(result.arguments)
+    if arguments.get("medio_pago"):
+        options = {row["code"]: row for row in payment_method_options(active_only=True)}
+        method = _exact_expense_method(arguments["medio_pago"], options)
+        if method:
+            arguments["medio_pago"] = method
+        else:
+            arguments.pop("medio_pago", None)
+    missing = next((field for field in PAYMENT_FIELDS if field not in arguments), None)
+    if missing is None:
+        return _execute_tool(profile, "preparar_registro_pago", arguments, update)
+    # El borrador es contexto, no una propuesta. No tiene botón y solo se
+    # recupera si se entregó esta pregunta al mismo usuario y chat.
+    _audit(profile, PAYMENT_DIALOGUE, {"actualizacion": update.pk, "datos": arguments, "faltante": missing})
+    return BotReply(PAYMENT_QUESTIONS[missing] + " Aún no he registrado el pago.", PAYMENT_DIALOGUE)
+
+
+def _recent_payment_draft(profile, update, previous):
+    if (previous is None or previous.pk >= update.pk or previous.estado != "PROCESADO"
+            or previous.intencion != PAYMENT_DIALOGUE
+            or previous.recibido_en < timezone.now() - timedelta(minutes=ACTION_TTL_MINUTES)):
+        return None
+    from mainApp.models import TelegramAuditoria
+
+    payload = TelegramAuditoria.objects.filter(
+        usuario=profile.usuario, telegram_user_id=update.telegram_user_id, telegram_chat_id=update.telegram_chat_id,
+        accion=PAYMENT_DIALOGUE, exitoso=True, argumentos__actualizacion=previous.pk,
+        creado_en__gte=max(profile.vinculado_en, timezone.now() - timedelta(minutes=ACTION_TTL_MINUTES)),
+    ).order_by("-pk").values_list("argumentos", flat=True).first()
+    draft = payload.get("datos") if isinstance(payload, dict) else None
+    if (not isinstance(draft, dict) or not set(draft) <= set(PAYMENT_FIELDS)
+            or not all(isinstance(value, str) and 0 < len(value) <= 160 for value in draft.values())
+            or payload.get("faltante") not in set(PAYMENT_FIELDS) - set(draft)):
+        return None
+    return draft
+
+
+def _direct_payment_followup(text, draft, amount):
+    if "monto" not in draft and amount is not None:
+        return PaymentExtraction(dict(draft, monto=str(amount)))
+    if "medio_pago" not in draft:
+        label = re.sub(r"^(?:(?:fue|(?:lo )?pagu[eé])\s+)?(?:(?:por|en|con)\s+)?", "", text, flags=re.IGNORECASE).strip(" .!")
+        options = {row["code"]: row for row in payment_method_options(active_only=True)}
+        code = _exact_expense_method(label, options)
+        if code:
+            return PaymentExtraction(dict(draft, medio_pago=code))
+    return None
+
+
 def build_reply(update, client):
     try:
         return _build_reply(update, client)
@@ -2267,13 +2374,25 @@ def _build_reply(update, client):
         raise PermissionDenied("Usuario inactivo.")
     if special_code_request(text):
         return _execute_tool(profile, "preparar_clave_merk2", {}, update)
-    expense_arguments = direct_expense_request(text)
+    expense_arguments, ambiguous_amount = expense_request(text)
     if expense_arguments is not None:
         return _execute_tool(profile, "preparar_registro_pago", expense_arguments, update)
-    payment_question = expense_clarification(text)
-    if payment_question is not None:
+    if ambiguous_amount:
         _require_access(profile, "registrar_egreso")
-        return BotReply(payment_question, "aclarar_pago")
+        return BotReply(
+            "El separador del monto puede cambiar el valor. ¿Cuántos pesos pagaste? "
+            "Responde solo con el importe sin separadores de miles, por ejemplo 85900. "
+            "Aún no he preparado ni registrado el pago.",
+            EXPENSE_AMOUNT_CLARIFICATION,
+        )
+    amount_answer = spoken_amount_reply(text)
+    if amount_answer is not None:
+        expense_arguments = _expense_from_amount_reply(profile, update, amount_answer)
+        if expense_arguments is not None:
+            return _execute_tool(profile, "preparar_registro_pago", expense_arguments, update)
+    partial_expense = incomplete_expense_fields(text)
+    if partial_expense is not None:
+        return _reply_from_payment_extraction(profile, update, PaymentExtraction(partial_expense))
     if re.sub(r"\s+", " ", _normalized_text(text)).strip(" ¿?¡!.,") in {
         "confirmar", "confirmo", "confirmar pago", "confirmar devolucion", "botones",
         "no veo los botones", "no aparecen los botones", "no me salen los botones",
@@ -2294,20 +2413,19 @@ def _build_reply(update, client):
     direct = common_read_request(text)
     if direct is not None:
         return _execute_tool(profile, *direct, update=update)
-    from mainApp.models import TelegramActualizacion
-
-    previous = list(
-        TelegramActualizacion.objects
-        .filter(
-            telegram_user_id=update.telegram_user_id,
-            telegram_chat_id=update.telegram_chat_id,
-            estado="PROCESADO",
-            recibido_en__gte=max(profile.vinculado_en, timezone.now() - timedelta(hours=24)),
-        )
-        .exclude(pk=update.pk)
-        .only("transcripcion", "texto", "respuesta")
-        .order_by("-procesado_en", "-update_id")[:12]
-    )
+    earlier = _chat_updates_before(profile, update, timedelta(hours=24))
+    previous = list(earlier.filter(estado="PROCESADO").only(
+        "intencion", "transcripcion", "texto", "respuesta",
+    ).order_by("-procesado_en", "-update_id")[:12])
+    draft = None
+    if previous and previous[0].intencion == PAYMENT_DIALOGUE and may_continue_payment(text):
+        # No saltar un mensaje fallido, ignorado o todavía pendiente.
+        latest = earlier.only("estado", "intencion", "recibido_en").first()
+        draft = _recent_payment_draft(profile, update, latest)
+    if draft is not None:
+        followup = _direct_payment_followup(text, draft, amount_answer)
+        if followup is not None:
+            return _reply_from_payment_extraction(profile, update, followup)
     history = []
     for item in reversed(previous):
         previous_text = str(item.transcripcion or item.texto or "").strip()
@@ -2315,8 +2433,14 @@ def _build_reply(update, client):
             history.append({"role": "user", "text": previous_text})
         if item.respuesta:
             history.append({"role": "model", "text": item.respuesta})
-    with measured("interpretar_texto_ia", update_id=update.pk):
-        tool_name, arguments, plain_text = _intelligent_function_call(text, history=history)
+    token = payment_context.set(PaymentContext(text, draft))
+    try:
+        with measured("interpretar_texto_ia", update_id=update.pk):
+            tool_name, arguments, plain_text = _intelligent_function_call(text, history=history)
+    finally:
+        payment_context.reset(token)
+    if isinstance(plain_text, PaymentExtraction):
+        return _reply_from_payment_extraction(profile, update, plain_text)
     if not tool_name:
         return BotReply(plain_text, "respuesta_ia")
     return _execute_tool(profile, tool_name, arguments, update)
