@@ -11,7 +11,7 @@ python-decouple==3.8            # manejo de variables de entorno (.env)
 pytz==2026.2                    # zonas horarias utilizadas en mainApp/views.py
 pywin32>=306; sys_platform == "win32"  # integración nativa solo en Windows
 requests==2.32.5                # llamadas HTTP
-sqlparse==0.5.3                 # requerido por Django
+sqlparse==0.6.0                 # requerido por Django
 urllib3==2.5.0                  # requests
 websocket-client==1.8.0         # conexiones WebSocket
 whitenoise==6.10.0              # servir archivos estáticos
