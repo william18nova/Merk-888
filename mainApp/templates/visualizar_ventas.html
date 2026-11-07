@@ -4,8 +4,17 @@
 {% block title %}Visualizar Ventas{% endblock %}
 
 {% block content %}
-<div class="container-pedidos">
-  <h2><i class="fas fa-receipt"></i> Lista de Ventas</h2>
+<div class="ventas-page" aria-labelledby="ventas-title">
+  <header class="ventas-header">
+    <div class="ventas-header__main">
+      <span class="ventas-header__icon" aria-hidden="true"><i class="fas fa-receipt"></i></span>
+      <div>
+        <p class="ventas-eyebrow">Historial de operaciones</p>
+        <h2 id="ventas-title">Lista de ventas</h2>
+      </div>
+    </div>
+    <p class="ventas-header__hint"><i class="fas fa-arrow-pointer" aria-hidden="true"></i> Abre una venta para ver su detalle</p>
+  </header>
 
   {# ——— Alertas Django ——— #}
   {% if messages %}
@@ -18,32 +27,35 @@
     </div>
   {% endif %}
 
-  {# ——— Buscador externo ——— #}
-  <div class="search-wrapper">
-    <i class="fas fa-search"></i>
-    <input id="buscador-ventas" class="search-input" type="text" placeholder="Buscar…">
-  </div>
-
-  {# ——— Filtro por producto (id, nombre o código de barras) ——— #}
-  <div class="search-wrapper" style="margin-top:8px; position:relative;">
-    <i class="fas fa-box"></i>
-    <input id="filtro-producto"
-           class="search-input"
-           type="text"
-           autocomplete="off"
-           data-barcode-camera="true"
-           placeholder="Filtrar por producto (id, nombre o código)…">
-    <button id="filtro-producto-clear"
-            type="button"
-            title="Quitar filtro"
-            style="display:none; margin-left:6px; padding:4px 10px; cursor:pointer;">
-      ✕
-    </button>
-    <span id="filtro-producto-chip"
-          style="display:none; margin-left:8px; padding:3px 10px; border-radius:12px;
-                 background:#e0f2fe; color:#075985; font-size:12px;"></span>
-    <input type="hidden" id="filtro-producto-id" value="">
-  </div>
+  <section class="ventas-search-panel" aria-label="Buscar ventas">
+    <div class="ventas-search-field">
+      <label for="buscador-ventas">Buscar en las ventas</label>
+      <div class="search-wrapper">
+        <i class="fas fa-search" aria-hidden="true"></i>
+        <input id="buscador-ventas" class="search-input" type="search" placeholder="Nombre, ID o medio de pago…">
+      </div>
+    </div>
+    <div class="ventas-search-field">
+      <label for="filtro-producto">Filtrar por producto</label>
+      <div class="search-wrapper">
+        <i class="fas fa-box" aria-hidden="true"></i>
+        <input id="filtro-producto"
+               class="search-input"
+               type="text"
+               autocomplete="off"
+               data-barcode-camera="true"
+               aria-describedby="ventas-producto-help"
+               placeholder="Nombre, ID o código de barras…">
+        <button id="filtro-producto-clear" class="ventas-product-clear" type="button"
+                title="Quitar filtro de producto" aria-label="Quitar filtro de producto" style="display:none;">
+          <i class="fas fa-xmark" aria-hidden="true"></i>
+        </button>
+      </div>
+      <small id="ventas-producto-help">Selecciona un resultado o presiona Enter para buscar.</small>
+      <span id="filtro-producto-chip" class="ventas-product-chip" style="display:none;" role="status"></span>
+      <input type="hidden" id="filtro-producto-id" value="">
+    </div>
+  </section>
 
   {# ——— Tabla de ventas ——— #}
   <section class="ventas-filters" aria-label="Filtros avanzados de ventas">
@@ -64,9 +76,10 @@
 
     <div class="ventas-filters-body" id="ventas-filters-body">
       <div class="ventas-filter-layout">
-        <aside class="ventas-filter-sidebar" aria-label="Acciones rapidas de filtros">
+        <aside class="ventas-filter-sidebar" aria-label="Acciones rápidas de filtros">
           <p class="ventas-eyebrow">Refinar ventas</p>
-          <h3>Encuentra ventas por fecha, cliente, caja o valor.</h3>
+          <h3>Una búsqueda más precisa</h3>
+          <p class="ventas-filter-description">Combina fechas, ubicación y valores.</p>
           <div class="ventas-filter-actions">
             <button type="button" class="ventas-chip-btn" data-range="today">
               <i class="fas fa-calendar-day"></i> Hoy
@@ -107,7 +120,7 @@
           </fieldset>
 
           <fieldset class="ventas-filter-group">
-            <legend>Ubicacion y pago</legend>
+            <legend>Ubicación y pago</legend>
             <div class="ventas-filter-grid ventas-filter-grid--two">
               <label class="ventas-filter-field">
                 <span>Sucursal</span>
@@ -167,17 +180,17 @@
             <div class="ventas-filter-grid">
               <label class="ventas-filter-field ventas-filter-field--wide">
                 <span>Cliente</span>
-                <input id="filtro-cliente" class="ventas-filter-control" type="text" placeholder="Nombre, documento o telefono">
+                <input id="filtro-cliente" class="ventas-filter-control" type="text" placeholder="Nombre, documento o teléfono">
               </label>
 
               <label class="ventas-filter-field">
-                <span>Total min.</span>
+                <span>Total mínimo</span>
                 <input id="filtro-total-min" class="ventas-filter-control" type="number" min="0" step="100" inputmode="decimal" placeholder="0">
               </label>
 
               <label class="ventas-filter-field">
-                <span>Total max.</span>
-                <input id="filtro-total-max" class="ventas-filter-control" type="number" min="0" step="100" inputmode="decimal" placeholder="Sin limite">
+                <span>Total máximo</span>
+                <input id="filtro-total-max" class="ventas-filter-control" type="number" min="0" step="100" inputmode="decimal" placeholder="Sin límite">
               </label>
 
               <label class="ventas-filter-field">
@@ -201,18 +214,18 @@
   </section>
 
   <div class="table-wrap">
-    <table id="ventasTable" class="display">
+    <table id="ventasTable" class="display" aria-label="Historial de ventas">
       <thead>
         <tr>
-          <th>ID</th>
-          <th>Fecha</th>
-          <th>Hora</th>
-          <th>Cliente</th>
-          <th>Empleado</th>
-          <th>Sucursal</th>
-          <th>Punto Pago</th>
-          <th>Total</th>
-          <th>Medio Pago</th>
+          <th scope="col">ID</th>
+          <th scope="col">Fecha</th>
+          <th scope="col">Hora</th>
+          <th scope="col">Cliente</th>
+          <th scope="col">Empleado</th>
+          <th scope="col">Sucursal</th>
+          <th scope="col">Punto de pago</th>
+          <th scope="col">Total</th>
+          <th scope="col">Medio de pago</th>
         </tr>
       </thead>
       <tbody>
@@ -230,10 +243,8 @@
 <script src="https://code.jquery.com/ui/1.13.2/jquery-ui.min.js"></script>
 <script src="https://cdn.datatables.net/1.11.5/js/jquery.dataTables.min.js"></script>
 
-{# ——— Estilos base (igual a listar_pedidos.css) ——— #}
-<link rel="stylesheet" href="{% static 'css/visualizar_pedidos.css' %}">
-{# ——— Overrides específicos de ventas (muestra los alerts) ——— #}
-<link rel="stylesheet" href="{% static 'css/visualizar_ventas.css' %}?v=4">
+{# Estilos propios: no heredar reglas de la pantalla de pedidos. #}
+<link rel="stylesheet" href="{% static 'css/visualizar_ventas.css' %}?v=6">
 
 {# URL base para navegar al ver_venta/id y URL de datos para DataTables #}
 <script>
