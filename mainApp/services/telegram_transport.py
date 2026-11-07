@@ -63,8 +63,10 @@ def retry_after(data, headers=None):
     return max(waits, default=30)
 
 
-def download_voice_file(token, result, *, limit):
+def download_voice_file(token, result, *, limit, label='audio'):
     from .telegram_bot import TelegramBotError, TelegramExternalError, TelegramRateLimit
+    overflow = ('El audio supera el límite de 20 MB.' if label == 'audio'
+                else f'La foto supera el límite de {limit // (1024 * 1024)} MB.')
     if not isinstance(result, dict):
         raise TelegramBotError('Telegram no devolvió los datos del audio.')
     path, size = result.get('file_path'), result.get('file_size')
@@ -74,7 +76,7 @@ def download_voice_file(token, result, *, limit):
     if size is not None and (type(size) is not int or size < 0):
         raise TelegramBotError('Telegram no devolvió un tamaño válido para el audio.')
     if size is not None and size > limit:
-        raise TelegramBotError('El audio supera el límite de 20 MB.')
+        raise TelegramBotError(overflow)
     response = None
     deadline = time.monotonic() + 45
     try:
@@ -88,7 +90,7 @@ def download_voice_file(token, result, *, limit):
         if length is not None:
             try:
                 if int(length) > limit:
-                    raise TelegramBotError('El audio supera el límite de 20 MB.')
+                    raise TelegramBotError(overflow)
             except (TypeError, ValueError):
                 pass
         chunks, total = [], 0
@@ -99,7 +101,7 @@ def download_voice_file(token, result, *, limit):
                 continue
             total += len(chunk)
             if total > limit:
-                raise TelegramBotError('El audio supera el límite de 20 MB.')
+                raise TelegramBotError(overflow)
             chunks.append(chunk)
         if not total:
             raise TelegramBotError('Telegram entregó un audio vacío. Envía una nota de voz nueva o escribe la solicitud.')

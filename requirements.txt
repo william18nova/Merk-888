@@ -16,3 +16,6 @@ urllib3==2.5.0                  # requests
 websocket-client==1.8.0         # conexiones WebSocket
 whitenoise==6.10.0              # servir archivos estáticos
 django-csp>=4.0,<5.0            #imprimir facturas
+openpyxl>=3.1.5,<4              # reportes Excel del bot
+reportlab>=4.5.1,<5             # reportes PDF del bot
+Pillow>=12.3.0,<13              # validación de fotos de comprobantes

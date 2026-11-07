@@ -80,11 +80,13 @@ def _existing_link(turn_id, row_index):
 
 
 @transaction.atomic
-def register_closing_expense(*, user, token, confirmed):
+def register_closing_expense(*, user, token, confirmed, origin="WEB"):
     from mainApp.models import CambioEgreso, DesglosePagosCierre, MetodoPago, TurnoCaja
     from local_pos.request_context import offline_request
     if not can_edit_expenses(user):
         raise PermissionDenied("No tienes permiso para registrar pagos desde cierres.")
+    if origin not in {"WEB", "TELEGRAM"}:
+        raise OperationalExpenseError("Origen de conciliación no válido.")
     if offline_request():
         raise OperationalExpenseError("Esta operación requiere conexión con la base online; no se guardó ningún pago.")
     if confirmed is not True:
@@ -122,7 +124,7 @@ def register_closing_expense(*, user, token, confirmed):
     expense = register_operational_expense(user=user, concept=payment["nombre"],
         amount=Decimal(payment["monto"]), payment_method="efectivo", expected_tax=data["cash_tax"])
     before = expense_values(expense)
-    reason = f"CONCILIACION WEB CIERRE {turn.pk}/{data['row']} | Alta desde declaración del cierre; fecha del turno."
+    reason = f"CONCILIACION {origin} CIERRE {turn.pk}/{data['row']} | Alta desde declaración del cierre; fecha del turno."
     expense, changed = edit_operational_expense(user=user, expense_id=expense.pk,
         concept=payment["nombre"], amount=Decimal(payment["monto"]), payment_method="efectivo",
         payment_date=local_start.date(), reason=reason, version=expense_edit_token(expense, user),

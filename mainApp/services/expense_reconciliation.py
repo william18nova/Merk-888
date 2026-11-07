@@ -141,7 +141,7 @@ def closing_report(start, end):
         dt=timezone.localtime(t.inicio, CO)
         declarations.append(dict(turn=t.pk, date=dt.date(), started_at=dt,
             cashier=t.cajero.nombreusuario, register=t.puntopago.nombre,
-            branch=str(t.puntopago.sucursalid), payments=s.pagos or [], total=s.total))
+            branch=str(t.puntopago.sucursalid), branch_id=t.puntopago.sucursalid_id, payments=s.pagos or [], total=s.total))
         declarations[-1]['source_version'] = source_version(s)
         try:
             validate(s.total, s.pagos)

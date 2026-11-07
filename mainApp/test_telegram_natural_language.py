@@ -27,6 +27,16 @@ def chat_json(value):
 
 # Cada función debe seguir accesible aunque el usuario no nombre un comando.
 CASES = [
+    ('consultar_conciliacion_cierres', 'Compara los pagos que declararon en los cierres de hoy con lo que ya está en Pagos.', {}),
+    ('preparar_pago_cierre', 'De la lista anterior quiero revisar el turno 1985, fila uno, para agregar lo que falta.', {'turno_id': 1985, 'fila': 1}),
+    ('preparar_lote_pagos', 'Pagué a Aurora 10000 en efectivo y pagué a Zeta 20000 en efectivo.', {'pagos': [
+        {'fragmento': 'Pagué a Aurora 10000 en efectivo', 'concepto': 'Aurora', 'monto_texto': '10000', 'medio_texto': 'efectivo'},
+        {'fragmento': 'pagué a Zeta 20000 en efectivo', 'concepto': 'Zeta', 'monto_texto': '20000', 'medio_texto': 'efectivo'}]}),
+    ('exportar_reporte', 'Mándame un Excel con los pagos de ayer para descargarlo.', {'reporte': 'pagos', 'formato': 'xlsx', 'desde': '2026-11-05', 'hasta': '2026-11-05'}),
+    ('preparar_programacion', 'Todos los lunes a las ocho de la mañana recuérdame revisar el inventario.', {'tipo': 'recordatorio', 'frecuencia': 'SEMANAL', 'hora': '08:00', 'dia_semana': 0, 'texto': 'Revisar el inventario'}),
+    ('consultar_programaciones', 'Enséñame los recordatorios flexibles y alertas que tengo activos o pausados.', {}),
+    ('preparar_cambio_programacion', 'Quiero pausar el aviso número siete, déjame revisarlo.', {'programacion_id': 7, 'activo': False}),
+    ('completar_comprobante', 'En el comprobante el concepto correcto es Aurora, y el valor base es 10000.', {'concepto': 'Aurora', 'monto_texto': '10000'}),
     ('consultar_ventas', 'Oye, de lo que movimos ayer dime solamente cuánto entró en ventas.', {'desde': '2026-11-05', 'hasta': '2026-11-05'}),
     ('buscar_producto', 'Estoy mirando arroz Diana; necesito saber a cómo lo estamos vendiendo.', {'consulta': 'arroz Diana', 'vista': 'precio'}),
     ('consultar_inventario', 'Antes de surtir quisiera saber cuántos arroces Diana nos quedan en Yerbabuena.', {'consulta': 'arroz Diana', 'sucursal': 'Yerbabuena'}),

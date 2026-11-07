@@ -67,6 +67,8 @@ def payment_prompt(continuation):
         "Para registrar una compra o pago YA REALIZADO interpreta la intención, no el orden ni una frase fija. "
         "'A Comercial Sol le pasé 85.900 con Nequi, anótalo' y 'La compra en Comercial Sol fueron ochenta y cinco mil "
         "novecientos, los pagué con Nequi' solicitan preparar ese pago. Usa preparar_registro_pago con los fragmentos "
+        "literales solo si hay UN pago. Para DOS a CINCO pagos distintos usa preparar_lote_pagos y no intentes meterlos en uno. "
+        "Para completar el borrador de una foto usa completar_comprobante. Copia los datos "
         "literales del mensaje nuevo. Copia la expresión numérica completa, incluidas palabras como 'mil'. Si falta un "
         "dato usa la función con los campos que sí estén claros. No digas que ya registraste, no inventes un botón "
         "y no sumes impuestos. Si pide transferir, consultar, editar, registrar más de un pago o mezcla acciones, "

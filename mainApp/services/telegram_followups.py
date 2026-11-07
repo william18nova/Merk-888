@@ -85,4 +85,11 @@ def process_followups(*, now=None, client=None, limit=5):
             # No guardar excepciones de transporte: podrían incluir el token.
             delivery.estado, delivery.detalle = "ERROR_INCIERTO", "No se pudo confirmar el envío; no se reintenta automáticamente."
         delivery.save(update_fields=["estado", "detalle"])
+    if processed < limit:
+        try:
+            from .telegram_scheduling import process_programmations
+            processed += process_programmations(now=local, client=client, limit=limit-processed)
+        except Exception:
+            # Permite migrar/reiniciar sin detener la cola de mensajes existente.
+            bot.logger.warning('Telegram programaciones=no_disponibles')
     return processed

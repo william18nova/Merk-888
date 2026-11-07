@@ -15,7 +15,12 @@ ACTION_UI = {
     "cambio_catalogo": ("preparar_cambio_catalogo", "Confirmar cambio"),
     "operacion_negocio": ("preparar_operacion_negocio", "Confirmar"),
     "generar_clave_merk2": ("preparar_clave_merk2", "Generar clave"),
+    'pago_cierre': ('preparar_pago_cierre', 'Confirmar pago faltante'),
+    'lote_pagos': ('preparar_lote_pagos', 'Revisar pagos'),
+    'pago_comprobante': ('preparar_pago_comprobante', 'Confirmar pago revisado'),
+    'programacion_bot': ('preparar_programacion', 'Confirmar programación'),
 }
+CANONICAL_ACTIONS = {'pago_cierre', 'lote_pagos', 'pago_comprobante', 'programacion_bot'}
 PROPOSAL_INTENTS = {value[0] for value in ACTION_UI.values()} | {"seleccionar_concepto_pago"}
 
 
@@ -31,6 +36,8 @@ def _fingerprint(arguments):
 
 def proposal_keyboard(action):
     """Teclado obligatorio calculado únicamente con el estado del dominio."""
+    if action.accion in CANONICAL_ACTIONS:
+        return canonical_reply(action.telegram_usuario, action).reply_markup
     if action.accion == "registrar_pago" and action.argumentos.get("concepto_eleccion_pendiente"):
         concept = action.argumentos["concepto"]
         rows = [[{"text": f"Usar {index + 1}: {option['nombre'][:48]}",
@@ -75,7 +82,7 @@ def remember_confirmation(profile, reply):
     if action.estado != "PENDIENTE" or not reply.text.strip():
         raise bot.TelegramBotError("La propuesta ya no está disponible para confirmar.")
     # Los pagos se reconstruyen desde sus valores y su elección actual de concepto.
-    if action.accion == "registrar_pago":
+    if action.accion == "registrar_pago" or action.accion in CANONICAL_ACTIONS:
         return
     action.argumentos = dict(action.argumentos, **{PRESENTATION_KEY: {
         "version": 1, "texto": reply.text, "fingerprint": _fingerprint(action.argumentos),
@@ -87,7 +94,24 @@ def _require_action_access(profile, action):
     bot = _bot()
     if not profile.activo or not profile.usuario.is_active or action.telegram_usuario_id != profile.pk:
         raise PermissionDenied("La propuesta no pertenece a tu cuenta activa.")
-    if action.accion == "registrar_pago":
+    if action.accion in CANONICAL_ACTIONS:
+        from .telegram_finance_workflows import require
+        if action.accion == 'programacion_bot':
+            from .telegram_scheduling import access
+            from mainApp.models import TelegramProgramacion
+            config = action.argumentos.get('config')
+            if config is None:
+                rule = TelegramProgramacion.objects.filter(pk=action.argumentos.get('id'), telegram_usuario=profile).first()
+                if rule is None: raise PermissionDenied('La programación ya no pertenece a tu cuenta.')
+                config = rule.configuracion
+            if action.argumentos.get('activo') is False: require(profile,'home')
+            else: access(profile, config)
+        else:
+            require(profile)
+            if action.accion=='pago_cierre':
+                from .expense_editing import can_edit_expenses
+                if not can_edit_expenses(profile.usuario): raise PermissionDenied('No tienes permiso para conciliar pagos de cierres.')
+    elif action.accion == "registrar_pago":
         bot._require_access(profile, "registrar_egreso")
     elif action.accion == "editar_pago":
         bot._require_access(profile, "editar_egreso")
@@ -115,6 +139,8 @@ def restore_confirmation(profile, action, *, recovered=True):
     _require_action_access(profile, action)
     if action.estado != "PENDIENTE" or action.vence_en <= timezone.now():
         return bot.BotReply("Esta propuesta ya se resolvió o venció. Pídeme el cambio de nuevo para revisar los datos actuales.", "propuesta_no_disponible")
+    if action.accion in CANONICAL_ACTIONS:
+        return canonical_reply(profile, action)
     if action.accion == "registrar_pago":
         return (bot._expense_concept_choice_reply(action) if action.argumentos.get("concepto_eleccion_pendiente")
                 else bot._expense_confirmation_reply(action))
@@ -156,11 +182,19 @@ def ensure_proposal_buttons(update, reply):
     return canonical
 
 
+def canonical_reply(profile, action):
+    from .telegram_finance_workflows import closing_reply, batch_reply
+    from .telegram_receipts import receipt_reply
+    from .telegram_scheduling import program_reply
+    return {'pago_cierre': lambda: closing_reply(action), 'lote_pagos': lambda: batch_reply(profile, action),
+            'pago_comprobante': lambda: receipt_reply(action), 'programacion_bot': lambda: program_reply(action)}[action.accion]()
+
+
 def reuse_update_proposal(update):
     """Reintentar el envío de la MISMA propuesta si el trabajador se interrumpió."""
     from mainApp.models import TelegramAccionPendiente
     bot = _bot()
-    if update.tipo not in {"TEXTO", "VOZ"} or update.intentos < 2:
+    if update.tipo not in {"TEXTO", "VOZ", 'FOTO'} or update.intentos < 2:
         return None
     actions = list(TelegramAccionPendiente.objects.filter(actualizacion_id=update.pk).order_by("creado_en", "pk")[:2])
     if not actions:

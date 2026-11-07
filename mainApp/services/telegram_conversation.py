@@ -48,6 +48,12 @@ def conversation_history(updates):
     """Solo mensajes operativos; jamás códigos de vínculo o eventos de botones."""
     history = []
     for item in reversed(updates):
+        if getattr(item, 'tipo', '') == 'FOTO':
+            # No reenviar fotos, identificadores de archivo ni sus captions a la IA de texto.
+            if item.intencion == 'preparar_pago_comprobante':
+                history.append({'role': 'user', 'text': 'Envié una foto para crear un borrador de comprobante.'})
+                history.append({'role': 'model', 'text': 'Para completarlo o corregirlo usa completar_comprobante; aún requiere revisión y botón.'})
+            continue
         text = str(item.transcripcion or item.texto or "").strip()
         if (item.intencion in {"vincular", "sin_vinculo"}
                 or getattr(item, "tipo", "TEXTO") not in {"TEXTO", "VOZ"}

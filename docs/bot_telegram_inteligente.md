@@ -1,7 +1,7 @@
 # Bot inteligente de Telegram
 
-> Ampliación actual: [asistente operativo, inventario, pedidos, alias y avisos](telegram_asistente_operativo.md).
-> Requiere la migración **0042** y reiniciar el trabajador. Las notas «sin nuevas
+> Ampliación actual: [cierres, comprobantes, lotes, Excel/PDF y avisos flexibles](telegram_flujos_financieros.md).
+> Requiere la migración **0054** y reiniciar el trabajador. Las notas «sin nuevas
 > migraciones» de secciones históricas de este documento se refieren a esas
 > ampliaciones anteriores, no a esta entrega.
 
@@ -960,7 +960,7 @@ python manage.py test mainApp.test_telegram_fast_paths mainApp.test_telegram_per
 ### Lenguaje natural para todas las capacidades
 
 No hay que memorizar comandos: el texto y la transcripción del audio pasan por
-el mismo intérprete. Puede elegir cualquiera de las 39 funciones actuales,
+el mismo intérprete. Puede elegir cualquiera de las funciones disponibles,
 incluidas consultas, análisis, continuación de listas, preparación de pagos y
 correcciones, catálogos, inventario, pedidos, horarios, devoluciones, alias,
 seguimientos, ayuda, cuenta vinculada y recuperación de propuestas.
@@ -993,7 +993,7 @@ No agrega operaciones prohibidas ni permite eliminar pagos, ejecutar ventas,
 cerrar cajas, cambiar permisos o transferir dinero. Cada cambio admitido sigue
 requiriendo revisar la propuesta y pulsar su botón.
 
-Pruebas de contratos para las 39 funciones, tanto con texto como transcripción,
+Pruebas de contratos para todas las funciones, tanto con texto como transcripción,
 selección semántica, contexto, datos faltantes, permisos y confirmaciones:
 
 ```bash

@@ -20,6 +20,12 @@ NATURAL_LANGUAGE_RULES = (
     "Ayuda => consultar_ayuda; cuenta vinculada => consultar_cuenta; confirmar, descartar una propuesta o "
     "recuperar su teclado => recuperar_botones. Estas últimas solicitudes nunca sustituyen el botón real. "
     "Cancelar una propuesta NO es cancelar una jornada ni anular un pago registrado: aclara el objeto si es ambiguo. "
+    "Para comparar declaraciones de cierres con Pagos usa consultar_conciliacion_cierres y para una fila faltante preparar_pago_cierre; no inventes turno ni fila. "
+    "Si relata de dos a cinco pagos ya realizados usa preparar_lote_pagos con fragmentos literales disjuntos, uno por pago, sin omitir ninguno. El lote no los confirma juntos. "
+    "Una foto es un borrador con consentimiento y revisión; para corregirla usa completar_comprobante, no preparar_registro_pago. "
+    "Para archivos usa exportar_reporte, no simules adjuntos. Para recordatorios, informes semanales/mensuales o alertas de caja/PTM usa preparar_programacion, "
+    "pregunta fecha, hora, día, período o umbral faltante. No programes ninguna acción contable; solo avisos al propio chat. "
+    "Consultar o pausar/activar esos avisos usa consultar_programaciones o preparar_cambio_programacion con un ID verificado. "
     "No declares haber realizado una consulta o un cambio sin una herramienta; nunca inventes resultados ni botones."
 )
 

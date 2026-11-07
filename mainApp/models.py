@@ -1115,6 +1115,31 @@ class TelegramEnvioSeguimiento(models.Model):
         constraints = [models.UniqueConstraint(fields=["seguimiento", "fecha"], name="telegram_seguimiento_dia_unico")]
 
 
+class TelegramProgramacion(models.Model):
+    """Reglas voluntarias del chat privado; nunca ejecutan movimientos contables."""
+    telegram_usuario = models.ForeignKey(TelegramUsuario, on_delete=models.CASCADE, related_name="programaciones")
+    tipo = models.CharField(max_length=20)
+    frecuencia = models.CharField(max_length=12)
+    configuracion = models.JSONField(default=dict)
+    activo = models.BooleanField(default=True, db_index=True)
+    creado_en = models.DateTimeField(auto_now_add=True)
+    ultimo_chequeo = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "telegram_programaciones"
+
+
+class TelegramEntregaProgramada(models.Model):
+    programacion = models.ForeignKey(TelegramProgramacion, on_delete=models.CASCADE, related_name="entregas")
+    clave = models.CharField(max_length=64)
+    estado = models.CharField(max_length=20, default="RESERVADO")
+    creado_en = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "telegram_entregas_programadas"
+        constraints = [models.UniqueConstraint(fields=["programacion", "clave"], name="telegram_programa_entrega_unica")]
+
+
 class TelegramCodigoVinculacion(models.Model):
     """Código de un solo uso para enlazar Telegram sin exponer contraseñas."""
 
@@ -1157,6 +1182,7 @@ class TelegramActualizacion(models.Model):
     TIPOS = (
         ("TEXTO", "Texto"),
         ("VOZ", "Voz"),
+        ("FOTO", "Comprobante"),
         ("CALLBACK", "Botón"),
         ("OTRO", "Otro"),
     )
@@ -1171,6 +1197,8 @@ class TelegramActualizacion(models.Model):
     texto = models.TextField(blank=True, default="")
     voice_file_id = models.CharField(max_length=255, blank=True, default="")
     voice_file_size = models.PositiveBigIntegerField(null=True, blank=True)
+    photo_file_id = models.CharField(max_length=255, blank=True, default="")
+    photo_file_size = models.PositiveBigIntegerField(null=True, blank=True)
     callback_query_id = models.CharField(max_length=160, blank=True, default="")
     estado = models.CharField(
         max_length=12,

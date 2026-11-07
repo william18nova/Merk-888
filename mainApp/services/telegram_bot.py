@@ -73,6 +73,14 @@ from mainApp.services.telegram_expense_language import (
 from mainApp.services import telegram_providers
 from mainApp.services.telegram_timing import ai_deadline, logger as timing_logger, measured, network_timeout
 from mainApp.services.telegram_transport import http_request
+from . import telegram_finance_workflows, telegram_reports, telegram_scheduling, telegram_receipts
+
+EXTENSION_FUNCTIONS = {**telegram_finance_workflows.TOOL_FUNCTIONS, **telegram_reports.TOOL_FUNCTIONS,
+                       **telegram_scheduling.TOOL_FUNCTIONS, **telegram_receipts.TOOL_FUNCTIONS}
+EXTENSION_DEFINITIONS = (telegram_finance_workflows.TOOL_DEFINITIONS + telegram_reports.TOOL_DEFINITIONS
+                         + telegram_scheduling.TOOL_DEFINITIONS + telegram_receipts.TOOL_DEFINITIONS)
+EXTENSION_PREPARATIONS = {'preparar_pago_cierre', 'preparar_lote_pagos', 'preparar_programacion',
+                          'preparar_cambio_programacion', 'completar_comprobante'}
 
 
 logger = logging.getLogger(__name__)
@@ -91,6 +99,7 @@ PAGINATED_READ_TOOLS = frozenset({
     "consultar_pagos", "listar_empleados", "consultar_registros",
     "consultar_detalle_operativo", "ranking_productos", "buscar_vistas",
     "consultar_informe", "consultar_pendientes", "consultar_horarios_empleados",
+    "consultar_conciliacion_cierres", "consultar_programaciones",
 })
 # El trabajador evita repetir una petición fallida por cada mensaje. Cambiar la
 # clave o el modelo permite probar inmediatamente la configuración corregida.
@@ -258,6 +267,7 @@ class BotReply:
     history_text: str | None = None
     # Solo en memoria: una burbuja con los 8 dígitos, nunca en repr/BD/IA.
     copyable_code: str | None = field(default=None, repr=False)
+    document: telegram_reports.BotDocument | None = field(default=None, repr=False)
 
 
 def _configured(name):
@@ -439,11 +449,20 @@ def normalize_webhook_update(payload):
     sender = obj(message.get("from"))
     chat = obj(message.get("chat"))
     voice = obj(message.get("voice"))
+    photos = message.get('photo') or []
+    if not isinstance(photos, list) or len(photos) > 10 or any(not isinstance(p, dict) for p in photos):
+        raise TelegramBotError('La estructura de la foto no es válida.')
+    photo = photos[-1] if photos else {}
+    photo_size = photo.get('file_size')
+    if photo_size is not None and (type(photo_size) is not int or not 0 <= photo_size < 2 ** 63):
+        raise TelegramBotError('El tamaño de la foto no es válido.')
     file_size = voice.get("file_size")
     if file_size is not None and (type(file_size) is not int or not 0 <= file_size < 2 ** 63):
         raise TelegramBotError("El tamaño del audio no es válido.")
     if voice:
         kind = "VOZ"
+    elif photo:
+        kind = 'FOTO'
     elif message.get("text") is not None:
         kind = "TEXTO"
     else:
@@ -459,9 +478,11 @@ def normalize_webhook_update(payload):
         ]))[:160],
         "chat_type": str(chat.get("type") or "")[:20],
         "tipo": kind,
-        "texto": str(message.get("text") or "")[:8000],
+        "texto": str(message.get("text") or message.get('caption') or "")[:8000],
         "voice_file_id": str(voice.get("file_id") or "")[:255],
         "voice_file_size": file_size,
+        'photo_file_id': str(photo.get('file_id') or '')[:255],
+        'photo_file_size': photo_size,
     }
 
 
@@ -477,7 +498,7 @@ class TelegramApiClient:
 
     def _post(self, method, *, payload=None, files=None, timeout=(3, 20)):
         from .telegram_transport import retry_after
-        uncertain = method == "sendMessage"
+        uncertain = method in {"sendMessage", "sendDocument"}
         response = None
         try:
             response = http_request(
@@ -637,6 +658,19 @@ class TelegramApiClient:
         from .telegram_transport import download_voice_file
         result = self._post("getFile", payload={"file_id": file_id})
         return download_voice_file(self.token, result, limit=TELEGRAM_FILE_LIMIT)
+
+    def download_photo(self, file_id):
+        from .telegram_transport import download_voice_file
+        result = self._post('getFile', payload={'file_id': file_id})
+        return download_voice_file(self.token, result, limit=telegram_receipts.PHOTO_LIMIT, label='foto')
+
+    def send_document(self, chat_id, document):
+        wait = max(0, self._next_send - time.monotonic())
+        if wait: time.sleep(wait)
+        result = self._post('sendDocument', payload={'chat_id': int(chat_id)},
+            files={'document': (document.name, document.data, document.mime)}, timeout=(3, 45))
+        self._next_send = time.monotonic() + 1.05
+        return result
 
 
 def transcribe_voice(audio_bytes, *, update=None):
@@ -1224,6 +1258,7 @@ TOOL_FUNCTIONS = {
     "preparar_registro_pago": tool_prepare_expense,
     **OPERATIONS_FUNCTIONS,
     **CONVERSATION_FUNCTIONS,
+    **EXTENSION_FUNCTIONS,
 }
 
 
@@ -1312,6 +1347,7 @@ GEMINI_TOOLS = [{"functionDeclarations": [
 ]}]
 GEMINI_TOOLS[0]["functionDeclarations"].extend(OPERATIONS_DEFINITIONS)
 GEMINI_TOOLS[0]["functionDeclarations"].extend(CONVERSATION_DEFINITIONS)
+GEMINI_TOOLS[0]["functionDeclarations"].extend(EXTENSION_DEFINITIONS)
 
 
 def _assistant_system_prompt():
@@ -1876,7 +1912,7 @@ def _execute_scoped_tool(profile, tool_name, arguments, update=None):
     if function is None:
         raise TelegramBotError("La acción solicitada no está permitida.")
     try:
-        if tool_name in OPERATIONS_FUNCTIONS:
+        if tool_name in OPERATIONS_FUNCTIONS or tool_name in EXTENSION_FUNCTIONS:
             validate_operation_arguments(tool_name, arguments)
         if tool_name == "continuar_consulta":
             resolved_name, resolved_args = resolve_continuation(profile, arguments)
@@ -1887,7 +1923,7 @@ def _execute_scoped_tool(profile, tool_name, arguments, update=None):
         if tool_name == "consultar_pagos":
             _require_access(profile, "registrar_egreso")
             arguments = _expense_query_arguments(profile, arguments)
-        if tool_name in PREPARATION_TOOLS | {"preparar_registro_pago", "preparar_cambio_catalogo", "preparar_devolucion_venta", "preparar_turno_empleado", "preparar_edicion_pago", "preparar_clave_merk2"}:
+        if tool_name in PREPARATION_TOOLS | EXTENSION_PREPARATIONS | {"preparar_registro_pago", "preparar_cambio_catalogo", "preparar_devolucion_venta", "preparar_turno_empleado", "preparar_edicion_pago", "preparar_clave_merk2"}:
             result = function(profile, arguments, update=update)
             remember_confirmation(profile, result)
         elif tool_name in {"resolver_tarea", "consultar_resultado", "recuperar_botones"}:
@@ -1927,6 +1963,8 @@ def _execute_scoped_tool(profile, tool_name, arguments, update=None):
 HELP_TEXT = (
     "Puedo consultar catálogos, ventas, inventario, pagos, empleados, pedidos, Nequi y más según tus permisos. "
     "También preparo pagos, devoluciones, pedidos, inventario y cambios de catálogo con confirmación. "
+    "Puedo revisar pagos de cierres, separar lotes de hasta cinco pagos, leer fotos de comprobantes con tu consentimiento, "
+    "enviarte Excel/PDF y preparar recordatorios, informes programados y alertas de caja o PTM. Nada se activa ni se registra sin revisar sus botones. "
     "Pídeme cualquiera de estas funciones con tus palabras, por escrito o por audio; no necesitas memorizar comandos. "
     "Si falta un dato te lo pregunto. Para guardar cambios siempre se usa el botón real de confirmación. También puedes usar:\n"
     "• /ventas — ventas de hoy\n"
@@ -2040,6 +2078,21 @@ def _handle_callback(update, profile, client):
     from mainApp.models import TelegramAccionPendiente
 
     data = str(update.texto or "")
+    if data.startswith(('recon:', 'bpay:', 'rcpt:')):
+        if profile is None:
+            return BotReply('Primero vincula tu cuenta con /vincular CODIGO.', 'sin_vinculo')
+        client.answer_callback(update.callback_query_id, 'Revisando la solicitud')
+        match = re.fullmatch(r'recon:([1-9][0-9]{0,18}):([0-9]{1,2})', data)
+        if match:
+            return _execute_tool(profile, 'preparar_pago_cierre', {'turno_id': int(match[1]), 'fila': int(match[2])+1}, update)
+        match = re.fullmatch(r'bpay:(o|m):([0-9a-fA-F-]{36}):([0-9])(?::([0-9]{1,3}))?', data)
+        if match and (match[1] == 'm') == (match[4] is not None):
+            return telegram_finance_workflows.batch_callback(profile, match[2], int(match[3]),
+                int(match[4]) if match[4] is not None else None, update)
+        match = re.fullmatch(r'rcpt:(l|m|d):([0-9a-fA-F-]{36})(?::([0-9]{1,3}))?', data)
+        if match and (match[1] == 'l') == (match[3] is None):
+            return telegram_receipts.receipt_callback(profile, match[2], match[1], int(match[3]) if match[3] is not None else None, client)
+        return BotReply('Ese botón ya no es válido.', 'callback_invalido')
     if data.startswith("schedule:"):
         return handle_schedule_callback(update, profile, client)
     if data.startswith("page:"):
@@ -2095,6 +2148,15 @@ def _handle_callback(update, profile, client):
                 message = "Usa Generar clave o Cancelar en esta propuesta."
         elif action.accion == "editar_pago":
             message = confirm_payment_edit(profile, action) if verb == "confirm" else "Usa Confirmar corrección o Cancelar en esta propuesta."
+        elif action.accion == 'pago_cierre':
+            message = telegram_finance_workflows.confirm_closing(profile, action) if verb == 'confirm' else 'Usa los botones de la declaración.'
+        elif action.accion == 'lote_pagos':
+            reply = telegram_finance_workflows.batch_reply(profile, action)
+            message = 'Cada pago del lote necesita su propia revisión y confirmación.'
+        elif action.accion == 'pago_comprobante':
+            message = telegram_receipts.confirm_receipt(profile, action) if verb == 'confirm' else 'Usa los botones del comprobante.'
+        elif action.accion == 'programacion_bot':
+            message = telegram_scheduling.confirm_program(profile, action) if verb == 'confirm' else 'Usa Confirmar programación o Cancelar.'
         elif action.accion == "devolver_venta":
             message = confirm_return(profile, action) if verb == "confirm" else "Usa Confirmar devolución o Cancelar en esta propuesta."
         elif action.accion == "turno_empleado":
@@ -2119,6 +2181,7 @@ def _handle_callback(update, profile, client):
                 message = "Revisa la propuesta antes de confirmar el pago."
             else:
                 try:
+                    telegram_finance_workflows.guard_batch_confirmation(profile, action)
                     expense = register_operational_expense(
                         user=profile.usuario,
                         concept=action.argumentos.get("concepto"),
@@ -2379,6 +2442,9 @@ def _build_reply(update, client):
         ])
     if update.tipo == "CALLBACK":
         return _handle_callback(update, profile, client)
+    if update.tipo == 'FOTO':
+        if profile is None: return BotReply('Vincula tu cuenta por escrito antes de enviar comprobantes.', 'sin_vinculo')
+        return telegram_receipts.receive_photo(profile, update)
     text = str(update.transcripcion or update.texto or "").strip()
     if text.startswith("/"):
         return _handle_command(update, profile, text)
@@ -2396,7 +2462,12 @@ def _build_reply(update, client):
         raise PermissionDenied("Usuario inactivo.")
     if special_code_request(text):
         return _execute_tool(profile, "preparar_clave_merk2", {}, update)
-    expense_arguments, ambiguous_amount = expense_request(text)
+    from mainApp.models import TelegramAccionPendiente
+    receipt_pending = type(getattr(profile, 'pk', None)) is int and TelegramAccionPendiente.objects.filter(
+        telegram_usuario_id=profile.pk, accion='pago_comprobante', estado='PENDIENTE', vence_en__gt=timezone.now()).exists()
+    # Ante un comprobante pendiente, la IA distingue completar la foto de otro
+    # pago nuevo. Un atajo de importes no debe crear una operación adicional.
+    expense_arguments, ambiguous_amount = (None, False) if receipt_pending else expense_request(text)
     if expense_arguments is not None:
         return _execute_tool(profile, "preparar_registro_pago", expense_arguments, update)
     if ambiguous_amount:
@@ -2408,11 +2479,11 @@ def _build_reply(update, client):
             EXPENSE_AMOUNT_CLARIFICATION,
         )
     amount_answer = spoken_amount_reply(text)
-    if amount_answer is not None:
+    if amount_answer is not None and not receipt_pending:
         expense_arguments = _expense_from_amount_reply(profile, update, amount_answer)
         if expense_arguments is not None:
             return _execute_tool(profile, "preparar_registro_pago", expense_arguments, update)
-    partial_expense = incomplete_expense_fields(text)
+    partial_expense = None if receipt_pending else incomplete_expense_fields(text)
     if partial_expense is not None:
         return _reply_from_payment_extraction(profile, update, PaymentExtraction(partial_expense))
     if re.sub(r"\s+", " ", _normalized_text(text)).strip(" ¿?¡!.,") in {
@@ -2486,6 +2557,13 @@ def recover_stale_updates():
 def _validate_bot_reply(reply):
     if not isinstance(reply, BotReply) or not isinstance(reply.text, str):
         raise TelegramBotError("No pude preparar una respuesta válida. Revisa el resultado en la web antes de repetir una acción.")
+    if reply.document is not None:
+        doc = reply.document
+        if (not isinstance(doc, telegram_reports.BotDocument) or reply.proposal_id or reply.copyable_code
+                or not re.fullmatch(r'novapos-[a-z]+-[0-9-]+\.(?:xlsx|pdf)', doc.name)
+                or doc.mime not in {'application/pdf', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}
+                or not isinstance(doc.data, bytes) or not 1 <= len(doc.data) <= 10 * 1024 * 1024):
+            raise TelegramBotError('No pude preparar un archivo seguro. Reduce el informe y vuelve a pedirlo.')
     code = reply.copyable_code
     if code is not None or reply.intent == "clave_merk2_generada":
         if (reply.intent != "clave_merk2_generada" or reply.proposal_id
@@ -2504,7 +2582,11 @@ def _send_bot_reply(client, chat_id, reply):
         if code is not None:
             # Texto plano exacto: sin título, prefijo, Markdown ni otros datos.
             client.send_message(chat_id, code)
+        if reply.document is not None:
+            client.send_document(chat_id, reply.document)
     except TelegramBotError as exc:
+        if reply.document is not None:
+            raise TelegramDeliveryUncertain('No pude confirmar la entrega del archivo completo. Puedes volver a pedir el informe; no se ejecutó ninguna operación contable.') from None
         if code is not None:
             # La autorización ya está confirmada y la entrega puede ser incierta.
             # No regenerar ni guardar la clave para reintentar otro envío después.
@@ -2586,7 +2668,7 @@ def process_next_update():
             update.respuesta = "Actualización sin identidad válida."
         elif update.tipo == "OTRO":
             client = TelegramApiClient()
-            reply = BotReply("Por ahora acepto mensajes de texto y notas de voz.", "tipo_no_soportado")
+            reply = BotReply("Acepto texto, notas de voz y fotos de comprobantes. Envía la imagen como foto, no como documento.", "tipo_no_soportado")
             _send_bot_reply(client, update.telegram_chat_id, reply)
             update.estado = "PROCESADO"
             update.intencion = reply.intent
