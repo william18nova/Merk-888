@@ -6,7 +6,7 @@ import unicodedata
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 
-from .telegram_wording import CONVERSATION_STYLE
+from .telegram_wording import CONVERSATION_STYLE, NATURAL_LANGUAGE_RULES
 from .telegram_queries import SMART_QUERY_RULES
 
 # Grafías habituales del mismo nombre al dictarlo; no equivale a aceptar
@@ -112,58 +112,12 @@ def response_failure(response, data):
 
 
 def selected_tool_names(text, history, available):
-    """Selección conservadora: si el tema es incierto mantiene el catálogo completo."""
-    from .telegram_expense_language import payment_context, payment_language
+    """No ocultar funciones por palabras: la selección semántica pertenece a la IA.
 
-    query = normalized(text)
-    short_reply = bool(re.fullmatch(
-        r"\s*(?:(?:por|en)\s*)?(?:nequi|neki|efectivo|tarjeta|daviplata|banco caja social|caja social)[.!?\s]*",
-        query,
-    ))
-    continuation = short_reply or bool(re.match(r"\s*(?:y\b|ahora\b|tambien\b|eso\b|ese\b|esa\b|si\b|no\b|cambial|ponl|hazl|separal|desglos|siguiente|anterior)", query))
-    if continuation:
-        previous = next((normalized(item.get("text", "")) for item in reversed(history or []) if item.get("role") == "user"), "")
-        query += " " + previous
-        if short_reply:
-            clarification = next((normalized(item.get("text", "")) for item in reversed(history or []) if item.get("role") == "model"), "")
-            query += " " + clarification
-    domains = [
-        (rf"\b(?:claves?|codigos?)\b.*\b{SPECIAL_CODE_CLIENT_PATTERN}\b", {"preparar_clave_merk2"}),
-        (r"\b(?:agrega|agregar|registra|registrar|anota|anotar)\b.*\b(?:nequi|neki|efectivo|daviplata|tarjeta|banco caja social)\b", {"preparar_registro_pago", "consultar_pagos"}),
-        (r"\b(?:alias|recuerda|llamarle|nombres alternativos)\b", {"preparar_alias", "consultar_aliases", "consultar_registros", "buscar_producto"}),
-        (r"\b(?:avisame|notifica\w*|alerta\w*|seguimiento\w*|todos los dias|cada dia|diariamente)\b", {"preparar_seguimiento", "consultar_seguimientos"}),
-        (r"\b(?:pedido\w*|reabastec\w*|surtir|surtido\w*)\b", {"planificar_reabastecimiento", "preparar_pedido_proveedor", "consultar_registros", "buscar_producto"}),
-        (r"\b(?:inventario\w*|stock|existencia\w*|conteo)\b", {"preparar_movimiento_inventario", "consultar_inventario", "planificar_reabastecimiento"}),
-        (r"\b(?:analiza\w*|por que|explica\w*)\b.*\b(?:balance|ventas|pagos|queda\w*)\b", {"analizar_balance"}),
-        (r"\b(?:pago\w*|pague|pagado\w*|pagamos|pagar|paga|pagaron|egreso\w*|gasto\w*)\b", {"consultar_pagos", "consultar_pago", "preparar_edicion_pago", "preparar_registro_pago", "consultar_informe"}),
-        (r"\b(?:compra\w*|compre|compramos)\b", {"consultar_pagos", "preparar_registro_pago", "consultar_registros", "consultar_detalle_operativo", "consultar_informe"}),
-        (r"\b(?:venta\w*|vendi\w*|vende\w*|vendio|factura\w*)\b", {"consultar_ventas", "consultar_detalle_operativo", "ranking_productos", "consultar_informe", "consultar_registros"}),
-        (r"\b(?:producto\w*|precio\w*|stock|inventario\w*|agotado\w*|existencia\w*)\b", {"buscar_producto", "consultar_inventario", "consultar_registros", "ranking_productos", "preparar_cambio_catalogo"}),
-        (r"\b(?:empleado\w*|personal|equipo)\b", {"listar_empleados", "consultar_registros", "preparar_cambio_catalogo", "consultar_horarios_empleados"}),
-        (r"\b(?:horario\w*|calendario\w*|jornada\w*|turno\w*|descans\w*|trabaj\w*|rotacion\w*)\b|\ba que horas? (?:entro|entra|entran|salgo|sale|salen)\b", {"consultar_horarios_empleados", "preparar_turno_empleado", "listar_empleados", "consultar_registros", "consultar_turnos"}),
-        (r"\b(?:caja\w*|cierre\w*|arqueo\w*|retiro\w*)\b", {"consultar_turnos", "consultar_detalle_operativo", "consultar_registros"}),
-        (r"\b(?:devol\w*|devuel\w*|reintegr\w*|reembols\w*)\b", {"preparar_devolucion_venta", "consultar_detalle_operativo", "consultar_registros", "buscar_producto"}),
-        (r"\b(?:cliente\w*|proveedor\w*|categoria\w*|sucursal\w*|usuario\w*|rol|roles|permiso\w*|nequi|configuracion|pedido\w*)\b", {"consultar_registros", "consultar_detalle_operativo", "preparar_cambio_catalogo"}),
-        (r"\b(?:balance|negocio|resumen|saldo|queda\w*|resta\w*)\b", {"consultar_balance", "consultar_resumen_negocio", "consultar_ventas", "consultar_pagos", "consultar_informe"}),
-    ]
-    matches = [names for pattern, names in domains if re.search(pattern, query)]
-    payment = payment_context.get()
-    if (payment and (payment.draft is not None or payment_language(text))
-            and not any("preparar_registro_pago" in names for names in matches)):
-        matches.append({"preparar_registro_pago", "consultar_pagos"})
-    if not matches:
-        return set(available)
-    result = {"consultar_capacidades", "buscar_vistas", "consultar_pendientes", "consultar_datos"}.union(*matches)
-    if len(matches) > 1:
-        result.add("consultar_varias")
-    if continuation:
-        result.add("continuar_consulta")
-    if re.search(r"\b(?:primero|luego|despues|segundo|tercero|cuarto|quinto|ultimo|prepara|revisa|busca|encuentra)\b", query):
-        result.update({"resolver_tarea", "consultar_resultado"})
-    if re.search(r"\b(?:segundo|tercero|cuarto|quinto|de la lista|de esos)\b", query):
-        # Una referencia no identifica el dominio sin consultar la lista real.
-        return set(available)
-    return result & set(available)
+    Solo una selección validada del modelo puede reducir este catálogo después.
+    Las frases exactas de los atajos ya se resolvieron antes de llegar aquí.
+    """
+    return set(available)
 
 
 def compact_history(history, budget=6000):
@@ -256,4 +210,4 @@ def compact_prompt(today, names):
         rules.append("Solo configura avisos si el usuario lo solicita explícitamente, con hora de Colombia y confirmación. No inventar una frecuencia: actualmente solo DIARIA; para otros días explica ese límite y pregunta antes de preparar. No decir que está activo sin confirmación ni sin procesador --followups.")
     if "preparar_alias" in names:
         rules.append("Los alias se guardan únicamente si el usuario pide recordarlos, para su cuenta y con confirmación. Pregunta entidad e ID o consulta un resultado único antes; no aprendas nombres automáticamente de errores de audio.")
-    return "\n".join([CONVERSATION_STYLE, SMART_QUERY_RULES, *rules])
+    return "\n".join([CONVERSATION_STYLE, NATURAL_LANGUAGE_RULES, SMART_QUERY_RULES, *rules])

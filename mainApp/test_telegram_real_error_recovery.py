@@ -66,8 +66,7 @@ class TranscribedShortcutTests(SimpleTestCase):
         definitions, prompt, _ = bot._ai_request_context(text)
         names = {d["name"] for d in definitions}
         self.assertIn("preparar_registro_pago", names)
-        self.assertNotIn("preparar_turno_empleado", names)
-        self.assertLess(len(names), len(bot.TOOL_FUNCTIONS))
+        self.assertEqual(names, set(bot.TOOL_FUNCTIONS))
         self.assertIn("botón Confirmar", prompt)
 
     def test_short_payment_answer_uses_context_only_to_select_schemas(self):
@@ -78,7 +77,7 @@ class TranscribedShortcutTests(SimpleTestCase):
                 definitions, _, supplied_history = bot._ai_request_context(text, history)
                 names = {d["name"] for d in definitions}
                 self.assertIn("preparar_registro_pago", names)
-                self.assertNotIn("preparar_turno_empleado", names)
+                self.assertEqual(names, set(bot.TOOL_FUNCTIONS))
                 self.assertEqual(supplied_history, history)
                 self.assertIsNone(common_read_request(text))
         self.assertEqual(policy.selected_tool_names("Neki", [], bot.TOOL_FUNCTIONS), set(bot.TOOL_FUNCTIONS))

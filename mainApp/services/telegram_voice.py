@@ -24,7 +24,8 @@ _FAILURES = {}
 # Whisper admite un prompt de vocabulario en el mismo idioma del audio.
 SPANISH_VOCABULARY = (
     "NovaPOS, Nova Advance, Merk2 (Merk dos), merk2888, clave especial, Nequi, Daviplata, efectivo, "
-    "tarjeta, Banco Caja Social, Yerbabuena, pago, egreso, inventario, turno."
+    "tarjeta, Banco Caja Social, Yerbabuena, pago, egreso, inventario, turno, proveedor, pedido, "
+    "producto, venta, devolución, horario, categoría, cliente, sucursal, conteo físico, alias, informe diario."
 )
 
 

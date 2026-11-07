@@ -21,6 +21,7 @@ def _bot():
 
 
 READ_TOOLS = (
+    "consultar_ayuda", "consultar_cuenta",
     "planificar_reabastecimiento", "consultar_aliases", "consultar_seguimientos", "consultar_resultado", "analizar_balance",
     "consultar_pago",
     "consultar_datos",

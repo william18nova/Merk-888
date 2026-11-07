@@ -636,7 +636,13 @@ def validate_arguments(tool_name, arguments, *, allow_missing=False):
     schema = next(item["parameters"] for item in _bot().GEMINI_TOOLS[0]["functionDeclarations"] if item["name"] == tool_name)
 
     def label(path):
-        names = {"pago_id": "número del pago", "registro_id": "número del registro", "id": "número del registro", "venta_id": "número de la venta", "concepto": "concepto", "monto": "valor", "medio_pago": "medio de pago", "motivo": "motivo", "desde": "fecha inicial", "hasta": "fecha final", "fuente": "información que quieres consultar", "campos": "datos que quieres cambiar", "columnas": "datos que quieres ver"}
+        names = {"pago_id": "número del pago", "registro_id": "número del registro", "id": "número del registro", "venta_id": "número de la venta", "concepto": "concepto", "monto": "valor", "medio_pago": "medio de pago", "motivo": "motivo", "desde": "fecha inicial", "hasta": "fecha final", "fuente": "información que quieres consultar", "campos": "datos que quieres cambiar", "columnas": "datos que quieres ver",
+                 "consulta": "nombre o dato que quieres buscar", "recurso": "tipo de registro", "entidad": "tipo de registro",
+                 "operacion": "qué quieres hacer", "producto": "producto", "productos": "productos y cantidades",
+                 "proveedor": "proveedor", "sucursal": "sucursal", "cantidad": "cantidad", "modo": "si debo sumar unidades o dejar un conteo exacto",
+                 "empleado": "empleado", "inicio": "fecha y hora de inicio", "fin": "fecha y hora de finalización",
+                 "hora": "hora de Colombia", "tipo": "tipo de solicitud", "alias": "nombre alternativo",
+                 "posicion": "posición en la lista", "pasos": "pasos que necesitas", "consultas": "consultas que necesitas"}
         return names.get(path.split(".")[-1], "dato solicitado")
 
     def check(value, rule, path):

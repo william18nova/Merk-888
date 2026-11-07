@@ -440,12 +440,15 @@ class TelegramBotTests(TestCase):
             "arguments": {"concepto": "servicio de agua", "monto_texto": "25000 pesos", "medio_texto": "efectivo"},
         })}}]})
         client = SimpleNamespace(answer_callback=MagicMock())
+        selection = _ai_response({"choices": [{"message": {"content": json.dumps({
+            "herramientas": ["preparar_registro_pago"],
+        })}}]})
         with patch(
             "mainApp.services.telegram_bot.requests.post",
-            side_effect=[rejected, accepted],
+            side_effect=[rejected, selection, accepted],
         ) as post:
             reply = build_reply(original, client)
-        self.assertEqual(post.call_count, 2)
+        self.assertEqual(post.call_count, 3)
         self.assertEqual(reply.intent, "preparar_registro_pago")
         self.assertEqual(TelegramAccionPendiente.objects.count(), 1)
         self.assertEqual(Egreso.objects.count(), 0)

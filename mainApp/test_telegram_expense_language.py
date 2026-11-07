@@ -98,7 +98,7 @@ class ConversationalPaymentTests(TestCase):
                       texto="" if voice else phrase, transcripcion=phrase if voice else "")
         return TelegramActualizacion.objects.create(**dict(fields, **overrides))
 
-    def test_voice_story_uses_single_structured_fallback_and_prepares_exact_payment(self):
+    def test_voice_story_selects_semantically_then_prepares_exact_payment(self):
         phrase = "A Papelería Sol le pasé ochenta y cinco mil novecientos con Nequi, apúntame eso."
         self.assertEqual(expense_request(phrase), (None, False))
         update = self.message(phrase, voice=True)
@@ -106,9 +106,10 @@ class ConversationalPaymentTests(TestCase):
             "name": "preparar_registro_pago",
             "arguments": {"concepto": "Papelería Sol", "monto_texto": "ochenta y cinco mil novecientos", "medio_texto": "Nequi"},
         })}}]})
-        with patch.object(bot.requests, "post", side_effect=[response({}, 503), result]) as post:
+        selection = response({"choices": [{"message": {"content": json.dumps({"herramientas": ["preparar_registro_pago"]})}}]})
+        with patch.object(bot.requests, "post", side_effect=[response({}, 503), selection, result]) as post:
             reply = bot.build_reply(update, self.client_stub)
-        self.assertEqual(post.call_count, 2)
+        self.assertEqual(post.call_count, 3)
         groq = post.call_args.kwargs["json"]
         self.assertEqual(groq["response_format"], {"type": "json_object"})
         self.assertNotIn("tools", groq)

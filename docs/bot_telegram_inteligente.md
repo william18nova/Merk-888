@@ -877,12 +877,14 @@ en producción.
 
 ### Menor consumo y continuidad de las conversaciones
 
-- Para un tema identificado se envían solo las herramientas relacionadas y las
-  reglas correspondientes. Las peticiones de varios temas conservan herramientas
-  de ambos y las consultas múltiples. Si el tema es incierto, se mantiene el
-  catálogo completo para no eliminar capacidades.
-- El contexto reciente de la misma cuenta/chat se limita a ocho mensajes, hasta
-  1.200 caracteres por mensaje y 6.000 en total. No se comparten conversaciones
+- La interpretación libre no oculta herramientas por palabras clave. Gemini
+  recibe las capacidades completas. En conversación libre, Groq, Cerebras y
+  OpenRouter eligen primero entre nombres y descripciones de todo el catálogo;
+  después reciben solo los esquemas elegidos y sus reglas. Ambas etapas
+  conservan la petición original y el historial. Si falla la interpretación,
+  el siguiente proveedor reutiliza esa selección validada, sin empezar de cero.
+- El contexto reciente de la misma cuenta/chat se limita a doce intercambios
+  (hasta 24 fragmentos), 1.200 caracteres por fragmento y 6.000 en total. No se comparten conversaciones
   ni se reutilizan resultados financieros en caché.
 - Frases sencillas como «cuánto he pagado hoy», «muéstrame los pagos de hoy»,
   «cuánto pagué este mes por método de pago», «lista de empleados», «mi horario
@@ -930,8 +932,8 @@ y [errores y reintentos de Gemini](https://ai.google.dev/gemini-api/docs/trouble
   novecientos con Nequi; apúntame eso»), los proveedores de texto extraen el
   concepto, el monto y el medio en campos separados. El servidor exige que los
   fragmentos estén en el mensaje actual y convierte importes en palabras a
-  pesos; no acepta cifras ni medios inventados por la IA. En Groq la extracción
-  de pagos usa JSON desde el primer intento.
+  pesos; no acepta cifras ni medios inventados por la IA. En Groq, después de
+  elegir la función, la extracción de pagos usa JSON desde el primer intento.
 - Si falta un dato, el borrador conserva solo los campos comprobados de ese
   pago. «Fue por Nequi» o «son ochenta y cinco mil novecientos» pueden completar
   la pregunta reciente del mismo chat sin volver a llamar a la IA. El borrador
@@ -954,6 +956,55 @@ latencia real de Telegram o de un proveedor en producción.
 ```bash
 python manage.py test mainApp.test_telegram_fast_paths mainApp.test_telegram_performance --settings=NovaSoft.test_settings
 ```
+
+### Lenguaje natural para todas las capacidades
+
+No hay que memorizar comandos: el texto y la transcripción del audio pasan por
+el mismo intérprete. Puede elegir cualquiera de las 39 funciones actuales,
+incluidas consultas, análisis, continuación de listas, preparación de pagos y
+correcciones, catálogos, inventario, pedidos, horarios, devoluciones, alias,
+seguimientos, ayuda, cuenta vinculada y recuperación de propuestas.
+
+Ejemplos de intención, no frases obligatorias:
+
+- «De lo vendido réstale lo pagado y dime qué queda».
+- «Del egreso cuarenta y dos me equivoqué digitando: eran treinta mil».
+- «Conté arroz Diana en Yerbabuena y hay doce; déjalo en doce por conteo físico».
+- «A Camila ponle mañana de siete de la mañana a dos de la tarde».
+- «Necesito dos unidades de ese producto en un pedido para la sucursal».
+- «Muéstrame bajo qué usuario estoy hablando contigo».
+- «Déjame revisar la solicitud que todavía tengo sin guardar».
+
+La IA interpreta intención, orden y sinónimos, conserva condiciones y consulta
+el contexto de esta misma cuenta/chat para respuestas a aclaraciones. El servidor
+valida esquemas, datos reales, permisos y ambigüedades. Si faltan producto,
+cantidad, sucursal, motivo, fecha u otros datos necesarios, pregunta en lenguaje
+cotidiano; no rellena esos datos para poder ejecutar.
+
+Los atajos inequívocos y los comandos explícitos continúan funcionando. Las
+frases nuevas usan IA, no una lista obligatoria de expresiones. Las claves de
+vinculación se procesan localmente y se excluyen del contexto enviado a la IA,
+al igual que los eventos de botones. Por seguridad no se dictan contraseñas.
+
+Pedir «confírmalo» o «descarta lo pendiente» por voz recupera el teclado real;
+no confirma ni cancela una operación automáticamente. Una cancelación de
+jornada laboral usa su propuesta específica, no el descarte de una propuesta.
+No agrega operaciones prohibidas ni permite eliminar pagos, ejecutar ventas,
+cerrar cajas, cambiar permisos o transferir dinero. Cada cambio admitido sigue
+requiriendo revisar la propuesta y pulsar su botón.
+
+Pruebas de contratos para las 39 funciones, tanto con texto como transcripción,
+selección semántica, contexto, datos faltantes, permisos y confirmaciones:
+
+```bash
+python manage.py test mainApp.test_telegram_natural_language --settings=NovaSoft.test_settings --noinput
+```
+
+Las pruebas automáticas usan respuestas de IA simuladas: verifican la integración,
+no garantizan entender cualquier frase real. La precisión también depende de la
+grabación, la transcripción y el modelo; cuotas, red o caídas pueden impedir el
+servicio. No hay nuevos proveedores, modelos de pago, dependencias ni migraciones.
+Tras publicar, recargar la misma tarea del bot; no iniciar otra en paralelo.
 
 ## 1. Crear las credenciales
 

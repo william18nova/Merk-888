@@ -173,8 +173,9 @@ class AIResilienceTests(SimpleTestCase):
             self.assertEqual(bot._intelligent_function_call("Hola")[2], "Respuesta Gemini")
         self.assertEqual(post.call_count, 2)
 
-    def test_context_shrinks_for_payments_without_losing_confirmation_rules(self):
-        definitions, prompt, _ = bot._ai_request_context("Analiza los pagos del trimestre por concepto")
+    def test_semantically_selected_context_shrinks_without_losing_confirmation_rules(self):
+        definitions, prompt, _ = bot._ai_request_context("Analiza los pagos del trimestre por concepto",
+            selected_names={"consultar_pagos", "preparar_registro_pago"})
         names = {d["name"] for d in definitions}
         self.assertIn("consultar_pagos", names)
         self.assertIn("preparar_registro_pago", names)
@@ -197,7 +198,7 @@ class AIResilienceTests(SimpleTestCase):
     def test_continuations_keep_previous_domain_and_rotation_safety(self):
         definitions, prompt, history = bot._ai_request_context("Ahora solo esa fecha", [{"role": "user", "text": "Cambia el horario de Camila"}])
         self.assertIn("preparar_turno_empleado", {d["name"] for d in definitions})
-        self.assertIn("PREGUNTA alcance", prompt)
+        self.assertIn("PREGUNTA si el cambio", prompt)
         self.assertTrue(history)
 
     def test_history_budget_preserves_recent_messages_without_mutating_input(self):

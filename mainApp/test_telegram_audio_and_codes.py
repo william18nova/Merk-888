@@ -86,11 +86,10 @@ class AudioShortcutTests(SimpleTestCase):
         self.assertEqual(direct_expense_request("Registra un pago de $90.000,50 en Banco Caja Social para Vitaminas y comida."),
                          {"concepto": "Vitaminas y comida", "monto": "90000.50", "medio_pago": "tarjeta"})
 
-    def test_real_add_payment_wording_selects_small_payment_catalog(self):
+    def test_real_add_payment_wording_keeps_full_catalog_for_semantic_selection(self):
         names = selected_tool_names("agrega 90.000 por Neki a transporte vitaminas y comida", [], bot.TOOL_FUNCTIONS)
         self.assertIn("preparar_registro_pago", names)
-        self.assertNotIn("preparar_turno_empleado", names)
-        self.assertLess(len(names), len(bot.TOOL_FUNCTIONS))
+        self.assertEqual(names, set(bot.TOOL_FUNCTIONS))
 
     def test_invalid_payment_method_is_clarification_not_failed_update_or_proposal(self):
         with patch.object(bot, "_require_access"), patch.object(bot, "_resolve_payment_method", return_value="nxd"), \
@@ -130,13 +129,12 @@ class AudioShortcutTests(SimpleTestCase):
             with self.subTest(text=text):
                 self.assertFalse(codes.direct_request(text))
 
-    def test_voice_key_spelling_selects_only_the_relevant_domain(self):
+    def test_voice_key_spelling_does_not_hide_other_possible_intentions(self):
         for text in ("Claves Merk dos", "Sácame una clave de Merc 2", "Me regalas un código para Merck dos"):
             with self.subTest(text=text):
                 names = selected_tool_names(text, [], bot.TOOL_FUNCTIONS)
                 self.assertIn('preparar_clave_merk2', names)
-                self.assertNotIn('preparar_registro_pago', names)
-                self.assertNotIn('preparar_turno_empleado', names)
+                self.assertEqual(names, set(bot.TOOL_FUNCTIONS))
 
     def test_spoken_key_requests_prepare_without_text_ai(self):
         profile = SimpleNamespace(usuario=SimpleNamespace(is_active=True), save=MagicMock(),
