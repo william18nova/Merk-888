@@ -20,6 +20,11 @@ Ruta: `/caja/pagos/revisar-cierres/`.
 - Incluye todos los turnos cerrados con detalle, a cualquier hora: mañana,
   tarde, noche o madrugada. Muestra fecha y hora de inicio, hora de Colombia.
   La fecha del reporte es la del inicio, aunque el turno termine al día siguiente.
+- Las declaraciones aparecen primero por el turno más reciente (fecha y hora de
+  inicio descendentes; en empate, ID de turno descendente), también al filtrar
+  por estado. Dentro de un mismo cierre se conserva el orden del desglose y sus
+  referencias de auditoría. Los pagos registrados mantienen su orden de fecha
+  e ID descendentes, sin tener que bajar por los registros antiguos.
 - Compara nombre normalizado e importe base antes del 4 × 1.000, fecha ±1 día.
 - La equivalencia Diego/Fabián fue aclarada expresamente por el propietario.
 - Solo confirma automáticamente un vínculo de auditoría `CONCILIACION ... CIERRE

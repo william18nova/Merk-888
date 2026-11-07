@@ -32,7 +32,7 @@
   <div class="reconciliation-comparison">
   <section id="closing-declarations" class="reconciliation-column" aria-labelledby="closing-declarations-title">
   <h2 id="closing-declarations-title">Declarado por los cajeros</h2>
-  <p>El filtro de estado se aplica únicamente a estas declaraciones.</p>
+  <p>Más recientes primero, por fecha y hora de inicio del turno. El filtro de estado se aplica únicamente a estas declaraciones.</p>
   <div class="reconciliation-scroll reconciliation-list">
     {% for row in rows %}
     <article class="reconciliation-item">
@@ -75,7 +75,7 @@
   </section>
   <section id="registered-payments" class="reconciliation-column" aria-labelledby="registered-payments-title">
     <header class="reconciliation-ledger-head"><div><p class="expense-eyebrow">Registro real de Pagos</p><h2 id="registered-payments-title">Pagos ya agregados</h2></div><span>{{ registered_count }} registros</span></header>
-    <p>Todos los medios de pago y usuarios dentro de las fechas elegidas, desde el 01/11/2026. No se ocultan al filtrar el estado de las declaraciones. Los pagos no identifican sucursal.</p>
+    <p>Más recientes primero. Todos los medios de pago y usuarios dentro de las fechas elegidas, desde el 01/11/2026. No se ocultan al filtrar el estado de las declaraciones. Los pagos no identifican sucursal.</p>
     <div class="reconciliation-ledger-totals"><span>Valor pagado sin impuesto<strong>$ {{ registered_base_total|floatformat:2 }}</strong></span><span>Total con 4 × 1.000<strong>$ {{ registered_total|floatformat:2 }}</strong></span></div>
     <label class="reconciliation-search">Buscar entre estos pagos<input type="search" placeholder="Concepto, número, usuario o valor…" data-ledger-search aria-controls="registered-payments-list" autocomplete="off"></label>
     <p class="reconciliation-search-result" data-ledger-results role="status" aria-live="polite"></p>

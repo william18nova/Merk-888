@@ -111,6 +111,15 @@ class ReconciliationTests(SimpleTestCase):
         self.assertEqual(result['registered_count'],0)
         self.assertEqual(result['registered_total'],Decimal(0))
 
+    def test_registered_ledger_shows_newest_dates_and_ids_first(self):
+        older = dict(self.expense(day=1), id=50)
+        morning = dict(self.expense(day=2), id=10)
+        latest = dict(self.expense(day=2), id=11)
+        result = registered_payments([morning, older, latest], [], date(2026,11,1), date(2026,11,2))
+        self.assertEqual([item['id'] for item in result['registered_payments']], [11, 10, 50])
+        self.assertEqual(result['registered_count'], 3)
+        self.assertEqual(result['registered_total'], Decimal('210000'))
+
 
 class ReconciliationViewTests(SimpleTestCase):
     def request(self,query=None):

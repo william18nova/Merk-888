@@ -134,7 +134,7 @@ def closing_report(start, end):
     cutoff = timezone.make_aware(datetime.combine(RECONCILIATION_START, time.min), CO)
     hi = timezone.make_aware(datetime.combine(end + timedelta(days=1), time.min), CO)
     sources = list(DesglosePagosCierre.objects.select_related('turno__cajero', 'turno__puntopago__sucursalid').filter(
-        turno__estado='CERRADO', turno__inicio__gte=lo, turno__inicio__lt=hi).order_by('turno__inicio', 'turno_id'))
+        turno__estado='CERRADO', turno__inicio__gte=lo, turno__inicio__lt=hi).order_by('-turno__inicio', '-turno_id'))
     declarations=[]
     for s in sources:
         t=s.turno

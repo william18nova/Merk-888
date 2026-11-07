@@ -211,6 +211,32 @@ class ClosingExpenseRegistrationTests(TestCase):
         self.assertEqual({ref['turn'] for ref in report['registered_payments'][0]['references']},
                          {morning.turno_id, self.turn.pk})
 
+    def test_newest_shifts_first_preserves_source_row_order_and_filters(self):
+        # Create records out of date order; ties use the newest shift ID.
+        older = self.extra_source(datetime(2026, 11, 1, 23, 59), name='DECLARACION ANTIGUA')
+        newest = self.extra_source(datetime(2026, 11, 3, 0, 15), name='DECLARACION RECIENTE')
+        morning = self.extra_source(datetime(2026, 11, 2, 7), name='DECLARACION MANANA')
+        tied = self.extra_source(datetime(2026, 11, 3, 0, 15), name='DECLARACION PRIMERA')
+        tied.pagos = [{'nombre': 'DECLARACION PRIMERA', 'monto': '30000'},
+                      {'nombre': 'DECLARACION SEGUNDA', 'monto': '40000'}]
+        tied.save()
+        expected = [(tied.turno_id, 0), (tied.turno_id, 1), (newest.turno_id, 0),
+                    (self.turn.pk, 0), (morning.turno_id, 0), (older.turno_id, 0)]
+        report = closing_report(date(2026, 11, 1), date(2026, 11, 3))
+        self.assertEqual([(row['turn'], row['index']) for row in report['rows']], expected)
+        for status in ('', 'missing'):
+            with self.subTest(status=status):
+                response = self.client.get(self.url, {'desde': '2026-11-01', 'hasta': '2026-11-03', 'estado': status})
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual([(row['turn'], row['index']) for row in response.context['rows']], expected)
+                self.assertContains(response, 'Más recientes primero')
+                html = response.content.decode()
+                names = ['DECLARACION PRIMERA', 'DECLARACION SEGUNDA', 'DECLARACION RECIENTE',
+                         'TURNO CAMILA', 'DECLARACION MANANA', 'DECLARACION ANTIGUA']
+                self.assertEqual([html.index(name) for name in names], sorted(html.index(name) for name in names))
+        self.assertFalse(Egreso.objects.exists())
+        self.assertFalse(CambioEgreso.objects.exists())
+
     def test_morning_night_and_overnight_can_register_without_duplicates_or_cash_changes(self):
         cases = [(7, 0, 'AREPAS', '30000'), (20, 0, 'VIGILANCIA', '40000'),
                  (0, 30, 'TRANSPORTE', '50000'), (23, 59, 'INSUMOS', '60000')]
