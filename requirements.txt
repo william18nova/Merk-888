@@ -1,7 +1,7 @@
 asgiref==3.9.1                  # requerido por Django
 certifi==2025.8.3               # requests/urllib3
 charset-normalizer==3.4.3       # requests/urllib3
-Django==5.1.1                   # framework principal
+Django==5.2.17                   # framework principal
 django-autocomplete-light==3.11.0  # autocompletado en formularios
 django-widget-tweaks==1.5.0     # personalización de templates
 Flask>=3.0,<4                   # servidor HTTP para utilidades locales
