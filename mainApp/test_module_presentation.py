@@ -116,13 +116,13 @@ class ModulePresentationTests(SimpleTestCase):
                         'confirmar-pago', 'mix-mode', 'cliente_id', 'sucursal_id', 'puntopago_id',
                         'productos', 'cantidades', 'pagos', 'nequi_notificacion_id'):
             self.assertIn('id="' + control + '"', html)
-        self.assertIn('css/nova_checkout.css?v=1', html)
+        self.assertIn('css/nova_checkout.css?v=2', html)
         self.assertIn('javascript/generar_venta.js?v=51', html)
         context.update(hybrid_local=True, hybrid_django_runtime=True, hybrid_sale_context={'preview': True})
         local = render_to_string('generar_venta.html', context)
         self.assertIn('/local/sales/assets/sale-bridge.css', local)
         self.assertIn('/local/sales/assets/sale-bridge.js', local)
-        self.assertIn('css/nova_checkout.css?v=1', local)
+        self.assertIn('css/nova_checkout.css?v=2', local)
         context.update(full_local_development=True, full_local_installed=False)
         # Solo se comprueba el contrato de plantilla; no se carga la BD del runtime.
         local_urls = ModuleType('presentation_local_urls')
@@ -146,3 +146,18 @@ class ModulePresentationTests(SimpleTestCase):
         self.assertNotIn('src="/static/javascript/generar_venta.js', html)
         self.assertIn('no se registran ventas ni pagos', html)
         self.assertIn('data-label="Subtotal"', html)
+
+    def test_checkout_uses_large_scoped_type_without_zooming_the_navigation(self):
+        css = (settings.BASE_DIR / 'mainApp/static/css/nova_checkout.css').read_text(encoding='utf-8')
+        sizes = {name: int(value) for name, value in re.findall(r'(--checkout-[\w-]+):\s*(\d+)px', css)}
+        self.assertGreaterEqual(sizes['--checkout-text'], 20)
+        self.assertGreaterEqual(sizes['--checkout-control'], 22)
+        self.assertGreaterEqual(sizes['--checkout-small'], 16)
+        self.assertIn('body.nova-ui--checkout', css)
+        self.assertNotIn(':root', css)
+        self.assertNotRegex(css, r'(?m)^\s*(?:body|html|\.navbar)\s*\{')
+        self.assertNotRegex(css, r'\bzoom\s*:|scale\(')
+        self.assertIn('@media (max-width: 1200px)', css)
+        self.assertIn('@media (max-width: 860px)', css)
+        self.assertIn('font-size: clamp(38px, 4.2vw, 48px)', css)
+        self.assertIn('.nova-ui--checkout #myModal #confirmar-pago', css)
