@@ -707,8 +707,8 @@ body::before{
   overflow-x:hidden !important;
 
   box-sizing:border-box !important;
-  background:#fff !important;
-  border:1px solid var(--slate-200) !important;
+  background:#162f4e !important;
+  border:1px solid #527196 !important;
   border-radius:12px !important;
   box-shadow:0 16px 30px rgba(0,0,0,.16) !important;
   padding:4px 0;
@@ -726,7 +726,7 @@ body::before{
   overflow:hidden !important;
   padding:10px 12px !important;
   font-size:15px !important;
-  color:#0b1220 !important;
+  color:#dce9f9 !important;
   line-height:1.25 !important;
   cursor:pointer !important;
   border:none !important;
@@ -740,8 +740,8 @@ body::before{
 .ui-state-active,
 .ui-menu-item-wrapper.ui-state-active,
 .ui-menu .ui-state-focus{
-  background:#eaf3ff !important;
-  color:#0b1220 !important;
+  background:#284d74 !important;
+  color:#f4f8ff !important;
   border:none !important;
 }
 

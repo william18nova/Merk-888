@@ -15,6 +15,7 @@
 
   <script src="{% static 'javascript/nova_storage.js' %}?v=1"></script>
   {% block extra_head %}{% endblock %}
+  {% block module_styles %}{% endblock %}
   {% if nova_integrated_enabled %}
   <link rel="stylesheet" href="{% static 'css/integrated_navigation.css' %}?v=1">
   {% url 'integrated_navigation' as nova_navigation_url %}
@@ -22,7 +23,7 @@
   {% endif %}
   {% if nova_journal_enabled %}<script defer src="{% static 'javascript/integrated_business_transport.js' %}?v=1" data-user="{{ request.user.pk }}"></script>{% endif %}
 </head>
-<body{% if full_local_development %} class="nova-full-local"{% endif %}>
+<body class="{% if full_local_development %}nova-full-local {% endif %}{% block body_class %}{% endblock %}">
   {% if nova_integrated_enabled %}
   <dialog id="nova-offline-dialog" class="nova-offline-dialog" aria-labelledby="nova-offline-title" aria-describedby="nova-offline-message">
     <span class="nova-offline-label">NOVA POS</span>

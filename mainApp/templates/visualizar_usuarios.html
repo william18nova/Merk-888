@@ -2,9 +2,12 @@
 {% load static %}
 
 {% block title %}Visualizar Usuarios{% endblock %}
+{% block body_class %}nova-ui nova-ui--list{% endblock %}
+{% block module_styles %}<link rel="stylesheet" href="{% static 'css/nova_modules.css' %}?v=1">
+<script defer src="{% static 'javascript/nova_modules.js' %}?v=1"></script>{% endblock %}
 
 {% block extra_head %}
-  <link rel="stylesheet" href="{% static 'css/visualizar_usuarios.css' %}">
+  <link rel="stylesheet" href="{% static 'css/visualizar_usuarios.css' %}?v=2">
   <link rel="stylesheet"
         href="https://cdn.datatables.net/1.11.5/css/jquery.dataTables.min.css">
   <script defer src="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/js/all.min.js"></script>
@@ -13,7 +16,7 @@
 {% endblock %}
 
 {% block content %}
-  <div class="container">
+  <div class="container nova-page nova-list-page">
     <h2><i class="fas fa-users"></i> Lista de Usuarios</h2>
 
     {# ---- mensajes Django ---- #}
@@ -30,7 +33,7 @@
     {# ---- buscador externo ---- #}
     <div class="search-wrapper">
       <span class="search-icon"><i class="fas fa-search"></i></span>
-      <input id="buscador-usuarios"
+      <input id="buscador-usuarios" aria-label="Buscar usuarios"
              class="search-input"
              type="text"
              placeholder="Buscar…">
@@ -40,9 +43,9 @@
     <table id="usuariosTable" class="display">
       <thead>
         <tr>
-          <th>Nombre de Usuario</th>
-          <th>Rol</th>
-          <th class="no-sort">Acciones</th>
+          <th scope="col">Nombre de Usuario</th>
+          <th scope="col">Rol</th>
+          <th scope="col" class="no-sort">Acciones</th>
         </tr>
       </thead>
       <tbody>
@@ -59,6 +62,7 @@
 
               <button type="button"
                       class="btn borrar"
+                      aria-label="Eliminar {{ u.nombreusuario }}"
                       data-nombre="{{ u.nombreusuario }}"><i class="fas fa-trash-alt"></i></button>
             </div>
 

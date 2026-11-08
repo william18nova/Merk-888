@@ -1,14 +1,17 @@
 {% extends "base.html" %}
 {% load static %}
 {% block title %}Agregar Producto{% endblock %}
+{% block body_class %}nova-ui nova-ui--form{% endblock %}
+{% block module_styles %}<link rel="stylesheet" href="{% static 'css/nova_modules.css' %}?v=1">
+<script defer src="{% static 'javascript/nova_modules.js' %}?v=1"></script>{% endblock %}
 
 {% block extra_head %}
-  <link rel="stylesheet" href="{% static 'css/agregar_producto.css' %}">
+  <link rel="stylesheet" href="{% static 'css/agregar_producto.css' %}?v=2">
   <script defer src="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/js/all.min.js"></script>
 {% endblock %}
 
 {% block content %}
-  <div class="container">
+  <div class="container nova-page nova-form-page">
     <i class="fas fa-box-open icon"></i>
     <h2>Agregar Producto</h2>
 
@@ -19,13 +22,13 @@
     <div id="error-message"   class="alert alert-error"   style="display:none;"></div>
     <div id="success-message" class="alert alert-success" style="display:none;"></div>
 
-    <form id="productoForm" method="post" action="{% url 'agregar_producto' %}">
+    <form class="nova-form-grid" id="productoForm" method="post" action="{% url 'agregar_producto' %}">
       {% csrf_token %}
 
       {# ------- nombre / descripción / precio / cod-barras / iva ------- #}
       {% for field in form.visible_fields %}
         {% if field.name != "categoria" %}
-          <div class="form-group">
+          <div class="form-group{% if field.name == 'descripcion' or field.name == 'nombre' %} nova-field-wide{% endif %}">
             <label for="{{ field.id_for_label }}">
               {{ field.label }}{% if field.field.required %} <span class="required">*</span>{% endif %}
             </label>

@@ -3,16 +3,19 @@
 {% load static %}
 
 {% block title %}Agregar Proveedor{% endblock %}
+{% block body_class %}nova-ui nova-ui--form{% endblock %}
+{% block module_styles %}<link rel="stylesheet" href="{% static 'css/nova_modules.css' %}?v=1">
+<script defer src="{% static 'javascript/nova_modules.js' %}?v=1"></script>{% endblock %}
 
 {# ---------- CSS & Iconos ---------- #}
 {% block extra_head %}
   <link rel="stylesheet"
         href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"/>
-  <link rel="stylesheet" href="{% static 'css/agregar_proveedor.css' %}">
+  <link rel="stylesheet" href="{% static 'css/agregar_proveedor.css' %}?v=2">
 {% endblock %}
 
 {% block content %}
-  <div class="container-proveedor">
+  <div class="container-proveedor nova-page nova-form-page">
     <i class="fas fa-truck icon-proveedor"></i>
     <h2>Agregar Proveedor</h2>
 
@@ -27,7 +30,7 @@
       <span id="success-text"></span>
     </div>
 
-    <form id="form-agregar-proveedor"
+    <form class="nova-form-grid" id="form-agregar-proveedor"
           method="post"
           action="{% url 'agregar_proveedor' %}">
       {% csrf_token %}
@@ -67,7 +70,7 @@
       </div>
 
       {# ---------- Dirección ---------- #}
-      <div class="form-group-proveedor">
+      <div class="form-group-proveedor nova-field-wide">
         <label for="{{ form.direccion.id_for_label }}">{{ form.direccion.label }}</label>
         {{ form.direccion }}
         <div class="field-error" id="error-id_direccion"></div>

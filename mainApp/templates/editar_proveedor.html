@@ -3,20 +3,18 @@
 {% load static %}
 
 {% block title %}Editar Proveedor{% endblock %}
-{% block content %}
-<!DOCTYPE html>
-<html lang="es">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-
-  <!-- Font-Awesome y estilos compartidos -->
+{% block body_class %}nova-ui nova-ui--form{% endblock %}
+{% block module_styles %}<link rel="stylesheet" href="{% static 'css/nova_modules.css' %}?v=1">
+<script defer src="{% static 'javascript/nova_modules.js' %}?v=1"></script>{% endblock %}
+{% block extra_head %}
+<!-- Font-Awesome y estilos compartidos -->
   <link rel="stylesheet"
         href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"/>
-  <link rel="stylesheet" href="{% static 'css/agregar_proveedor.css' %}">
-</head>
-<body>
-  <div class="container-proveedor">
+  <link rel="stylesheet" href="{% static 'css/agregar_proveedor.css' %}?v=2">
+{% endblock %}
+
+{% block content %}
+  <div class="container-proveedor nova-page nova-form-page">
     <i class="fas fa-truck icon-proveedor"></i>
     <h2>Editar Proveedor</h2>
     <p class="obligatorio-texto">
@@ -29,14 +27,14 @@
       <i class="fas fa-check-circle"></i><span id="success-text"></span>
     </div>
 
-    <form id="form-editar-proveedor"
+    <form class="nova-form-grid" id="form-editar-proveedor"
           method="post"
           action="{% url 'editar_proveedor' proveedor.pk %}">
       {% csrf_token %}
 
       {# ---------- campos ---------- #}
       {% for field in form.visible_fields %}
-        <div class="form-group-proveedor">
+        <div class="form-group-proveedor{% if field.name == 'direccion' %} nova-field-wide{% endif %}">
           <label for="{{ field.id_for_label }}">
             {{ field.label }}{% if field.field.required %} <span class="required">*</span>{% endif %}
           </label>
@@ -52,6 +50,4 @@
   </div>
 
   <script defer src="{% static 'javascript/editar_proveedor.js' %}"></script>
-</body>
-</html>
 {% endblock %}

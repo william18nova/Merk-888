@@ -2,6 +2,9 @@
 {% load static %}
 
 {% block title %}Editar Pedido{% endblock %}
+{% block body_class %}nova-ui nova-ui--order{% endblock %}
+{% block module_styles %}<link rel="stylesheet" href="{% static 'css/nova_modules.css' %}?v=1">
+<script defer src="{% static 'javascript/nova_modules.js' %}?v=1"></script>{% endblock %}
 
 {% block extra_head %}
   <!-- Font-Awesome + DataTables + CSS personalizado -->
@@ -15,12 +18,12 @@
   />
   <link
     rel="stylesheet"
-    href="{% static 'css/agregar_pedido.css' %}"
+    href="{% static 'css/agregar_pedido.css' %}?v=2"
   />
 {% endblock %}
 
 {% block content %}
-<div class="container-inventario">
+<div class="container-inventario nova-page nova-form-page nova-order-page">
   <i class="fas fa-truck icon-inventario"></i>
   <h2>Editar Pedido #{{ pedido.pedidoid }}</h2>
   <p class="obligatorio-texto">
@@ -30,7 +33,7 @@
   <div id="error-message"   class="alert alert-error"></div>
   <div id="success-message" class="alert alert-success"></div>
 
-  <form
+  <form class="nova-form-grid"
     id="pedidoForm"
     method="post"
     action="{% url 'editar_pedido' pedido.pedidoid %}"
@@ -72,7 +75,7 @@
     </div>
 
     {# ─── Comentario ─────────────────────── #}
-    <div class="form-group-precio">
+    <div class="form-group-precio nova-field-wide">
       <label for="id_comentario">Comentario</label>
       {{ form.comentario }}
     </div>
@@ -167,11 +170,11 @@
       <table id="detalle-pedido" class="display">
         <thead>
           <tr>
-            <th>Producto</th>
-            <th>Cantidad</th>
-            <th>Precio U.</th>
-            <th>Subtotal</th>
-            <th>Acciones</th>
+            <th scope="col">Producto</th>
+            <th scope="col">Cantidad</th>
+            <th scope="col">Precio U.</th>
+            <th scope="col">Subtotal</th>
+            <th scope="col">Acciones</th>
           </tr>
         </thead>
         <tbody>

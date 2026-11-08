@@ -2,17 +2,20 @@
 {% load static %}
 
 {% block title %}Pedidos pagados{% endblock %}
+{% block body_class %}nova-ui nova-ui--report{% endblock %}
+{% block module_styles %}<link rel="stylesheet" href="{% static 'css/nova_modules.css' %}?v=1">
+<script defer src="{% static 'javascript/nova_modules.js' %}?v=1"></script>{% endblock %}
 
 {% block extra_head %}
 <link rel="stylesheet"
       href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"/>
 <link rel="stylesheet"
-      href="{% static 'css/reportes_pedidos_pagados.css' %}">
+      href="{% static 'css/reportes_pedidos_pagados.css' %}?v=2">
 {% endblock %}
 
 {% block content %}
 <div class="wrap">
-  <div class="card">
+  <div class="card nova-page nova-report-page">
     <h2><i class="fas fa-file-invoice-dollar"></i> Pedidos pagados</h2>
 
     <div id="flash-ok"   class="alert alert-success" style="display:none"></div>
@@ -21,7 +24,7 @@
     <div class="grid">
       <!-- Sucursal -->
       <div class="field">
-        <label>Sucursal</label>
+        <label for="ac_sucursal">Sucursal</label>
         <div class="ac-wrap">
           <i class="fas fa-store"></i>
           <input id="ac_sucursal" class="ac-input" placeholder="Buscar sucursal…" autocomplete="off">
@@ -32,7 +35,7 @@
 
       <!-- Punto de pago -->
       <div class="field">
-        <label>Punto de pago (opcional)</label>
+        <label for="ac_puntopago">Punto de pago (opcional)</label>
         <div class="ac-wrap">
           <i class="fas fa-cash-register"></i>
           <input id="ac_puntopago" class="ac-input" placeholder="Buscar punto de pago…" autocomplete="off" disabled>
@@ -44,7 +47,7 @@
 
       <!-- Fecha (opcional) -->
       <div class="field">
-        <label>Fecha recibida (opcional)</label>
+        <label for="fecha">Fecha recibida (opcional)</label>
         <div class="date-wrap">
           <i class="fas fa-calendar-day"></i>
           <input type="date" id="fecha" class="date-input">

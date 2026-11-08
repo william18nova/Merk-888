@@ -2,6 +2,9 @@
 {% load static %}
 
 {% block title %}Clientes{% endblock %}
+{% block body_class %}nova-ui nova-ui--list{% endblock %}
+{% block module_styles %}<link rel="stylesheet" href="{% static 'css/nova_modules.css' %}?v=1">
+<script defer src="{% static 'javascript/nova_modules.js' %}?v=1"></script>{% endblock %}
 
 {% block extra_head %}
   <link rel="stylesheet"
@@ -9,11 +12,11 @@
   <link rel="stylesheet"
         href="https://cdn.datatables.net/1.13.8/css/jquery.dataTables.min.css"/>
   <link rel="stylesheet"
-        href="{% static 'css/visualizar_clientes.css' %}">
+        href="{% static 'css/visualizar_clientes.css' %}?v=2">
 {% endblock %}
 
 {% block content %}
-  <div class="container">
+  <div class="container nova-page nova-list-page">
     <h2><i class="fas fa-user-friends"></i> Lista de Clientes</h2>
 
     {% if messages %}
@@ -29,12 +32,12 @@
     <table id="clientesTable" class="display">
       <thead>
         <tr>
-          <th>Nombre</th>
-          <th>Apellido</th>
-          <th>Teléfono</th>
-          <th>Email</th>
-          <th>N.º Documento</th>
-          <th class="no-sort">Acciones</th>
+          <th scope="col">Nombre</th>
+          <th scope="col">Apellido</th>
+          <th scope="col">Teléfono</th>
+          <th scope="col">Email</th>
+          <th scope="col">N.º Documento</th>
+          <th scope="col" class="no-sort">Acciones</th>
         </tr>
       </thead>
       <tbody>

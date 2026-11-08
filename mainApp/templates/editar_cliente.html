@@ -2,16 +2,19 @@
 {% load static %}
 
 {% block title %}Editar Cliente{% endblock %}
+{% block body_class %}nova-ui nova-ui--form{% endblock %}
+{% block module_styles %}<link rel="stylesheet" href="{% static 'css/nova_modules.css' %}?v=1">
+<script defer src="{% static 'javascript/nova_modules.js' %}?v=1"></script>{% endblock %}
 
 {% block extra_head %}
   <link rel="stylesheet"
-        href="{% static 'css/agregar_cliente.css' %}">
+        href="{% static 'css/agregar_cliente.css' %}?v=2">
   <script defer
           src="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/js/all.min.js"></script>
 {% endblock %}
 
 {% block content %}
-  <div class="container-empleado">
+  <div class="container-empleado nova-page nova-form-page">
     <i class="fas fa-user-edit icon-empleado"></i>
     <h2>Editar Cliente</h2>
 
@@ -22,13 +25,13 @@
     <div id="error-message"   class="alert alert-error"   style="display:none;"></div>
     <div id="success-message" class="alert alert-success" style="display:none;"></div>
 
-    <form id="clienteForm"
+    <form class="nova-form-grid" id="clienteForm"
           method="post"
           action="{% url 'editar_cliente' form.instance.pk %}">
       {% csrf_token %}
 
       {% for field in form.visible_fields %}
-        <div class="form-group-empleado">
+        <div class="form-group-empleado{% if field.name == 'numerodocumento' %} nova-field-wide{% endif %}">
           <label for="{{ field.id_for_label }}">
             {{ field.label }}
             {% if field.field.required %}<span class="required">*</span>{% endif %}

@@ -3,6 +3,10 @@
 {% load static %}
 
 {% block title %}Generar Venta{% endblock %}
+{% block body_class %}nova-ui nova-ui--checkout{% endblock %}
+{% block module_styles %}<link rel="stylesheet" href="{% static 'css/nova_modules.css' %}?v=1">
+<script defer src="{% static 'javascript/nova_modules.js' %}?v=1"></script>
+<link rel="stylesheet" href="{% static 'css/nova_checkout.css' %}?v=1">{% endblock %}
 
 {% block extra_head %}
   {% if hybrid_local %}
@@ -16,7 +20,7 @@
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"/>
   {% endif %}
   <link rel="stylesheet" href="{% static 'vendor/jquery-ui/jquery-ui-1.13.2.min.css' %}?v=1"/>
-  <link rel="stylesheet" href="{% static 'css/generar_venta.css' %}?v=29">
+  <link rel="stylesheet" href="{% static 'css/generar_venta.css' %}?v=30">
   <link rel="stylesheet" href="{% static 'css/modal_venta.css' %}?v=19">
 {% endblock %}
 
@@ -262,11 +266,11 @@
       <table id="detalle-productos" class="table">
         <thead>
           <tr>
-            <th>Producto</th>
-            <th>Cant.</th>
-            <th>Precio U.</th>
-            <th>Subtotal</th>
-            <th class="text-center">Acc.</th>
+            <th scope="col">Producto</th>
+            <th scope="col">Cant.</th>
+            <th scope="col">Precio U.</th>
+            <th scope="col">Subtotal</th>
+            <th scope="col" class="text-center">Acc.</th>
           </tr>
         </thead>
         <tbody></tbody>

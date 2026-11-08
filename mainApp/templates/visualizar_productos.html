@@ -2,16 +2,12 @@
 {% load static %}
 
 {% block title %}Visualizar Productos{% endblock %}
+{% block body_class %}nova-ui nova-ui--list nova-ui--products{% endblock %}
+{% block module_styles %}<link rel="stylesheet" href="{% static 'css/nova_modules.css' %}?v=1">
+<script defer src="{% static 'javascript/nova_modules.js' %}?v=1"></script>{% endblock %}
 
-{% block content %}
-<!DOCTYPE html>
-<html lang="es">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Lista de Productos</title>
-
-  <link rel="stylesheet"
+{% block extra_head %}
+<link rel="stylesheet"
         href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"/>
 
   <link rel="stylesheet"
@@ -19,10 +15,11 @@
   <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
   <script src="https://cdn.datatables.net/1.11.5/js/jquery.dataTables.min.js"></script>
 
-  <link rel="stylesheet" href="{% static 'css/visualizar_productos.css' %}">
-</head>
-<body>
-  <div class="container">
+  <link rel="stylesheet" href="{% static 'css/visualizar_productos.css' %}?v=2">
+{% endblock %}
+
+{% block content %}
+  <div class="container nova-page nova-list-page">
     <h2><i class="fas fa-box"></i> Lista de Productos</h2>
 
     {% if messages %}
@@ -37,7 +34,7 @@
 
     <div class="search-wrapper">
       <i class="fas fa-search"></i>
-      <input id="buscador-productos" class="search-input" type="text"
+      <input id="buscador-productos" aria-label="Buscar productos" class="search-input" type="text"
              placeholder="Buscar por nombre o código de barras…"
              autocomplete="off" data-barcode-camera="true">
     </div>
@@ -45,19 +42,19 @@
     <table id="productosTable" class="display">
       <thead>
         <tr>
-          <th>ID</th>
-          <th>Nombre</th>
-          <th>Descripción</th>
-          <th>Precio</th>
-          <th>Precio anterior</th>   {# ✅ NUEVO #}
-          <th>Categoría</th>
-          <th>Cód. Barras</th>
-          <th>IVA</th>
-          <th>Imp. Consumo</th>
-          <th>ICUI</th>
-          <th>IBUA</th>
-          <th>Rentabilidad</th>
-          <th class="no-sort">Acciones</th>
+          <th scope="col">ID</th>
+          <th scope="col">Nombre</th>
+          <th scope="col">Descripción</th>
+          <th scope="col">Precio</th>
+          <th scope="col">Precio anterior</th>   {# ✅ NUEVO #}
+          <th scope="col">Categoría</th>
+          <th scope="col">Cód. Barras</th>
+          <th scope="col">IVA</th>
+          <th scope="col">Imp. Consumo</th>
+          <th scope="col">ICUI</th>
+          <th scope="col">IBUA</th>
+          <th scope="col">Rentabilidad</th>
+          <th scope="col" class="no-sort">Acciones</th>
         </tr>
       </thead>
       <tbody></tbody>
@@ -69,6 +66,4 @@
   </script>
 
   <script src="{% static 'javascript/visualizar_productos.js' %}" defer></script>
-</body>
-</html>
 {% endblock %}

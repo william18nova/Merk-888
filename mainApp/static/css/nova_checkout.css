@@ -1,0 +1,105 @@
+/* Ajustes de presentación del POS. Conserva estados, atajos y scroll del modal. */
+.nova-ui--checkout .page-grid { max-width: 1520px; margin: 26px auto 44px; gap: 20px; grid-template-columns: minmax(300px, .75fr) minmax(0, 1.25fr); align-items: start; }
+.nova-ui--checkout .panel { min-height: 0; padding: 22px; border: 1px solid var(--nova-border); border-radius: 16px; color: var(--nova-text); background: var(--nova-surface); box-shadow: 0 12px 32px #0613242b; backdrop-filter: none; }
+.nova-ui--checkout .panel-left h1, .nova-ui--checkout .panel-right h2 { margin: 0 0 20px; color: #f5f8ff; text-align: left; font-size: clamp(24px, 2.4vw, 30px); font-weight: 700; letter-spacing: -.035em; text-shadow: none; }
+.nova-ui--checkout .panel-right h2 { font-size: 24px; }
+.nova-ui--checkout .panel .form-group { margin-bottom: 18px; }
+.nova-ui--checkout .panel .form-group label { color: var(--nova-text); font-size: 12px; font-weight: 600; }
+.nova-ui--checkout .panel .form-group :is(input:not([type="hidden"]), select) { min-height: 46px; border-color: #46617e; border-radius: 9px; color: #f2f6ff; background-color: var(--nova-input); font-size: 14px; transform: none; }
+.nova-ui--checkout .panel .form-group :is(input, select):focus { border-color: var(--nova-focus); background-color: #173453; box-shadow: 0 0 0 3px #87baff20; }
+.nova-ui--checkout .panel .hint { color: var(--nova-muted); font-size: 11px; line-height: 1.6; opacity: 1; }
+.nova-ui--checkout :is(.panel, #myModal) :is(button, input, select, a):focus-visible { outline: 3px solid var(--nova-focus); outline-offset: 3px; }
+.nova-ui--checkout .panel .btn { min-height: 44px; padding: 10px 15px; border-radius: 9px; font-size: 13px; font-weight: 650; letter-spacing: 0; text-transform: none; box-shadow: none; }
+.nova-ui--checkout .panel .btn-primary { border: 1px solid #6c9cd8; color: #fff; background: #2b63a6; }
+.nova-ui--checkout .panel .btn-primary:hover { background: #3475bd; transform: none; box-shadow: none; }
+.nova-ui--checkout .panel .btn-secondary { color: #c8ddf6; border-color: #46617e; background: #203e60; }
+.nova-ui--checkout .panel .btn-secondary:hover { color: #fff; background: #2c527b; transform: none; }
+.nova-ui--checkout #btn-scan-cam.btn-escanear { border: 1px solid #527196 !important; color: #b3d5ff !important; background: #234567 !important; box-shadow: none !important; }
+.nova-ui--checkout .right-header { align-items: stretch; gap: 16px; margin-bottom: 18px; text-align: left; }
+.nova-ui--checkout .right-title { width: 100%; }
+.nova-ui--checkout .bag-quick-actions { margin-bottom: 8px; gap: 8px; }
+.nova-ui--checkout .bag-quick-actions .btn { min-height: 38px; padding: 8px 11px; font-size: 11px; }
+.nova-ui--checkout .panel-right .total-line { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 16px; margin-top: 16px; border: 1px solid #426080; border-radius: 10px; color: #c4d6ec; background: var(--nova-head); font-size: 13px; font-weight: 500; text-align: left; }
+.nova-ui--checkout #total { color: #f4f8ff; font-size: clamp(26px, 3vw, 34px); font-weight: 750; font-variant-numeric: tabular-nums; }
+.nova-ui--checkout .right-actions { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: center; }
+.nova-ui--checkout #generar-venta { grid-column: 1 / -1; width: 100%; max-width: none; margin: 0; min-height: 48px; }
+.nova-ui--checkout #buscar-detalles { max-width: none; min-height: 42px; margin: 0; padding: 10px 12px; border: 1px solid #46617e; border-radius: 9px; color: #f2f6ff; background: var(--nova-input); }
+.nova-ui--checkout #buscar-detalles::placeholder { color: #a2b6d0; }
+.nova-ui--checkout #vaciar-carrito { min-height: 42px; padding: 9px 12px; border: 1px solid #815166; color: #ffc1ca; background: #462e40; font-size: 12px; font-weight: 600; box-shadow: none; }
+.nova-ui--checkout #vaciar-carrito:hover { background: #60394c; transform: none; }
+.nova-ui--checkout #detalle-productos { border: 1px solid var(--nova-border); border-radius: 10px; color: var(--nova-text); background: var(--nova-row); box-shadow: none; }
+.nova-ui--checkout #detalle-productos th { padding: 13px 10px; border: 0; border-bottom: 1px solid #426080; color: #c4d6ec; background: var(--nova-head); font-size: 10px; font-weight: 650; text-transform: uppercase; }
+.nova-ui--checkout #detalle-productos td { padding: 12px 10px; border: 0; border-bottom: 1px solid #2c4766; color: var(--nova-text); background: transparent; font-size: 12px; }
+.nova-ui--checkout #detalle-productos tbody tr { background: var(--nova-row); }
+.nova-ui--checkout #detalle-productos tbody tr:nth-child(even) { background: var(--nova-row-alt); }
+.nova-ui--checkout #detalle-productos tbody tr:hover { background: var(--nova-hover); }
+.nova-ui--checkout #detalle-productos td:first-child { color: #dce9f9; font-weight: 600; }
+.nova-ui--checkout #detalle-productos td:nth-child(4) { color: #f4f8ff; font-weight: 700; font-variant-numeric: tabular-nums; }
+.nova-ui--checkout #detalle-productos tbody td::before { color: var(--nova-muted); font-size: 11px; font-weight: 500; }
+.nova-ui--checkout #detalle-productos :is(.qty-input, input[type="number"]) { border: 1px solid #527196; border-radius: 8px; color: #f2f6ff; background: var(--nova-input); box-shadow: none; }
+.nova-ui--checkout .btn-chip-danger { color: #ffc1ca; border: 1px solid #815166; background: #462e40; font-weight: 600; box-shadow: none; }
+.nova-ui--checkout .btn-chip-danger:hover { background: #60394c; box-shadow: none; transform: none; }
+.nova-ui--checkout .right-footer { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--nova-border); text-align: left; }
+.nova-ui--checkout .right-footer .venta-draft-save-status { text-align: left; }
+.nova-ui--checkout .ui-autocomplete { padding: 5px; border: 1px solid #527196; border-radius: 10px; color: var(--nova-text); background: var(--nova-surface); box-shadow: 0 12px 30px #06132466; }
+.nova-ui--checkout .ui-autocomplete .ui-menu-item-wrapper { padding: 10px 12px; border-radius: 6px; }
+.nova-ui--checkout .ui-autocomplete .ui-state-active { margin: 0; border-color: transparent; color: #f4f8ff; background: #284d74; }
+
+/* Solo aspecto del modal: no se redefine display, bloqueo de scroll ni apertura. */
+.nova-ui--checkout #myModal.modal { background: #061324d9; backdrop-filter: blur(6px); }
+.nova-ui--checkout #myModal .modal-content { width: min(600px, 100%); padding: 24px; border: 1px solid #527196; border-radius: 16px; color: var(--nova-text); background: var(--nova-surface); box-shadow: 0 20px 70px #020c1c80; }
+.nova-ui--checkout #myModal .modal-content::before { content: none; }
+.nova-ui--checkout #myModal .modal-content h2 { margin: 0 50px 20px 0; color: #f5f8ff; font-size: 26px; font-weight: 700; letter-spacing: -.025em; text-shadow: none; }
+.nova-ui--checkout #myModal .close { width: 44px; height: 44px; border: 1px solid #527196; border-radius: 10px; background: #203e60; box-shadow: none; }
+.nova-ui--checkout #myModal :is(.total-banner, .pending-banner, .payment-help) { border: 1px solid #426080; border-radius: 10px; color: #dce9f9; background: var(--nova-head); box-shadow: none; }
+.nova-ui--checkout #myModal .total-label { font-size: 13px; font-weight: 600; }
+.nova-ui--checkout #myModal .total-amount { padding: 0; border: 0; border-radius: 0; color: #f4f8ff; background: transparent; font-size: 22px; font-weight: 750; box-shadow: none; font-variant-numeric: tabular-nums; }
+.nova-ui--checkout #myModal .total-icon { border-radius: 8px; box-shadow: none; }
+.nova-ui--checkout #myModal .modal-content > p.payment-help { font-size: 12px; line-height: 1.65; box-shadow: none; }
+.nova-ui--checkout #myModal :is(.mix-row, .radio-wrap) { gap: 10px; padding: 12px; margin: 10px 0; border: 1px solid #36506d; border-radius: 10px; color: var(--nova-text); background: var(--nova-input); box-shadow: none; }
+.nova-ui--checkout #myModal :is(.mix-row, .radio-wrap):hover { transform: none; border-color: #6589b2; background: #1b3858; }
+.nova-ui--checkout #myModal .mix-row:has(input:checked) { border-color: #86b0e3; background: #233f5c; }
+.nova-ui--checkout #myModal .mix-check { gap: 12px; min-height: 28px; }
+.nova-ui--checkout #myModal .mix-check span { font-size: 13px; font-weight: 600; letter-spacing: 0; text-shadow: none; }
+.nova-ui--checkout #myModal .mix-check input[type="checkbox"] { width: 21px; height: 21px; filter: none; accent-color: #82b5fc; }
+.nova-ui--checkout #myModal :is(.pm-amt, #monto-recibido, .employee-discount-auth input) { min-height: 44px; border: 1px solid #527196; border-radius: 9px; color: #f2f6ff; background: var(--nova-input); box-shadow: none; font-size: 15px; }
+.nova-ui--checkout #myModal :is(.pm-amt, #monto-recibido)::placeholder { color: #a2b6d0; }
+.nova-ui--checkout #myModal #confirmar-pago { min-height: 46px; border: 1px solid #6c9cd8; border-radius: 9px; color: #fff; background: #2b63a6; font-size: 14px; font-weight: 650; letter-spacing: 0; text-transform: none; box-shadow: none; }
+.nova-ui--checkout #myModal #confirmar-pago:hover { background: #3475bd; box-shadow: none; }
+
+@media (max-width: 1100px) {
+  .nova-ui--checkout .page-grid { grid-template-columns: minmax(280px, .8fr) minmax(0, 1.2fr); gap: 16px; }
+  .nova-ui--checkout .panel { padding: 18px; }
+  .nova-ui--checkout #detalle-productos :is(th, td) { padding-left: 8px; padding-right: 8px; }
+}
+@media (max-width: 900px) {
+  .nova-ui--checkout .page-grid { grid-template-columns: 1fr; margin-top: 18px; }
+  .nova-ui--checkout .panel { width: 100%; min-height: 0; }
+  .nova-ui--checkout .panel-left form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 18px; }
+  .nova-ui--checkout .panel-left form > .sep { grid-column: 1 / -1; }
+}
+@media (max-width: 760px) {
+  .nova-ui--checkout .panel { padding: 18px 16px; border-radius: 13px; }
+  .nova-ui--checkout .panel-left form { grid-template-columns: 1fr; }
+  .nova-ui--checkout .panel .form-group :is(input:not([type="hidden"]), select), .nova-ui--checkout #buscar-detalles { font-size: 16px; }
+  .nova-ui--checkout #detalle-productos tbody tr { border-color: #3a5778; background: var(--nova-row) !important; box-shadow: none; }
+  .nova-ui--checkout #detalle-productos tbody td { border-bottom-color: #2c4766; color: var(--nova-text); background: transparent; }
+  .nova-ui--checkout #detalle-productos tbody td::before { color: var(--nova-muted); font-size: 11px; font-weight: 500; }
+  .nova-ui--checkout #detalle-productos tbody td:nth-child(4) { color: #f4f8ff; font-size: 17px; }
+  .nova-ui--checkout .btn-chip-danger.eliminar-producto { width: 44px; min-width: 44px; height: 44px; }
+  .nova-ui--checkout #myModal .modal-content { padding: 20px 16px; }
+  .nova-ui--checkout #myModal :is(.pm-amt, #monto-recibido, .employee-discount-auth input) { font-size: 16px; }
+}
+@media (max-width: 600px) {
+  .nova-ui--checkout #myModal :is(.mix-row, .radio-wrap).show-amt,
+  .nova-ui--checkout #myModal :is(.mix-row, .radio-wrap):has(.pm-amt:not(:disabled)) { grid-template-columns: minmax(0, 1fr) !important; }
+  .nova-ui--checkout #myModal .total-banner { flex-wrap: wrap; }
+  .nova-ui--checkout #myModal .total-amount { margin-left: auto; font-size: 20px; }
+}
+@media (max-width: 400px) {
+  .nova-ui--checkout .right-actions { grid-template-columns: minmax(0, 1fr); }
+  .nova-ui--checkout #vaciar-carrito { justify-self: end; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .nova-ui--checkout :is(.panel, #myModal) *, .nova-ui--checkout .ui-autocomplete { animation: none !important; transition: none !important; }
+}

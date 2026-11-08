@@ -3,6 +3,9 @@
 {% load static %}
 
 {% block title %}Detalle del Pedido #{{ pedido.pedidoid }}{% endblock %}
+{% block body_class %}nova-ui nova-ui--order{% endblock %}
+{% block module_styles %}<link rel="stylesheet" href="{% static 'css/nova_modules.css' %}?v=1">
+<script defer src="{% static 'javascript/nova_modules.js' %}?v=1"></script>{% endblock %}
 
 {% block extra_head %}
   <!-- Font-Awesome + DataTables CSS -->
@@ -12,18 +15,16 @@
         href="https://cdn.datatables.net/1.13.8/css/jquery.dataTables.min.css"/>
 
   <!-- Misma hoja que editar/agregar pedido -->
-  <link rel="stylesheet" href="{% static 'css/agregar_pedido.css' %}"/>
-  <!-- Estilos comunes para tablas (de visualizar_pedidos.css) -->
-  <link rel="stylesheet" href="{% static 'css/visualizar_pedidos.css' %}"/>
+  <link rel="stylesheet" href="{% static 'css/agregar_pedido.css' %}?v=2"/>
 {% endblock %}
 
 {% block content %}
-<div class="container-inventario">
+<div class="container-inventario nova-page nova-form-page nova-order-page">
   <i class="fas fa-truck icon-inventario"></i>
   <h2>Detalle del Pedido #{{ pedido.pedidoid }}</h2>
   <p class="obligatorio-texto">Los campos están en modo solo lectura.</p>
 
-  <form id="verPedidoForm">
+  <form class="nova-form-grid" id="verPedidoForm">
     {% csrf_token %}
 
     <div class="form-group-precio">
@@ -67,11 +68,11 @@
     <table id="detalle-pedido" class="display">
       <thead>
         <tr>
-          <th>Producto</th>
-          <th>Cantidad</th>
-          <th>Precio U.</th>
-          <th>Subtotal</th>
-          <th>Acciones</th>
+          <th scope="col">Producto</th>
+          <th scope="col">Cantidad</th>
+          <th scope="col">Precio U.</th>
+          <th scope="col">Subtotal</th>
+          <th scope="col">Acciones</th>
         </tr>
       </thead>
       <tbody>
