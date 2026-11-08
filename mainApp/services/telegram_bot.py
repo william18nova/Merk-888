@@ -73,7 +73,7 @@ from mainApp.services.telegram_expense_language import (
 from mainApp.services import telegram_providers
 from mainApp.services.telegram_timing import ai_deadline, logger as timing_logger, measured, network_timeout
 from mainApp.services.telegram_transport import http_request
-from . import telegram_finance_workflows, telegram_reports, telegram_scheduling, telegram_receipts
+from . import telegram_finance_workflows, telegram_reports, telegram_scheduling, telegram_receipts, telegram_tts
 
 EXTENSION_FUNCTIONS = {**telegram_finance_workflows.TOOL_FUNCTIONS, **telegram_reports.TOOL_FUNCTIONS,
                        **telegram_scheduling.TOOL_FUNCTIONS, **telegram_receipts.TOOL_FUNCTIONS}
@@ -297,6 +297,7 @@ def integration_status():
         "voice_provider": " → ".join(telegram_providers.LABELS[n] for n in voice_providers),
         "providers": provider_rows,
         "provider_error": provider_error,
+        "audio_replies": telegram_tts.status(),
         "enabled": is_feature_enabled(TELEGRAM_BOT_FEATURE),
     }
 
@@ -498,7 +499,7 @@ class TelegramApiClient:
 
     def _post(self, method, *, payload=None, files=None, timeout=(3, 20)):
         from .telegram_transport import retry_after
-        uncertain = method in {"sendMessage", "sendDocument"}
+        uncertain = method in {"sendMessage", "sendDocument", "sendVoice"}
         response = None
         try:
             response = http_request(
@@ -669,6 +670,27 @@ class TelegramApiClient:
         if wait: time.sleep(wait)
         result = self._post('sendDocument', payload={'chat_id': int(chat_id)},
             files={'document': (document.name, document.data, document.mime)}, timeout=(3, 45))
+        self._next_send = time.monotonic() + 1.05
+        return result
+
+    def send_voice(self, chat_id, audio, *, reply_to_message_id):
+        if (not isinstance(audio, telegram_tts.BotVoice) or audio.name != 'novapos-respuesta.ogg'
+                or audio.mime != 'audio/ogg' or not isinstance(audio.data, bytes)
+                or not 1 <= len(audio.data) <= telegram_tts.MAX_AUDIO
+                or not audio.data.startswith(b'OggS') or b'OpusHead' not in audio.data[:128]
+                or type(audio.duration) is not int or not 1 <= audio.duration <= telegram_tts.MAX_SECONDS
+                or type(reply_to_message_id) is not int or reply_to_message_id <= 0):
+            raise TelegramBotError('No pude preparar una nota de voz válida.')
+        wait = max(0, self._next_send - time.monotonic())
+        if wait:
+            time.sleep(min(wait, 1.1))
+        # Un único intento: una entrega de audio incierta nunca repite el texto
+        # ni la operación. Los botones permanecen en el mensaje escrito.
+        result = self._post('sendVoice', payload={'chat_id': int(chat_id),
+            'duration': audio.duration, 'disable_notification': True, 'protect_content': True,
+            'caption': 'Lectura automática. El texto y sus botones son la referencia para confirmar cambios.',
+            'reply_parameters': json.dumps({'message_id': reply_to_message_id})},
+            files={'voice': (audio.name, audio.data, audio.mime)}, timeout=(3, 12))
         self._next_send = time.monotonic() + 1.05
         return result
 
@@ -2577,13 +2599,14 @@ def _validate_bot_reply(reply):
 def _send_bot_reply(client, chat_id, reply):
     code = _validate_bot_reply(reply)
     try:
-        client.send_message(chat_id, reply.text, reply_markup=reply.reply_markup,
-                            require_buttons=bool(reply.proposal_id))
+        delivery = client.send_message(chat_id, reply.text, reply_markup=reply.reply_markup,
+                                       require_buttons=bool(reply.proposal_id))
         if code is not None:
             # Texto plano exacto: sin título, prefijo, Markdown ni otros datos.
             client.send_message(chat_id, code)
         if reply.document is not None:
             client.send_document(chat_id, reply.document)
+        return delivery
     except TelegramBotError as exc:
         if reply.document is not None:
             raise TelegramDeliveryUncertain('No pude confirmar la entrega del archivo completo. Puedes volver a pedir el informe; no se ejecutó ninguna operación contable.') from None
@@ -2701,12 +2724,17 @@ def process_next_update():
             update.respuesta = (reply.history_text if reply.history_text is not None else reply.text)[:8000]
             update.save(update_fields=["intencion", "respuesta"])
             with measured("enviar_respuesta", update_id=update.pk):
-                _send_bot_reply(client, update.telegram_chat_id, reply)
+                delivery = _send_bot_reply(client, update.telegram_chat_id, reply)
             update.estado = "PROCESADO"
             update.intencion = reply.intent[:80]
             update.respuesta = (reply.history_text if reply.history_text is not None else reply.text)[:8000]
         update.procesado_en = timezone.now()
         update.save(update_fields=["estado", "intencion", "respuesta", "procesado_en"])
+        if update.estado == 'PROCESADO' and update.tipo != 'OTRO':
+            try:
+                telegram_tts.enqueue_reply(update, reply, delivery)
+            except Exception as exc:
+                logger.warning('Telegram voz_salida cola_no_disponible update=%s clase=%s', update.pk, type(exc).__name__)
     except TelegramTranscriptionPending as exc:
         update.estado = "PENDIENTE"
         update.intentos = max(0, update.intentos - 1)

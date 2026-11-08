@@ -268,3 +268,9 @@ ASSEMBLYAI_API_KEY = _telegram_setting("ASSEMBLYAI_API_KEY")
 ASSEMBLYAI_MODEL = _telegram_setting("ASSEMBLYAI_MODEL", "universal-2")
 ASSEMBLYAI_TRIAL_CONFIRMED = _telegram_setting("ASSEMBLYAI_TRIAL_CONFIRMED", "false")
 TELEGRAM_FFMPEG_BIN = _telegram_setting("TELEGRAM_FFMPEG_BIN", "ffmpeg")
+# Voz de salida opcional. Activar solo con consentimiento para enviar a Gemini
+# el texto de las respuestas y tras revisar el plan/cuota del proyecto.
+# off: solo texto; voice: texto + voz al recibir audio; always: ambos formatos.
+TELEGRAM_AUDIO_REPLIES = _telegram_setting("TELEGRAM_AUDIO_REPLIES", "off")
+GEMINI_TTS_MODEL = _telegram_setting("GEMINI_TTS_MODEL", "gemini-3.8-flash-lite-tts")
+GEMINI_TTS_VOICE = _telegram_setting("GEMINI_TTS_VOICE", "Kore")

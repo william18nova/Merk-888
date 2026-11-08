@@ -28,6 +28,7 @@
     <article><span class="tg-dot {% if integration.telegram_token and integration.webhook_secret %}is-ok{% endif %}"></span><small>Telegram</small><strong>{% if integration.telegram_token and integration.webhook_secret %}Configurado{% else %}Faltan variables{% endif %}</strong></article>
     <article><span class="tg-dot {% if integration.text_provider %}is-ok{% endif %}"></span><small>Proveedores de texto configurados</small><strong>{% if integration.text_provider %}{{ integration.text_provider }}{% else %}Falta proveedor IA{% endif %}</strong></article>
     <article><span class="tg-dot {% if integration.voice_provider %}is-ok{% endif %}"></span><small>Proveedores de audio configurados</small><strong>{{ integration.voice_provider|default:"Falta proveedor de voz" }}</strong></article>
+    <article><span class="tg-dot {% if integration.audio_replies.ready %}is-ok{% endif %}"></span><small>Respuestas habladas</small><strong>{{ integration.audio_replies.label }}</strong></article>
   </div>
 
   <section class="tg-card tg-card--wide">
@@ -38,6 +39,7 @@
       {% for provider in integration.providers %}<tr><td>{{ provider.stage }}</td><td>{{ provider.name }}</td><td>{{ provider.status }}</td></tr>{% endfor %}
     </tbody></table></div>
     <p class="tg-muted">Azure requiere FFmpeg y un recurso F0; solo se envían audios completos de hasta 60 segundos. Deepgram y AssemblyAI usan créditos iniciales, no una cuota gratuita ilimitada. Desactiva las recargas automáticas en cada cuenta.</p>
+    <p class="tg-muted">La voz de salida es opcional y usa Gemini TTS: primero se entrega el texto y después su lectura automática, sin cambiar los botones. No se leen claves de un solo uso. Si la síntesis no está disponible, se conserva la respuesta escrita. Los informes extensos se consultan completos por escrito.</p>
   </section>
 
   {% if generated_code %}
