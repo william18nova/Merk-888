@@ -1,11 +1,12 @@
 from datetime import date
+from copy import deepcopy
 from decimal import Decimal
 from unittest.mock import patch
 from types import SimpleNamespace
 from django.test import SimpleTestCase, RequestFactory
 from django.core.exceptions import PermissionDenied
 from mainApp.services.expense_reconciliation import reconcile, similarity, registered_payments
-from mainApp.expense_reconciliation_views import PagosCierresRevisionView
+from mainApp.expense_reconciliation_views import PagosCierresRevisionView, _pending_review_context
 
 
 class ReconciliationTests(SimpleTestCase):
@@ -14,6 +15,14 @@ class ReconciliationTests(SimpleTestCase):
 
     def expense(self, name='FABIÁN', amount='70000', day=1, method='efectivo'):
         return dict(id=10,date=date(2026,11,day),name=name,amount=Decimal(amount),method=method)
+
+    def report(self, declarations, expenses, links):
+        rows = reconcile(declarations, expenses, links)
+        labels = {'linked': 'Conciliado con auditoría', 'possible': 'Puede estar registrado',
+                  'missing': 'Sin coincidencia', 'review': 'Revisar'}
+        summary = [dict(code=code, label=label) for code, label in labels.items()]
+        return dict(rows=rows, summary=summary,
+                    **registered_payments(expenses, rows, date(2026,11,1), date(2026,11,2)))
 
     def test_similar_name_is_only_possible(self):
         self.assertEqual(reconcile([self.declaration()],[self.expense()],{})[0]['status'],'possible')
@@ -120,6 +129,81 @@ class ReconciliationTests(SimpleTestCase):
         self.assertEqual(result['registered_count'], 3)
         self.assertEqual(result['registered_total'], Decimal('210000'))
 
+    def test_pending_view_removes_only_audited_matches_from_both_lists_and_totals(self):
+        possible = dict(self.expense('CAMILA', '80000'), id=11, total=Decimal('80320'), tax=Decimal('320'))
+        unrelated = dict(self.expense('TRANSPORTE', '10000', method='nequi'), id=12)
+        report = self.report([self.declaration(), self.declaration(3, 'CAMILA', '80000'),
+                              self.declaration(2, 'BIBIANA', '90000')],
+                             [self.expense(), possible, unrelated], {(1,0): {10}})
+        before = deepcopy(report)
+        result = _pending_review_context(report)
+        self.assertEqual([(row['turn'], row['status']) for row in result['rows']],
+                         [(3, 'possible'), (2, 'missing')])
+        self.assertEqual([item['id'] for item in result['registered_payments']], [12, 11])
+        self.assertEqual(result['reconciled_hidden_count'], 1)
+        self.assertEqual(result['registered_count'], 2)
+        self.assertEqual(result['registered_base_total'], Decimal('90000'))
+        self.assertEqual(result['registered_total'], Decimal('90320'))
+        self.assertEqual({item['code']: (item['count'], item['total']) for item in result['summary']},
+                         {'possible': (1, Decimal('80000')), 'missing': (1, Decimal('90000')),
+                          'review': (0, Decimal(0))})
+        # El informe interno sigue conservando los vínculos para evitar duplicados.
+        self.assertEqual(report, before)
+        self.assertEqual(report['rows'][0]['status'], 'linked')
+
+    def test_all_reconciled_leaves_empty_pending_lists_and_zero_totals(self):
+        report = self.report([self.declaration()], [self.expense()], {(1,0): {10}})
+        result = _pending_review_context(report)
+        self.assertEqual(result['rows'], [])
+        self.assertEqual(result['registered_payments'], [])
+        self.assertEqual(result['registered_count'], 0)
+        self.assertEqual(result['registered_base_total'], Decimal(0))
+        self.assertEqual(result['registered_total'], Decimal(0))
+        self.assertTrue(all(item['count'] == 0 and item['total'] == 0 for item in result['summary']))
+
+    def test_split_audited_payments_are_all_removed_from_pending_ledger(self):
+        expenses = [self.expense('LINA', '80000'), dict(self.expense('MIGUEL', '50000'), id=11)]
+        report = self.report([self.declaration(name='LINA 80000 MIGUEL 50000', amount='130000')],
+                             expenses, {(1,0): {10,11}})
+        result = _pending_review_context(report)
+        self.assertEqual(result['rows'], [])
+        self.assertEqual(result['registered_payments'], [])
+        self.assertEqual(result['reconciled_hidden_count'], 1)
+
+    def test_changed_audited_payments_stay_visible_for_review(self):
+        for changes in ({'amount': Decimal('80000')}, {'name': 'BIBIANA'},
+                        {'date': date(2026,11,2)}, {'method': 'nequi'}):
+            with self.subTest(changes=changes):
+                report = self.report([self.declaration()], [dict(self.expense(), **changes)], {(1,0): {10}})
+                result = _pending_review_context(report)
+                self.assertEqual(result['rows'][0]['status'], 'review')
+                self.assertEqual(result['registered_count'], 1)
+                self.assertEqual(result['reconciled_hidden_count'], 0)
+
+    def test_audited_source_with_invalid_breakdown_remains_visible(self):
+        report = self.report([self.declaration()], [self.expense()], {(1,0): {10}})
+        report['rows'][0]['source_error'] = 'El total del desglose no coincide.'
+        result = _pending_review_context(report)
+        self.assertEqual(result['rows'][0]['status'], 'review')
+        self.assertEqual(result['rows'][0]['source_error'], 'El total del desglose no coincide.')
+        self.assertEqual(result['registered_count'], 1)
+        self.assertEqual(result['reconciled_hidden_count'], 0)
+        self.assertEqual(next(item for item in result['summary'] if item['code'] == 'review')['count'], 1)
+        self.assertEqual(report['rows'][0]['status'], 'linked')
+
+    def test_payment_needed_by_an_unresolved_declaration_is_not_hidden(self):
+        report = self.report([self.declaration()], [self.expense()], {(1,0): {10}})
+        report['rows'].append(dict(report['rows'][0], turn=2, status='review'))
+        result = _pending_review_context(report)
+        self.assertEqual([row['turn'] for row in result['rows']], [2])
+        self.assertEqual([payment['id'] for payment in result['registered_payments']], [10])
+
+    def test_possible_match_without_audit_is_not_hidden(self):
+        result = _pending_review_context(self.report([self.declaration()], [self.expense()], {}))
+        self.assertEqual(result['rows'][0]['status'], 'possible')
+        self.assertEqual(result['registered_count'], 1)
+        self.assertEqual(result['reconciled_hidden_count'], 0)
+
 
 class ReconciliationViewTests(SimpleTestCase):
     def request(self,query=None):
@@ -194,12 +278,29 @@ class ReconciliationViewTests(SimpleTestCase):
     @patch('mainApp.expense_reconciliation_views.can_edit_expenses',return_value=True)
     @patch('mainApp.expense_reconciliation_views.closing_report')
     def test_declaration_status_filter_does_not_hide_registered_payments(self,report,permission,offline,render):
-        ledger=[{'id':1},{'id':2}]
+        ledger=[{'id':1,'amount':Decimal('70000')},{'id':2,'amount':Decimal('80000')}]
         report.return_value={'rows':[{'status':'linked'},{'status':'missing'}],'registered_payments':ledger}
         PagosCierresRevisionView.as_view()(self.request({'desde':'2026-11-01','hasta':'2026-11-01','estado':'missing'}))
         context=render.call_args.args[2]
         self.assertEqual(context['rows'],[{'status':'missing'}])
         self.assertEqual(context['registered_payments'],ledger)
+
+    @patch('mainApp.expense_reconciliation_views.render')
+    @patch('local_pos.request_context.offline_request',return_value=False)
+    @patch('mainApp.expense_reconciliation_views.can_edit_expenses',return_value=True)
+    @patch('mainApp.expense_reconciliation_views.closing_report')
+    def test_legacy_linked_filter_cannot_restore_reconciled_rows(self,report,permission,offline,render):
+        expenses = [dict(id=10, date=date(2026,11,1), name='FABIAN', amount=Decimal('70000'), method='efectivo')]
+        declarations = [dict(turn=turn, date=date(2026,11,1), payments=[dict(nombre=name, monto='70000')])
+                        for turn, name in ((1,'FABIAN'),(2,'BIBIANA'))]
+        rows = reconcile(declarations, expenses, {(1,0): {10}})
+        report.return_value = dict(rows=rows, **registered_payments(expenses, rows, date(2026,11,1), date(2026,11,1)))
+        PagosCierresRevisionView.as_view()(self.request(
+            {'desde':'2026-11-01','hasta':'2026-11-01','estado':'linked'}))
+        context=render.call_args.args[2]
+        self.assertEqual([(row['turn'],row['status']) for row in context['rows']],[(2,'missing')])
+        self.assertEqual(context['registered_payments'],[])
+        self.assertNotIn('selected_status',context)
 
     @patch('mainApp.expense_reconciliation_views.render')
     @patch('local_pos.request_context.offline_request',return_value=False)

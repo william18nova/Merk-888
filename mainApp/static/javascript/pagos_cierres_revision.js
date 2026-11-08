@@ -38,7 +38,7 @@
       element.hidden = !matches;
       if (matches) visible += 1;
     });
-    output.textContent = `${visible} de ${items.length} pagos visibles. Los totales corresponden a todo el rango.`;
+    output.textContent = `${visible} de ${items.length} pagos visibles. Los totales corresponden a esta lista, antes de buscar.`;
   };
   input.addEventListener('input', update);
   update();

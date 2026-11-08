@@ -3,7 +3,7 @@
 {% block title %}Revisar pagos de cierres{% endblock %}
 {% block extra_head %}
 <link rel="stylesheet" href="{% static 'css/registrar_egreso.css' %}?v=4">
-<link rel="stylesheet" href="{% static 'css/pagos_cierres_revision.css' %}?v=3">
+<link rel="stylesheet" href="{% static 'css/pagos_cierres_revision.css' %}?v=4">
 {% endblock %}
 {% block content %}
 <main class="expense-page reconciliation-page">
@@ -11,6 +11,7 @@
     <div><p class="expense-eyebrow">Control de pagos · Revisión y registro</p>
       <h1>Pagos declarados en cierres de caja</h1>
       <p>Compara lo declarado por los cajeros y registra los pagos faltantes después de revisarlos. No modifica los cierres ni vuelve a descontar dinero de caja.</p>
+      <p>Los conciliados con auditoría se retiran automáticamente de ambas listas. Su historial se conserva en Pagos y en el cierre; los casos con diferencias siguen visibles.</p>
       <a class="expense-link" href="{% url 'registrar_egreso' %}">← Volver a Registrar pago</a>
     </div>
   </header>
@@ -19,19 +20,19 @@
   <form method="get" class="reconciliation-filters">
     <label>Desde<input type="date" name="desde" value="{{ start }}" min="{{ report_start }}" required></label>
     <label>Hasta<input type="date" name="hasta" value="{{ end }}" min="{{ report_start }}" required></label>
-    <label>Mostrar<select name="estado"><option value="">Todos los estados</option><option value="missing" {% if selected_status == 'missing' %}selected{% endif %}>Sin coincidencia</option><option value="possible" {% if selected_status == 'possible' %}selected{% endif %}>Puede estar registrado</option><option value="review" {% if selected_status == 'review' %}selected{% endif %}>Revisar</option><option value="linked" {% if selected_status == 'linked' %}selected{% endif %}>Conciliado con auditoría</option></select></label>
+    <label>Mostrar<select name="estado"><option value="">Todos los pendientes</option><option value="missing" {% if selected_status == 'missing' %}selected{% endif %}>Sin coincidencia</option><option value="possible" {% if selected_status == 'possible' %}selected{% endif %}>Puede estar registrado</option><option value="review" {% if selected_status == 'review' %}selected{% endif %}>Revisar</option></select></label>
     <button class="expense-submit" type="submit">Revisar cierres</button>
   </form>
   <p class="reconciliation-note"><strong>Incluye todos los turnos cerrados, sin importar su hora de inicio.</strong> La fecha corresponde al inicio del turno, hora de Colombia, incluso si terminó al día siguiente. La revisión comienza el 1 de noviembre de 2026; no se muestran declaraciones ni coincidencias anteriores. Se compara el importe sin 4 × 1.000 y nombres similares en la misma fecha o ±1 día, sin retroceder antes del inicio de la revisión. Una coincidencia sugerida no confirma que sea el mismo pago. Como Pagos no identifica sucursal, verifica también ese dato.</p>
   {% if error %}<p class="expense-warning" role="alert">{{ error }}</p>{% else %}
-  <section class="reconciliation-summary" aria-label="Resumen">
+  <section class="reconciliation-summary" aria-label="Resumen de pendientes">
     {% for item in summary %}<article class="reconciliation-stat reconciliation-status--{{ item.code }}"><span>{{ item.label }}</span><strong>{{ item.count }}</strong><small>$ {{ item.total|floatformat:2 }}</small></article>{% endfor %}
   </section>
-  <p>{{ source_count }} cierres con detalle · Todos los turnos · Consultado: {{ checked_at|date:'d/m/Y H:i' }}. Los totales de «Sin coincidencia» no son autorización para registrar pagos.</p>
+  <p>{{ source_count }} cierres con detalle revisados · Todos los turnos · Consultado: {{ checked_at|date:'d/m/Y H:i' }}{% if reconciled_hidden_count %} · {{ reconciled_hidden_count }} {% if reconciled_hidden_count == 1 %}declaración conciliada oculta{% else %}declaraciones conciliadas ocultas{% endif %}{% endif %}. Los totales de «Sin coincidencia» no son autorización para registrar pagos.</p>
   <nav class="reconciliation-jumps" aria-label="Secciones de comparación"><a class="expense-link" href="#closing-declarations">Ver declaraciones</a><a class="expense-link" href="#registered-payments">Ver pagos registrados ({{ registered_count }})</a></nav>
   <div class="reconciliation-comparison">
   <section id="closing-declarations" class="reconciliation-column" aria-labelledby="closing-declarations-title">
-  <h2 id="closing-declarations-title">Declarado por los cajeros</h2>
+  <h2 id="closing-declarations-title">Declaraciones por revisar</h2>
   <p>Más recientes primero, por fecha y hora de inicio del turno. El filtro de estado se aplica únicamente a estas declaraciones.</p>
   <div class="reconciliation-scroll reconciliation-list">
     {% for row in rows %}
@@ -70,13 +71,13 @@
       </details>
       {% elif row.status == 'possible' or row.status == 'review' %}<p class="reconciliation-registration-help">Revisa las coincidencias y el detalle antes de registrar otro pago. Aquí no se duplican pagos con coincidencias pendientes.</p>{% endif %}
     </article>
-    {% empty %}<p class="expense-empty">No hay declaraciones para el rango y estado seleccionados.</p>{% endfor %}
+    {% empty %}<p class="expense-empty">No hay declaraciones pendientes para el rango y estado seleccionados.</p>{% endfor %}
   </div>
   </section>
   <section id="registered-payments" class="reconciliation-column" aria-labelledby="registered-payments-title">
-    <header class="reconciliation-ledger-head"><div><p class="expense-eyebrow">Registro real de Pagos</p><h2 id="registered-payments-title">Pagos ya agregados</h2></div><span>{{ registered_count }} registros</span></header>
-    <p>Más recientes primero. Todos los medios de pago y usuarios dentro de las fechas elegidas, desde el 01/11/2026. No se ocultan al filtrar el estado de las declaraciones. Los pagos no identifican sucursal.</p>
-    <div class="reconciliation-ledger-totals"><span>Valor pagado sin impuesto<strong>$ {{ registered_base_total|floatformat:2 }}</strong></span><span>Total con 4 × 1.000<strong>$ {{ registered_total|floatformat:2 }}</strong></span></div>
+    <header class="reconciliation-ledger-head"><div><p class="expense-eyebrow">Registro real de Pagos</p><h2 id="registered-payments-title">Pagos registrados por comparar</h2></div><span>{{ registered_count }} registros</span></header>
+    <p>Más recientes primero. Todos los medios de pago y usuarios dentro de las fechas elegidas, desde el 01/11/2026, excepto los ya conciliados con auditoría. El filtro de estado solo afecta a las declaraciones. Los pagos no identifican sucursal.</p>
+    <div class="reconciliation-ledger-totals"><span>Base de estos pagos<strong>$ {{ registered_base_total|floatformat:2 }}</strong></span><span>Total de estos pagos con 4 × 1.000<strong>$ {{ registered_total|floatformat:2 }}</strong></span></div>
     <label class="reconciliation-search">Buscar entre estos pagos<input type="search" placeholder="Concepto, número, usuario o valor…" data-ledger-search aria-controls="registered-payments-list" autocomplete="off"></label>
     <p class="reconciliation-search-result" data-ledger-results role="status" aria-live="polite"></p>
     <div id="registered-payments-list" class="reconciliation-scroll reconciliation-list">
@@ -88,11 +89,11 @@
         <p class="reconciliation-ledger-relation">{{ payment.relation }}{% for ref in payment.references %} · Turno #{{ ref.turn }}{% endfor %}</p>
         <a class="expense-link" href="{% url 'editar_egreso' payment.id %}" target="_blank" rel="noopener">Abrir pago #{{ payment.id }} ↗</a>
       </article>
-      {% empty %}<p class="expense-empty">No hay pagos registrados en este rango de fechas.</p>{% endfor %}
+      {% empty %}<p class="expense-empty">No hay pagos pendientes de comparar en este rango de fechas.</p>{% endfor %}
     </div>
   </section>
   </div>
   {% endif %}
 </main>
 {% endblock %}
-{% block scripts %}<script defer src="{% static 'javascript/pagos_cierres_revision.js' %}?v=2"></script>{% endblock %}
+{% block scripts %}<script defer src="{% static 'javascript/pagos_cierres_revision.js' %}?v=3"></script>{% endblock %}

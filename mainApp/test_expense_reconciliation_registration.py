@@ -271,7 +271,9 @@ class ClosingExpenseRegistrationTests(TestCase):
         self.assertEqual(timezone.localtime(expense.creado_en, CO).date(), date(2026, 11, 2))
         response = self.client.get(response.url)
         self.assertEqual(response.context['rows'], [])
-        self.assertEqual([payment['id'] for payment in response.context['registered_payments']], [expense.pk])
+        self.assertEqual(response.context['registered_payments'], [])
+        self.assertEqual(response.context['reconciled_hidden_count'], 1)
+        self.assertTrue(Egreso.objects.filter(pk=expense.pk).exists())
 
     def test_foreign_tampered_and_expired_tokens_cannot_write(self):
         token = self.token()
@@ -342,10 +344,60 @@ class ClosingExpenseRegistrationTests(TestCase):
             'concepto': 'NO USAR', 'monto': '1', 'medio_pago': 'nequi', 'fecha': '2025-01-01', **self.query})
         self.assertEqual(response.status_code, 302)
         expense = Egreso.objects.get()
+        self.assertTrue(response.url.endswith('#closing-declarations'))
         self.assertEqual((expense.concepto.nombre, expense.monto_base, expense.medio_pago), ('TURNO CAMILA', Decimal('70000'), 'efectivo'))
         response = self.client.get(response.url)
         self.assertContains(response, 'vínculo auditado')
-        self.assertContains(response, 'Conciliado con auditoría')
+        self.assertContains(response, '1 declaración conciliada oculta')
+        self.assertContains(response, 'No hay declaraciones pendientes')
+        self.assertContains(response, 'No hay pagos pendientes de comparar')
+        self.assertNotContains(response, 'TURNO CAMILA')
+        self.assertNotContains(response, 'Conciliado con auditoría')
+        self.assertNotContains(response, 'Confirmar y registrar pago')
+
+    def test_reconciled_rows_disappear_without_deleting_history_or_changing_cash(self):
+        token = self.token()
+        expense, _ = self.apply(token)
+        models = (Egreso, CambioEgreso, TurnoCaja, DesglosePagosCierre, PuntosPago)
+        before = {model: list(model.objects.values()) for model in models}
+        for selected in ('', 'linked', 'missing', 'possible', 'review'):
+            with self.subTest(selected=selected):
+                response = self.client.get(self.url, dict(self.query, estado=selected))
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.context['rows'], [])
+                self.assertEqual(response.context['registered_payments'], [])
+                self.assertEqual(response.context['registered_base_total'], Decimal(0))
+                self.assertEqual(response.context['registered_total'], Decimal(0))
+                self.assertNotContains(response, 'TURNO CAMILA')
+                self.assertNotContains(response, 'value="linked"')
+        self.assertEqual({model: list(model.objects.values()) for model in models}, before)
+        self.assertEqual(self.rows()[0]['status'], 'linked')
+        existing, created = self.apply(token)
+        self.assertEqual(existing.pk, expense.pk)
+        self.assertFalse(created)
+        self.assertEqual(Egreso.objects.count(), 1)
+
+    def test_audited_payment_returns_to_review_if_amount_changes_then_disappears_when_restored(self):
+        expense, _ = self.apply()
+        Egreso.objects.filter(pk=expense.pk).update(monto=Decimal('80000'))
+        response = self.client.get(self.url, self.query)
+        self.assertEqual(response.context['rows'][0]['status'], 'review')
+        self.assertEqual([payment['id'] for payment in response.context['registered_payments']], [expense.pk])
+        self.assertEqual(response.context['reconciled_hidden_count'], 0)
+        Egreso.objects.filter(pk=expense.pk).update(monto=Decimal('70000'))
+        response = self.client.get(self.url, self.query)
+        self.assertEqual(response.context['rows'], [])
+        self.assertEqual(response.context['registered_payments'], [])
+
+    def test_invalid_source_total_is_still_shown_even_with_audited_payment(self):
+        expense, _ = self.apply()
+        self.source.total = Decimal('70001')
+        self.source.save()
+        response = self.client.get(self.url, self.query)
+        row = response.context['rows'][0]
+        self.assertEqual(row['status'], 'review')
+        self.assertTrue(row['source_error'])
+        self.assertEqual([payment['id'] for payment in response.context['registered_payments']], [expense.pk])
         self.assertNotContains(response, 'Confirmar y registrar pago')
 
     def test_post_without_explicit_confirmation_has_no_side_effect(self):
