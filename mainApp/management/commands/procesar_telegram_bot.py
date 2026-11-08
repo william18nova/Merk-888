@@ -49,6 +49,9 @@ class Command(BaseCommand):
         processed = 0
         watcher = SourceWatcher(settings.BASE_DIR) if options["reload"] and not once else None
         self.stdout.write("Procesador del bot de Telegram iniciado.")
+        from mainApp.services.telegram_tts import status as voice_reply_status
+        voice_status = voice_reply_status()
+        self.stdout.write(f"Voz de salida: {voice_status['mode']} | {voice_status['label']}")
         # Solo este trabajador: no cambiar conexiones de la web ni de comandos
         # externos. Evita reconectar con Aiven varias veces por cada mensaje.
         db_config = connection.settings_dict

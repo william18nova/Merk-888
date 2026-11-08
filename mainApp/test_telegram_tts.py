@@ -11,6 +11,7 @@ import time
 
 import requests
 from django.test import SimpleTestCase, TestCase, override_settings
+from django.core.management import call_command
 from django.utils import timezone
 
 from .models import (ConfiguracionFuncionalidad, Egreso, Rol, TelegramActualizacion,
@@ -366,3 +367,16 @@ class AudioReplyIntegrationTests(TestCase):
             self.profile.activo = False
             self.profile.save()
             self.assertFalse(tts._still_authorized(job()))
+
+    def test_worker_announces_voice_mode_without_keys_or_network(self):
+        output = io.StringIO()
+        command = 'mainApp.management.commands.procesar_telegram_bot.'
+        with patch(command + 'process_next_update', return_value=False), \
+                patch(command + 'recover_stale_updates', return_value=0), \
+                patch(command + 'is_feature_enabled', return_value=True), \
+                patch.object(tts, 'status', return_value={'mode':'voice','label':'Audio al recibir una nota de voz'}), \
+                patch.object(tts, 'http_request') as http:
+            call_command('procesar_telegram_bot', once=True, stdout=output)
+        self.assertIn('Voz de salida: voice | Audio al recibir una nota de voz', output.getvalue())
+        self.assertNotIn('GEMINI_API_KEY', output.getvalue())
+        http.assert_not_called()
