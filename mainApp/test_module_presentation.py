@@ -116,13 +116,13 @@ class ModulePresentationTests(SimpleTestCase):
                         'confirmar-pago', 'mix-mode', 'cliente_id', 'sucursal_id', 'puntopago_id',
                         'productos', 'cantidades', 'pagos', 'nequi_notificacion_id'):
             self.assertIn('id="' + control + '"', html)
-        self.assertIn('css/nova_checkout.css?v=2', html)
+        self.assertIn('css/nova_checkout.css?v=3', html)
         self.assertIn('javascript/generar_venta.js?v=51', html)
         context.update(hybrid_local=True, hybrid_django_runtime=True, hybrid_sale_context={'preview': True})
         local = render_to_string('generar_venta.html', context)
         self.assertIn('/local/sales/assets/sale-bridge.css', local)
         self.assertIn('/local/sales/assets/sale-bridge.js', local)
-        self.assertIn('css/nova_checkout.css?v=2', local)
+        self.assertIn('css/nova_checkout.css?v=3', local)
         context.update(full_local_development=True, full_local_installed=False)
         # Solo se comprueba el contrato de plantilla; no se carga la BD del runtime.
         local_urls = ModuleType('presentation_local_urls')

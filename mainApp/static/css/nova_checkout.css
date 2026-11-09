@@ -3,7 +3,7 @@ body.nova-ui--checkout { --checkout-text: 20px; --checkout-control: 22px; --chec
 .nova-ui--checkout :is(.page-grid, #myModal, .venta-draft-center) { font-size: var(--checkout-text); line-height: 1.5; }
 .nova-ui--checkout .page-grid { max-width: 1520px; margin: 26px auto 44px; gap: 20px; grid-template-columns: minmax(300px, .75fr) minmax(0, 1.25fr); align-items: start; }
 .nova-ui--checkout .panel { min-height: 0; padding: 22px; border: 1px solid var(--nova-border); border-radius: 16px; color: var(--nova-text); background: var(--nova-surface); box-shadow: 0 12px 32px #0613242b; backdrop-filter: none; }
-.nova-ui--checkout .panel-left h1, .nova-ui--checkout .panel-right h2 { margin: 0 0 24px; color: #f5f8ff; text-align: left; font-size: clamp(30px, 3vw, 40px); line-height: 1.2; font-weight: 700; letter-spacing: -.025em; text-shadow: none; }
+.nova-ui--checkout .panel-left h1, .nova-ui--checkout .panel-right h2 { margin: 0 0 24px; color: #f5f8ff; text-align: center; font-size: clamp(30px, 3vw, 40px); line-height: 1.2; font-weight: 700; letter-spacing: -.025em; text-shadow: none; }
 .nova-ui--checkout .panel-right h2 { font-size: clamp(28px, 2.6vw, 36px); }
 .nova-ui--checkout .panel .form-group { margin-bottom: 18px; }
 .nova-ui--checkout .panel .form-group label { margin-bottom: 10px; color: var(--nova-text); font-size: var(--checkout-text); line-height: 1.4; font-weight: 600; }
