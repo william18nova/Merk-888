@@ -60,3 +60,14 @@ def payload(turn):
         return {"disponible": False, "pagos": []}
     return {"disponible": True, "total": str(record.total), "pagos": record.pagos,
             "registrado_por": record.registrado_por.get_username(), "registrado_en": record.registrado_en.isoformat()}
+
+
+def has_audited_payments(turn):
+    """A restart cannot replace the row indexes referenced by the payment ledger."""
+    from mainApp.models import CambioEgreso
+    reference = f"CIERRE {turn.pk}"
+    reasons = CambioEgreso.objects.filter(
+        motivo__startswith="CONCILIACION", motivo__contains=reference,
+    ).values_list("motivo", flat=True)
+    pattern = re.compile(rf"\b{reference}(?:/|\s|\||$)")
+    return any(pattern.search(reason) for reason in reasons.iterator())

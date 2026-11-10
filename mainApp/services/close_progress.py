@@ -1,6 +1,7 @@
 """Monotonic, row-locked checkpoint. Never changes financial balances."""
 import json
 from decimal import Decimal
+from uuid import uuid4
 
 from django.contrib.auth.decorators import login_required
 from django.db import transaction
@@ -37,12 +38,60 @@ def compatible(previous, new):
         and (previous["step"] != "media" or previous["denominations"] == new["denominations"]))
 
 
-def validate_final(turn, invoices, details, cash):
+def _record(turn):
     from mainApp.models import AvanceCierreCaja
-    record = AvanceCierreCaja.objects.filter(turno=turn).first()
-    if not record:
+    return AvanceCierreCaja.objects.filter(turno=turn).first()
+
+
+def _attempt(record):
+    return record.progreso.get("attempt", "") if record else ""
+
+
+def _progress(record):
+    if not record or "step" not in record.progreso:
+        return None
+    return {key: value for key, value in record.progreso.items() if key != "attempt"}
+
+
+def attempt_id(turn):
+    return _attempt(_record(turn))
+
+
+def confirmed_progress(turn):
+    return _progress(_record(turn))
+
+
+def restart(turn, actor):
+    """Replace the checkpoint, including its identity, under the turn lock."""
+    from mainApp.models import AvanceCierreCaja
+    AvanceCierreCaja.objects.update_or_create(turno=turn,
+        defaults={"progreso": {"attempt": uuid4().hex}, "registrado_por": actor})
+
+
+def align_local_attempt(turn_id, attempt, actor_id):
+    """Copy the active identity to a local POS without erasing same-attempt drafts."""
+    from mainApp.models import AvanceCierreCaja
+    records = AvanceCierreCaja.objects.using("offline")
+    record = records.filter(turno_id=turn_id).first()
+    if _attempt(record) == attempt:
+        return
+    if attempt:
+        records.update_or_create(turno_id=turn_id,
+            defaults={"progreso": {"attempt": attempt}, "registrado_por_id": actor_id})
+    else:
+        records.filter(turno_id=turn_id).delete()
+
+
+STALE_ATTEMPT = "El cierre cambió. Vuelve a Turno de caja para continuar con el cierre vigente."
+
+
+def validate_final(turn, invoices, details, cash, *, attempt=""):
+    record = _record(turn)
+    if attempt != _attempt(record):
+        raise ValueError(STALE_ATTEMPT)
+    progress = _progress(record)
+    if not progress:
         return  # Older tabs and signed offline events remain compatible.
-    progress = record.progreso
     total, rows = validate(invoices, details)
     if str(total) != progress["invoices"] or rows != progress["payment_details"]:
         raise ValueError("Los pagos no coinciden con el paso ya confirmado. Recarga para recuperar el cierre guardado.")
@@ -62,24 +111,31 @@ def checkpoint(request, turno_id):
         turn = get_object_or_404(query, pk=turno_id)
         if not _can_operate_turno(request.user, turn):
             return JsonResponse({"success": False, "error": "No puedes operar el cierre de otro cajero."}, status=403)
-        record = AvanceCierreCaja.objects.filter(turno=turn).first()
         if turn.estado != "CIERRE":
             return JsonResponse({"success": False, "error": "El turno ya no está en cierre.", "closed": turn.estado == "CERRADO"}, status=409)
+        record = _record(turn)
+        attempt = _attempt(record)
+        previous = _progress(record)
         if request.method == "POST":
             try:
                 if len(request.body) > 60000:
                     raise ValueError("El avance supera el tamaño permitido.")
-                new = normalize(json.loads(request.body))
+                data = json.loads(request.body)
+                new = normalize(data)
             except (ValueError, TypeError) as exc:
                 return JsonResponse({"success": False, "error": str(exc)}, status=400)
-            if record and (not compatible(record.progreso, new)
-                    or (record.progreso["step"] == "media" and new["step"] != "media")):
+            if data.get("attempt", "") != attempt:
+                return JsonResponse({"success": False, "error": STALE_ATTEMPT}, status=409)
+            if previous and (not compatible(previous, new)
+                    or (previous["step"] == "media" and new["step"] != "media")):
                 return JsonResponse({"success": False, "conflict": True,
-                    "progress": record.progreso, "error": "Otra pestaña ya confirmó estos valores. Recarga para recuperar el avance guardado."}, status=409)
+                    "progress": previous, "error": "Otra pestaña ya confirmó estos valores. Recarga para recuperar el avance guardado."}, status=409)
             # Imports a validated legacy/offline checkpoint without inventing payments.
-            if not record or record.progreso != new:
-                record, _ = AvanceCierreCaja.objects.update_or_create(turno=turn,
-                    defaults={"progreso": new, "registrado_por": request.user})
-        response = JsonResponse({"success": True, "progress": record.progreso if record else None})
+            if previous != new:
+                data = {**new, "attempt": attempt} if attempt else new
+                AvanceCierreCaja.objects.update_or_create(turno=turn,
+                    defaults={"progreso": data, "registrado_por": request.user})
+            previous = new
+        response = JsonResponse({"success": True, "progress": previous, "attempt": attempt})
         response["Cache-Control"] = "no-store, private"
         return response

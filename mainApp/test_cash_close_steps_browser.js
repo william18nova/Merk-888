@@ -81,9 +81,17 @@ test("cierre en páginas distintas, solo hacia adelante y con valores conservado
       let body = '';
       req.on('data', chunk => { body += chunk; });
       req.on('end', () => {
-        if (req.method === 'POST') checkpoint = JSON.parse(body);
         res.setHeader('Content-Type', 'application/json');
-        res.end(JSON.stringify({success: true, progress: checkpoint}));
+        if (req.method === 'POST') {
+          const {attempt = '', ...progress} = JSON.parse(body);
+          if (attempt !== (initial.cierre_intento || '')) {
+            res.statusCode = 409;
+            res.end(JSON.stringify({success: false, error: 'El cierre cambió.'}));
+            return;
+          }
+          checkpoint = progress;
+        }
+        res.end(JSON.stringify({success: true, progress: checkpoint, attempt: initial.cierre_intento || ''}));
       });
       return;
     }
@@ -242,6 +250,7 @@ test("cierre en páginas distintas, solo hacia adelante y con valores conservado
     await otherTab.locator("#closeMediaStep").waitFor({state: "visible"});
     assert.equal(await otherTab.locator("#facturas_pagadas").inputValue(), "2000");
     await otherTab.close();
+    const oldDraft = await page.evaluate(() => NovaCloseStorage.read(8080));
     completeClose = true;
     await page.locator("#btnCerrar").click();
     await page.locator("#tc-confirm-ok").click();
@@ -282,6 +291,25 @@ test("cierre en páginas distintas, solo hacia adelante y con valores conservado
     await fresh.reload();
     await fresh.locator("#closeMediaStep").waitFor({state: "visible"});
     assert.equal(await fresh.locator("#facturas_pagadas").inputValue(), "0");
+
+    // Un reinicio conserva el ID del turno, pero no admite el respaldo viejo.
+    initial.estado = 'ABIERTO';
+    initial.cierre_intento = 'intento-nuevo';
+    checkpoint = null;
+    await page.goto(url);
+    await page.locator('#stepOpen').waitFor({state:'visible'});
+    await page.evaluate(async draft => { await NovaCloseStorage.put(8080, draft).durable; }, oldDraft);
+    await page.locator('#btnIniciarCierre').click();
+    await page.locator('#tc-confirm-ok').click();
+    await page.locator('#closePaymentsStep').waitFor({state:'visible'});
+    assert.equal(await page.locator('#facturas_pagadas').inputValue(), '0');
+    assert.equal(await page.locator('[data-payment-name]').count(), 0);
+    assert.equal(await page.evaluate(() => NovaCloseStorage.read(8080).progress.step), 'media');
+    await page.locator('#btnPaymentsNext').click();
+    await page.locator('#tc-confirm-ok').click();
+    await page.locator('#closeCashStep').waitFor({state:'visible'});
+    assert.equal(await page.locator('#close_b5000').inputValue(), '0');
+    assert.equal(checkpoint.step, 'cash');
     assert.deepEqual(errors, []);
   } finally {
     if (browser) await browser.close();

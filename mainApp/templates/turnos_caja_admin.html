@@ -56,18 +56,19 @@
       <section class="tca-card tca-section" aria-labelledby="datosTitle">
         <div class="tca-section-head"><span class="tca-section-number">01</span><div><h2 id="datosTitle">Datos del turno</h2><p>Estado, fechas y efectivo de apertura.</p></div></div>
         <div class="form-grid">
-          <div><label for="estado">Estado</label><select id="estado" class="in"><option value="ABIERTO">Abierto</option><option value="CIERRE">En cierre</option><option value="CERRADO">Cerrado</option></select></div>
+          <div><label for="estado">Estado</label><select id="estado" class="in" aria-describedby="estadoAyuda"><option value="ABIERTO">Abierto</option><option value="CIERRE">En cierre</option><option value="CERRADO">Cerrado</option></select></div>
           <div><label for="base">Base de apertura en efectivo</label><input id="base" class="in" type="number" step="0.01" min="0" placeholder="0.00"></div>
           <div><label for="inicio">Inicio</label><input id="inicio" class="in" type="datetime-local"></div>
           <div><label for="cierre">Cierre iniciado</label><input id="cierre" class="in" type="datetime-local"></div>
           <div><label for="fin">Fin</label><input id="fin" class="in" type="datetime-local"></div>
           <div><label for="efectivoReal">Efectivo real en caja <span class="tca-optional">(opcional)</span></label><input id="efectivoReal" class="in" type="number" step="0.01" min="0" placeholder="Sin registrar"></div>
         </div>
+        <p id="estadoAyuda" class="tca-help" role="status"></p>
         <p class="tca-help">Los cambios se aplican únicamente al pulsar <strong>Guardar cambios</strong>.</p>
       </section>
 
       <section class="tca-card tca-section" aria-labelledby="totalsTitle">
-        <div class="tca-section-head"><span class="tca-section-number">02</span><div><h2 id="totalsTitle">Resumen del cuadre</h2><p>Se recalcula al editar los medios de pago.</p></div></div>
+        <div class="tca-section-head"><span class="tca-section-number">02</span><div><h2 id="totalsTitle">Resumen del cuadre</h2><p>Las diferencias y la deuda se muestran al cerrar.</p></div></div>
         <div class="metrics">
           <div class="m"><div class="k">Esperado total</div><div id="mEsperado" class="v">—</div></div>
           <div class="m"><div class="k" id="mVentasLabel">Total reportado</div><div id="mVentas" class="v">—</div></div>
@@ -121,5 +122,5 @@
 </script>
 <script defer src="{% static 'javascript/close_payment_details.js' %}?v=1"></script>
 <script defer src="{% static 'javascript/ptm_cash_pool_summary.js' %}?v=1"></script>
-<script defer src="{% static 'javascript/turnos_caja_admin.js' %}?v=9"></script>
+<script defer src="{% static 'javascript/turnos_caja_admin.js' %}?v=10"></script>
 {% endblock %}

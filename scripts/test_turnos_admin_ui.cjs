@@ -27,7 +27,7 @@ after(async()=>{await browser?.close();});
 function sample(id=1674){
   return {success:true,turno:{id,estado:'CERRADO',puntopago:'Principal',cajero:'Ana Martínez',saldo_apertura_efectivo:100000,
     inicio_local:'2026-09-23T07:00',cierre_iniciado_local:'2026-09-23T14:00',fin_local:'2026-09-23T14:20',
-    efectivo_real:1050000,facturas_pagadas:50000,ptm:{cantidad:0,declarado:0,recargas:0,retiros:0,neto:0}},
+    efectivo_real:1050000,facturas_pagadas:50000,ptm:{cantidad:0,declarado:null,recargas:0,retiros:0,neto:0}},
     medios:[{metodo:'efectivo',label:'Efectivo',esperado:1000000,contado:1000000,diferencia:0},
       {metodo:'nequi',label:'Nequi',esperado:500000,contado:505000,diferencia:5000},
       {metodo:'tarjeta',label:'Tarjeta / Banco Caja Social',esperado:200000,contado:195000,diferencia:-5000}]};
@@ -52,7 +52,12 @@ async function fixture({width=1440,initial='1674',canDelete=true,data=sample()}=
     if(!match)return route.fulfill({status:404,body:'Unexpected test route'});
     if(match[2]==='update/'){
       const body=route.request().postDataJSON();
-      state.data.medios=state.data.medios.map(m=>({...m,...body.medios.find(v=>v.metodo===m.metodo)}));
+      if(body.estado!==state.data.turno.estado&&body.estado!=='CERRADO'){
+        Object.assign(state.data.turno,{estado:body.estado,cierre_iniciado_local:'',fin_local:'',efectivo_real:null,facturas_pagadas:0,cierre_intento:'nuevo'});
+        state.data.medios=state.data.medios.map(m=>({...m,esperado:0,contado:null,diferencia:0}));
+      } else {
+        state.data.medios=state.data.medios.map(m=>({...m,...body.medios?.find(v=>v.metodo===m.metodo)}));
+      }
       return route.fulfill({json:{success:true,msg:'Turno actualizado y recalculado.'}});
     }
     if(match[2]==='delete/')return route.fulfill({json:{success:true,msg:'Turno eliminado.'}});
@@ -115,9 +120,31 @@ test('editar y guardar conserva cálculos, facturas y payload existente',async()
     await page.waitForFunction(()=>document.querySelector('#saveStatus').dataset.state==='success');
     const posts=requests.filter(r=>r.method==='POST');assert.equal(posts.length,1);
     assert.equal(posts[0].url,'/api/admin/turnos_caja/1674/update/');
-    assert.deepEqual(posts[0].body,{estado:'CERRADO',saldo_apertura_efectivo:'100000',inicio_local:'2026-09-23T07:00',cierre_iniciado_local:'2026-09-23T14:00',fin_local:'2026-09-23T14:20',efectivo_real:'1050000',medios:[{metodo:'efectivo',esperado:'1000000',contado:'1010000'},{metodo:'nequi',esperado:'500000',contado:'505000'},{metodo:'tarjeta',esperado:'200000',contado:'195000'}]});
+    assert.deepEqual(posts[0].body,{estado:'CERRADO',estado_original:'CERRADO',cierre_intento_original:'',saldo_apertura_efectivo:'100000',inicio_local:'2026-09-23T07:00',cierre_iniciado_local:'2026-09-23T14:00',fin_local:'2026-09-23T14:20',efectivo_real:'1050000',medios:[{metodo:'efectivo',esperado:'1000000',contado:'1010000'},{metodo:'nequi',esperado:'500000',contado:'505000'},{metodo:'tarjeta',esperado:'200000',contado:'195000'}]});
     assert.equal(await page.locator('#mFacturasPagadas').textContent(),currency(50000));
     assert.equal(await page.locator('#btnSave').isEnabled(),true);
+  }finally{await page.close();}
+});
+
+test('reabrir explica el reinicio y no reenvía los valores del cierre anterior',async()=>{
+  const {page,requests}=await fixture({width:390});
+  try{
+    await page.locator('#estado').selectOption('ABIERTO');
+    assert.match(await page.locator('#estadoAyuda').textContent(),/Pagos de caja/);
+    assert.equal(await page.locator('#cierre').isDisabled(),true);
+    assert.equal(await page.locator('#efectivoReal').isDisabled(),true);
+    assert.equal(await page.locator('#mDeuda').textContent(),'—');
+    page.once('dialog',dialog=>dialog.dismiss());
+    await page.locator('#btnSave').click();
+    assert.equal(requests.filter(r=>r.method==='POST').length,0);
+    page.once('dialog',dialog=>dialog.accept());
+    await page.locator('#btnSave').click();
+    await page.waitForFunction(()=>document.querySelector('#turnoStatus').dataset.state==='ABIERTO');
+    const [saved]=requests.filter(r=>r.method==='POST');
+    assert.deepEqual(saved.body,{estado:'ABIERTO',estado_original:'CERRADO',cierre_intento_original:'',
+      saldo_apertura_efectivo:'100000',inicio_local:'2026-09-23T07:00'});
+    assert.equal(await page.locator('#efectivoReal').inputValue(),'');
+    assert.equal(await page.locator('#mFacturasPagadas').textContent(),currency(0));
   }finally{await page.close();}
 });
 

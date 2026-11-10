@@ -20,6 +20,7 @@ def rows(query):
 def capture(identity, scope):
     from mainApp.models import ConceptoEgreso, Venta, DetalleVenta, PagoVenta, TurnoCaja, OperacionPTM, BolsaEfectivoPTM
     from mainApp.permissions import user_can_access_url_name, user_can_change_sale
+    from mainApp.services.close_progress import attempt_id
     actor = identity["actor"]
     granted = [route for route in ROUTES if user_can_access_url_name(actor, route)]
     for routes in (scope["routes"], identity["routes"]):
@@ -43,6 +44,7 @@ def capture(identity, scope):
     turn_id = scope["offline_sale"]["turn_id"]
     if turn_id:
         data["turn"] = rows(TurnoCaja.objects.filter(pk=turn_id))[0]
+        data["close_attempt"] = attempt_id(turn_id)
         data["has_ptm"] = OperacionPTM.objects.filter(turno_id=turn_id).exists()
     scope["offline_business"] = data
 
@@ -69,6 +71,9 @@ def apply(scope):
         return
     if data["turn"]:
         _upsert(TurnoCaja, [data["turn"]])
+        if "close_attempt" in data:
+            from mainApp.services.close_progress import align_local_attempt
+            align_local_attempt(data["turn"]["id"], data["close_attempt"], scope["user_id"])
     _upsert(Venta, data["sales"])
     _upsert(DetalleVenta, data["details"])
     _upsert(PagoVenta, data["payments"])

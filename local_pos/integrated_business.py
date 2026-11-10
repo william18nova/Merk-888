@@ -138,8 +138,15 @@ def build(request, action, state, kwargs):
     turn = TurnoCaja.objects.select_for_update().get(pk=turn_id, cajero_id=request.user.pk)
     if turn.estado not in ({"ABIERTO", "CIERRE"} if action == "close_begin" else {"CIERRE"}):
         raise SaleError("El turno no está en el paso correcto para este cierre.")
+    from mainApp.services.close_progress import STALE_ATTEMPT, attempt_id, validate_final
+    attempt = request.POST.get("cierre_intento", "")
+    if attempt != attempt_id(turn):
+        raise SaleError(STALE_ATTEMPT)
+    close_context = {"turn_id": turn.pk}
+    if attempt:
+        close_context["close_attempt"] = attempt
     if action == "close_begin":
-        return {"turn_id": turn.pk}
+        return close_context
     try:
         values = json.loads(request.POST.get("medios_json", "[]"))
         ptm = int(request.POST.get("ptm_transacciones") or 0)
@@ -160,13 +167,12 @@ def build(request, action, state, kwargs):
         seen.add(code)
         normalized.append({"metodo": code, "contado": str(amount)})
     from mainApp.services.close_payments import validate as validate_close_payments
-    from mainApp.services.close_progress import validate_final
     try:
         bills, details = validate_close_payments(request.POST.get("facturas_pagadas", "0"), request.POST.get("pagos_detalle"))
-        validate_final(turn, bills, details, money(request.POST.get("efectivo_entregado", 0)))
+        validate_final(turn, bills, details, money(request.POST.get("efectivo_entregado", 0)), attempt=attempt)
     except ValueError as exc:
         raise SaleError(str(exc)) from None
-    return {"turn_id": turn.pk, "cash": str(money(request.POST.get("efectivo_entregado", 0))),
+    return {**close_context, "cash": str(money(request.POST.get("efectivo_entregado", 0))),
         "bills": str(bills), "bills_details": details, "methods": normalized}
 
 
@@ -206,8 +212,10 @@ def project(action, values, request, state, occurred):
 def turn_payload(turn, user=None):
     """No speculative final balances and no writes from GET close pages."""
     from mainApp.services.payment_methods import payment_method_options
+    from mainApp.services.close_progress import attempt_id
     return {"success": True, "turno_id": turn.pk, "estado": turn.estado,
         "inicio": turn.inicio.isoformat(), "cierre_iniciado": turn.cierre_iniciado.isoformat() if turn.cierre_iniciado else None,
+        "cierre_intento": attempt_id(turn),
         "base": float(turn.saldo_apertura_efectivo), "hide_bd_cols": True,
         "puntopago": {"id": turn.puntopago_id, "nombre": turn.puntopago.nombre},
         "cajero": {"id": turn.cajero_id, "nombreusuario": turn.cajero.get_username()},
@@ -396,6 +404,9 @@ def project_online_ack(command, result):
             turn_id = data.get("turno_id")
             if turn_id == scope.get("offline_sale", {}).get("turn_id"):
                 TurnoCaja.objects.using("offline").filter(pk=turn_id).update(estado="CIERRE" if action == "close_begin" else "CERRADO")
+                if action == "close_begin" and "cierre_intento" in data:
+                    from mainApp.services.close_progress import align_local_attempt
+                    align_local_attempt(turn_id, data["cierre_intento"], command.actor_id)
         state.scope = scope
         state.save(using="offline", update_fields=["scope"])
 
@@ -466,6 +477,10 @@ def execute_event(command):
         return {"success": True, "sale_id": sale.pk, "total": values["total"]}
     if not turn or turn.estado not in {"ABIERTO", "CIERRE"} or occurred < turn.inicio:
         raise SaleError("El turno ya fue cerrado o cambió; revisa el cierre pendiente.")
+    from mainApp.services.close_progress import attempt_id
+    attempt = values.get("close_attempt", "")
+    if attempt != attempt_id(turn):
+        raise SaleError("El cierre fue reiniciado en NovaPOS. Revisa el conteo pendiente antes de sincronizar.")
     from mainApp.services.ptm_cash_pool import bag_for_turn
     if turn.operaciones_ptm.exists() or bag_for_turn(turn):
         raise SaleError("El turno contiene PTM. Requiere conciliación con conexión.")
@@ -477,7 +492,8 @@ def execute_event(command):
     if turn.estado != "CIERRE":
         raise SaleError("Falta conciliar el inicio del cierre.")
     close_values = {"turno_id": str(turn.pk), "efectivo_entregado": values["cash"],
-        "facturas_pagadas": values["bills"], "ptm_transacciones": "0", "medios_json": json.dumps(values["methods"])}
+        "facturas_pagadas": values["bills"], "ptm_transacciones": "0", "medios_json": json.dumps(values["methods"]),
+        "cierre_intento": attempt}
     if "bills_details" in values:
         close_values["pagos_detalle"] = json.dumps(values["bills_details"], ensure_ascii=False)
     result = call_close(TurnoCajaCerrarApi, actor, close_values, allow_legacy_payments="bills_details" not in values)

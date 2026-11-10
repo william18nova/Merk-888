@@ -33,7 +33,7 @@ from django.contrib import messages
 from zoneinfo import ZoneInfo
 from django.core.exceptions import FieldDoesNotExist, ValidationError as DjangoValidationError
 from .services.ptm import resumen_ptm, resumen_ptm_json, validar_conteo_ptm
-from .services import ptm_cash_pool
+from .services import close_progress, ptm_cash_pool
 from .services.pos_request_receipts import protect_sale, protect_business
 from django.core import signing
 from django.core.signing import BadSignature, SignatureExpired
@@ -11732,12 +11732,16 @@ def _manuales_sin_api_por_metodo(turno: TurnoCaja) -> dict[str, dict[str, Decima
     }
 
 
+@transaction.atomic
 def _turno_frontend_payload(turno: TurnoCaja, user=None) -> dict:
     if getattr(settings, "NOVA_INTEGRATED_JOURNAL_ENABLED", False):
         from local_pos.request_context import offline_request
         if offline_request():
             from local_pos.integrated_business import turn_payload
             return turn_payload(turno, user)
+    if turno.estado == "CIERRE":
+        # No regenerar el snapshot viejo si un administrador acaba de reabrirlo.
+        turno = get_object_or_404(TurnoCaja.objects.select_for_update(), pk=turno.pk)
     payload = {
         "success": True,
         "bolsa_ptm": ptm_cash_pool.payload(turno),
@@ -11746,6 +11750,7 @@ def _turno_frontend_payload(turno: TurnoCaja, user=None) -> dict:
         "estado": turno.estado,
         "inicio": _iso_dt(turno.inicio),
         "cierre_iniciado": _iso_dt(turno.cierre_iniciado) if turno.cierre_iniciado else None,
+        "cierre_intento": close_progress.attempt_id(turno),
         "base": float(turno.saldo_apertura_efectivo or 0),
         "puntopago": {
             "id": turno.puntopago_id,
@@ -12129,6 +12134,7 @@ class TurnoCajaIniciarCierreApi(LoginRequiredMixin, View):
             "turno_id": turno.id,
             "estado": turno.estado,
             "cierre_iniciado": _iso_co(timezone.localtime(turno.cierre_iniciado, CO_TZ)),
+            "cierre_intento": close_progress.attempt_id(turno),
             "bolsa_ptm": ptm_cash_pool.payload(turno),
             "base": float(turno.saldo_apertura_efectivo),
             "esperado_total": float(esperado_total),
@@ -12195,20 +12201,22 @@ class TurnoCajaCerrarApi(LoginRequiredMixin, View):
         except ValueError as exc:
             return JsonResponse({"success": False, "error": str(exc), "code": "close_payment_details"}, status=400)
 
-        try:
-            validar_conteo_ptm(turno, request.user, request.POST.get("ptm_transacciones"))
-        except DjangoValidationError as exc:
-            return JsonResponse({"success": False, "error": " ".join(exc.messages)}, status=400)
-
         efectivo_entregado = _to_decimal(request.POST.get("efectivo_entregado"), Decimal("0.00"))
         if efectivo_entregado < 0:
             return JsonResponse({"success": False, "error": "Efectivo entregado no puede ser negativo."}, status=400)
 
-        from .services.close_progress import validate_final
         try:
-            validate_final(turno, facturas_pagadas, pagos_detalle, efectivo_entregado)
+            close_progress.validate_final(
+                turno, facturas_pagadas, pagos_detalle, efectivo_entregado,
+                attempt=request.POST.get("cierre_intento", ""),
+            )
         except ValueError as exc:
             return JsonResponse({"success": False, "error": str(exc)}, status=409)
+
+        try:
+            validar_conteo_ptm(turno, request.user, request.POST.get("ptm_transacciones"))
+        except DjangoValidationError as exc:
+            return JsonResponse({"success": False, "error": " ".join(exc.messages)}, status=400)
 
         base = turno.saldo_apertura_efectivo or Decimal("0.00")
         efectivo_contado = (efectivo_entregado - base).quantize(Decimal("0.01"))
@@ -12495,6 +12503,7 @@ class TurnoCajaRetiroView(LoginRequiredMixin, View):
             "cajero": _turno_label_usuario(turno.cajero),
             "inicio": _iso_dt(turno.inicio),
             "cierre_iniciado": _iso_dt(turno.cierre_iniciado),
+            "cierre_intento": close_progress.attempt_id(turno),
             "fin": _iso_dt(turno.fin),
             "base_apertura": float(turno.saldo_apertura_efectivo or 0),
             "efectivo_real": float(turno.efectivo_real or 0),
@@ -13252,6 +13261,7 @@ class TurnoCajaRecuperarOIniciarView(LoginRequiredMixin, View):
                     "estado": turno.estado,
                     "inicio": _iso_dt(turno.inicio),
                     "cierre_iniciado": _iso_dt(turno.cierre_iniciado) if turno.cierre_iniciado else None,
+                    "cierre_intento": close_progress.attempt_id(turno),
                     "base": float(turno.saldo_apertura_efectivo or 0),
                     "puntopago": {"id": turno.puntopago_id, "nombre": getattr(turno.puntopago, "nombre", str(turno.puntopago_id))},
                     "cajero": {"id": turno.cajero_id, "nombreusuario": _turno_label_usuario(turno.cajero)},
@@ -13278,6 +13288,7 @@ class TurnoCajaRecuperarOIniciarView(LoginRequiredMixin, View):
                 "estado": turno.estado,
                 "inicio": _iso_dt(turno.inicio),
                 "cierre_iniciado": _iso_dt(turno.cierre_iniciado) if turno.cierre_iniciado else None,
+                "cierre_intento": close_progress.attempt_id(turno),
                 "base": float(turno.saldo_apertura_efectivo or 0),
                 "puntopago": {"id": pp.pk, "nombre": getattr(pp, "nombre", str(pp.pk))},
                 "cajero": {"id": cajero.pk, "nombreusuario": getattr(cajero, "nombreusuario", str(cajero.pk))},
@@ -13481,22 +13492,15 @@ class TurnoCajaAdminDetailAPI(LoginRequiredMixin, View):
             ),
             Decimal("0.00"),
         )
-        medios = [
-            medio
+        medios = {
+            _normalize_metodo(medio.metodo): medio
             for medio in medios_rows
             if _normalize_metodo(medio.metodo) not in INTERNAL_PAYMENT_CODES
-        ]
-        codes = _turn_payment_method_codes(
-            existing_codes=[medio.metodo for medio in medios],
-        )
-        order = {code: index for index, code in enumerate(codes)}
+        }
+        codes = _turn_payment_method_codes(existing_codes=medios)
         labels = _turn_payment_method_labels(codes)
-        medios.sort(
-            key=lambda medio: (
-                order.get(_normalize_metodo(medio.metodo), len(order)),
-                _normalize_metodo(medio.metodo),
-            )
-        )
+        if turno.estado == "CERRADO":
+            codes = [code for code in codes if code in medios]
 
         return JsonResponse({
             "success": True,
@@ -13510,6 +13514,7 @@ class TurnoCajaAdminDetailAPI(LoginRequiredMixin, View):
                 "cajero": getattr(turno.cajero, "nombreusuario", str(turno.cajero_id)),
                 "inicio": _iso_dt(turno.inicio),
                 "cierre_iniciado": _iso_dt(turno.cierre_iniciado),
+                "cierre_intento": close_progress.attempt_id(turno),
                 "fin": _iso_dt(turno.fin),
                 "inicio_local": _iso_dt_local_input(turno.inicio),
                 "cierre_iniciado_local": _iso_dt_local_input(turno.cierre_iniciado),
@@ -13527,17 +13532,15 @@ class TurnoCajaAdminDetailAPI(LoginRequiredMixin, View):
             },
             "medios": [
                 {
-                    "id": m.id,
-                    "metodo": _normalize_metodo(m.metodo),
-                    "label": _turn_method_label(
-                        m.metodo,
-                        labels=labels,
-                    ),
-                    "esperado": float(m.esperado or 0),
-                    "contado": float(m.contado) if m.contado is not None else None,
-                    "diferencia": float(m.diferencia or 0),
+                    "id": m.pk if m else None,
+                    "metodo": code,
+                    "label": _turn_method_label(code, labels=labels),
+                    "esperado": float(m.esperado or 0) if m else 0,
+                    "contado": float(m.contado) if m and m.contado is not None else None,
+                    "diferencia": float(m.diferencia or 0) if m else 0,
                 }
-                for m in medios
+                for code in codes
+                for m in [medios.get(code)]
             ]
         })
 
@@ -13558,9 +13561,10 @@ class TurnoCajaAdminUpdateAPI(LoginRequiredMixin, View):
                 status=400,
             )
 
-        estado = (payload.get("estado") or "").strip().upper()
-        if estado and estado not in ESTADOS_TURNO:
+        estado = payload.get("estado", "")
+        if not isinstance(estado, str) or (estado.strip().upper() not in (*ESTADOS_TURNO, "")):
             return JsonResponse({"success": False, "error": "Estado inválido."}, status=400)
+        estado = estado.strip().upper()
 
         # El orden global de bloqueos es configuración → turno. De esta forma
         # una edición administrativa no puede reabrir turnos mientras las
@@ -13581,10 +13585,22 @@ class TurnoCajaAdminUpdateAPI(LoginRequiredMixin, View):
                 status=409,
             )
 
-        turno = get_object_or_404(
-            TurnoCaja.objects.select_for_update(),
-            pk=turno_id,
-        )
+        # El inicio normal también bloquea primero el punto y luego el turno.
+        punto_id = get_object_or_404(TurnoCaja.objects.only("puntopago_id"), pk=turno_id).puntopago_id
+        get_object_or_404(PuntosPago.objects.select_for_update(), pk=punto_id)
+        turno = get_object_or_404(TurnoCaja.objects.select_for_update(), pk=turno_id, puntopago_id=punto_id)
+
+        from .models import DesglosePagosCierre
+        from .services.close_payments import has_audited_payments
+
+        estado_original = turno.estado
+        estado = estado or estado_original
+        if (
+            payload.get("estado_original", estado_original) != estado_original
+            or ("cierre_intento_original" in payload
+                and payload["cierre_intento_original"] != close_progress.attempt_id(turno))
+        ):
+            return JsonResponse({"success": False, "error": "El turno cambió. Vuelve a cargarlo antes de guardar."}, status=409)
 
         from .services.hybrid import assert_turn_released
         try:
@@ -13592,13 +13608,125 @@ class TurnoCajaAdminUpdateAPI(LoginRequiredMixin, View):
         except DjangoValidationError as exc:
             return JsonResponse({"success": False, "error": " ".join(exc.messages)}, status=409)
 
-        if turno.operaciones_ptm.exists() or hasattr(turno, "participacion_bolsa_ptm"):
+        if turno.operaciones_ptm.exists() or hasattr(turno, "participacion_bolsa_ptm") or turno.conteos_ptm.exists():
             return JsonResponse({
                 "success": False,
                 "error": "Este turno tiene operaciones PTM auditables: no se permite alterar sus fechas, estado o valores manualmente. Usa el cierre normal.",
             }, status=409)
 
-        medios_in = payload.get("medios") or []
+        now = timezone.now()
+        zero = Decimal("0.00")
+        max_amount = Decimal("9999999999.99")
+
+        def parse_dt_local(key, current):
+            raw = payload.get(key)
+            if raw in (None, "") or raw == _iso_dt_local_input(current):
+                return current  # No truncar segundos al guardar sin cambiar la fecha.
+            try:
+                naive = timezone.datetime.strptime(raw, "%Y-%m-%dT%H:%M")
+                return timezone.make_aware(naive, timezone.get_current_timezone())
+            except (ValueError, TypeError):
+                raise ValueError("Revisa el formato de las fechas del turno.") from None
+
+        inicio_anterior = turno.inicio
+        base_anterior = turno.saldo_apertura_efectivo
+        try:
+            turno.inicio = parse_dt_local("inicio_local", turno.inicio)
+            turno.saldo_apertura_efectivo = _to_dec(payload.get("saldo_apertura_efectivo", base_anterior), None)
+            if turno.saldo_apertura_efectivo is None or not zero <= turno.saldo_apertura_efectivo <= max_amount:
+                raise ValueError("Ingresa una base de apertura válida de 0 o más.")
+        except ValueError as exc:
+            return JsonResponse({"success": False, "error": str(exc)}, status=400)
+
+        declarations = DesglosePagosCierre.objects.filter(turno=turno)
+        stale_open = estado == estado_original == "ABIERTO" and (
+            turno.cierre_iniciado or turno.fin or turno.efectivo_real is not None or turno.real_total is not None
+            or turno.medios.filter(contado__isnull=False).exists()
+            or close_progress.confirmed_progress(turno) or declarations.exists()
+        )
+        restart = estado in {"ABIERTO", "CIERRE"} and (
+            estado != estado_original or stale_open or (estado == "CIERRE" and not turno.cierre_iniciado)
+        )
+        manual_close = estado == "CERRADO" and estado_original != "CERRADO"
+        if restart or manual_close or (estado == "ABIERTO" and turno.inicio != inicio_anterior):
+            if turno.inicio > now:
+                return JsonResponse({"success": False, "error": "El inicio del turno no puede quedar en el futuro."}, status=400)
+            overlapping = TurnoCaja.objects.filter(puntopago_id=punto_id).exclude(pk=turno.pk).filter(
+                Q(estado__in=["ABIERTO", "CIERRE"]) | Q(inicio__gte=turno.inicio) | Q(fin__gt=turno.inicio),
+            ).order_by("-inicio").first()
+            if overlapping:
+                return JsonResponse({"success": False, "error": (
+                    f"El turno #{overlapping.pk} usa ese punto de pago en el mismo periodo o después. "
+                    "No se cambiaron los estados ni se mezclaron sus ventas."
+                )}, status=409)
+
+        if (restart or manual_close) and estado != "ABIERTO":
+            try:
+                ptm_cash_pool.assert_received(turno)
+            except DjangoValidationError as exc:
+                return JsonResponse({"success": False, "error": " ".join(exc.messages)}, status=409)
+
+        if restart:
+            if has_audited_payments(turno):
+                return JsonResponse({"success": False, "error": (
+                    "Este turno tiene pagos conciliados con auditoría. No se puede reiniciar su cierre desde aquí."
+                )}, status=409)
+            turno.estado = estado
+            turno.cierre_iniciado = now if estado == "CIERRE" else None
+            turno.fin = None
+            turno.real_total = turno.efectivo_real = None
+            turno.diferencia_total = turno.diferencia_efectivo = turno.deuda_total = zero
+            expected, turno.esperado_total, turno.ventas_efectivo, turno.ventas_no_efectivo = _expected_por_metodo(turno)
+            turno.ventas_total = turno.esperado_total
+            turno.save()
+            turno.medios.update(esperado=zero, contado=None, diferencia=zero)
+            if estado == "CIERRE":
+                _sync_turno_medios_esperados(turno, expected, reset_contados=True)
+            declarations.delete()
+            close_progress.restart(turno, request.user)
+            return JsonResponse({"success": True, "msg": (
+                "Turno abierto. El próximo cierre empezará desde el primer paso."
+                if estado == "ABIERTO" else "Cierre iniciado desde el primer paso."
+            )})
+
+        if estado == "ABIERTO":
+            turno.save(update_fields=["inicio", "saldo_apertura_efectivo"])
+            return JsonResponse({"success": True, "msg": "Datos de apertura actualizados."})
+        if estado == "CIERRE":
+            if turno.inicio != inicio_anterior or turno.saldo_apertura_efectivo != base_anterior:
+                return JsonResponse({"success": False, "error": "Reabre el turno para corregir la apertura y empezar un cierre nuevo."}, status=409)
+            return JsonResponse({"success": True, "msg": "El cierre en curso conserva sus pasos confirmados."})
+
+        if manual_close and (
+            close_progress.confirmed_progress(turno) or has_audited_payments(turno) or declarations.exists()
+            or turno.medios.filter(metodo__iexact=FACTURAS_PAGADAS_METODO, contado__isnull=False).exclude(contado=0).exists()
+        ):
+            return JsonResponse({"success": False, "error": (
+                "El turno ya tiene pagos o conteos declarados. Completa el cierre normal para conservarlos."
+            )}, status=409)
+
+        try:
+            fechas_anteriores = (inicio_anterior, turno.cierre_iniciado, turno.fin)
+            if manual_close:
+                turno.cierre_iniciado = turno.cierre_iniciado if estado_original == "CIERRE" and turno.cierre_iniciado else now
+                turno.fin = now
+            else:
+                turno.cierre_iniciado = parse_dt_local("cierre_iniciado_local", turno.cierre_iniciado)
+                turno.fin = parse_dt_local("fin_local", turno.fin)
+            fechas_actuales = (turno.inicio, turno.cierre_iniciado, turno.fin)
+            fechas = [dt for dt in fechas_actuales if dt is not None]
+            if (manual_close or fechas_actuales != fechas_anteriores) and fechas != sorted(fechas):
+                raise ValueError("Las fechas deben ir en orden: inicio, inicio de cierre y fin.")
+            efectivo = payload.get("efectivo_real", None if manual_close else turno.efectivo_real)
+            turno.efectivo_real = None if efectivo in (None, "") else _to_dec(efectivo, None)
+            if (efectivo not in (None, "") or manual_close) and (
+                turno.efectivo_real is None or not zero <= turno.efectivo_real <= max_amount
+            ):
+                raise ValueError("Ingresa el efectivo real contado, incluida la base. Escribe 0 si no hay efectivo.")
+        except ValueError as exc:
+            return JsonResponse({"success": False, "error": str(exc)}, status=400)
+
+        medios_in = payload.get("medios", [])
         if not isinstance(medios_in, list):
             return JsonResponse(
                 {"success": False, "error": "medios debe ser una lista."},
@@ -13612,8 +13740,9 @@ class TurnoCajaAdminUpdateAPI(LoginRequiredMixin, View):
             for medio in medios_rows
             if _normalize_metodo(medio.metodo) not in INTERNAL_PAYMENT_CODES
         }
-        medios_validated = []
-        seen_methods = set()
+        expected = _expected_por_metodo(turno)[0] if manual_close else {}
+        allowed = set(expected) | set(medios_db)
+        medios_validated = {}
         for item in medios_in:
             if not isinstance(item, dict):
                 return JsonResponse(
@@ -13624,71 +13753,53 @@ class TurnoCajaAdminUpdateAPI(LoginRequiredMixin, View):
             if (
                 not metodo
                 or metodo in INTERNAL_PAYMENT_CODES
-                or metodo not in medios_db
+                or metodo not in allowed
             ):
                 return JsonResponse(
                     {"success": False, "error": "Hay un medio que no pertenece al turno."},
                     status=400,
                 )
-            if metodo in seen_methods:
+            if metodo in medios_validated:
                 return JsonResponse(
                     {"success": False, "error": "Hay un medio de pago repetido."},
                     status=400,
                 )
-            seen_methods.add(metodo)
-
-            esperado = _to_dec(item.get("esperado"), Decimal("0.00"))
+            esperado = expected.get(metodo, zero) if manual_close else _to_dec(item.get("esperado"), None)
             contado_raw = item.get("contado")
-            contado = None
-            if contado_raw is not None and str(contado_raw).strip() != "":
-                contado = _to_dec(contado_raw, Decimal("0.00"))
-            medios_validated.append((medios_db[metodo], esperado, contado))
+            counted = None if contado_raw in (None, "") else _to_dec(contado_raw, None)
+            if esperado is None or abs(esperado) > max_amount or (contado_raw not in (None, "") and (
+                counted is None or abs(counted) > max_amount
+            )):
+                return JsonResponse({"success": False, "error": "Revisa los importes de los medios de pago."}, status=400)
+            medios_validated[metodo] = (esperado, counted)
 
-        def parse_dt_local(s):
-            s = (s or "").strip()
-            if not s:
-                return None
-            try:
-                naive = timezone.datetime.strptime(s, "%Y-%m-%dT%H:%M")
-                return timezone.make_aware(naive, timezone.get_current_timezone())
-            except Exception:
-                return None
+        if manual_close:
+            for code, amount in expected.items():
+                if code != CASH_PAYMENT_CODE and amount != zero and medios_validated.get(code, (zero, None))[1] is None:
+                    return JsonResponse({"success": False, "error": (
+                        f"Indica cuánto contaste en {_turn_method_label(code)}. Escribe 0 si no encontraste dinero."
+                    )}, status=400)
+            medios_validated[CASH_PAYMENT_CODE] = (
+                expected[CASH_PAYMENT_CODE], turno.efectivo_real - turno.saldo_apertura_efectivo,
+            )
+            _sync_turno_medios_esperados(turno, expected, reset_contados=True)
+            medios_db = {_normalize_metodo(m.metodo): m for m in turno.medios.all()}
+            close_progress.restart(turno, request.user)
 
-        inicio = parse_dt_local(payload.get("inicio_local"))
-        cierre_iniciado = parse_dt_local(payload.get("cierre_iniciado_local"))
-        fin = parse_dt_local(payload.get("fin_local"))
-
-        base = _to_dec(payload.get("saldo_apertura_efectivo"), getattr(turno, "saldo_apertura_efectivo", Decimal("0.00")) or Decimal("0.00"))
-        if base < 0:
-            base = Decimal("0.00")
-
-        efectivo_real = payload.get("efectivo_real")
-        efectivo_real_dec = None
-        if efectivo_real is not None and str(efectivo_real).strip() != "":
-            efectivo_real_dec = _to_dec(efectivo_real, Decimal("0.00"))
-            if efectivo_real_dec < 0:
-                efectivo_real_dec = Decimal("0.00")
-
-        if estado:
-            turno.estado = estado
-        if inicio:
-            turno.inicio = inicio
-        turno.cierre_iniciado = cierre_iniciado
-        turno.fin = fin
-        turno.saldo_apertura_efectivo = base
-        if hasattr(turno, "efectivo_real"):
-            turno.efectivo_real = efectivo_real_dec
-
+        turno.estado = "CERRADO"
         turno.save()
 
-        for m, esperado, contado in medios_validated:
+        for code, (esperado, contado) in medios_validated.items():
+            m = medios_db[code]
             m.esperado = esperado
             m.contado = contado
             m.save(update_fields=["esperado", "contado"])
 
         _recalc_turno_from_medios(turno)
+        turno.real_total = (turno.efectivo_real + turno.ventas_no_efectivo) if turno.efectivo_real is not None else None
+        turno.save(update_fields=["real_total"])
 
-        return JsonResponse({"success": True, "msg": "Turno actualizado y recalculado."})
+        return JsonResponse({"success": True, "msg": "Turno cerrado con el cuadre indicado." if manual_close else "Turno actualizado y recalculado."})
 
 
 class TurnoCajaAdminDeleteAPI(LoginRequiredMixin, View):

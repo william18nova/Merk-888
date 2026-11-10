@@ -4,20 +4,22 @@
   const memory = new Map();
   const ranks = {payments: 0, cash: 1, media: 2};
   const rank = p => ranks[p?.progress?.step] || 0;
-  const key = id => `tc_contados_${id}`;
+  // A reset starts a different draft even if another browser still has the old one open.
+  const key = (id, attempt = '') => `tc_contados_${id}${attempt ? `_${attempt}` : ''}`;
   const url = id => root.TURNO_CIERRE_RESPALDO?.replace('/0/', `/${id}/`);
   const csrf = () => document.querySelector('[name=csrfmiddlewaretoken]')?.value || '';
   const clone = value => JSON.parse(JSON.stringify(value));
-  function read(id) {
+  function read(id, attempt) {
+    const draftKey = key(id, attempt);
     let local;
-    try { local = JSON.parse(root.localStorage.getItem(key(id)) || 'null'); } catch {}
-    const cached = memory.get(String(id));
+    try { local = JSON.parse(root.localStorage.getItem(draftKey) || 'null'); } catch {}
+    const cached = memory.get(draftKey);
     if (local && (!cached || rank(local) > rank(cached) || (rank(local) === rank(cached) && local.ts > cached.ts))) {
-      memory.set(String(id), local); return local;
+      memory.set(draftKey, local); return local;
     }
     return cached || null;
   }
-  async function remote(id, progress) {
+  async function remote(id, progress, attempt) {
     if (!url(id)) return null;
     const ctrl = new AbortController();
     const timeout = setTimeout(() => ctrl.abort(), 6000);
@@ -25,10 +27,15 @@
       const response = await fetch(url(id), {method: progress ? 'POST' : 'GET', credentials: 'same-origin',
         cache: 'no-store', signal: ctrl.signal, headers: {'Accept': 'application/json',
           'Content-Type': 'application/json', 'X-CSRFToken': csrf(), 'X-Requested-With': 'XMLHttpRequest'},
-        ...(progress ? {body: JSON.stringify(progress)} : {})});
+        ...(progress ? {body: JSON.stringify(attempt ? {...progress, attempt} : progress)} : {})});
       if (response.redirected) throw Object.assign(new Error('La sesión venció. Conserva el cierre y vuelve a iniciar sesión.'), {blocked: true});
       const data = await response.json().catch(() => null);
-      if (response.ok && data?.success) return data;
+      if (response.ok && data?.success) {
+        if ((data.attempt || '') !== (attempt || '')) {
+          throw Object.assign(new Error('El cierre cambió. Vuelve a Turno de caja para continuar con el cierre vigente.'), {blocked: true});
+        }
+        return data;
+      }
       if (response.status >= 400 && response.status < 500) {
         throw Object.assign(new Error(data?.error || 'No tienes autorización para guardar este cierre.'), {blocked: true});
       }
@@ -36,22 +43,23 @@
     } catch (error) { if (error.blocked) throw error; return null; }
     finally { clearTimeout(timeout); }
   }
-  function put(id, payload) {
+  function put(id, payload, attempt) {
+    const draftKey = key(id, attempt);
     const copy = clone(payload);
-    memory.set(String(id), copy);
+    memory.set(draftKey, copy);
     let stored = false;
-    try { root.NovaStorage.safeSet(key(id), JSON.stringify(copy)); stored = true; } catch {}
+    try { root.NovaStorage.safeSet(draftKey, JSON.stringify(copy)); stored = true; } catch {}
     // Invocation order is transaction order; no unhandled rejection on input events.
-    const durable = root.NovaStorage.durable.set(key(id), copy).then(() => true, () => false);
+    const durable = root.NovaStorage.durable.set(draftKey, copy).then(() => true, () => false);
     return {stored, durable};
   }
-  async function load(id) {
-    let payload = read(id);
+  async function load(id, attempt) {
+    let payload = read(id, attempt);
     try {
-      const saved = await root.NovaStorage.durable.get(key(id));
+      const saved = await root.NovaStorage.durable.get(key(id, attempt));
       if (saved && (!payload || rank(saved) > rank(payload) || (rank(saved) === rank(payload) && saved.ts > payload.ts))) payload = saved;
     } catch {}
-    const result = await remote(id);
+    const result = await remote(id, null, attempt);
     if (result?.progress) {
       // Keep unconfirmed counts from the latest draft, but server-confirmed fields win.
       const server = result.progress;
@@ -63,31 +71,33 @@
         throw new Error('El respaldo local no coincide con los pagos confirmados en el servidor. Conserva los datos y solicita revisión.');
       }
     }
-    if (payload) { memory.set(String(id), payload); put(id, payload); }
+    if (payload) put(id, payload, attempt);
     return payload;
   }
-  async function commit(id, payload) {
-    const result = await remote(id, payload.progress);
-    const previous = read(id);
-    const saved = put(id, payload);
+  async function commit(id, payload, attempt) {
+    const result = await remote(id, payload.progress, attempt);
+    const previous = read(id, attempt);
+    const saved = put(id, payload, attempt);
     const durable = await saved.durable;
     if (!result && !saved.stored && !durable) {
-      if (previous) memory.set(String(id), previous); else memory.delete(String(id));
+      const draftKey = key(id, attempt);
+      if (previous) memory.set(draftKey, previous); else memory.delete(draftKey);
       throw new Error('No se pudo guardar el avance en la base ni en este navegador. No se avanzó. Descarga el respaldo y conserva esta pestaña.');
     }
     if (!result && url(id)) root.dispatchEvent(new CustomEvent('nova:close-local-only'));
     return true;
   }
-  function forget(id) {
-    memory.delete(String(id));
-    try { root.localStorage.removeItem(key(id)); } catch {}
-    void root.NovaStorage.durable.remove(key(id)).catch(() => {});
+  function forget(id, attempt) {
+    const draftKey = key(id, attempt);
+    memory.delete(draftKey);
+    try { root.localStorage.removeItem(draftKey); } catch {}
+    void root.NovaStorage.durable.remove(draftKey).catch(() => {});
   }
-  function download(id, payload) {
-    const blob = new Blob([JSON.stringify({version: 1, turno_id: id, payload}, null, 2)], {type: 'application/json'});
+  function download(id, payload, attempt) {
+    const blob = new Blob([JSON.stringify({version: 1, turno_id: id, intento: attempt || '', payload}, null, 2)], {type: 'application/json'});
     const link = document.createElement('a'); const href = URL.createObjectURL(blob);
     link.href = href; link.download = `respaldo-cierre-${id}.json`; link.click();
     setTimeout(() => URL.revokeObjectURL(href), 10000);
   }
-  root.NovaCloseStorage = {read, put, load, commit, forget, download};
+  root.NovaCloseStorage = {key, read, put, load, commit, forget, download};
 })(window);

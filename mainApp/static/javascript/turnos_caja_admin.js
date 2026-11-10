@@ -62,6 +62,7 @@
   const saveStatus = $("#saveStatus");
 
   const estado = $("#estado");
+  const estadoAyuda = $("#estadoAyuda");
   const base = $("#base");
   const inicio = $("#inicio");
   const cierre = $("#cierre");
@@ -99,9 +100,31 @@
     btnLoad.disabled = busy;
     turnoId.disabled = busy;
     editor.setAttribute("aria-busy", String(busy));
-    editor.querySelectorAll("input,select").forEach(input => { input.disabled = busy || protectedPTM; });
+    const locked = busy || protectedPTM;
+    const closed = estado.value === "CERRADO";
+    const alreadyClosed = TURNO?.estado === "CERRADO";
+    estado.disabled = locked;
+    base.disabled = inicio.disabled = locked || (estado.value === "CIERRE" && TURNO?.estado === "CIERRE");
+    cierre.disabled = fin.disabled = locked || !closed || !alreadyClosed;
+    efectivoReal.disabled = locked || !closed;
+    mediosBody.querySelectorAll("[data-esp]").forEach(input => { input.disabled = locked || !closed || !alreadyClosed; });
+    mediosBody.querySelectorAll("[data-con]").forEach(input => {
+      input.disabled = locked || !closed || (!alreadyClosed && input.dataset.con === "efectivo");
+    });
     btnSave.disabled = busy || protectedPTM || !TURNO;
     if (btnDelete) btnDelete.disabled = busy || protectedPTM || !TURNO;
+    const help = {
+      ABIERTO: TURNO?.estado === "ABIERTO"
+        ? "Puedes ajustar la apertura. El cuadre se calculará al iniciar el cierre."
+        : "Al guardar se descartará el cierre anterior. El próximo empezará por Pagos de caja.",
+      CIERRE: TURNO?.estado === "CIERRE"
+        ? "El cajero puede continuar desde el paso confirmado. Para cambiar la apertura, vuelve a Abierto."
+        : "Al guardar se iniciará un cierre nuevo por Pagos de caja, sin conteos previos.",
+      CERRADO: alreadyClosed
+        ? "Puedes corregir fechas y valores del cierre guardado."
+        : "Para cerrar manualmente, indica el efectivo real incluida la base y el saldo neto de los otros medios. Si ya se confirmaron pasos o hubo pagos de caja, usa el cierre normal.",
+    };
+    estadoAyuda.textContent = help[estado.value] || "";
   }
 
   function showLoadState(title, message) {
@@ -118,6 +141,7 @@
   }
 
   function recalcUI() {
+    const showSettlement = TURNO?.estado === "CERRADO" && estado.value === "CERRADO";
     let esperadoTotal = 0;
     let ventasTotal = 0;
     let esperadoEf = 0;
@@ -142,21 +166,21 @@
     const diffTotal = ventasTotal - esperadoTotal;
 
     mEsperado.textContent = money2(esperadoTotal);
-    mVentas.textContent = money2(ventasTotal);
-    mDiff.textContent = money2(diffTotal);
-    mDeuda.textContent = money2(deudaTotal);
-    mEf.textContent = money2(contadoEf);
-    mNoEf.textContent = money2(ventasTotal - contadoEf);
+    mVentas.textContent = showSettlement ? money2(ventasTotal) : "—";
+    mDiff.textContent = showSettlement ? money2(diffTotal) : "—";
+    mDeuda.textContent = showSettlement ? money2(deudaTotal) : "—";
+    mEf.textContent = showSettlement ? money2(contadoEf) : "—";
+    mNoEf.textContent = showSettlement ? money2(ventasTotal - contadoEf) : "—";
 
-    mDiff.className = "v " + numClass(diffTotal);
-    mDeuda.className = "v " + (deudaTotal < 0 ? "neg" : "");
+    mDiff.className = "v " + (showSettlement ? numClass(diffTotal) : "");
+    mDeuda.className = "v " + (showSettlement && deudaTotal < 0 ? "neg" : "");
 
     // pintar diffs por fila
     for (const m of MEDIOS) {
       const el = Array.from(mediosBody.querySelectorAll("[data-diff]")).find(node => node.dataset.diff === m.metodo);
       if (el) {
-        el.textContent = money2(m.diferencia);
-        el.className = "diff " + numClass(m.diferencia);
+        el.textContent = showSettlement ? money2(m.diferencia) : "—";
+        el.className = "diff " + (showSettlement ? numClass(m.diferencia) : "");
       }
     }
   }
@@ -197,11 +221,10 @@
       inputContado.className = "in in-sm numin";
       inputContado.type = "number";
       inputContado.step = "0.01";
-      inputContado.min = "0";
       inputContado.dataset.con = m.metodo;
       inputContado.setAttribute("aria-label", `Contado · ${chip.textContent}`);
       inputContado.value = m.contado === null ? "" : String(num(m.contado));
-      inputContado.placeholder = "(vacío = 0)";
+      inputContado.placeholder = "Sin contar";
       tdC.appendChild(inputContado);
       tr.appendChild(tdC);
 
@@ -255,7 +278,7 @@
       metodo: m.metodo,
       label: m.label || String(m.metodo || "").toUpperCase(),
       esperado: num(m.esperado),
-      contado: (m.contado === null ? "" : num(m.contado)),
+      contado: (TURNO.estado !== "CERRADO" || m.contado === null ? "" : num(m.contado)),
       diferencia: num(m.diferencia),
     }));
 
@@ -265,7 +288,7 @@
     inicio.value = TURNO.inicio_local || "";
     cierre.value = TURNO.cierre_iniciado_local || "";
     fin.value = TURNO.fin_local || "";
-    efectivoReal.value = (TURNO.efectivo_real === null || typeof TURNO.efectivo_real === "undefined") ? "" : num(TURNO.efectivo_real);
+    efectivoReal.value = TURNO.estado === "CERRADO" && TURNO.efectivo_real != null ? num(TURNO.efectivo_real) : "";
 
     ppName.textContent = TURNO.puntopago || "—";
     cajName.textContent = TURNO.cajero || "—";
@@ -286,7 +309,7 @@
     document.getElementById("mPTMHistorial").search = `?turno=${TURNO.id}`;
 
     buildMediosTable();
-    protectedPTM = Number(ptm.cantidad || 0) > 0 || !!data.bolsa_ptm?.participa;
+    protectedPTM = Number(ptm.cantidad || 0) > 0 || ptm.declarado != null || !!data.bolsa_ptm?.participa;
     document.getElementById("mVentasLabel").textContent = protectedPTM ? "Neto reconocido (incluye PTM)" : "Total reportado";
     document.getElementById("mEfectivoLabel").textContent = protectedPTM ? "Efectivo neto (incluye PTM)" : "Efectivo reportado";
     $("#ptmProtection").hidden = !protectedPTM;
@@ -336,24 +359,37 @@
   editor.addEventListener("input", () => {
     if (!busy && !protectedPTM) setSaveStatus("Hay cambios pendientes de guardar.", "dirty");
   });
+  estado.addEventListener("change", () => {
+    syncControls();
+    recalcUI();
+  });
 
   btnSave.addEventListener("click", async () => {
     if (!TURNO?.id || busy || protectedPTM) return;
     const id = TURNO.id;
+    const target = estado.value;
+    if (target !== TURNO.estado && target !== "CERRADO" && TURNO.estado !== "ABIERTO" &&
+        !confirm("Se descartarán los pagos declarados y los conteos del cierre anterior. No se borrarán ventas ni pagos registrados. ¿Continuar?")) return;
 
     const payload = {
-      estado: estado.value,
+      estado: target,
+      estado_original: TURNO.estado,
+      cierre_intento_original: TURNO.cierre_intento || "",
       saldo_apertura_efectivo: base.value,
       inicio_local: inicio.value,
-      cierre_iniciado_local: cierre.value,
-      fin_local: fin.value,
-      efectivo_real: efectivoReal.value,
-      medios: MEDIOS.map(m => ({
+    };
+    if (target === "CERRADO") {
+      if (TURNO.estado === "CERRADO") {
+        payload.cierre_iniciado_local = cierre.value;
+        payload.fin_local = fin.value;
+      }
+      payload.efectivo_real = efectivoReal.value;
+      payload.medios = MEDIOS.map(m => ({
         metodo: m.metodo,
         esperado: String(num(m.esperado)),
         contado: (m.contado === "" ? "" : String(num(m.contado))),
-      })),
-    };
+      }));
+    }
 
     busy = true;
     $("#flash").hidden = true;

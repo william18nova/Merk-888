@@ -25,6 +25,19 @@ avanza y ofrece descargar un JSON del conteo (contiene datos del negocio:
 guardarlo de forma privada; no subirlo a repositorios). No hay importación
 automática de ese archivo ni ejecución automática de pagos.
 
+## Cambiar de estado desde Editar turno
+
+Al pasar a **Abierto** o iniciar un nuevo **En cierre** se descarta el cuadre
+anterior y se crea otro intento. La base, las ventas, los reintegros y los pagos
+registrados se conservan. El conteo nuevo comienza en **Pagos de caja**; una
+pestaña o una sincronización del intento anterior no puede volver a guardarlo.
+Guardar un turno que ya está en cierre no reinicia sus pasos.
+
+El cierre manual requiere el efectivo real y los demás importes contados.
+Si el cajero ya confirmó pasos, debe completarlo por el cierre normal. No se
+permite reiniciar turnos protegidos por PTM, con pagos conciliados por auditoría
+o que se superponen con otro turno del mismo punto de pago.
+
 ## Despliegue
 
 En PythonAnywhere, aplicar `python manage.py migrate --noinput`, ejecutar

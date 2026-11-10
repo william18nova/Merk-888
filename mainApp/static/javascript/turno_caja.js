@@ -229,7 +229,8 @@
     const fd = new FormData();
     Object.entries(dataObj || {}).forEach(([k, v]) => fd.append(k, v == null ? "" : v));
     if (window.NovaBusiness && (url === API_RECUPERAR || url === API_INI_CIERRE || url === API_CERRAR)) {
-      try { return await window.NovaBusiness.submit(url, fd, `${url}:${dataObj.turno_id || "open"}`, getCSRF(), signal); }
+      const attempt = dataObj.cierre_intento ? `:${dataObj.cierre_intento}` : "";
+      try { return await window.NovaBusiness.submit(url, fd, `${url}:${dataObj.turno_id || "open"}${attempt}`, getCSRF(), signal); }
       catch (error) { return {success: false, error: error.message}; }
     }
 
@@ -477,6 +478,7 @@
      STATE
      ============================================================ */
   let TURNO_ID = null;
+  let CLOSE_ATTEMPT = "";
   let BASE = 0;
   let MEDIOS = [];                 // [{metodo, label}]
   const CONTADOS = Object.create(null);
@@ -558,7 +560,6 @@
   /* ============================================================
      PERSISTENCIA del contado (sobrevive a F5 mientras estés en CIERRE)
      ============================================================ */
-  const lsKey = (turnoId) => `tc_contados_${turnoId}`;
   const retiroDenomsKey = (turnoId) => `tc_retiro_denoms_${turnoId}`;
 
   function intCount(v) {
@@ -695,7 +696,7 @@
   function adoptStoredCloseProgress() {
     if (!TURNO_ID) return false;
     try {
-      const saved = normalizedCloseProgress(window.NovaCloseStorage.read(TURNO_ID)?.progress);
+      const saved = normalizedCloseProgress(window.NovaCloseStorage.read(TURNO_ID, CLOSE_ATTEMPT)?.progress);
       if (saved && CLOSE_STEPS.indexOf(saved.step) >= CLOSE_STEPS.indexOf(closeProgress.step)) {
         if (JSON.stringify(saved) === JSON.stringify(closeProgress)) return false;
         closeProgress = saved;
@@ -745,7 +746,7 @@
         closeProgress = {step: to, invoices, denominations, payment_details: paymentDetails};
         if (facturasPagadasInp) facturasPagadasInp.value = String(invoices);
         try {
-          await window.NovaCloseStorage.commit(TURNO_ID, closePayload());
+          await window.NovaCloseStorage.commit(TURNO_ID, closePayload(), CLOSE_ATTEMPT);
         } catch (error) {
           closeProgress = previous;
           err(error.message);
@@ -767,6 +768,7 @@
     try {
       const counts = readCloseDenomCounts();
       sessionStorage.setItem(retiroDenomsKey(turnoId), JSON.stringify({
+        attempt: CLOSE_ATTEMPT,
         counts,
         total: closeCashTotalValue(counts),
         ts: Date.now(),
@@ -792,7 +794,7 @@
     const button = document.createElement('button');
     button.id = 'tc-download-backup'; button.type = 'button'; button.className = 'btn btn-ghost';
     button.textContent = 'Descargar respaldo del cierre';
-    button.addEventListener('click', () => window.NovaCloseStorage.download(TURNO_ID, closePayload()));
+    button.addEventListener('click', () => window.NovaCloseStorage.download(TURNO_ID, closePayload(), CLOSE_ATTEMPT));
     stepClose?.append(button);
   }
 
@@ -800,7 +802,7 @@
     if (!TURNO_ID || closePageLeaving) return false;
     try {
       if (adoptStoredCloseProgress()) showCloseSubstep(closeProgress.step);
-      const saved = window.NovaCloseStorage.put(TURNO_ID, closePayload());
+      const saved = window.NovaCloseStorage.put(TURNO_ID, closePayload(), CLOSE_ATTEMPT);
       saved.durable.then(ok => {
         if (!ok && !saved.stored && !closePageLeaving) {
           warn('El navegador no pudo guardar el borrador. Conserva esta pestaña; al confirmar se intentará guardar en la base.');
@@ -814,7 +816,7 @@
   function restoreContados() {
     if (!TURNO_ID) return;
     try {
-      const payload = window.NovaCloseStorage.read(TURNO_ID);
+      const payload = window.NovaCloseStorage.read(TURNO_ID, CLOSE_ATTEMPT);
       if (!payload || typeof payload !== "object") return;
       const savedProgress = normalizedCloseProgress(payload.progress);
       if (efectivoEntregadoInp && payload.efectivo_entregado) {
@@ -847,7 +849,7 @@
   }
 
   function clearContados(turnoId) {
-    window.NovaCloseStorage.forget(turnoId);
+    window.NovaCloseStorage.forget(turnoId, CLOSE_ATTEMPT);
   }
 
   /* ============================================================
@@ -1071,6 +1073,7 @@
     const ptmCount = document.getElementById("ptm_transacciones");
     if (ptmCount) { ptmCount.value = "0"; ptmCount.oninput = persistContados; }
     TURNO_ID = data.turno_id || data.turno?.id || null;
+    CLOSE_ATTEMPT = data.cierre_intento || data.turno?.cierre_intento || "";
 
     const baseFrom =
       data.base ??
@@ -1118,7 +1121,7 @@
     }
 
     if (estado === "CIERRE") {
-      try { await window.NovaCloseStorage.load(TURNO_ID); }
+      try { await window.NovaCloseStorage.load(TURNO_ID, CLOSE_ATTEMPT); }
       catch (error) { err(error.message); showSection('close'); offerCloseBackup(); return; }
       setBadge(estadoBadge2, "CIERRE");
       stopDurationClock();
@@ -1234,7 +1237,7 @@
     setBtnLoading(btnIniCierre, true);
 
     try {
-      const data = await postForm(API_INI_CIERRE, { turno_id: TURNO_ID });
+      const data = await postForm(API_INI_CIERRE, { turno_id: TURNO_ID, cierre_intento: CLOSE_ATTEMPT });
       if (!data.success) { err(data.error || "Error al iniciar el cierre."); return; }
 
       ok("Cierre iniciado.");
@@ -1299,6 +1302,7 @@
     try {
       const data = await postForm(API_CERRAR, {
         turno_id: TURNO_ID,
+        cierre_intento: CLOSE_ATTEMPT,
         efectivo_entregado: String(efectivoEntregado),
         facturas_pagadas: String(facturasPagadas),
         pagos_detalle: JSON.stringify(readPaymentDetails()),
@@ -1406,7 +1410,7 @@
   btnPaymentsNext?.addEventListener("click", () => { void advanceCloseStep("payments", "cash"); });
   btnCashNext?.addEventListener("click", () => { void advanceCloseStep("cash", "media"); });
   window.addEventListener("storage", event => {
-    if (TURNO_ID && event.key === lsKey(TURNO_ID)) {
+    if (TURNO_ID && event.key === window.NovaCloseStorage.key(TURNO_ID, CLOSE_ATTEMPT)) {
       adoptStoredCloseProgress();
       if (!navigateClosePage(closeProgress.step)) showCloseSubstep(closeProgress.step);
     }

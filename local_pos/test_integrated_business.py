@@ -89,6 +89,39 @@ class IntegratedBusinessTests(TransactionTestCase):
         self.assertEqual(DesglosePagosCierre.objects.get(turno=self.turn).total, Decimal("2000"))
         self.assertEqual(DesglosePagosCierre.objects.count(), 1)
 
+    def test_older_offline_close_is_rejected_after_restart(self):
+        from django.db import transaction
+        from mainApp.services.close_progress import restart
+        from .integrated_business import SaleError
+
+        self.close_offline(self.turn.pk)
+        stale = LocalCommand.objects.using("offline").get(kind=KINDS["close_begin"])
+        with transaction.atomic():
+            restart(TurnoCaja.objects.select_for_update().get(pk=self.turn.pk), self.user)
+        with self.assertRaisesRegex(SaleError, "reiniciado"):
+            upload(stale)
+        self.turn.refresh_from_db()
+        self.assertEqual(self.turn.estado, "ABIERTO")
+
+    def test_copied_restart_identity_is_used_by_offline_begin_and_close(self):
+        from django.db import transaction
+        from mainApp.services.close_progress import attempt_id, restart
+
+        with transaction.atomic():
+            restart(TurnoCaja.objects.select_for_update().get(pk=self.turn.pk), self.user)
+        attempt = attempt_id(self.turn)
+        self.sync()
+        begin = self.run_view(TurnoCajaIniciarCierreApi, self.request({"turno_id": self.turn.pk, "cierre_intento": attempt}))
+        self.assertEqual(begin.status_code, 200, begin.content)
+        self.assertEqual(json.loads(begin.content)["cierre_intento"], attempt)
+        close = {"turno_id": self.turn.pk, "efectivo_entregado": "6000", "facturas_pagadas": "0", "medios_json": "[]"}
+        self.assertEqual(self.run_view(TurnoCajaCerrarApi, self.request(close)).status_code, 409)
+        response = self.run_view(TurnoCajaCerrarApi, self.request({**close, "cierre_intento": attempt}))
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(flush(), 2)
+        self.turn.refresh_from_db()
+        self.assertEqual(self.turn.estado, "CERRADO")
+
     def open_offline(self, **changes):
         from mainApp.views import TurnoCajaRecuperarOIniciarView
         request = self.request({"puntopago_id": self.point.pk, "usuario_id": self.user.pk,

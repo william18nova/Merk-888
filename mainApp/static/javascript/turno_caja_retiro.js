@@ -78,6 +78,7 @@
       if (!raw) return null;
       const payload = JSON.parse(raw);
       if (!payload || typeof payload !== "object") return null;
+      if ((payload.attempt || "") !== (DATA.cierre_intento || "")) return null;
       if (Date.now() - (payload.ts || 0) > 24 * 3600 * 1000) return null;
       return payload;
     } catch {
@@ -413,7 +414,7 @@
     if (btnPrintLabel && buttonText) btnPrintLabel.textContent = buttonText;
   }
 
-  const printKey = () => `tc_retiro_print_${DATA.turno_id}`;
+  const printKey = () => `tc_retiro_print_${DATA.turno_id}${DATA.cierre_intento ? `_${DATA.cierre_intento}` : ""}`;
   function storedPrintState() {
     try { return JSON.parse(localStorage.getItem(printKey()) || "null"); } catch { return null; }
   }
