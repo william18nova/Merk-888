@@ -11,13 +11,14 @@ from django.template.loader import render_to_string
 from django.test import RequestFactory, TestCase
 from django.utils import timezone
 
+from mainApp.hybrid_models import EquipoHibrido, SesionHibrida
 from mainApp.models import (
-    CambioDevolucion, Categoria, ConfiguracionFuncionalidad, DetalleVenta,
+    AvanceCierreCaja, CambioDevolucion, Categoria, ConfiguracionFuncionalidad, DetalleVenta,
     Empleado, Inventario, MetodoPago, NotificacionNequi, PagoVenta, Producto,
     PuntosPago, ReintegroVenta, Sucursal, TurnoCaja, TurnoCajaMedio, Usuario, Venta,
 )
 from mainApp.services.feature_flags import TURN_REQUIRED_FEATURE
-from mainApp.views import VentaDetailView, _sum_reintegros_por_metodo
+from mainApp.views import VentaDetailView, _expected_por_metodo, _sum_reintegros_por_metodo
 
 
 class RefundWithoutActiveTurnTests(TestCase):
@@ -55,7 +56,7 @@ class RefundWithoutActiveTurnTests(TestCase):
             self.addCleanup(patcher.stop)
         self.factory = RequestFactory()
 
-    def submit(self, refunds=None, *, quantity=1):
+    def submit(self, refunds=None, *, quantity=1, journal=False, **changes):
         refunds = [] if refunds is None else refunds
         payload = {"accion": "guardar", "mediopago": self.sale.mediopago,
                    "dev-TOTAL_FORMS": "1", "dev-INITIAL_FORMS": "1",
@@ -65,7 +66,9 @@ class RefundWithoutActiveTurnTests(TestCase):
         for index, (method, amount) in enumerate(refunds):
             payload[f"reint-{index}-medio_pago"] = method
             payload[f"reint-{index}-monto"] = str(amount)
-        request = self.factory.post(f"/ver_venta/{self.sale.pk}/", payload)
+        payload.update(changes)
+        request = self.factory.post(f"/ver_venta/{self.sale.pk}/", payload,
+                                    **({"HTTP_X_NOVA_BUSINESS": "1"} if journal else {}))
         request.user = self.user
         request.session = {}
         request._messages = FallbackStorage(request)
@@ -127,6 +130,110 @@ class RefundWithoutActiveTurnTests(TestCase):
         self.assertEqual(ReintegroVenta.objects.get().turno_id, current.pk)
         self.assertEqual(TurnoCajaMedio.objects.get(turno=current, metodo="efectivo").esperado, -500)
         self.assertEqual(_sum_reintegros_por_metodo(current), {"efectivo": Decimal("500.00")})
+        self.assert_closed_unchanged()
+
+    def turn_at(self, name, *, branch=None, state="ABIERTO"):
+        point = PuntosPago.objects.create(nombre=name, sucursalid=branch or self.branch, dinerocaja=20000)
+        turn = TurnoCaja.objects.create(cajero=self.user, puntopago=point, estado=state)
+        if state == "CIERRE":
+            turn.cierre_iniciado = timezone.now()
+            turn.save(update_fields=["cierre_iniciado"])
+        return turn
+
+    def reserve_turn(self, turn):
+        device = EquipoHibrido.objects.create(nombre="Equipo de prueba", punto=turn.puntopago,
+            enlace_hash="test", enlace_vence=timezone.now(), creado_por=self.user)
+        SesionHibrida.objects.create(equipo=device, usuario=self.user, turno=turn, vence_en=timezone.now())
+
+    def assert_no_refund_changes(self):
+        self.sale.refresh_from_db()
+        self.stock.refresh_from_db()
+        self.detail.refresh_from_db()
+        self.point.refresh_from_db()
+        self.assertEqual((self.sale.total, self.sale.mediopago, self.stock.cantidad, self.detail.cantidad, self.point.dinerocaja),
+                         (1000, "nequi", 10, 2, 10000))
+        self.assertFalse(ReintegroVenta.objects.exists())
+        self.assertFalse(CambioDevolucion.objects.exists())
+        self.assertEqual(PagoVenta.objects.get(ventaid=self.sale).medio_pago, "nequi")
+
+    def test_selected_other_register_gets_the_whole_refund_and_origin_is_unchanged(self):
+        original = TurnoCaja.objects.create(cajero=self.user, puntopago=self.point, estado="ABIERTO")
+        selected = self.turn_at("Caja elegida", state="CIERRE")
+        AvanceCierreCaja.objects.create(turno=selected, registrado_por=self.user, progreso={"step": "cash"})
+        response, request = self.submit([("efectivo", 200), ("nequi", 300)], turno_reintegro_id=selected.pk)
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(any(f"turno #{selected.pk}" in str(msg) for msg in get_messages(request)))
+        self.assertEqual(set(ReintegroVenta.objects.values_list("turno_id", flat=True)), {selected.pk})
+        self.assertEqual(_sum_reintegros_por_metodo(selected), {"efectivo": 200, "nequi": 300})
+        self.assertEqual(_sum_reintegros_por_metodo(original), {})
+        self.assertEqual(dict(selected.medios.values_list("metodo", "esperado")), {"efectivo": -200, "nequi": -300})
+        expected, total, _, _ = _expected_por_metodo(selected)
+        self.assertEqual((expected["efectivo"], expected["nequi"], total), (-200, -300, -500))
+        self.assertFalse(original.medios.exists())
+        self.sale.refresh_from_db()
+        self.assertEqual((self.sale.puntopagoid_id, self.sale.total), (self.point.pk, 500))
+        self.assertEqual(PagoVenta.objects.get(ventaid=self.sale).monto, 1000)
+        self.assert_closed_unchanged()
+
+    def test_picker_only_lists_eligible_shifts_in_the_sale_branch(self):
+        original = TurnoCaja.objects.create(cajero=self.user, puntopago=self.point)
+        eligible = self.turn_at("Caja alternativa", state="CIERRE")
+        self.turn_at("Caja ajena", branch=Sucursal.objects.create(nombre="Otra sucursal"))
+        reserved = self.turn_at("Caja reservada")
+        self.reserve_turn(reserved)
+        counted = self.turn_at("Caja contada", state="CIERRE")
+        AvanceCierreCaja.objects.create(turno=counted, registrado_por=self.user, progreso={"step": "media"})
+        request = self.factory.get(f"/ver_venta/{self.sale.pk}/")
+        request.user = self.user
+        with patch("mainApp.views.render", return_value=HttpResponse()) as render_view:
+            self.assertEqual(VentaDetailView().get(request, self.sale.pk).status_code, 200)
+        picker = render_view.call_args.args[2]["refund_turn_picker"]
+        self.assertEqual({turn.pk for turn in picker["turns"]}, {original.pk, eligible.pk})
+        self.assertEqual(picker["default_id"], original.pk)
+        self.assertFalse(picker["allow_no_turn"])
+
+    def test_closed_foreign_reserved_or_counted_turn_is_not_charged_and_no_edits_are_saved(self):
+        TurnoCaja.objects.create(cajero=self.user, puntopago=self.point)
+        foreign = self.turn_at("Ajena", branch=Sucursal.objects.create(nombre="Otra"))
+        reserved = self.turn_at("Reservada")
+        self.reserve_turn(reserved)
+        counted = self.turn_at("Contada", state="CIERRE")
+        AvanceCierreCaja.objects.create(turno=counted, registrado_por=self.user, progreso={"step": "media"})
+        for choice in (self.closed.pk, foreign.pk, reserved.pk, counted.pk, "900000000", "", "sin_turno", "9" * 100):
+            with self.subTest(choice=choice):
+                _, request = self.submit(turno_reintegro_id=choice, mediopago="efectivo")
+                self.assertTrue(any(msg.level_tag == "error" for msg in get_messages(request)))
+                self.assert_no_refund_changes()
+        self.assert_closed_unchanged()
+
+    def test_explicit_no_turn_does_not_charge_another_register(self):
+        other = self.turn_at("Otra caja abierta")
+        self.submit(turno_reintegro_id="sin_turno")
+        self.assertIsNone(ReintegroVenta.objects.get().turno_id)
+        self.assertFalse(other.medios.exists())
+        self.point.refresh_from_db()
+        self.assertEqual(self.point.dinerocaja, 9500)
+
+    def test_invalid_selection_returns_a_conflict_to_the_installed_app(self):
+        response, _ = self.submit(turno_reintegro_id=self.closed.pk, journal=True)
+        self.assertEqual(response.status_code, 409)
+        self.assert_no_refund_changes()
+
+    def test_selection_from_old_page_is_rejected_if_turn_control_was_disabled(self):
+        chosen = self.turn_at("Caja disponible antes")
+        self.feature.habilitada = False
+        self.feature.save(update_fields=["habilitada"])
+        _, request = self.submit(turno_reintegro_id=chosen.pk)
+        self.assertTrue(any("control de turnos cambió" in str(msg) for msg in get_messages(request)))
+        self.assert_no_refund_changes()
+
+    def test_selected_turn_is_ignored_when_saving_only_the_payment_method(self):
+        original = TurnoCaja.objects.create(cajero=self.user, puntopago=self.point)
+        self.submit(quantity=0, mediopago="efectivo", turno_reintegro_id=self.closed.pk)
+        self.sale.refresh_from_db()
+        self.assertEqual(self.sale.mediopago, "efectivo")
+        self.assertFalse(ReintegroVenta.objects.exists())
+        self.assertEqual(original.medios.get(metodo="efectivo").esperado, 1000)
         self.assert_closed_unchanged()
 
     def test_cannot_return_more_than_remaining_without_turn(self):

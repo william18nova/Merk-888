@@ -47,6 +47,7 @@
 
   const bloquePagos = document.getElementById("bloque-mixto-pagos");
   const bloqueReint = document.getElementById("bloque-mixto-reintegro");
+  const turnoReintegro = document.getElementById("id_turno_reintegro");
 
   const totalVentaEl = document.getElementById("mixto-total-venta");
   const sumaPagosEl = document.getElementById("mixto-suma-pagos");
@@ -99,6 +100,10 @@
 
   function setReintegroInputsEnabled(enabled) {
     if (!bloqueReint) return;
+    if (turnoReintegro) {
+      turnoReintegro.disabled = !enabled;
+      turnoReintegro.required = enabled;
+    }
     const inputs = bloqueReint.querySelectorAll("input[name$='-monto']");
     inputs.forEach(i => {
       i.disabled = !enabled;

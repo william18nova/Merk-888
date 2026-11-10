@@ -1867,6 +1867,7 @@ class CambioDevolucion(models.Model):
         reintegro_map: dict | None = None,
         registrado_por=None,
         turno_requerido=True,
+        turno_destino=None,
     ):
         """
         ✅ Hace TODO:
@@ -1880,6 +1881,8 @@ class CambioDevolucion(models.Model):
         de turnos de ventas: activa la búsqueda de un turno vigente, pero una
         devolución no exige que exista. Sin turno, guarda el reintegro con
         turno=None y descuenta solo el efectivo del saldo del punto de pago.
+        ``turno_destino`` permite usar un turno de reintegro que el llamador
+        ya validó y bloqueó en la misma transacción.
         """
         from .models import DetalleVenta, ReintegroVenta, TurnoCaja
 
@@ -1904,7 +1907,9 @@ class CambioDevolucion(models.Model):
         turno = None
         if total_dev > 0:
             reintegro_map = cls._normalizar_reintegro_map(reintegro_map, total_dev)
-            if turno_requerido:
+            if turno_destino is not None:
+                turno = turno_destino
+            elif turno_requerido:
                 turno = cls._turno_abierto_para_venta_locked(venta)
 
         now = timezone.localdate()

@@ -112,7 +112,8 @@
 }
 
 .venta-grid input,
-.venta-grid select{
+.venta-grid select,
+.reintegro-destino select{
   width: 100%;
   padding: 10px 10px;
   border-radius: 10px;
@@ -129,12 +130,14 @@
   filter: saturate(.92);
 }
 
-.venta-grid select{
+.venta-grid select,
+.reintegro-destino select{
   cursor: pointer;
   background: rgba(240,248,255,.98);
 }
 
-.venta-grid select:focus{
+.venta-grid select:focus,
+.reintegro-destino select:focus{
   box-shadow: 0 0 0 4px rgba(77,166,255,.18);
   border-color: rgba(77,166,255,.55);
 }
@@ -297,6 +300,20 @@
   color: rgba(234,242,255,.86);
   line-height: 1.45;
 }
+
+.reintegro-destino{
+  display: grid;
+  gap: 7px;
+  padding: 12px;
+  margin-bottom: 12px;
+  border: 1px solid rgba(77,166,255,.35);
+  border-radius: 12px;
+  background: rgba(12,35,64,.35);
+}
+
+.reintegro-destino label{ font-weight: 800; }
+.reintegro-destino select{ min-width: 0; text-overflow: ellipsis; }
+.reintegro-destino small{ color: rgba(234,242,255,.85); line-height: 1.45; }
 
 .reintegro-todo{
   flex: 0 0 auto;

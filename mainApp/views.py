@@ -8175,6 +8175,43 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin, View):
                 monto=total
             )
 
+    def _preparar_reintegro(self, request, venta, detalles, active_codes, *, turno_requerido):
+        from .services.refund_turns import lock_destination
+
+        dev_formset = DevolucionFormSet(request.POST, prefix="dev")
+        if not dev_formset.is_valid():
+            raise ValueError("Revisa las cantidades a devolver.")
+
+        det_map = {d.pk: d for d in detalles}
+        devoluciones = []
+        seen = set()
+        for row in dev_formset.cleaned_data:
+            cant = int(row.get("devolver") or 0)
+            if cant <= 0:
+                continue
+            det = det_map.get(row["detalle_id"])
+            if det is None or det.pk in seen:
+                raise ValueError("La devolución tiene un producto repetido o que no pertenece a esta venta.")
+            if cant > int(det.cantidad):
+                raise ValueError(f"No puedes devolver {cant} porque solo se vendieron {det.cantidad}.")
+            seen.add(det.pk)
+            devoluciones.append({"detalle": det, "cantidad": cant})
+        if not devoluciones:
+            raise ValueError("Indica al menos una cantidad a devolver.")
+
+        total = self._calcular_total_reintegro(venta, devoluciones)
+        ok, err, reintegro_map = self._validar_reintegro_mixto(
+            venta, ReintegroMixtoFormSet(request.POST, prefix="reint"), total,
+            active_codes=active_codes,
+        )
+        if not ok:
+            raise ValueError(err)
+
+        turno_destino = lock_destination(
+            venta, request.POST.get("turno_reintegro_id"), turn_required=turno_requerido,
+        ) if total > 0 else None
+        return devoluciones, reintegro_map, turno_destino
+
     # -------------------------
     # GET
     # -------------------------
@@ -8254,7 +8291,7 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin, View):
             reintegros = list(
                 ReintegroVenta.objects
                 .filter(venta=venta)
-                .select_related("turno", "registrado_por")
+                .select_related("turno__puntopago", "registrado_por")
                 .order_by("-creado_en", "-reintegroid")
             )
 
@@ -8307,6 +8344,14 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin, View):
                 labels=payment_method_labels,
             )
 
+        print_only = self._is_print_only(request.user, venta)
+        refund_turn_picker = None
+        if not print_only and reintegro_ledger_ready and venta.total > 0:
+            from local_pos.request_context import offline_request
+            if not offline_request() and is_feature_enabled(TURN_REQUIRED_FEATURE, fresh=True):
+                from .services.refund_turns import choices
+                refund_turn_picker = choices(venta)
+
         return render(request, self.template_name, {
             "venta": venta,
             "filas": zip(detalles, dev_formset.forms),
@@ -8325,7 +8370,8 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin, View):
             "venta_total_cobrado": self._venta_total_cobrado(venta),
             "reintegros": reintegros,
             "reintegro_ledger_ready": reintegro_ledger_ready,
-            "venta_print_only": self._is_print_only(request.user, venta),
+            "venta_print_only": print_only,
+            "refund_turn_picker": refund_turn_picker,
             "venta_solicitud_cambio_whatsapp_url": solicitud_whatsapp_url,
             "autorizacion_merk2888": autorizacion_merk2888,
             "beneficio_merk2888": bool(autorizacion_merk2888),
@@ -8399,9 +8445,7 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin, View):
             else normalize_payment_method_code(nuevo_mediopago_raw)
         )
 
-        dev_formset = DevolucionFormSet(request.POST, prefix="dev")
         pagos_formset = PagoMixtoFormSet(request.POST, prefix="pagos")
-        reintegro_formset = ReintegroMixtoFormSet(request.POST, prefix="reint")
 
         metodo_old_raw = (venta.mediopago or "").strip().lower()
         metodo_old = (
@@ -8411,7 +8455,7 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin, View):
         )
 
         # ✅ clave: detectar si realmente hay devoluciones
-        hay_devolucion = self._hay_devolucion_en_post(request)
+        hay_devolucion = accion != "volver_lista" and self._hay_devolucion_en_post(request)
 
         if hay_devolucion and not _reintegro_ledger_ready():
             messages.error(
@@ -8496,6 +8540,17 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin, View):
                     reverse_lazy("ver_venta", kwargs={"venta_id": venta_id})
                 )
 
+        if hay_devolucion:
+            try:
+                devoluciones, reintegro_map, turno_destino = self._preparar_reintegro(
+                    request, venta, detalles, medios_activos, turno_requerido=turno_requerido_actual,
+                )
+            except ValueError as exc:
+                if request.headers.get("X-Nova-Business") == "1":
+                    return JsonResponse({"success": False, "error": str(exc)}, status=409)
+                messages.error(request, f"⚠️ {exc}")
+                return redirect(reverse_lazy("ver_venta", kwargs={"venta_id": venta_id}))
+
         try:
             self._aplicar_delta_mapa_pagos(
                 venta,
@@ -8512,7 +8567,6 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin, View):
         if metodo_objetivo != metodo_old:
             venta.mediopago = metodo_objetivo
             venta.save(update_fields=["mediopago"])
-            messages.success(request, "✅ Medio de pago actualizado.")
 
         # 1) Persistir el nuevo mapa solo después de validarlo y ajustar caja.
         if metodo_objetivo == "mixto":
@@ -8520,50 +8574,12 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin, View):
         else:
             self._guardar_pago_unico(venta)
 
-        if accion == "volver_lista":
-            return redirect(reverse_lazy("visualizar_ventas"))
-
-        # ✅ SI NO HAY DEVOLUCIÓN: terminamos aquí (así el cambio de medio sí “se guarda” sin obligarte a devolver)
         if not hay_devolucion:
+            if metodo_objetivo != metodo_old:
+                messages.success(request, "✅ Medio de pago actualizado.")
+            if accion == "volver_lista":
+                return redirect(reverse_lazy("visualizar_ventas"))
             messages.success(request, "✅ Cambios guardados.")
-            return redirect(reverse_lazy("ver_venta", kwargs={"venta_id": venta_id}))
-
-        # 2) Validar devoluciones (solo si hay devolucion)
-        if not dev_formset.is_valid():
-            messages.error(request, "⚠️ Revisa las cantidades a devolver.")
-            return redirect(reverse_lazy("ver_venta", kwargs={"venta_id": venta_id}))
-
-        det_map = {d.pk: d for d in detalles}
-        devoluciones = []
-
-        for row in dev_formset.cleaned_data:
-            cant = int(row.get("devolver") or 0)
-            if cant <= 0:
-                continue
-
-            det = det_map.get(row["detalle_id"])
-            if not det:
-                continue
-
-            if cant > int(det.cantidad):
-                messages.error(request, f"⚠️ No puedes devolver {cant} porque solo se vendieron {det.cantidad}.")
-                return redirect(reverse_lazy("ver_venta", kwargs={"venta_id": venta_id}))
-
-            devoluciones.append({"detalle": det, "cantidad": cant})
-
-        if not devoluciones:
-            return redirect(reverse_lazy("ver_venta", kwargs={"venta_id": venta_id}))
-
-        total_reintegro = self._calcular_total_reintegro(venta, devoluciones)
-
-        ok, err, reintegro_map = self._validar_reintegro_mixto(
-            venta,
-            reintegro_formset,
-            total_reintegro,
-            active_codes=medios_activos,
-        )
-        if not ok:
-            messages.error(request, f"⚠️ {err}")
             return redirect(reverse_lazy("ver_venta", kwargs={"venta_id": venta_id}))
 
         try:
@@ -8572,13 +8588,18 @@ class VentaDetailView(LoginRequiredMixin, DenyRolesMixin, View):
                 devoluciones,
                 reintegro_map=reintegro_map,
                 registrado_por=request.user,
-                turno_requerido=turno_requerido_actual,
+                turno_requerido=False,
+                turno_destino=turno_destino,
             )
         except ValueError as exc:
+            transaction.set_rollback(True)
             messages.error(request, f"⚠️ {exc}")
             return redirect(reverse_lazy("ver_venta", kwargs={"venta_id": venta_id}))
 
-        messages.success(request, "✅ Devolución registrada correctamente.")
+        messages.success(request, (
+            f"✅ Devolución registrada correctamente en el turno #{turno_destino.pk}."
+            if turno_destino else "✅ Devolución registrada correctamente."
+        ))
         return redirect(reverse_lazy("visualizar_ventas"))
 
     @staticmethod

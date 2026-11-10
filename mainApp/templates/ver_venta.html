@@ -5,7 +5,7 @@
 
 {% block extra_head %}
   <link rel="stylesheet" href="{% static 'css/generar_venta.css' %}">
-  <link rel="stylesheet" href="{% static 'css/ver_venta.css' %}?v=4">
+  <link rel="stylesheet" href="{% static 'css/ver_venta.css' %}?v=5">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"/>
 {% endblock %}
 
@@ -192,6 +192,30 @@
         <i class="fas fa-money-bill-transfer me-2"></i> ¿Por qué medio entregaste el dinero?
       </h2>
 
+      {% if refund_turn_picker %}
+      <div class="reintegro-destino">
+        {% if refund_turn_picker.turns or refund_turn_picker.allow_no_turn %}
+        <label for="id_turno_reintegro">¿A qué turno se carga la devolución?</label>
+        <select id="id_turno_reintegro" name="turno_reintegro_id" aria-describedby="reintegro-turno-ayuda" disabled>
+          {% if refund_turn_picker.turns %}
+          <option value="" disabled {% if not refund_turn_picker.default_id %}selected{% endif %}>Selecciona el turno</option>
+          {% endif %}
+          {% for turno in refund_turn_picker.turns %}
+          <option value="{{ turno.pk }}" {% if turno.pk == refund_turn_picker.default_id %}selected{% endif %}>
+            #{{ turno.pk }} · {{ turno.puntopago.nombre }} · {{ turno.cajero.nombreusuario }} · {{ turno.inicio|date:'d/m H:i' }} · {% if turno.estado == 'CIERRE' %}En cierre{% else %}Abierto{% endif %}
+          </option>
+          {% endfor %}
+          {% if refund_turn_picker.allow_no_turn %}
+          <option value="{{ refund_turn_picker.no_turn_value }}" {% if not refund_turn_picker.turns %}selected{% endif %}>Sin turno · {{ venta.puntopagoid.nombre }}</option>
+          {% endif %}
+        </select>
+        <small id="reintegro-turno-ayuda">Elige la caja que entregó el dinero. El descuento queda en ese turno; la venta sigue en su caja original. Los turnos cerrados o con conteo confirmado no se pueden elegir.</small>
+        {% else %}
+        <small role="status">No hay un turno disponible para el reintegro. Si ya se confirmó el conteo, reabre el turno antes de hacer la devolución.</small>
+        {% endif %}
+      </div>
+      {% endif %}
+
       <p class="reintegro-explanation">
         Por defecto, todo el dinero se asigna a Efectivo. Cámbialo solamente si
         la devolución salió por otro medio o si necesitas repartirla.
@@ -258,7 +282,7 @@
           <strong>-${{ reintegro.monto|floatformat:2 }}</strong>
           <small>
             {% if reintegro.turno_id %}
-              Turno #{{ reintegro.turno_id }}
+              Turno #{{ reintegro.turno_id }} · {{ reintegro.turno.puntopago.nombre }}
             {% else %}
               Sin turno
             {% endif %}
@@ -279,7 +303,7 @@
           <i class="fas fa-save me-1"></i> Guardar cambios / devolución
         </button>
 
-        <button type="submit" class="btn-primary" name="accion" value="volver_lista">
+        <button type="submit" class="btn-primary" name="accion" value="volver_lista" formnovalidate>
           <i class="fas fa-list me-1"></i> Volver a la lista
         </button>
 
@@ -347,5 +371,5 @@
   if (!/^https?:\/\//.test(window.POS_AGENT_URL)) window.POS_AGENT_URL = "http://127.0.0.1:8787";
 </script>
 
-<script src="{% static 'javascript/ver_venta.js' %}?v=7"></script>
+<script src="{% static 'javascript/ver_venta.js' %}?v=8"></script>
 {% endblock %}

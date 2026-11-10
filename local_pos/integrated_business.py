@@ -119,6 +119,10 @@ def build(request, action, state, kwargs):
             for row in form.cleaned_data if row.get("devolver", 0) > 0]
         lines = return_items(sale, items)
         total = CambioDevolucion.calcular_total_devolucion(sale, lines)
+        selected = request.POST.get("turno_reintegro_id")
+        authorized = state.scope["offline_sale"].get("turn_id")
+        if total > 0 and selected is not None and (not authorized or selected != str(authorized)):
+            raise SaleError("Sin conexión solo puedes cargar una devolución al turno autorizado de este equipo. Conéctate para elegir otro turno.")
         ok, error, mapping = VentaDetailView()._validar_reintegro_mixto(sale, refunds, total,
             active_codes=set(MetodoPago.objects.filter(activo=True).values_list("codigo", flat=True)))
         if not ok:

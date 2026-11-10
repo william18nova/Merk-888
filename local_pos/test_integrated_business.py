@@ -64,6 +64,16 @@ class IntegratedBusinessTests(TransactionTestCase):
             "dev-TOTAL_FORMS": "1", "dev-INITIAL_FORMS": "0", "dev-0-detalle_id": str(self.detail.pk), "dev-0-devolver": str(count),
             "reint-TOTAL_FORMS": "1", "reint-INITIAL_FORMS": "0", "reint-0-medio_pago": "efectivo", "reint-0-monto": str(2000 * count)})
 
+    def test_offline_refund_rejects_a_turn_outside_the_equipment_scope(self):
+        request = self.refund_request()
+        request.POST = request.POST.copy()
+        request.POST["turno_reintegro_id"] = str(self.turn.pk + 1)
+        response = self.run_view(VentaDetailView, request, venta_id=self.sale.pk)
+        self.assertEqual(response.status_code, 409, response.content)
+        self.assertIn("turno autorizado", json.loads(response.content)["error"])
+        self.assertFalse(ReintegroVenta.objects.using("offline").exists())
+        self.assertFalse(LocalCommand.objects.using("offline").exists())
+
     def close_offline(self, turn_id):
         self.assertEqual(self.run_view(TurnoCajaIniciarCierreApi, self.request({"turno_id": turn_id})).status_code, 200)
         response = self.run_view(TurnoCajaCerrarApi, self.request({"turno_id": turn_id,
